@@ -16,7 +16,11 @@ class User(Base):
     last_login_at = Column(TIMESTAMP, default=func.current_timestamp())
     provider_info = Column(JSONB)
     provider_username = Column(String(255))
+
+    
     # Relationships
     projects = relationship(
         "Project", back_populates="user"
     )  # Assumes a 'Project' class exists
+        # Relationship to Conversation model
+    conversations = relationship("Conversation", back_populates="user")
