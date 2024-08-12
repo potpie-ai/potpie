@@ -12,7 +12,7 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=False)
     display_name = Column(String(255))
     email_verified = Column(Boolean, default=False)
-    created_at = Column(TIMESTAMP, default=func.current_timestamp())
+    created_at = Column(TIMESTAMP(timezone=True), default=func.utcnow(), nullable=False)  # Use UTC timestamp
     last_login_at = Column(TIMESTAMP, default=func.current_timestamp())
     provider_info = Column(JSONB)
     provider_username = Column(String(255))

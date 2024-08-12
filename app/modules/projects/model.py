@@ -21,7 +21,7 @@ class Project(Base):
     repo_name = Column(Text)
     branch_name = Column(Text)
     user_id = Column(String(255), nullable=False)
-    created_at = Column(TIMESTAMP, default=func.current_timestamp())
+    created_at = Column(TIMESTAMP(timezone=True), default=func.utcnow(), nullable=False)  # Use UTC timestamp
     commit_id = Column(String(255))
     is_deleted = Column(Boolean, default=False)
     updated_at = Column(
