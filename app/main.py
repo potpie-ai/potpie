@@ -7,6 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import Base, engine
 
+from app.modules.conversations.router import router as conversations_router
+from app.modules.users.router import router as user_router
+
 
 load_dotenv(override=True)
 
@@ -40,6 +43,10 @@ def check_and_set_env_vars():
 check_and_set_env_vars()
 
 
-@app.get("/health")
+@app.get("/health" ,tags=["Health"])
 def health_check():
     return {"status": "ok"}
+
+
+app.include_router(user_router,  prefix="/api/v1", tags=["User"])
+app.include_router(conversations_router,  prefix="/api/v1", tags=["Conversations"])
