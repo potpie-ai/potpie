@@ -1,3 +1,4 @@
+import json
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -87,6 +88,7 @@ class ConversationAPI:
         ]
         return messages
 
+    
     @staticmethod
     @router.post("/conversations/{conversation_id}/message/")
     async def post_message(
@@ -97,25 +99,32 @@ class ConversationAPI:
         async def generate_message_content():
             # Simulate content generation in chunks
             content_parts = [
-                f"{message.content} (part 1)",
-                f"{message.content} (part 2)",
-                f"{message.content} (part 3)"
+                "string (part 1)",
+                "string (part 2)",
+                "string (part 3)"
             ]
 
             for part in content_parts:
                 await asyncio.sleep(1)  # Simulate delay in content generation
-                yield part  # Yield plain text content
+                yield f"data: {json.dumps({'content': part})}\n\n"
+                # Two Newlines (\n\n): Necessary to properly terminate each event in SSE format.
 
         async def message_stream():
-            # First, yield the message metadata (if necessary)
-            metadata = f"Message ID: mock-message-id, Conversation ID: {conversation_id}, Type: {"AI_GENERATED"}, Reason: {"STREAM"}\n"
-            yield metadata
+            # First, yield the message metadata as JSON, wrapped in an SSE event
+            metadata = {
+                "message_id": "mock-message-id",
+                "conversation_id": conversation_id,
+                "type": "AI_GENERATED",
+                "reason": "STREAM"
+            }
+            yield f"data: {json.dumps(metadata)}\n\n"
 
-            # Then, stream the content updates
+            # Then, stream the content updates as SSE events
             async for content_update in generate_message_content():
                 yield content_update
 
-        return StreamingResponse(message_stream(), media_type="text/plain")
+        return StreamingResponse(message_stream(), media_type="text/event-stream")
+
 
     @staticmethod
     @router.post("/conversations/{conversation_id}/regenerate/", response_model=MessageResponse)

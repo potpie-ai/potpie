@@ -25,7 +25,7 @@ class ConversationResponse(BaseModel):
     agent_ids: List[str]
     created_at: datetime
     updated_at: datetime
-    messages: Optional[List["MessageResponse"]] = []
+    messages: List["MessageResponse"] = []
 
     class Config:
         from_attributes = True
@@ -37,3 +37,6 @@ class ConversationInfoResponse(BaseModel):
     total_messages: int 
     class Config:
         from_attributes = True
+
+# Resolve forward references
+ConversationResponse.update_forward_refs()
