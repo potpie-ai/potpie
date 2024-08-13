@@ -17,13 +17,11 @@ class Conversation(Base):
     user_id = Column(String(255), ForeignKey("users.uid"), nullable=False, index=True)  # ForeignKey to User model with index
     title = Column(String(255), nullable=False)  # Title of the conversation
     status = Column(SQLAEnum(ConversationStatus), default=ConversationStatus.ACTIVE, nullable=False)  # Status of the conversation
-    project_ids = Column(ARRAY(String), nullable=False)  # List of project IDs
-    agent_ids = Column(ARRAY(String), nullable=False)  # List of agent IDs
+    project_ids = Column(ARRAY(String), nullable=False)
+    agent_ids = Column(ARRAY(String), nullable=False)
     created_at = Column(TIMESTAMP(timezone=True), default=func.utcnow(), nullable=False)  # Use UTC timestamp
     updated_at = Column(TIMESTAMP(timezone=True), default=func.utcnow(), onupdate=func.utcnow(), nullable=False)  # Use UTC timestamp
 
     # Relationship to the Message model
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
-
-    # Relationship back to User model
     user = relationship("User", back_populates="conversations")
