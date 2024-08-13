@@ -1,7 +1,6 @@
 import json
 from typing import List
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import StreamingResponse
 
 from sqlalchemy.orm import Session
 from app.core.database import get_db
@@ -22,8 +21,6 @@ from .message.schema import (
 )
 
 router = APIRouter()
-
-
 
 class ConversationAPI:
 
@@ -97,36 +94,10 @@ class ConversationAPI:
     async def post_message(
         conversation_id: str,
         message: MessageRequest,
+        controller: ConversationController = Depends(get_controller),
         db: Session = Depends(get_db)
-    ):
-        async def generate_message_content():
-            # Simulate content generation in chunks
-            content_parts = [
-                "string (part 1)",
-                "string (part 2)",
-                "string (part 3)"
-            ]
-
-            for part in content_parts:
-                await asyncio.sleep(1)  # Simulate delay in content generation
-                yield f"data: {json.dumps({'content': part})}\n\n"
-                # Two Newlines (\n\n): Necessary to properly terminate each event in SSE format.
-
-        async def message_stream():
-            # First, yield the message metadata as JSON, wrapped in an SSE event
-            metadata = {
-                "message_id": "mock-message-id",
-                "conversation_id": conversation_id,
-                "type": "AI_GENERATED",
-                "reason": "STREAM"
-            }
-            yield f"data: {json.dumps(metadata)}\n\n"
-
-            # Then, stream the content updates as SSE events
-            async for content_update in generate_message_content():
-                yield content_update
-
-        return StreamingResponse(message_stream(), media_type="text/event-stream")
+    ):  
+        return await controller.post_message(conversation_id, message, db, user_id='abc')
 
 
     @staticmethod
