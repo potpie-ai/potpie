@@ -16,9 +16,7 @@ from .conversation.schema import (
 
 from .message.schema import (
     MessageRequest,
-    MessageResponse,
-    MessageMetadata,
-    MessageContentUpdate
+    MessageResponse
 )
 
 router = APIRouter()
