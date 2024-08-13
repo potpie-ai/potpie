@@ -1,22 +1,20 @@
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 from datetime import datetime
 from .model import ConversationStatus
+from ..message.schema import MessageResponse
 
-class CreateConversation(BaseModel):
+
+class CreateConversationRequest(BaseModel):
     user_id: str
     title: str
     status: ConversationStatus
     project_ids: List[str]
     agent_ids: List[str]
 
-
-class CreateConversation(BaseModel):
-    user_id: str
-    title: str
-    status: ConversationStatus
-    project_ids: List[str]
-    agent_ids: List[str]
+class CreateConversationResponse(BaseModel):
+    message: str
+    conversation_id: str
 
 class ConversationResponse(BaseModel):
     id: str
@@ -27,14 +25,15 @@ class ConversationResponse(BaseModel):
     agent_ids: List[str]
     created_at: datetime
     updated_at: datetime
+    messages: Optional[List["MessageResponse"]] = []
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class ConversationInfoResponse(BaseModel):
     id: str
     agent_ids: List[str]
     project_ids: List[str]
-
+    total_messages: int 
     class Config:
-        orm_mode = True
+        from_attributes = True
