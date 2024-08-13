@@ -17,14 +17,3 @@ class MessageResponse(BaseModel):
 
     class Config:
         from_attributes = True
-
-class MessageMetadata(BaseModel):
-    id: str
-    conversation_id: str
-    sender_id: Optional[str]
-    type: str
-    reason: Optional[str]
-    created_at: datetime
-
-class MessageContentUpdate(BaseModel):
-    content: str
