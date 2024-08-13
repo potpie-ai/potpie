@@ -27,7 +27,6 @@ class UserAPI:
                 agent_ids=["agent1", "agent2"],
                 created_at="2024-01-01T00:00:00Z",
                 updated_at="2024-01-02T00:00:00Z",
-                messages=[]
             ) for i in range(start, start + limit)
         ]
         return conversations
