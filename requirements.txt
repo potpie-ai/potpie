@@ -6,3 +6,10 @@ gunicorn
 python-dotenv
 psycopg2
 psycopg2-binary
+langchain
+openai
+duckduckgo-search
+langchain_community
+openai
+langchain_core
+langchain-openai 

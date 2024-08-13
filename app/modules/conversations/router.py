@@ -1,11 +1,13 @@
 import json
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 import asyncio
+
+from app.modules.conversations.conversation.controller import ConversationController
 
 from .conversation.schema import (
     CreateConversationRequest, 
@@ -22,17 +24,20 @@ from .message.schema import (
 router = APIRouter()
 
 
+
 class ConversationAPI:
 
     @staticmethod
+    def get_controller():
+        return ConversationController()
+
     @router.post("/conversations/", response_model=CreateConversationResponse)
     def create_conversation(
         conversation: CreateConversationRequest,
-        db: Session = Depends(get_db)
+        controller: ConversationController = Depends(get_controller),
+        db: Session = Depends(get_db),
     ):
-        # Mocked data instead of actual logic
-        conversation_id = "mock-conversation-id"
-        return CreateConversationResponse(message="project setup complete", conversation_id=conversation_id)
+        return controller.create_conversation(conversation)
 
     @staticmethod
     @router.get("/conversations/{conversation_id}/", response_model=ConversationResponse)
