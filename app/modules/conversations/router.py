@@ -147,3 +147,11 @@ class ConversationAPI:
     ):
         # Mocked success response
         return {"status": "success"}
+    
+    @staticmethod
+    @router.post("/conversations/{conversation_id}/stop/", response_model=dict)
+    async def stop_generation(
+        conversation_id: str,
+        db: Session = Depends(get_db)
+    ):
+        return {"status": "stopped"}
