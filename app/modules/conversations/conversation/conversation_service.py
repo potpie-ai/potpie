@@ -5,12 +5,15 @@ from datetime import datetime
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.modules.conversations.conversation.conversation_model import Conversation, ConversationStatus
-from app.modules.conversations.conversation.conversation_schema import CreateConversationRequest
-from app.modules.conversations.message.message_model import Message
-from app.modules.conversations.message.message_schema import MessageRequest
-from app.modules.conversations.message.message_service import MessageService
 from app.modules.intelligence.agents.agent_registry import get_agent
+
+from app.modules.conversations.conversation.conversation_model import Conversation, ConversationStatus
+from app.modules.conversations.message.message_model import Message, MessageType
+
+from app.modules.conversations.conversation.conversation_schema import ConversationInfoResponse, ConversationResponse, CreateConversationRequest
+from app.modules.conversations.message.message_schema import MessageRequest, MessageResponse
+
+from app.modules.conversations.message.message_service import MessageService
 from app.modules.projects.projects_service import ProjectService
 
 
@@ -41,10 +44,7 @@ class ConversationService:
 
         # Create the initial message about the project creation
         initial_message_content = (
-            f"Project '{project_name}' has been created successfully. "
-            f"User ID: {conversation.user_id}, "
-            f"Associated Projects: {', '.join(conversation.project_ids)}, "
-            f"Agents: {', '.join(conversation.agent_ids)}."
+            f"Project '{project_name}' has been parsed successfully. "
         )
 
         # Store the initial message
@@ -52,7 +52,7 @@ class ConversationService:
             conversation_id=conversation_id,
             content=initial_message_content,
             sender_id=conversation.user_id,
-            message_type="HUMAN"  # Marked as HUMAN since it's an informative message
+            message_type= MessageType.SYSTEM_GENERATED
         )
 
         # Perform a search using the DuckDuckGo agent
@@ -63,8 +63,8 @@ class ConversationService:
         self.message_service.create_message(
             conversation_id=conversation_id,
             content=search_result,
-            sender_id=None,  # AI-generated, so no sender_id
-            message_type="AI_GENERATED"
+            sender_id=None,
+            message_type=MessageType.AI_GENERATED
         )
 
         # Commit all messages in one transaction
@@ -105,24 +105,60 @@ class ConversationService:
         async for content_update in self.generate_message_content():
             yield content_update
 
-    async def get_conversation(self, conversation_id: str):
-        # Implement logic to fetch conversation
-        pass
+    async def get_conversation(self, conversation_id: str) -> ConversationResponse:
+        conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
+        if not conversation:
+            raise ValueError("Conversation not found")
 
-    async def get_conversation_info(self, conversation_id: str):
-        # Implement logic to fetch conversation info
-        pass
+        return ConversationResponse(
+            id=conversation.id,
+            user_id=conversation.user_id,
+            title=conversation.title,
+            status=conversation.status.value,
+            project_ids=conversation.project_ids,
+            agent_ids=conversation.agent_ids,
+            created_at=conversation.created_at.isoformat(),
+            updated_at=conversation.updated_at.isoformat(),
+            messages=[message.to_response() for message in conversation.messages]
+        )
 
-    async def get_conversation_messages(self, conversation_id: str, start: int, limit: int):
-        # Implement logic to fetch conversation messages
-        pass
+    async def get_conversation_info(self, conversation_id: str) -> ConversationInfoResponse:
+        conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
+        if not conversation:
+            raise ValueError("Conversation not found")
+
+        return ConversationInfoResponse(
+            id=conversation.id,
+            agent_ids=conversation.agent_ids,
+            project_ids=conversation.project_ids,
+            total_messages=len(conversation.messages)
+        )
+
+    async def get_conversation_messages(self, conversation_id: str, start: int, limit: int) -> list[MessageResponse]:
+        messages = (
+            self.db.query(Message)
+            .filter_by(conversation_id=conversation_id)
+            .offset(start)
+            .limit(limit)
+            .all()
+        )
+        if not messages:
+            return []
+
+        return [message.to_response() for message in messages]
+
+    async def delete_conversation(self, conversation_id: str) -> dict:
+        conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
+        if not conversation:
+            raise ValueError("Conversation not found")
+
+        self.db.delete(conversation)
+        self.db.commit()
+        return {"status": "success"}
+    
 
     async def regenerate_last_message(self, conversation_id: str):
         # Implement logic to regenerate the last message
-        pass
-
-    async def delete_conversation(self, conversation_id: str):
-        # Implement logic to delete a conversation
         pass
 
     async def stop_generation(self, conversation_id: str):

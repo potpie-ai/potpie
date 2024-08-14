@@ -2,13 +2,15 @@ from sqlalchemy.orm import Session
 from uuid6 import uuid7
 from sqlalchemy import func
 
-from app.modules.conversations.message.message_model import Message
+
+from app.modules.conversations.message.message_model import Message, MessageType
+
 
 class MessageService:
     def __init__(self, db: Session):
         self.db = db  # Directly assign the db session to an instance variable
 
-    def create_message(self, conversation_id: str, content: str, sender_id: str, message_type: str):
+    def create_message(self, conversation_id: str, content: str, sender_id: str, message_type: MessageType):
         new_message = Message(
             id=str(uuid7()),
             conversation_id=conversation_id,

@@ -11,7 +11,8 @@ import app.models  # Ensure models are imported to set up relationships
 from app.modules.conversations.conversations_router import router as conversations_router
 from app.modules.users.user_router import router as user_router
 
-from app.modules.utils.dummy_setup import DummyDataSetup 
+from app.modules.utils.dummy_setup import DummyDataSetup
+from app.modules.utils.setup_agents import AgentsSetup 
 
 
 class MainApp:
@@ -21,7 +22,7 @@ class MainApp:
         self.setup_cors()
         self.initialize_database()
         self.check_and_set_env_vars()
-        self.setup_dummy_data()
+        self.setup_data()
         self.include_routers()
 
     def setup_cors(self):
@@ -48,11 +49,16 @@ class MainApp:
                 value = input(f"Enter value for {env_var}: ")
                 os.environ[env_var] = value
 
-    def setup_dummy_data(self):
+    def setup_data(self):
+
         # Setup dummy user and project during application startup
         dummy_data_setup = DummyDataSetup()
         dummy_data_setup.setup_dummy_user()
         dummy_data_setup.setup_dummy_project()
+
+        #setup default agents
+        default_agent_setup = AgentsSetup()
+        default_agent_setup.setup_agents()
 
     def include_routers(self):
         self.app.include_router(user_router, prefix="/api/v1", tags=["User"])

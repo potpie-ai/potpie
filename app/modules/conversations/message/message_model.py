@@ -7,6 +7,7 @@ import enum
 class MessageType(str, enum.Enum):
     AI_GENERATED = "AI_GENERATED"
     HUMAN = "HUMAN"
+    SYSTEM_GENERATED = "SYSTEM_GENERATED"
 
 class Message(Base):
     __tablename__ = "messages"
@@ -15,7 +16,7 @@ class Message(Base):
     conversation_id = Column(String(255), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True)
     content = Column(Text, nullable=False)
     sender_id = Column(String(255), nullable=True)  # Allow sender_id to be nullable
-    type = Column(SQLAEnum(MessageType), nullable=False)  # Type of message (AI_GENERATED or HUMAN)
+    type = Column(SQLAEnum(MessageType), nullable=False)  # Type of message (AI_GENERATED, HUMAN, SYSTEM_GENERATED)
     created_at = Column(TIMESTAMP(timezone=True), default=func.utcnow(), nullable=False)  # Use UTC timestamp
 
     # Relationship to the Conversation model
@@ -24,7 +25,8 @@ class Message(Base):
     # Add a CHECK constraint to enforce the sender_id logic
     __table_args__ = (
         CheckConstraint(
-            "(type = 'HUMAN' AND sender_id IS NOT NULL) OR (type = 'AI_GENERATED' AND sender_id IS NULL)",
+            "((type = 'HUMAN' AND sender_id IS NOT NULL) OR "
+            "(type IN ('AI_GENERATED', 'SYSTEM_GENERATED') AND sender_id IS NULL))",
             name="check_sender_id_for_type"
         ),
     )
