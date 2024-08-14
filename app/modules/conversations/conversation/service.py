@@ -1,7 +1,6 @@
 import asyncio
 import json
 from datetime import datetime
-from typing import AsyncGenerator
 from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.schema import MessageRequest
@@ -11,7 +10,7 @@ from app.modules.intelligence.agents.agent_registry import get_agent
 
 class ConversationService:
 
-    def store_message(self, conversation_id: str, message: MessageRequest, db: Session, user_id: str):
+    async def store_message(self, conversation_id: str, message: MessageRequest, db: Session, user_id: str):
         # Assume `user_id` is passed from the controller based on the authenticated user
         # Create a new Message object
         new_message = Message(
@@ -55,7 +54,7 @@ class ConversationService:
         async for content_update in self.generate_message_content():
             yield content_update
     
-    def create_conversation(self, conversation: CreateConversationRequest):
+    async def create_conversation(self, conversation: CreateConversationRequest):
         # Generate a mock conversation ID (could be replaced with DB logic if needed)
         conversation_id = "mock-conversation-id"
         

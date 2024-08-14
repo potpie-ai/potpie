@@ -4,18 +4,12 @@ from sqlalchemy.orm import Session
 
 from app.modules.conversations.conversation.service import ConversationService
 from app.modules.conversations.message.schema import MessageRequest, MessageResponse
-from .schema import CreateConversationRequest, CreateConversationResponse, ConversationResponse, ConversationInfoResponse
+from app.modules.conversations.conversation.schema import CreateConversationRequest, CreateConversationResponse, ConversationResponse, ConversationInfoResponse
 
 class ConversationController:
 
     def __init__(self):
         self.service = ConversationService()
-
-    async def post_message(self, conversation_id: str, message: MessageRequest, db: Session, user_id: str):
-        stored_message = await self.service.store_message(conversation_id, message, db, user_id)
-        message_stream = self.service.message_stream(conversation_id)
-        return StreamingResponse(message_stream, media_type="text/event-stream")
-    
     
     async def create_conversation(self, conversation: CreateConversationRequest) -> CreateConversationResponse:
         conversation_id, message = await self.service.create_conversation(conversation)
@@ -23,6 +17,7 @@ class ConversationController:
             return CreateConversationResponse(message=message, conversation_id=conversation_id)
         else:
             raise ValueError("Message returned from service is not a string")
+
 
     async def get_conversation(self, conversation_id: str) -> ConversationResponse:
         return ConversationResponse(
@@ -58,6 +53,12 @@ class ConversationController:
             ) for i in range(start, start + limit)
         ]
 
+    async def post_message(self, conversation_id: str, message: MessageRequest, db: Session, user_id: str):
+        stored_message = await self.service.store_message(conversation_id, message, db, user_id)
+        message_stream = self.service.message_stream(conversation_id)
+        return StreamingResponse(message_stream, media_type="text/event-stream")
+
+    
     async def regenerate_last_message(self, conversation_id: str) -> MessageResponse:
         # Mocked regenerated message
         return MessageResponse(
