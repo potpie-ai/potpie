@@ -11,7 +11,7 @@ from app.modules.conversations.message.message_schema import MessageRequest, Mes
 
 
 class ConversationController:
-    def __init__(self, db: Session = Depends(get_db)):
+    def __init__(self, db: Session):
         self.service = ConversationService(db)
 
     async def create_conversation(self, conversation: CreateConversationRequest) -> CreateConversationResponse:
@@ -22,38 +22,16 @@ class ConversationController:
             raise ValueError("Message returned from service is not a string")
 
     async def get_conversation(self, conversation_id: str) -> ConversationResponse:
-        return ConversationResponse(
-            id=conversation_id,
-            user_id="mock-user-id",
-            title="Mock Conversation Title",
-            status="active",
-            project_ids=["project1", "project2"],
-            agent_ids=["agent1", "agent2"],
-            created_at="2024-01-01T00:00:00Z",
-            updated_at="2024-01-02T00:00:00Z",
-            messages=[]
-        )
+        # Example logic to retrieve a conversation
+        return await self.service.get_conversation(conversation_id)
 
     async def get_conversation_info(self, conversation_id: str) -> ConversationInfoResponse:
-        return ConversationInfoResponse(
-            id=conversation_id, 
-            agent_ids=["agent1", "agent2"], 
-            project_ids=["project1", "project2"],
-            total_messages=100
-        )
+        # Example logic to retrieve conversation info
+        return await self.service.get_conversation_info(conversation_id)
 
     async def get_conversation_messages(self, conversation_id: str, start: int, limit: int) -> List[MessageResponse]:
-        return [
-            MessageResponse(
-                id=f"mock-message-id-{i}",
-                conversation_id=conversation_id,
-                content=f"Mock message content {i}",
-                sender_id="mock-sender-id",
-                type="HUMAN",
-                reason=None,
-                created_at="2024-01-01T00:00:00Z"
-            ) for i in range(start, start + limit)
-        ]
+        # Example logic to retrieve conversation messages
+        return await self.service.get_conversation_messages(conversation_id, start, limit)
 
     async def post_message(self, conversation_id: str, message: MessageRequest, user_id: str):
         stored_message = await self.service.store_message(conversation_id, message, user_id)
@@ -61,18 +39,10 @@ class ConversationController:
         return StreamingResponse(message_stream, media_type="text/event-stream")
 
     async def regenerate_last_message(self, conversation_id: str) -> MessageResponse:
-        return MessageResponse(
-            id="mock-message-id-regenerated",
-            conversation_id=conversation_id,
-            content="Regenerated message content",
-            sender_id="system",
-            type="AI_GENERATED",
-            reason="Regeneration",
-            created_at="2024-01-01T00:00:00Z"
-        )
+        return await self.service.regenerate_last_message(conversation_id)
 
     async def delete_conversation(self, conversation_id: str) -> dict:
-        return {"status": "success"}
+        return await self.service.delete_conversation(conversation_id)
 
     async def stop_generation(self, conversation_id: str) -> dict:
-        return {"status": "stopped"}
+        return await self.service.stop_generation(conversation_id)

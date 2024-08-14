@@ -1,13 +1,9 @@
-
 from sqlalchemy.orm import Session
-
-from app.core.base_service import BaseService
 from app.modules.projects.projects_model import Project
 
-
-class ProjectService(BaseService):
+class ProjectService:
     def __init__(self, db: Session):
-        super().__init__(db)
+        self.db = db  # Directly assign the db session to an instance variable
 
     def get_project_name(self, project_ids: list) -> str:
         projects = self.db.query(Project).filter(Project.id.in_(project_ids)).all()
