@@ -14,6 +14,7 @@ from app.modules.conversations.conversation.conversation_schema import Conversat
 from app.modules.conversations.message.message_schema import MessageRequest, MessageResponse
 
 from app.modules.conversations.message.message_service import MessageService
+from app.modules.intelligence.agents.agents_model import Agent
 from app.modules.projects.projects_service import ProjectService
 
 
@@ -26,25 +27,31 @@ class ConversationService:
 
     async def create_conversation(self, conversation: CreateConversationRequest):
         project_name = self.project_service.get_project_name(conversation.project_ids)
-        
+            
         # Create conversation
-        conversation_id =str(uuid7())
+        conversation_id = str(uuid7())
+        
         new_conversation = Conversation(
             id=conversation_id,
             user_id=conversation.user_id,
             title=project_name,
             status=ConversationStatus.ACTIVE,
             project_ids=conversation.project_ids,
-            agent_ids=conversation.agent_ids,
             created_at=func.now(),
             updated_at=func.now(),
         )
+
+        # Attach agents to the conversation
+        agents = self.db.query(Agent).filter(Agent.id.in_(conversation.agent_ids)).all()
+        
+        new_conversation.agents.extend(agents)
+
         self.db.add(new_conversation)
         self.db.commit()
 
         # Create the initial message about the project creation
         initial_message_content = (
-            f"Project '{project_name}' has been parsed successfully. "
+            f"Project {project_name} has been parsed successfully."
         )
 
         # Store the initial message
@@ -52,7 +59,7 @@ class ConversationService:
             conversation_id=conversation_id,
             content=initial_message_content,
             sender_id=conversation.user_id,
-            message_type= MessageType.SYSTEM_GENERATED
+            message_type=MessageType.SYSTEM_GENERATED
         )
 
         # Perform a search using the DuckDuckGo agent
