@@ -58,7 +58,7 @@ class ConversationService:
         self.message_service.create_message(
             conversation_id=conversation_id,
             content=initial_message_content,
-            sender_id=conversation.user_id,
+            sender_id=None,
             message_type=MessageType.SYSTEM_GENERATED
         )
 

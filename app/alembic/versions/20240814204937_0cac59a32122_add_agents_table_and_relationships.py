@@ -20,6 +20,9 @@ depends_on = None
 def upgrade() -> None:
     # Add the new enum value to the MessageType enum
     op.execute("ALTER TYPE messagetype ADD VALUE 'SYSTEM_GENERATED'")
+    
+    # Commit the transaction after altering the enum type
+    op.execute("COMMIT")
 
     # Create the agents table
     op.create_table('agents',
@@ -45,6 +48,13 @@ def upgrade() -> None:
     # Drop the agent_ids column from the conversations table
     op.drop_column('conversations', 'agent_ids')
 
+    # Recreate the check constraint with the updated enum values
+    op.drop_constraint('check_sender_id_for_type', 'messages', type_='check')
+    op.create_check_constraint(
+        constraint_name='check_sender_id_for_type',
+        table_name='messages',
+        condition="((type = 'HUMAN' AND sender_id IS NOT NULL) OR (type IN ('AI_GENERATED', 'SYSTEM_GENERATED') AND sender_id IS NULL))"
+    )
 
 def downgrade() -> None:
     # Downgrade steps
@@ -52,5 +62,13 @@ def downgrade() -> None:
     op.drop_table('conversation_agents')
     op.drop_table('agents')
 
-    # Cannot remove an enum value in PostgreSQL easily, so we might need to recreate the enum if necessary
-    # For simplicity, we'll leave the enum as-is during downgrade
+    # Downgrade the check constraint
+    op.drop_constraint('check_sender_id_for_type', 'messages', type_='check')
+    op.create_check_constraint(
+        constraint_name='check_sender_id_for_type',
+        table_name='messages',
+        condition="((type = 'HUMAN' AND sender_id IS NOT NULL) OR (type = 'AI_GENERATED' AND sender_id IS NULL))"
+    )
+
+    # TODO : Cannot remove an enum value in PostgreSQL easily, so we might need to recreate the enum if necessary, which doesnt seem to work for now.
+    # For now, we'll leave the enum as-is during downgrade
