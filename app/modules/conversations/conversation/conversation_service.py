@@ -1,6 +1,6 @@
 import asyncio
 import json
-import uuid
+from uuid6 import uuid7
 from datetime import datetime
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -25,7 +25,7 @@ class ConversationService:
         project_name = self.project_service.get_project_name(conversation.project_ids)
         
         # Create conversation
-        conversation_id = str(uuid.uuid4())
+        conversation_id =str(uuid7())
         new_conversation = Conversation(
             id=conversation_id,
             user_id=conversation.user_id,

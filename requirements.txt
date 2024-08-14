@@ -12,4 +12,5 @@ duckduckgo-search
 langchain_community
 openai
 langchain_core
-langchain-openai 
+langchain-openai
+uuid6
