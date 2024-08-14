@@ -1,7 +1,7 @@
 import os
 from app.core.database import SessionLocal
-from app.modules.projects.model import Project
-from app.modules.users.model import User
+from app.modules.projects.projects_model import Project
+from app.modules.users.user_model import User
 from sqlalchemy.sql import func
 
 class DummyDataSetup:

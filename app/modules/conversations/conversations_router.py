@@ -1,41 +1,28 @@
-import json
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
-
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, Query
 from app.core.database import get_db
-import asyncio
-
-from app.modules.conversations.conversation.controller import ConversationController
-
-from .conversation.schema import (
+from app.modules.conversations.conversation.conversation_controller import ConversationController
+from .conversation.conversation_schema import (
     CreateConversationRequest, 
     CreateConversationResponse, 
     ConversationResponse, 
-    ConversationInfoResponse, 
+    ConversationInfoResponse
 )
-
-from .message.schema import (
-    MessageRequest,
-    MessageResponse
-)
+from .message.message_schema import MessageRequest, MessageResponse
+from sqlalchemy.orm import Session
 
 router = APIRouter()
 
 class ConversationAPI:
-
     @staticmethod
-    def get_controller():
-        return ConversationController()
-    
+    def get_controller(db: Session = Depends(get_db)) -> ConversationController:
+        return ConversationController(db)
 
     @staticmethod
     @router.post("/conversations/", response_model=CreateConversationResponse)
     async def create_conversation(
         conversation: CreateConversationRequest,
-        controller: ConversationController = Depends(get_controller),
-        db: Session = Depends(get_db),
+        controller: ConversationController = Depends(lambda: ConversationAPI.get_controller())
     ):
         return await controller.create_conversation(conversation)
 
@@ -43,8 +30,7 @@ class ConversationAPI:
     @router.get("/conversations/{conversation_id}/", response_model=ConversationResponse)
     async def get_conversation(
         conversation_id: str,
-        controller: ConversationController = Depends(get_controller),
-        db: Session = Depends(get_db)
+        controller: ConversationController = Depends(lambda: ConversationAPI.get_controller())
     ):
         return await controller.get_conversation(conversation_id)
 
@@ -52,8 +38,7 @@ class ConversationAPI:
     @router.get("/conversations/{conversation_id}/info/", response_model=ConversationInfoResponse)
     async def get_conversation_info(
         conversation_id: str,
-        controller: ConversationController = Depends(get_controller),
-        db: Session = Depends(get_db)
+        controller: ConversationController = Depends(lambda: ConversationAPI.get_controller())
     ):
         return await controller.get_conversation_info(conversation_id)
 
@@ -61,10 +46,9 @@ class ConversationAPI:
     @router.get("/conversations/{conversation_id}/messages/", response_model=List[MessageResponse])
     async def get_conversation_messages(
         conversation_id: str,
-        start: int = Query(0, ge=0),  # Start index, default is 0
-        limit: int = Query(10, ge=1),  # Number of items to return, default is 10
-        controller: ConversationController = Depends(get_controller),
-        db: Session = Depends(get_db)
+        start: int = Query(0, ge=0),
+        limit: int = Query(10, ge=1),
+        controller: ConversationController = Depends(lambda: ConversationAPI.get_controller())
     ):
         return await controller.get_conversation_messages(conversation_id, start, limit)
 
@@ -73,17 +57,16 @@ class ConversationAPI:
     async def post_message(
         conversation_id: str,
         message: MessageRequest,
-        controller: ConversationController = Depends(get_controller),
-        db: Session = Depends(get_db)
+        user_id: str,
+        controller: ConversationController = Depends(lambda: ConversationAPI.get_controller())
     ):  
-        return await controller.post_message(conversation_id, message, db, user_id='abc')
+        return await controller.post_message(conversation_id, message, user_id)
 
     @staticmethod
     @router.post("/conversations/{conversation_id}/regenerate/", response_model=MessageResponse)
     async def regenerate_last_message(
         conversation_id: str,
-        controller: ConversationController = Depends(get_controller),
-        db: Session = Depends(get_db)
+        controller: ConversationController = Depends(lambda: ConversationAPI.get_controller())
     ):
         return await controller.regenerate_last_message(conversation_id)
 
@@ -91,8 +74,7 @@ class ConversationAPI:
     @router.delete("/conversations/{conversation_id}/", response_model=dict)
     async def delete_conversation(
         conversation_id: str, 
-        controller: ConversationController = Depends(get_controller),
-        db: Session = Depends(get_db)
+        controller: ConversationController = Depends(lambda: ConversationAPI.get_controller())
     ):
         return await controller.delete_conversation(conversation_id)
     
@@ -100,7 +82,6 @@ class ConversationAPI:
     @router.post("/conversations/{conversation_id}/stop/", response_model=dict)
     async def stop_generation(
         conversation_id: str,
-        controller: ConversationController = Depends(get_controller),
-        db: Session = Depends(get_db)
+        controller: ConversationController = Depends(lambda: ConversationAPI.get_controller())
     ):
         return await controller.stop_generation(conversation_id)

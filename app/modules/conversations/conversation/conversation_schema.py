@@ -1,8 +1,8 @@
 from pydantic import BaseModel
 from typing import List
 from datetime import datetime
-from app.modules.conversations.conversation.model import ConversationStatus
-from app.modules.conversations.message.schema import MessageResponse
+from app.modules.conversations.conversation.conversation_model import ConversationStatus
+from app.modules.conversations.message.message_schema import MessageResponse
 
 class CreateConversationRequest(BaseModel):
     user_id: str

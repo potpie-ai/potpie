@@ -2,7 +2,7 @@ from typing import List
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from app.core.database import get_db
-from app.modules.conversations.conversation.schema import ConversationResponse
+from app.modules.conversations.conversation.conversation_schema import ConversationResponse
 
 router = APIRouter()
 

@@ -1,8 +1,8 @@
 from sqlalchemy.orm import relationship
-from app.modules.users.model import User
-from app.modules.projects.model import Project
-from app.modules.conversations.conversation.model import Conversation
-from app.modules.conversations.message.model import Message
+from app.modules.conversations.message.message_model import Message
+from app.modules.users.user_model import User
+from app.modules.projects.projects_model import Project
+from app.modules.conversations.conversation.conversation_model import Conversation
 
 # Set up relationships between models
 User.projects = relationship("Project", back_populates="user")
