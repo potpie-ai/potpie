@@ -26,7 +26,7 @@ class ConversationAPI:
 
     @staticmethod
     @router.post("/conversations/", response_model=CreateConversationResponse)
-    def create_conversation(
+    async def create_conversation(
         conversation: CreateConversationRequest,
         db: Session = Depends(get_db)
     ):
@@ -36,7 +36,7 @@ class ConversationAPI:
 
     @staticmethod
     @router.get("/conversations/{conversation_id}/", response_model=ConversationResponse)
-    def get_conversation(conversation_id: str, db: Session = Depends(get_db)):
+    async def get_conversation(conversation_id: str, db: Session = Depends(get_db)):
         
         return ConversationResponse(
             id="mock-conversation-id",
@@ -52,7 +52,7 @@ class ConversationAPI:
 
     @staticmethod
     @router.get("/conversations/{conversation_id}/info/", response_model=ConversationInfoResponse)
-    def get_conversation_info(
+    async def get_conversation_info(
         conversation_id: str,
         db: Session = Depends(get_db)
     ):
@@ -66,7 +66,7 @@ class ConversationAPI:
 
     @staticmethod
     @router.get("/conversations/{conversation_id}/messages/", response_model=List[MessageResponse])
-    def get_conversation_messages(
+    async def get_conversation_messages(
         conversation_id: str,
         start: int = Query(0, ge=0),  # Start index, default is 0
         limit: int = Query(10, ge=1),  # Number of items to return, default is 10
@@ -148,7 +148,7 @@ class ConversationAPI:
 
     @staticmethod
     @router.delete("/conversations/{conversation_id}/", response_model=dict)
-    def delete_conversation(
+    async def delete_conversation(
         conversation_id: str, 
         db: Session = Depends(get_db)
     ):

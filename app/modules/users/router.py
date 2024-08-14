@@ -10,7 +10,7 @@ class UserAPI:
     
     @staticmethod
     @router.get("/users/{user_id}/conversations/", response_model=List[ConversationResponse])
-    def get_conversations_for_user(
+    async def get_conversations_for_user(
         user_id: str,
         start: int = Query(0, ge=0),  # Start index, default is 0
         limit: int = Query(10, ge=1),  # Number of items to return, default is 10
