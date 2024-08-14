@@ -23,7 +23,5 @@ class Conversation(Base):
     updated_at = Column(TIMESTAMP(timezone=True), default=func.utcnow(), onupdate=func.utcnow(), nullable=False)  # Use UTC timestamp
 
     # Relationship to the Message model
-    messages = relationship("Message", back_populates="conversation")
-
-    # Optional: Relationship back to User model (if needed)
+    messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
     user = relationship("User", back_populates="conversations")

@@ -12,7 +12,7 @@ class Message(Base):
     __tablename__ = "messages"
 
     id = Column(String(255), primary_key=True)
-    conversation_id = Column(String(255), ForeignKey("conversations.id"), nullable=False, index=True)
+    conversation_id = Column(String(255), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True)
     content = Column(Text, nullable=False)
     sender_id = Column(String(255), nullable=True)  # Allow sender_id to be nullable
     type = Column(SQLAEnum(MessageType), nullable=False)  # Type of message (AI_GENERATED or HUMAN)
