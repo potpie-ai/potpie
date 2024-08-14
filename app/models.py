@@ -1,5 +1,3 @@
-# models.py
-
 from sqlalchemy.orm import relationship
 from app.modules.users.model import User
 from app.modules.projects.model import Project
