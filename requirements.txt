@@ -6,3 +6,11 @@ gunicorn
 python-dotenv
 psycopg2
 psycopg2-binary
+neo4j
+tree-sitter<=0.21.3
+tree-sitter-languages
+tqdm
+grep-ast
+pygments
+networkx
+blar-graph
