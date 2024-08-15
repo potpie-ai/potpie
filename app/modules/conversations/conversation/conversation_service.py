@@ -123,10 +123,17 @@ class ConversationService:
             title=conversation.title,
             status=conversation.status.value,
             project_ids=conversation.project_ids,
-            agent_ids=conversation.agent_ids,
+            agent_ids=[agent.id for agent in conversation.agents],
             created_at=conversation.created_at.isoformat(),
             updated_at=conversation.updated_at.isoformat(),
-            messages=[message.to_response() for message in conversation.messages]
+            messages=[MessageResponse(
+                id=message.id,
+                conversation_id=message.conversation_id,
+                content=message.content,
+                sender_id=message.sender_id,
+                type=message.type,
+                created_at=message.created_at
+            ) for message in conversation.messages]
         )
 
     async def get_conversation_info(self, conversation_id: str) -> ConversationInfoResponse:
@@ -136,7 +143,7 @@ class ConversationService:
 
         return ConversationInfoResponse(
             id=conversation.id,
-            agent_ids=conversation.agent_ids,
+            agent_ids=[agent.id for agent in conversation.agents],
             project_ids=conversation.project_ids,
             total_messages=len(conversation.messages)
         )
