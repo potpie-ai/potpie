@@ -6,7 +6,7 @@ from uuid6 import uuid7
 class AgentsSetup:
     def setup_agents(self):
         agents = [
-            {"name": "langchain_duckduckgo", "provider": "LANGCHAIN", "description": "A LangChain agent for duckduckgo search"},
+            {"id" : 1, "name": "langchain_duckduckgo", "provider": "LANGCHAIN", "description": "A LangChain agent for duckduckgo search"},
         ]
 
         db: Session = SessionLocal()
@@ -15,7 +15,7 @@ class AgentsSetup:
                 existing_agent = db.query(Agent).filter_by(name=agent["name"]).first()
                 if not existing_agent:
                     new_agent = Agent(
-                        id=str(uuid7()),  # Assuming you're generating UUIDs
+                        id=agent["id"], 
                         name=agent["name"],
                         provider=agent["provider"],
                         description=agent.get("description"),
