@@ -1,5 +1,6 @@
 from typing import List
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from app.core.database import get_db
 from app.modules.conversations.conversation.conversation_controller import ConversationController
 from .conversation.conversation_schema import (
@@ -61,7 +62,11 @@ class ConversationAPI:
         db: Session = Depends(get_db)
     ):  
         controller = ConversationController(db)
-        return await controller.post_message(conversation_id, message, user_id)
+        
+        # Directly pass the async generator to StreamingResponse
+        message_stream = controller.post_message(conversation_id, message, user_id)
+        
+        return StreamingResponse(message_stream, media_type="text/event-stream")
 
     @staticmethod
     @router.post("/conversations/{conversation_id}/regenerate/", response_model=MessageResponse)

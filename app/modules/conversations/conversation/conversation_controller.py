@@ -1,9 +1,10 @@
-from typing import List
+from typing import AsyncGenerator, List
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.modules.conversations.conversation.conversation_schema import ConversationInfoResponse, ConversationResponse, CreateConversationRequest, CreateConversationResponse
 from app.modules.conversations.conversation.conversation_service import ConversationService
+from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import MessageRequest, MessageResponse
 
 class ConversationController:
@@ -26,10 +27,14 @@ class ConversationController:
     async def get_conversation_messages(self, conversation_id: str, start: int, limit: int) -> List[MessageResponse]:
         return await self.service.get_conversation_messages(conversation_id, start, limit)
     
-    async def post_message(self, conversation_id: str, message: MessageRequest, user_id: str):
-        stored_message = await self.service.store_message(conversation_id, message, user_id)
-        message_stream = self.service.message_stream(conversation_id)
-        return StreamingResponse(message_stream, media_type="text/event-stream")
+    async def post_message(self, conversation_id: str, message: MessageRequest, user_id: str) -> AsyncGenerator[str, None]:
+        # Store the message in the database with type MessageType.Human
+        stored_message = await self.service.store_message(conversation_id, message,MessageType.HUMAN, user_id)
+        
+        # Stream the DuckDuckGo response back to the user
+        async for chunk in self.service.message_stream(conversation_id, stored_message.content):
+            yield chunk  # This yields each part of the stream as an async generator
+
     
     async def regenerate_last_message(self, conversation_id: str) -> MessageResponse:
         return await self.service.regenerate_last_message(conversation_id)

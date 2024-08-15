@@ -1,5 +1,6 @@
 import asyncio
 import json
+from typing import AsyncGenerator, Optional
 from uuid6 import uuid7
 from datetime import datetime
 from sqlalchemy import func
@@ -15,6 +16,7 @@ from app.modules.conversations.message.message_schema import MessageRequest, Mes
 
 from app.modules.conversations.message.message_service import MessageService
 from app.modules.intelligence.agents.agents_model import Agent
+from app.modules.intelligence.agents.langchain_agents import LangChainAgent
 from app.modules.projects.projects_service import ProjectService
 
 
@@ -24,6 +26,12 @@ class ConversationService:
         self.project_service = ProjectService(db)
         self.message_service = MessageService(db)
     
+    async def perform_duckduckgo_search(self, query: str) -> AsyncGenerator[str, None]:
+        agent = LangChainAgent()  
+
+        # Stream the response from the DuckDuckGo agent
+        async for chunk in agent.run(f"Search for {query}"):
+            yield chunk
 
     async def create_conversation(self, conversation: CreateConversationRequest):
         project_name = self.project_service.get_project_name(conversation.project_ids)
@@ -62,14 +70,17 @@ class ConversationService:
             message_type=MessageType.SYSTEM_GENERATED
         )
 
-        # Perform a search using the DuckDuckGo agent
-        agent = get_agent("langchain_duckduckgo")
-        search_result = agent.run(f"Search for {project_name}")
+        # Collect the search result asynchronously
+        search_result = []
+        async for result in self.perform_duckduckgo_search(project_name):
+            search_result.append(result)
+        
+        combined_search_result = "\n".join(search_result)
 
         # Create the AI-generated message based on the search result
         self.message_service.create_message(
             conversation_id=conversation_id,
-            content=search_result,
+            content=combined_search_result,
             sender_id=None,
             message_type=MessageType.AI_GENERATED
         )
@@ -78,15 +89,18 @@ class ConversationService:
         self.db.commit()
 
         # Return the generated ID and search result as the first message
-        return conversation_id, search_result
+        return conversation_id, combined_search_result
     
 
-    async def store_message(self, conversation_id: str, message: MessageRequest, user_id: str):
+    async def store_message(self, conversation_id: str, message: MessageRequest, type: MessageType, user_id: Optional[str] = None) -> Message:
+        id = str(uuid7())
         new_message = Message(
+            id = id,
             conversation_id=conversation_id,
             content=message.content,
-            type="AI_GENERATED",
-            created_at=datetime.now()
+            type=type,
+            created_at=datetime.now(),
+            sender_id=user_id 
         )
         
         self.db.add(new_message)
@@ -94,14 +108,9 @@ class ConversationService:
         self.db.refresh(new_message)
         
         return new_message
+    
 
-    async def generate_message_content(self):
-        content_parts = ["string (part 1)", "string (part 2)", "string (part 3)"]
-        for part in content_parts:
-            await asyncio.sleep(1)
-            yield f"data: {json.dumps({'content': part})}\n\n"
-
-    async def message_stream(self, conversation_id: str):
+    async def message_stream(self, conversation_id: str, query: str) -> AsyncGenerator[str, None]:
         metadata = {
             "message_id": "mock-message-id",
             "conversation_id": conversation_id,
@@ -109,8 +118,10 @@ class ConversationService:
             "reason": "STREAM"
         }
         yield f"data: {json.dumps(metadata)}\n\n"
-        async for content_update in self.generate_message_content():
-            yield content_update
+
+        # Stream the response from DuckDuckGo search
+        async for content_update in self.perform_duckduckgo_search(query):
+            yield f"data: {json.dumps({'content': content_update})}\n\n"
 
     async def get_conversation(self, conversation_id: str) -> ConversationResponse:
         conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
