@@ -75,7 +75,7 @@ class ConversationAPI:
         db: Session = Depends(get_db)
     ):
         controller = ConversationController(db)
-        return await controller.regenerate_last_message(conversation_id)
+        return StreamingResponse(controller.regenerate_last_message(conversation_id), media_type="text/event-stream")
 
     @staticmethod
     @router.delete("/conversations/{conversation_id}/", response_model=dict)

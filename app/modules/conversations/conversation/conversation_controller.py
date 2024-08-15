@@ -36,8 +36,10 @@ class ConversationController:
             yield chunk  # This yields each part of the stream as an async generator
 
     
-    async def regenerate_last_message(self, conversation_id: str) -> MessageResponse:
-        return await self.service.regenerate_last_message(conversation_id)
+    async def regenerate_last_message(self, conversation_id: str) -> AsyncGenerator[str, None]:
+        # Call the service method and yield each chunk of the response
+        async for chunk in self.service.regenerate_last_message(conversation_id):
+            yield chunk
     
     async def stop_generation(self, conversation_id: str) -> dict:
         return await self.service.stop_generation(conversation_id)
