@@ -5,7 +5,7 @@ class ProjectService:
     def __init__(self, db: Session):
         self.db = db  # Directly assign the db session to an instance variable
 
-    def get_project_name(self, project_ids: list) -> str:
+    async def get_project_name(self, project_ids: list) -> str:
         projects = self.db.query(Project).filter(Project.id.in_(project_ids)).all()
         if not projects:
             raise ValueError("No valid projects found for the provided project IDs.")
