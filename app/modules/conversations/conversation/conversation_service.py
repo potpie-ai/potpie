@@ -147,8 +147,9 @@ class ConversationService:
             project_ids=conversation.project_ids,
             total_messages=len(conversation.messages)
         )
-
+    
     async def get_conversation_messages(self, conversation_id: str, start: int, limit: int) -> list[MessageResponse]:
+
         messages = (
             self.db.query(Message)
             .filter_by(conversation_id=conversation_id)
@@ -159,7 +160,16 @@ class ConversationService:
         if not messages:
             return []
 
-        return [message.to_response() for message in messages]
+        return [
+            MessageResponse(
+                id=message.id,
+                conversation_id=message.conversation_id,
+                content=message.content,
+                sender_id=message.sender_id,
+                type=message.type,
+                created_at=message.created_at
+            ) for message in messages
+        ]
 
     async def delete_conversation(self, conversation_id: str) -> dict:
         conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
