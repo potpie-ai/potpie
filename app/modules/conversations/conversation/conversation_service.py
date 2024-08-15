@@ -110,18 +110,42 @@ class ConversationService:
         return new_message
     
 
-    async def message_stream(self, conversation_id: str, query: str) -> AsyncGenerator[str, None]:
-        metadata = {
-            "message_id": "mock-message-id",
-            "conversation_id": conversation_id,
-            "type": "AI_GENERATED",
-            "reason": "STREAM"
-        }
-        yield f"data: {json.dumps(metadata)}\n\n"
+    async def message_stream(self, conversation_id: str, query: str):
+        try:
+            message_id = str(uuid7())  # Generate a unique ID for the message
+            metadata = {
+                "message_id": message_id,
+                "conversation_id": conversation_id,
+                "type": MessageType.AI_GENERATED,
+                "reason": "STREAM"
+            }
+            yield f"data: {json.dumps(metadata)}\n\n"
 
-        # Stream the response from DuckDuckGo search
-        async for content_update in self.perform_duckduckgo_search(query):
-            yield f"data: {json.dumps({'content': content_update})}\n\n"
+            full_content = ""  # Initialize a variable to accumulate the content
+
+            # Stream the response from DuckDuckGo search and accumulate the content
+            async for content_update in self.perform_duckduckgo_search(query):
+                full_content += content_update  # Accumulate the content
+                chunk = json.dumps({'content': content_update})
+                
+                # Stream the chunk back to the client
+                yield f"data: {chunk}\n\n"
+
+            # Once the streaming is done, store the full content as a single message
+            new_message = Message(
+                id=message_id,
+                conversation_id=conversation_id,
+                content=full_content,  # Store the accumulated content
+                type=MessageType.AI_GENERATED,
+                created_at=datetime.utcnow(),
+            )
+            self.db.add(new_message)
+            self.db.commit()
+            self.db.refresh(new_message)  # Refresh the message if needed
+
+        except Exception as e:
+            self.db.rollback()  # Rollback the transaction in case of error
+            raise e
 
     async def get_conversation(self, conversation_id: str) -> ConversationResponse:
         conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
