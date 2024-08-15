@@ -10,6 +10,7 @@ from app.modules.conversations.message.message_model import Message, MessageType
 from app.modules.conversations.conversation.conversation_schema import ConversationInfoResponse, ConversationResponse, CreateConversationRequest
 from app.modules.conversations.message.message_schema import MessageRequest, MessageResponse
 from app.modules.conversations.message.message_service import MessageService
+from app.modules.intelligence.agents.agents_model import Agent
 from app.modules.intelligence.agents.langchain_agents import LangChainAgent
 from app.modules.projects.projects_service import ProjectService
 
