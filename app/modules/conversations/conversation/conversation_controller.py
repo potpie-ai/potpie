@@ -21,9 +21,9 @@ class ConversationController:
 
     async def get_conversation(self, conversation_id: str) -> ConversationResponse:
         try:
-            return await self.service.get_conversation(conversation_id)
+            return self.service.get_conversation(conversation_id)
         except Exception as e:
-            raise HTTPException(status_code=404, detail="Conversation not found")
+            raise HTTPException(status_code=404, detail=e)
 
     async def delete_conversation(self, conversation_id: str) -> dict:
         try:

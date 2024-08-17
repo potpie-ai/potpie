@@ -163,6 +163,7 @@ class ConversationService:
     def get_conversation(self, conversation_id: str) -> ConversationResponse:
         try:
             conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
+
             if not conversation:
                 raise ValueError("Conversation not found")
 
@@ -170,19 +171,12 @@ class ConversationService:
                 id=conversation.id,
                 user_id=conversation.user_id,
                 title=conversation.title,
-                status=conversation.status.value,
+                status=conversation.status,
                 project_ids=conversation.project_ids,
                 created_at=conversation.created_at.isoformat(),
                 updated_at=conversation.updated_at.isoformat(),
-                messages=[MessageResponse(
-                    id=message.id,
-                    conversation_id=message.conversation_id,
-                    content=message.content,
-                    sender_id=message.sender_id,
-                    type=message.type,
-                    created_at=message.created_at
-                ) for message in conversation.messages]
             )
+        
         except Exception as e:
             logger.error(f"Error in get_conversation: {e}")
             raise e

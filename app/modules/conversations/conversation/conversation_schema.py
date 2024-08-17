@@ -20,11 +20,8 @@ class ConversationResponse(BaseModel):
     title: str
     status: ConversationStatus
     project_ids: List[str]
-    agent_ids: List[str]
     created_at: datetime
     updated_at: datetime
-    messages: List["MessageResponse"] = []
-
     class Config:
         from_attributes = True
 
