@@ -44,7 +44,7 @@ class DummyDataSetup:
                     dummy_project = Project(
                         directory="dummy_directory",
                         is_default=True,
-                        project_name="Dummy Project",
+                        project_name="Dummy Project Created To Test AI Agent",
                         properties=b'{}',  # Empty binary properties, adjust as needed
                         repo_name="dummy_repo",
                         branch_name="main",

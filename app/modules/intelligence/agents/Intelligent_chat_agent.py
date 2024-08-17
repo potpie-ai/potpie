@@ -37,7 +37,6 @@ class IntelligentAgent:
     async def run(self, query: str) -> AsyncGenerator[str, None]:
         result = await self.agent_executor.ainvoke({"input": query})
         
-        # Since `ainvoke` returns a dict, yield the relevant part of the result
         for key, value in result.items():
-            if isinstance(value, str):  # assuming you want to yield string outputs
+            if isinstance(value, str):
                 yield value
