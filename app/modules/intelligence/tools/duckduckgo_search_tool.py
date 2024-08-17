@@ -1,8 +1,14 @@
-from langchain_community.tools import DuckDuckGoSearchResults
+from langchain_community.tools import DuckDuckGoSearchRun
+from app.modules.intelligence.tools.tool_base import ToolBase
 
-class DuckDuckGoSearchTool:
+class DuckDuckGoTool(ToolBase):
     def __init__(self):
-        self.tool = DuckDuckGoSearchResults()
+        self.name = "DuckDuckGoSearch"
+        self.description = "Searches for information using DuckDuckGo."
+        self.tool = DuckDuckGoSearchRun()
 
-    def execute(self, query: str):
-        return self.tool.run(query)
+    def run(self, query: str) -> str:
+        try:
+            return self.tool.run(query)
+        except Exception as e:
+            return f"An error occurred while searching DuckDuckGo: {str(e)}"

@@ -6,11 +6,16 @@ gunicorn
 python-dotenv
 psycopg2
 psycopg2-binary
-langchain
 openai
 duckduckgo-search
-langchain_community
-openai
-langchain_core
-langchain-openai
 uuid6
+aiohttp
+langchain
+langchain-openai
+langchain-community
+guardrails-ai
+
+# Additional dependencies for specific tools
+pytrends
+wikipedia-api
+langgraph

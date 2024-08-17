@@ -9,7 +9,6 @@ class CreateConversationRequest(BaseModel):
     title: str
     status: ConversationStatus
     project_ids: List[str]
-    agent_ids: List[str]
 
 class CreateConversationResponse(BaseModel):
     message: str
@@ -31,7 +30,6 @@ class ConversationResponse(BaseModel):
 
 class ConversationInfoResponse(BaseModel):
     id: str
-    agent_ids: List[str]
     project_ids: List[str]
     total_messages: int 
     class Config:

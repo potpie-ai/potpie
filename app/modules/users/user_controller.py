@@ -17,7 +17,6 @@ class UserController:
                 title=conversation.title,
                 status=conversation.status,
                 project_ids=conversation.project_ids,
-                agent_ids=[agent.id for agent in conversation.agents],
                 created_at=conversation.created_at.isoformat(),
                 updated_at=conversation.updated_at.isoformat(),
             ) for conversation in conversations

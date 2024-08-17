@@ -6,14 +6,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import Base, engine
-import app.models  # Ensure models are imported to set up relationships
+import app.models
 
 from app.modules.conversations.conversations_router import router as conversations_router
 from app.modules.users.user_router import router as user_router
-from app.modules.intelligence.agent_router import router as agents_router
 
 from app.modules.utils.dummy_setup import DummyDataSetup
-from app.modules.utils.setup_agents import AgentsSetup 
 
 
 class MainApp:
@@ -57,12 +55,7 @@ class MainApp:
         dummy_data_setup.setup_dummy_user()
         dummy_data_setup.setup_dummy_project()
 
-        #setup default agents
-        default_agent_setup = AgentsSetup()
-        default_agent_setup.setup_agents()
-
     def include_routers(self):
-        self.app.include_router(agents_router, prefix="/api/v1", tags=["Agents"])
         self.app.include_router(user_router, prefix="/api/v1", tags=["User"])
         self.app.include_router(conversations_router, prefix="/api/v1", tags=["Conversations"])
 

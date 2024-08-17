@@ -25,8 +25,8 @@ class Message(Base):
     # Add a CHECK constraint to enforce the sender_id logic
     __table_args__ = (
         CheckConstraint(
-            "((type = 'HUMAN' AND sender_id IS NOT NULL) OR "
-            "(type IN ('AI_GENERATED', 'SYSTEM_GENERATED') AND sender_id IS NULL))",
+            "(type = 'HUMAN' AND sender_id IS NOT NULL) OR "
+            "(type IN ('AI_GENERATED', 'SYSTEM_GENERATED') AND sender_id IS NULL)",
             name="check_sender_id_for_type"
         ),
     )
