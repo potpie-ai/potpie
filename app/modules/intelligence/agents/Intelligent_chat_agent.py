@@ -1,42 +1,93 @@
 import os
-from typing import AsyncGenerator
+from typing import AsyncGenerator, List
 from langchain_openai import ChatOpenAI
-from langchain.memory import ConversationBufferMemory
-from langchain.agents import AgentExecutor, Tool
-from langchain.agents import create_openai_functions_agent
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.schema import SystemMessage
+from langchain_core.chat_history import BaseChatMessageHistory
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, HumanMessagePromptTemplate
+from langchain_core.runnables import RunnableSequence
+from langchain_core.pydantic_v1 import BaseModel, Field
+
+class InMemoryHistory(BaseChatMessageHistory, BaseModel):
+    """In memory implementation of chat message history."""
+    messages: List[BaseMessage] = Field(default_factory=list)
+
+    def add_message(self, message: BaseMessage) -> None:
+        """Add a self-created message to the store"""
+        self.messages.append(message)
+
+    def clear(self) -> None:
+        self.messages = []
+
+store = {}
+
+def get_session_history(user_id: str, conversation_id: str) -> BaseChatMessageHistory:
+    if (user_id, conversation_id) not in store:
+        store[(user_id, conversation_id)] = InMemoryHistory()
+    return store[(user_id, conversation_id)]
 
 class IntelligentAgent:
-    def __init__(self, openai_key: str, tools: list):
-        self.llm = ChatOpenAI(temperature=0.7, openai_api_key=openai_key)
-        # Explicitly set the output_key to avoid the warning
-        self.memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True, output_key="output")
+    def __init__(self, openai_key: str, tools: List):
+        os.environ['OPENAI_API_KEY'] = openai_key
+        self.llm = ChatOpenAI(temperature=0.7)
         self.tools = tools
-        self.agent_executor = self._create_agent_executor()
+        self.chain = self._create_chain()
 
-    def _create_agent_executor(self):
-        prompt = ChatPromptTemplate.from_messages([
-            SystemMessage(content="You are an intelligent assistant. Use the provided tools to answer user queries."),
-            MessagesPlaceholder(variable_name="chat_history"),
-            ("human", "{input}"),
-            MessagesPlaceholder(variable_name="agent_scratchpad"),
-        ])
-
-        tools = [Tool(name=tool.name, func=tool.run, description=tool.description) for tool in self.tools]
-        agent = create_openai_functions_agent(self.llm, tools, prompt)
-
-        return AgentExecutor(
-            agent=agent,
-            tools=tools,
-            memory=self.memory,
-            verbose=True,
-            return_intermediate_steps=True
+    def _create_chain(self) -> RunnableSequence:
+        # Construct the prompt template
+        prompt_template = ChatPromptTemplate(
+            messages=[
+                MessagesPlaceholder(variable_name="history"),
+                HumanMessagePromptTemplate.from_template("{input}")
+            ]
         )
 
-    async def run(self, query: str) -> AsyncGenerator[str, None]:
-        result = await self.agent_executor.ainvoke({"input": query})
-        
-        for key, value in result.items():
-            if isinstance(value, str):
-                yield value
+        # Create a sequence of operations by chaining them together
+        return prompt_template | self.llm
+
+    async def run(self, query: str, user_id: str, conversation_id: str) -> AsyncGenerator[str, None]:
+        # Ensure the query is a string
+        if not isinstance(query, str):
+            raise ValueError("Query must be a string.")
+
+        # Load the chat history
+        history = get_session_history(user_id, conversation_id)
+
+        # Prepare the input dictionary for the chain
+        inputs = {
+            "input": query,
+            "history": history.messages
+        }
+
+        # Invoke the chain with the prepared inputs
+        result = await self.chain.ainvoke(inputs)
+
+        # Ensure result is a string
+        if not isinstance(result, str):
+            result = str(result)
+
+        # If tools are required, handle tool invocation here
+        tool_results = []
+        for tool in self.tools:
+            if hasattr(tool, 'run'):
+                tool_result = tool.run(query)
+            elif hasattr(tool, 'arun'):
+                tool_result = await tool.arun(query)
+            else:
+                tool_result = ""
+            
+            # Ensure tool_result is a string
+            if not isinstance(tool_result, str):
+                tool_result = str(tool_result)
+                
+            tool_results.append(tool_result)
+
+        # Combine the results from the LLM and tools if needed
+        combined_tool_results = "\n".join(tool_results)
+        final_result = f"{result}\n\n{combined_tool_results}"
+
+        # Save the new interaction (query and final result) to memory
+        history.add_message(HumanMessage(content=query))
+        history.add_message(AIMessage(content=final_result))
+
+        # Ensure the final result is a string before yielding
+        yield str(final_result)

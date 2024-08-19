@@ -16,10 +16,9 @@ class WikipediaTool(BaseTool):
         try:
             query_run = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper())
             result = query_run.run(query)
-            # Ensure the result is relevant to the query
             if query.lower() not in result.lower():
                 return f"Relevant information not found directly related to '{query}'."
-            return result
+            return str(result)  # Ensure the result is a string
         except Exception as e:
             return f"An error occurred while fetching information from Wikipedia: {str(e)}"
 

@@ -26,12 +26,12 @@ class ConversationService:
         self.project_service = ProjectService(db)
         self.message_service = MessageService(db)
         self.openai_key = os.getenv("OPENAI_API_KEY")
-
         if not self.openai_key:
             raise ValueError("The OpenAI API key is not set in the environment variable 'OPENAI_API_KEY'.")
+        # Initialize the agent once
+        self.agent = self._initialize_agent()
 
     def _initialize_agent(self) -> IntelligentAgent:
-        # Initialize the tools for each agent instance
         tools = [
             GoogleTrendsTool(),
             WikipediaTool(),
@@ -39,22 +39,25 @@ class ConversationService:
         ]
         return IntelligentAgent(self.openai_key, tools)
 
-    async def run_tool_using_agent(self, query: str) -> AsyncGenerator[str, None]:
-        agent = self._initialize_agent()
-        async for chunk in agent.run(query):
+    async def run_tool_using_agent(self, query: str, user_id: str, conversation_id: str) -> AsyncGenerator[str, None]:
+        # Process the query using the agent and return the results
+        async for chunk in self.agent.run(query, user_id, conversation_id):
             yield chunk
 
     async def message_stream(self, conversation_id: str, query: str) -> AsyncGenerator[str, None]:
         try:
             full_content = ""
-
-            async for content_update in self.run_tool_using_agent(query):
+            # Use the agent's run method to process the query with memory and tools
+            async for content_update in self.run_tool_using_agent(query, "user_id", conversation_id):
                 if content_update:
                     full_content += content_update
                     yield content_update
-
-            await self.message_service.create_message(conversation_id, full_content.strip(), MessageType.AI_GENERATED)
-
+            # Ensure the memory is updated after generating the content
+            await self.message_service.create_message(
+                conversation_id,
+                full_content.strip(),
+                MessageType.AI_GENERATED
+            )
         except Exception as e:
             logger.error(f"Error in message_stream: {e}")
             raise e
@@ -63,7 +66,6 @@ class ConversationService:
         try:
             project_ids = conversation.project_ids
             project_name = await self.project_service.get_project_name(project_ids)
-
             conversation_id = str(uuid7())
             new_conversation = Conversation(
                 id=conversation_id,
@@ -74,19 +76,15 @@ class ConversationService:
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc),
             )
-
             self.db.add(new_conversation)
             self.db.commit()
-
             await self.message_service.create_message(
-                conversation_id, 
-                f"Project {project_name} has been parsed successfully.", 
+                conversation_id,
+                f"Project {project_name} has been parsed successfully.",
                 MessageType.SYSTEM_GENERATED,
                 sender_id=None,
             )
-
             await asyncio.create_task(self._async_create_conversation_post_commit(conversation_id, project_name))
-
             return conversation_id, "Conversation created successfully."
         except IntegrityError as e:
             logger.error(f"IntegrityError in create_conversation: {e}")
@@ -96,18 +94,15 @@ class ConversationService:
             logger.error(f"Error in create_conversation: {e}")
             self.db.rollback()
             raise e
-        
+
     async def _async_create_conversation_post_commit(self, conversation_id: str, project_name: str):
         try:
             search_result = []
-            async for result in self.run_tool_using_agent(project_name):
+            async for result in self.run_tool_using_agent(project_name, "user_id", conversation_id):
                 if result:
                     search_result.append(result)
-
             combined_search_result = "\n".join(search_result)
-
             await self.message_service.create_message(conversation_id, combined_search_result, MessageType.AI_GENERATED)
-
         except Exception as e:
             logger.error(f"Error in async processing after transaction: {e}")
 
@@ -129,10 +124,8 @@ class ConversationService:
                 .order_by(Message.created_at.desc())
                 .first()
             )
-
             if not last_human_message:
                 raise ValueError("No human message found to regenerate from")
-
             messages_to_delete = (
                 self.db.query(Message)
                 .filter(
@@ -142,15 +135,12 @@ class ConversationService:
             )
             messages_to_delete.delete(synchronize_session='fetch')
             self.db.commit()
-
             full_content = ""
-            async for chunk in self.run_tool_using_agent(last_human_message.content):
+            async for chunk in self.run_tool_using_agent(last_human_message.content, "user_id", conversation_id):
                 if chunk:
                     full_content += chunk
                     yield f"data: {{'content': {chunk}}}\n\n"
-
             await self.message_service.create_message(conversation_id, full_content.strip(), MessageType.AI_GENERATED)
-
         except IntegrityError as e:
             logger.error(f"IntegrityError in regenerate_last_message: {e}")
             self.db.rollback()
@@ -163,10 +153,8 @@ class ConversationService:
     def get_conversation(self, conversation_id: str) -> ConversationResponse:
         try:
             conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
-
             if not conversation:
                 raise ValueError("Conversation not found")
-
             return ConversationResponse(
                 id=conversation.id,
                 user_id=conversation.user_id,
@@ -176,7 +164,6 @@ class ConversationService:
                 created_at=conversation.created_at.isoformat(),
                 updated_at=conversation.updated_at.isoformat(),
             )
-        
         except Exception as e:
             logger.error(f"Error in get_conversation: {e}")
             raise e
@@ -186,7 +173,6 @@ class ConversationService:
             conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
             if not conversation:
                 raise ValueError("Conversation not found")
-
             return ConversationInfoResponse(
                 id=conversation.id,
                 project_ids=conversation.project_ids,
@@ -207,7 +193,6 @@ class ConversationService:
             )
             if not messages:
                 return []
-
             return [
                 MessageResponse(
                     id=message.id,
@@ -227,7 +212,6 @@ class ConversationService:
             conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
             if not conversation:
                 raise ValueError("Conversation not found")
-
             self.db.delete(conversation)
             self.db.commit()
             return {"status": "success"}

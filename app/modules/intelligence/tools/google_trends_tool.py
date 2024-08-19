@@ -21,8 +21,7 @@ class GoogleTrendsTool(BaseTool):
             else:
                 trend_data = trends[query].tolist()
                 recent_trend = trend_data[-1]
-                # Return only the most relevant trend data
-                return f"Recent trend for '{query}': {recent_trend}"
+                return str(recent_trend)  # Ensure the trend is a string
         except Exception as e:
             return f"An error occurred while retrieving trends for '{query}': {str(e)}"
 

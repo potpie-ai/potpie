@@ -15,8 +15,7 @@ class DuckDuckGoTool(BaseTool):
         try:
             search_run = DuckDuckGoSearchRun()
             result = search_run.run(query)
-            # Return only the first few lines or relevant section to avoid irrelevant results
-            return result.split('\n')[0]  # You can refine this further based on your needs
+            return str(result.split('\n')[0])  # Ensure the result is a string
         except Exception as e:
             return f"An error occurred while searching DuckDuckGo: {str(e)}"
 
