@@ -17,3 +17,4 @@ cli/momentum_cli/.momentum
 # Except for .env.template
 !.env.template
 **/node_modules/
+*.log

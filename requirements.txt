@@ -13,9 +13,11 @@ aiohttp
 langchain
 langchain-openai
 langchain-community
-guardrails-ai
+agentops
 
 # Additional dependencies for specific tools
 pytrends
 wikipedia-api
 langgraph
+langchain-postgres 
+psycopg[binary,pool]
