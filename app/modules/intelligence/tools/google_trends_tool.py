@@ -1,12 +1,12 @@
 from typing import Type
 from pytrends.request import TrendReq
-from langchain.tools import BaseTool
+from langchain.tools import BaseTool as LangchainToolBaseModel
 from pydantic import BaseModel
 
 class GoogleTrendsInput(BaseModel):
     query: str
 
-class GoogleTrendsTool(BaseTool):
+class GoogleTrendsTool(LangchainToolBaseModel):
     name = "GoogleTrends"
     description = "Provides Google Trends data summary for a specific query over the past 7 days. Use this for understanding the current popularity of topics."
     args_schema: Type[BaseModel] = GoogleTrendsInput

@@ -1,13 +1,13 @@
 from typing import Type
-from langchain.tools import BaseTool
 from langchain_community.tools import WikipediaQueryRun
 from langchain_community.utilities import WikipediaAPIWrapper
+from langchain.tools import BaseTool as LangchainToolBaseModel
 from pydantic import BaseModel
 
 class WikipediaInput(BaseModel):
     query: str
 
-class WikipediaTool(BaseTool):
+class WikipediaTool(LangchainToolBaseModel):
     name = "Wikipedia"
     description = "Fetch information from Wikipedia. Use this for factual queries about various topics."
     args_schema: Type[BaseModel] = WikipediaInput
