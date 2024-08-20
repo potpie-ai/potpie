@@ -4,7 +4,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from typing import Dict, List, Optional
 from datetime import datetime, timezone
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
-from app.modules.conversations.message.message_model import Message, MessageType
+from app.modules.conversations.message.message_model import Message, MessageStatus, MessageType
 from uuid6 import uuid7
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,13 @@ class ChatHistoryService:
 
     def get_session_history(self, user_id: str, conversation_id: str) -> List[BaseMessage]:
         try:
-            messages = self.db.query(Message).filter_by(conversation_id=conversation_id).order_by(Message.created_at).all()
+            messages = (
+                self.db.query(Message)
+                .filter_by(conversation_id=conversation_id)
+                .filter_by(status=MessageStatus.ACTIVE)  # Only fetch active messages
+                .order_by(Message.created_at)
+                .all()
+            )
             history = []
             for msg in messages:
                 if msg.type == MessageType.HUMAN:
