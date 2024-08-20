@@ -37,7 +37,7 @@ class ConversationService:
             WikipediaTool(),
             DuckDuckGoTool(),
         ]
-        return IntelligentAgent(self.openai_key, tools)
+        return IntelligentAgent(self.openai_key, tools)  # No need to pass the history manager here
 
     async def run_tool_using_agent(self, query: str, user_id: str, conversation_id: str) -> AsyncGenerator[str, None]:
         # Process the query using the agent and return the results
@@ -48,7 +48,7 @@ class ConversationService:
         try:
             full_content = ""
             # Use the agent's run method to process the query with memory and tools
-            async for content_update in self.run_tool_using_agent(query, "user_id", conversation_id):
+            async for content_update in self.run_tool_using_agent(query, user_id="user_id", conversation_id=conversation_id):
                 if content_update:
                     full_content += content_update
                     yield content_update

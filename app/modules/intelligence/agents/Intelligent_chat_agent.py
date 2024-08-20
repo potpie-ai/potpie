@@ -1,35 +1,23 @@
 import os
+import asyncio
 from typing import AsyncGenerator, List
 from langchain_openai import ChatOpenAI
-from langchain_core.chat_history import BaseChatMessageHistory
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, HumanMessagePromptTemplate
 from langchain_core.runnables import RunnableSequence
-from langchain_core.pydantic_v1 import BaseModel, Field
+from langchain_core.messages import HumanMessage, AIMessage
+import logging
+from app.modules.intelligence.memory.history_manager import InMemoryChatHistoryManager
 
-class InMemoryHistory(BaseChatMessageHistory, BaseModel):
-    """In memory implementation of chat message history."""
-    messages: List[BaseMessage] = Field(default_factory=list)
-
-    def add_message(self, message: BaseMessage) -> None:
-        """Add a self-created message to the store"""
-        self.messages.append(message)
-
-    def clear(self) -> None:
-        self.messages = []
-
-store = {}
-
-def get_session_history(user_id: str, conversation_id: str) -> BaseChatMessageHistory:
-    if (user_id, conversation_id) not in store:
-        store[(user_id, conversation_id)] = InMemoryHistory()
-    return store[(user_id, conversation_id)]
+# Set up logging
+logger = logging.getLogger(__name__)
 
 class IntelligentAgent:
     def __init__(self, openai_key: str, tools: List):
         os.environ['OPENAI_API_KEY'] = openai_key
         self.llm = ChatOpenAI(temperature=0.7)
         self.tools = tools
+
+        # Initialize the LLM chain
         self.chain = self._create_chain()
 
     def _create_chain(self) -> RunnableSequence:
@@ -50,7 +38,7 @@ class IntelligentAgent:
             raise ValueError("Query must be a string.")
 
         # Load the chat history
-        history = get_session_history(user_id, conversation_id)
+        history = InMemoryChatHistoryManager.get_session_history(user_id, conversation_id)
 
         # Prepare the input dictionary for the chain
         inputs = {
@@ -65,21 +53,8 @@ class IntelligentAgent:
         if not isinstance(result, str):
             result = str(result)
 
-        # If tools are required, handle tool invocation here
-        tool_results = []
-        for tool in self.tools:
-            if hasattr(tool, 'run'):
-                tool_result = tool.run(query)
-            elif hasattr(tool, 'arun'):
-                tool_result = await tool.arun(query)
-            else:
-                tool_result = ""
-            
-            # Ensure tool_result is a string
-            if not isinstance(tool_result, str):
-                tool_result = str(tool_result)
-                
-            tool_results.append(tool_result)
+        # Handle tool invocation here
+        tool_results = await self._run_tools(query)
 
         # Combine the results from the LLM and tools if needed
         combined_tool_results = "\n".join(tool_results)
@@ -91,3 +66,25 @@ class IntelligentAgent:
 
         # Ensure the final result is a string before yielding
         yield str(final_result)
+
+    async def _run_tools(self, query: str) -> List[str]:
+        """Run all tools asynchronously and gather their results."""
+        tool_results = []
+        for tool in self.tools:
+            try:
+                if hasattr(tool, 'run'):
+                    tool_result = await asyncio.to_thread(tool.run, query)
+                elif hasattr(tool, 'arun'):
+                    tool_result = await tool.arun(query)
+                else:
+                    tool_result = ""
+            except Exception as e:
+                logger.error(f"Error running tool {tool.name}: {str(e)}")
+                tool_result = f"Error running tool {tool.name}: {str(e)}"
+            
+            # Ensure tool_result is a string
+            if not isinstance(tool_result, str):
+                tool_result = str(tool_result)
+                
+            tool_results.append(tool_result)
+        return tool_results
