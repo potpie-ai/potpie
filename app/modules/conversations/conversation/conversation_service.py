@@ -258,14 +258,17 @@ class ConversationService:
             conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
             if not conversation:
                 raise ConversationNotFoundError(f"Conversation with id {conversation_id} not found")
+            
             messages = (
                 self.db.query(Message)
-                .filter_by(conversation_id=conversation_id, status=MessageStatus.ACTIVE)
+                .filter_by(conversation_id=conversation_id)
+                .filter_by(status=MessageStatus.ACTIVE)  # Only fetch active messages
                 .order_by(Message.created_at)
                 .offset(start)
                 .limit(limit)
                 .all()
             )
+            
             return [
                 MessageResponse(
                     id=message.id,
@@ -273,7 +276,8 @@ class ConversationService:
                     content=message.content,
                     sender_id=message.sender_id,
                     type=message.type,
-                    created_at=message.created_at
+                    status=message.status,  # Include the status field
+                    created_at=message.created_at,
                 ) for message in messages
             ]
         except ConversationNotFoundError as e:
