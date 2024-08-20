@@ -4,6 +4,11 @@ from sqlalchemy.orm import relationship
 from app.core.database import Base
 import enum
 
+class MessageStatus(str, enum.Enum):
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
+    # DELETED = "DELETED"  # Possible Future extension
+
 class MessageType(str, enum.Enum):
     AI_GENERATED = "AI_GENERATED"
     HUMAN = "HUMAN"
@@ -17,6 +22,7 @@ class Message(Base):
     content = Column(Text, nullable=False)
     sender_id = Column(String(255), nullable=True)
     type = Column(SQLAEnum(MessageType), nullable=False)
+    status = Column(SQLAEnum(MessageStatus), default=MessageStatus.ACTIVE, nullable=False)
     created_at = Column(TIMESTAMP(timezone=True), default=func.now(), nullable=False)
 
     conversation = relationship("Conversation", back_populates="messages")
@@ -28,7 +34,3 @@ class Message(Base):
             name="check_sender_id_for_type"
         ),
     )
-
-
-# Message relationships
-Message.conversation = relationship("Conversation", back_populates="messages")
