@@ -1,4 +1,3 @@
-import asyncio
 import os
 import logging
 from typing import AsyncGenerator, Optional, List
@@ -9,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from app.modules.intelligence.agents.intelligent_tool_using_orchestrator import IntelligentToolUsingOrchestrator
 from app.modules.projects.projects_service import ProjectService
 from app.modules.conversations.conversation.conversation_model import Conversation, ConversationStatus
-from app.modules.conversations.message.message_model import Message, MessageType
+from app.modules.conversations.message.message_model import Message, MessageType, MessageStatus
 from app.modules.conversations.conversation.conversation_schema import CreateConversationRequest, ConversationResponse, ConversationInfoResponse
 from app.modules.conversations.message.message_schema import MessageRequest, MessageResponse
 from app.modules.conversations.message.message_service import MessageService
@@ -118,6 +117,7 @@ class ConversationService:
 
     async def regenerate_last_message(self, conversation_id: str) -> AsyncGenerator[str, None]:
         try:
+            # Fetch the last human message
             last_human_message = (
                 self.db.query(Message)
                 .filter_by(conversation_id=conversation_id, type=MessageType.HUMAN)
@@ -126,15 +126,15 @@ class ConversationService:
             )
             if not last_human_message:
                 raise ValueError("No human message found to regenerate from")
-            messages_to_delete = (
-                self.db.query(Message)
-                .filter(
-                    Message.conversation_id == conversation_id,
-                    Message.id > last_human_message.id
-                )
-            )
-            messages_to_delete.delete(synchronize_session='fetch')
+
+            # Mark messages after the last human message as inactive
+            self.db.query(Message).filter(
+                Message.conversation_id == conversation_id,
+                Message.created_at > last_human_message.created_at
+            ).update({Message.status: MessageStatus.INACTIVE}, synchronize_session='fetch')
             self.db.commit()
+
+            # Regenerate new content
             full_content = ""
             async for chunk in self.run_tool_using_orchestrator(last_human_message.content, "user_id", conversation_id):
                 if chunk:
@@ -186,7 +186,7 @@ class ConversationService:
         try:
             messages = (
                 self.db.query(Message)
-                .filter_by(conversation_id=conversation_id)
+                .filter_by(conversation_id=conversation_id, status=MessageStatus.ACTIVE)
                 .offset(start)
                 .limit(limit)
                 .all()

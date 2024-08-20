@@ -1,16 +1,15 @@
-import asyncio
 from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy.orm import Session
-from uuid6 import uuid7
 from sqlalchemy.exc import IntegrityError
-from app.modules.conversations.message.message_model import Message, MessageType
+from app.modules.conversations.message.message_model import Message, MessageType, MessageStatus
+from uuid6 import uuid7
 
 class MessageService:
     def __init__(self, db: Session):
         self.db = db 
 
-    async def create_message(self, conversation_id: str, content: str, message_type: MessageType, sender_id: Optional[str] = None) -> Message:
+    def create_message(self, conversation_id: str, content: str, message_type: MessageType, sender_id: Optional[str] = None) -> Message:
         # Validate sender_id based on message_type
         if (message_type == MessageType.HUMAN and sender_id is None) or \
            (message_type in {MessageType.AI_GENERATED, MessageType.SYSTEM_GENERATED} and sender_id is not None):
@@ -24,47 +23,36 @@ class MessageService:
             type=message_type,
             created_at=datetime.now(timezone.utc),
             sender_id=sender_id,
+            status=MessageStatus.ACTIVE
         )
 
         try:
-            await asyncio.get_event_loop().run_in_executor(None, self._sync_db_add, new_message)
-            await asyncio.get_event_loop().run_in_executor(None, self._sync_db_commit)
-            await asyncio.get_event_loop().run_in_executor(None, self._sync_db_refresh, new_message)
+            self.db.add(new_message)
+            self.db.commit()
+            self.db.refresh(new_message)
             return new_message
         except IntegrityError as e:
-            # Rollback in case of error
-            await asyncio.get_event_loop().run_in_executor(None, self._sync_db_rollback)
-            raise e
+            self.db.rollback()
+            # Handle specific SQLAlchemy IntegrityError
+            raise RuntimeError("Database integrity error occurred") from e
+        except Exception as e:
+            self.db.rollback()
+            # Handle all other exceptions
+            raise RuntimeError("An unexpected error occurred") from e
 
-    def _sync_db_add(self, instance):
-        """Synchronous database add operation."""
-        self.db.add(instance)
-
-    def _sync_db_commit(self):
-        """Synchronous database commit operation."""
-        self.db.commit()
-
-    def _sync_db_refresh(self, instance):
-        """Synchronous database refresh operation."""
-        self.db.refresh(instance)
-
-    def _sync_db_rollback(self):
-        """Synchronous database rollback operation."""
-        self.db.rollback()
-
-    async def commit_and_refresh(self, instance):
-        """Commits the current transaction and refreshes the instance."""
+    def mark_message_inactive(self, message_id: str) -> None:
         try:
-            await asyncio.get_event_loop().run_in_executor(None, self._sync_db_commit)
-            await asyncio.get_event_loop().run_in_executor(None, self._sync_db_refresh, instance)
+            message = self.db.query(Message).filter(Message.id == message_id).one_or_none()
+            if message:
+                message.status = MessageStatus.INACTIVE
+                self.db.commit()
+            else:
+                raise ValueError("Message not found.")
         except IntegrityError as e:
-            await asyncio.get_event_loop().run_in_executor(None, self._sync_db_rollback)
-            raise e
-
-    async def commit(self):
-        """Commits the current transaction."""
-        try:
-            await asyncio.get_event_loop().run_in_executor(None, self._sync_db_commit)
-        except IntegrityError as e:
-            await asyncio.get_event_loop().run_in_executor(None, self._sync_db_rollback)
-            raise e
+            self.db.rollback()
+            # Handle specific SQLAlchemy IntegrityError
+            raise RuntimeError("Database integrity error occurred") from e
+        except Exception as e:
+            self.db.rollback()
+            # Handle all other exceptions
+            raise RuntimeError("An unexpected error occurred") from e
