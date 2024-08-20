@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from app.modules.intelligence.agents.Intelligent_chat_agent import IntelligentAgent
 from app.modules.projects.projects_service import ProjectService
 from app.modules.conversations.conversation.conversation_model import Conversation, ConversationStatus
-from app.modules.conversations.message.message_model import Message, MessageType
+from app.modules.conversations.message.message_model import Message, MessageType  # Import MessageType
 from app.modules.conversations.conversation.conversation_schema import CreateConversationRequest, ConversationResponse, ConversationInfoResponse
 from app.modules.conversations.message.message_schema import MessageRequest, MessageResponse
 from app.modules.conversations.message.message_service import MessageService
@@ -37,7 +37,7 @@ class ConversationService:
             WikipediaTool(),
             DuckDuckGoTool(),
         ]
-        return IntelligentAgent(self.openai_key, tools)  # No need to pass the history manager here
+        return IntelligentAgent(self.openai_key, tools, self.db)  # Pass the db session to the agent
 
     async def run_tool_using_agent(self, query: str, user_id: str, conversation_id: str) -> AsyncGenerator[str, None]:
         # Process the query using the agent and return the results

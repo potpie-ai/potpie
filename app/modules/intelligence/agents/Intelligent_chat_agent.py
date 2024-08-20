@@ -6,18 +6,19 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, Huma
 from langchain_core.runnables import RunnableSequence
 from langchain_core.messages import HumanMessage, AIMessage
 import logging
-from app.modules.intelligence.memory.history_manager import InMemoryChatHistoryManager
+from sqlalchemy.orm import Session
+from app.modules.conversations.message.message_model import MessageType
+from app.modules.intelligence.memory.postgres_history_manager import PostgresChatHistoryManager  # Import MessageType
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
 class IntelligentAgent:
-    def __init__(self, openai_key: str, tools: List):
+    def __init__(self, openai_key: str, tools: List, db: Session):
         os.environ['OPENAI_API_KEY'] = openai_key
         self.llm = ChatOpenAI(temperature=0.7)
         self.tools = tools
-
-        # Initialize the LLM chain
+        self.history_manager = PostgresChatHistoryManager(db)
         self.chain = self._create_chain()
 
     def _create_chain(self) -> RunnableSequence:
@@ -38,12 +39,12 @@ class IntelligentAgent:
             raise ValueError("Query must be a string.")
 
         # Load the chat history
-        history = InMemoryChatHistoryManager.get_session_history(user_id, conversation_id)
+        history = self.history_manager.get_session_history(user_id, conversation_id)
 
         # Prepare the input dictionary for the chain
         inputs = {
             "input": query,
-            "history": history.messages
+            "history": history
         }
 
         # Invoke the chain with the prepared inputs
@@ -60,9 +61,9 @@ class IntelligentAgent:
         combined_tool_results = "\n".join(tool_results)
         final_result = f"{result}\n\n{combined_tool_results}"
 
-        # Save the new interaction (query and final result) to memory
-        history.add_message(HumanMessage(content=query))
-        history.add_message(AIMessage(content=final_result))
+        # Save the new interaction (query and final result) to the database
+        self.history_manager.add_message(conversation_id, query, MessageType.HUMAN, user_id)
+        self.history_manager.add_message(conversation_id, final_result, MessageType.AI_GENERATED)
 
         # Ensure the final result is a string before yielding
         yield str(final_result)
