@@ -6,10 +6,10 @@ from uuid6 import uuid7
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from app.modules.intelligence.agents.Intelligent_chat_agent import IntelligentAgent
+from app.modules.intelligence.agents.intelligent_tool_using_orchestrator import IntelligentToolUsingOrchestrator
 from app.modules.projects.projects_service import ProjectService
 from app.modules.conversations.conversation.conversation_model import Conversation, ConversationStatus
-from app.modules.conversations.message.message_model import Message, MessageType  # Import MessageType
+from app.modules.conversations.message.message_model import Message, MessageType
 from app.modules.conversations.conversation.conversation_schema import CreateConversationRequest, ConversationResponse, ConversationInfoResponse
 from app.modules.conversations.message.message_schema import MessageRequest, MessageResponse
 from app.modules.conversations.message.message_service import MessageService
@@ -28,27 +28,27 @@ class ConversationService:
         self.openai_key = os.getenv("OPENAI_API_KEY")
         if not self.openai_key:
             raise ValueError("The OpenAI API key is not set in the environment variable 'OPENAI_API_KEY'.")
-        # Initialize the agent once
-        self.agent = self._initialize_agent()
+        # Initialize the orchestrator once
+        self.orchestrator = self._initialize_orchestrator()
 
-    def _initialize_agent(self) -> IntelligentAgent:
+    def _initialize_orchestrator(self) -> IntelligentToolUsingOrchestrator:
         tools = [
             GoogleTrendsTool(),
             WikipediaTool(),
             DuckDuckGoTool(),
         ]
-        return IntelligentAgent(self.openai_key, tools, self.db)  # Pass the db session to the agent
+        return IntelligentToolUsingOrchestrator(self.openai_key, tools, self.db)  # Pass the db session to the orchestrator
 
-    async def run_tool_using_agent(self, query: str, user_id: str, conversation_id: str) -> AsyncGenerator[str, None]:
-        # Process the query using the agent and return the results
-        async for chunk in self.agent.run(query, user_id, conversation_id):
+    async def run_tool_using_orchestrator(self, query: str, user_id: str, conversation_id: str) -> AsyncGenerator[str, None]:
+        # Process the query using the orchestrator and return the results
+        async for chunk in self.orchestrator.run(query, user_id, conversation_id):
             yield chunk
 
     async def message_stream(self, conversation_id: str, query: str) -> AsyncGenerator[str, None]:
         try:
             full_content = ""
-            # Use the agent's run method to process the query with memory and tools
-            async for content_update in self.run_tool_using_agent(query, user_id="user_id", conversation_id=conversation_id):
+            # Use the orchestrator's run method to process the query with memory and tools
+            async for content_update in self.run_tool_using_orchestrator(query, user_id="user_id", conversation_id=conversation_id):
                 if content_update:
                     full_content += content_update
                     yield content_update
@@ -98,7 +98,7 @@ class ConversationService:
     async def _async_create_conversation_post_commit(self, conversation_id: str, project_name: str):
         try:
             search_result = []
-            async for result in self.run_tool_using_agent(project_name, "user_id", conversation_id):
+            async for result in self.run_tool_using_orchestrator(project_name, "user_id", conversation_id):
                 if result:
                     search_result.append(result)
             combined_search_result = "\n".join(search_result)
@@ -136,7 +136,7 @@ class ConversationService:
             messages_to_delete.delete(synchronize_session='fetch')
             self.db.commit()
             full_content = ""
-            async for chunk in self.run_tool_using_agent(last_human_message.content, "user_id", conversation_id):
+            async for chunk in self.run_tool_using_orchestrator(last_human_message.content, "user_id", conversation_id):
                 if chunk:
                     full_content += chunk
                     yield f"data: {{'content': {chunk}}}\n\n"

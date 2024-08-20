@@ -1,22 +1,19 @@
-import os
 import asyncio
 from typing import AsyncGenerator, List
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, HumanMessagePromptTemplate
 from langchain_core.runnables import RunnableSequence
-from langchain_core.messages import HumanMessage, AIMessage
 import logging
 from sqlalchemy.orm import Session
 from app.modules.conversations.message.message_model import MessageType
-from app.modules.intelligence.memory.postgres_history_manager import PostgresChatHistoryManager  # Import MessageType
-
+from app.modules.intelligence.memory.postgres_history_manager import PostgresChatHistoryManager
 # Set up logging
 logger = logging.getLogger(__name__)
 
-class IntelligentAgent:
+class IntelligentToolUsingOrchestrator:
     def __init__(self, openai_key: str, tools: List, db: Session):
-        os.environ['OPENAI_API_KEY'] = openai_key
-        self.llm = ChatOpenAI(temperature=0.7)
+        # Pass the API key directly to ChatOpenAI
+        self.llm = ChatOpenAI(api_key=openai_key, temperature=0.7)
         self.tools = tools
         self.history_manager = PostgresChatHistoryManager(db)
         self.chain = self._create_chain()
