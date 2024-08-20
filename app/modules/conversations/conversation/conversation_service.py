@@ -63,12 +63,15 @@ class ConversationService:
 
     async def create_conversation(self, conversation: CreateConversationRequest) -> tuple[str, str]:
         try:
-            conversation_id = self._create_conversation_record(conversation)
             project_name = await self.project_service.get_project_name(conversation.project_ids)
             
-            await self._add_system_message(conversation_id, project_name)
-            await self._generate_initial_ai_response(conversation_id, project_name)
-
+            title = conversation.title.strip() if conversation.title else project_name
+            
+            conversation_id = self._create_conversation_record(conversation, title)
+            
+            await self._add_system_message(conversation_id, title)
+            await self._generate_initial_ai_response(conversation_id, title)
+            
             return conversation_id, "Conversation created successfully."
         except IntegrityError as e:
             logger.error(f"IntegrityError in create_conversation: {e}", exc_info=True)
@@ -79,12 +82,12 @@ class ConversationService:
             self.db.rollback()
             raise ConversationServiceError("An unexpected error occurred while creating the conversation.") from e
 
-    def _create_conversation_record(self, conversation: CreateConversationRequest) -> str:
+    def _create_conversation_record(self, conversation: CreateConversationRequest, title: str) -> str:
         conversation_id = str(uuid7())
         new_conversation = Conversation(
             id=conversation_id,
             user_id=conversation.user_id,
-            title="",  # Title will be set later
+            title=title,
             status=ConversationStatus.ACTIVE,
             project_ids=conversation.project_ids,
             created_at=datetime.now(timezone.utc),
@@ -92,7 +95,7 @@ class ConversationService:
         )
         self.db.add(new_conversation)
         self.db.commit()
-        logger.info(f"Created new conversation with ID: {conversation_id}")
+        logger.info(f"Created new conversation with ID: {conversation_id}, title: {title}")
         return conversation_id
 
     async def _add_system_message(self, conversation_id: str, project_name: str):
