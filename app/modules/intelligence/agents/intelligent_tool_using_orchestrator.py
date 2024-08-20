@@ -7,6 +7,7 @@ import logging
 from sqlalchemy.orm import Session
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.intelligence.memory.postgres_history_manager import PostgresChatHistoryManager
+
 # Set up logging
 logger = logging.getLogger(__name__)
 
