@@ -7,7 +7,7 @@ from langchain.schema import BaseMessage, HumanMessage, AIMessage
 import logging
 from sqlalchemy.orm import Session
 from app.modules.conversations.message.message_model import MessageType
-from app.modules.intelligence.memory.postgres_history_manager import PostgresChatHistoryManager
+from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -16,7 +16,7 @@ class IntelligentToolUsingOrchestrator:
     def __init__(self, openai_key: str, tools: List, db: Session):
         self.llm = ChatOpenAI(api_key=openai_key, temperature=0.7, model_kwargs={"stream": True})
         self.tools = {tool.name: tool for tool in tools}
-        self.history_manager = PostgresChatHistoryManager(db)
+        self.history_manager = ChatHistoryService(db)
         self.chain = self._create_chain()
 
     def _create_chain(self) -> RunnableSequence:

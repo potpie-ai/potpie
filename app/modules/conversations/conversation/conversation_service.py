@@ -9,6 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 
 from app.modules.intelligence.agents.intelligent_tool_using_orchestrator import IntelligentToolUsingOrchestrator
+from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.tools.duckduckgo_search_tool import DuckDuckGoTool
 from app.modules.intelligence.tools.google_trends_tool import GoogleTrendsTool
 from app.modules.intelligence.tools.wikipedia_tool import WikipediaTool
@@ -17,7 +18,6 @@ from app.modules.conversations.conversation.conversation_model import Conversati
 from app.modules.conversations.message.message_model import Message, MessageType, MessageStatus
 from app.modules.conversations.conversation.conversation_schema import CreateConversationRequest, ConversationInfoResponse
 from app.modules.conversations.message.message_schema import MessageRequest, MessageResponse
-from app.modules.intelligence.memory.postgres_history_manager import PostgresChatHistoryManager
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class ConversationService:
     def __init__(self, 
                  db: Session, 
                  project_service: ProjectService, 
-                 history_manager: PostgresChatHistoryManager, 
+                 history_manager: ChatHistoryService, 
                  orchestrator: IntelligentToolUsingOrchestrator):
         self.db = db
         self.project_service = project_service
@@ -44,7 +44,7 @@ class ConversationService:
     @classmethod
     def create(cls, db: Session):
         project_service = ProjectService(db)
-        history_manager = PostgresChatHistoryManager(db)
+        history_manager = ChatHistoryService(db)
         openai_key = cls._get_openai_key()
         orchestrator = cls._initialize_orchestrator(openai_key, db)
         return cls(db, project_service, history_manager, orchestrator)
