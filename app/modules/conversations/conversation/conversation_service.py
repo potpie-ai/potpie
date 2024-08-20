@@ -13,10 +13,9 @@ from app.modules.intelligence.tools.wikipedia_tool import WikipediaTool
 from app.modules.projects.projects_service import ProjectService
 from app.modules.conversations.conversation.conversation_model import Conversation, ConversationStatus
 from app.modules.conversations.message.message_model import Message, MessageType, MessageStatus
-from app.modules.conversations.conversation.conversation_schema import CreateConversationRequest
-from app.modules.conversations.message.message_schema import MessageRequest
+from app.modules.conversations.conversation.conversation_schema import CreateConversationRequest, ConversationInfoResponse
+from app.modules.conversations.message.message_schema import MessageRequest, MessageResponse
 from app.modules.intelligence.memory.postgres_history_manager import PostgresChatHistoryManager
-from app.modules.intelligence.tools.tool_factory import create_tools
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +58,6 @@ class ConversationService:
     def _initialize_orchestrator(openai_key: str, db: Session) -> IntelligentToolUsingOrchestrator:
         tools = [GoogleTrendsTool(), WikipediaTool(), DuckDuckGoTool()]
         return IntelligentToolUsingOrchestrator(openai_key, tools, db)
-
 
     async def create_conversation(self, conversation: CreateConversationRequest) -> tuple[str, str]:
         try:
@@ -108,9 +106,7 @@ class ConversationService:
     async def _generate_initial_ai_response(self, conversation_id: str, project_name: str):
         query = f"Summarize the project: {project_name}"
         try:
-            full_content = await self._generate_ai_response(query, conversation_id)
-            self.history_manager.add_message_chunk(conversation_id, full_content, MessageType.AI_GENERATED)
-            self.history_manager.flush_message_buffer(conversation_id, MessageType.AI_GENERATED)
+            await self._generate_ai_response(query, conversation_id)
             logger.info(f"Generated initial AI response for conversation {conversation_id}")
         except Exception as e:
             logger.error(f"Failed to generate initial AI response for conversation {conversation_id}: {e}", exc_info=True)
@@ -121,7 +117,6 @@ class ConversationService:
             self.history_manager.add_message_chunk(conversation_id, message.content, message_type, user_id)
             self.history_manager.flush_message_buffer(conversation_id, message_type, user_id)
             logger.info(f"Stored message in conversation {conversation_id}")
-
             if message_type == MessageType.HUMAN:
                 async for chunk in self._generate_and_stream_ai_response(message.content, conversation_id):
                     yield chunk
@@ -189,10 +184,82 @@ class ConversationService:
                 if chunk:
                     full_content += chunk
                     yield chunk  # Stream to the client
-
-            self.history_manager.add_message_chunk(conversation_id, full_content.strip(), MessageType.AI_GENERATED)
-            self.history_manager.flush_message_buffer(conversation_id, MessageType.AI_GENERATED)
             logger.info(f"Generated and streamed AI response for conversation {conversation_id}")
         except Exception as e:
             logger.error(f"Failed to generate and stream AI response for conversation {conversation_id}: {e}", exc_info=True)
             raise ConversationServiceError("Failed to generate and stream AI response.") from e
+
+    async def delete_conversation(self, conversation_id: str) -> dict:
+        try:
+            conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
+            if not conversation:
+                raise ConversationNotFoundError(f"Conversation with id {conversation_id} not found")
+            conversation.status = ConversationStatus.DELETED  # Soft delete
+            self.db.commit()
+            logger.info(f"Marked conversation {conversation_id} as deleted")
+            return {"status": "success", "message": f"Conversation {conversation_id} has been deleted successfully."}
+        except ConversationNotFoundError as e:
+            logger.warning(str(e))
+            raise
+        except Exception as e:
+            logger.error(f"Error in delete_conversation: {e}", exc_info=True)
+            self.db.rollback()
+            raise ConversationServiceError(f"Failed to delete conversation {conversation_id}") from e
+
+    async def get_conversation_info(self, conversation_id: str) -> ConversationInfoResponse:
+        try:
+            conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
+            if not conversation:
+                raise ConversationNotFoundError(f"Conversation with id {conversation_id} not found")
+            total_messages = self.db.query(Message).filter_by(conversation_id=conversation_id, status=MessageStatus.ACTIVE).count()
+            return ConversationInfoResponse(
+                id=conversation.id,
+                title=conversation.title,
+                status=conversation.status,
+                project_ids=conversation.project_ids,
+                created_at=conversation.created_at,
+                updated_at=conversation.updated_at,
+                total_messages=total_messages
+            )
+        except ConversationNotFoundError as e:
+            logger.warning(str(e))
+            raise
+        except Exception as e:
+            logger.error(f"Error in get_conversation_info: {e}", exc_info=True)
+            raise ConversationServiceError(f"Failed to get conversation info for {conversation_id}") from e
+
+    async def get_conversation_messages(self, conversation_id: str, start: int, limit: int) -> List[MessageResponse]:
+        try:
+            conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
+            if not conversation:
+                raise ConversationNotFoundError(f"Conversation with id {conversation_id} not found")
+            messages = (
+                self.db.query(Message)
+                .filter_by(conversation_id=conversation_id, status=MessageStatus.ACTIVE)
+                .order_by(Message.created_at)
+                .offset(start)
+                .limit(limit)
+                .all()
+            )
+            return [
+                MessageResponse(
+                    id=message.id,
+                    conversation_id=message.conversation_id,
+                    content=message.content,
+                    sender_id=message.sender_id,
+                    type=message.type,
+                    created_at=message.created_at
+                ) for message in messages
+            ]
+        except ConversationNotFoundError as e:
+            logger.warning(str(e))
+            raise
+        except Exception as e:
+            logger.error(f"Error in get_conversation_messages: {e}", exc_info=True)
+            raise ConversationServiceError(f"Failed to get messages for conversation {conversation_id}") from e
+
+    async def stop_generation(self, conversation_id: str) -> dict:
+        # Implement the logic to stop the generation process
+        # This might involve setting a flag in the orchestrator or cancelling an ongoing task
+        logger.info(f"Attempting to stop generation for conversation {conversation_id}")
+        return {"status": "success", "message": "Generation stop request received"}
