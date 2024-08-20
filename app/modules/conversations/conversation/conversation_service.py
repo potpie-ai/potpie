@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio
 from typing import AsyncGenerator, Optional, List
 from uuid6 import uuid7
 from datetime import datetime, timezone
@@ -9,7 +10,7 @@ from app.modules.intelligence.agents.intelligent_tool_using_orchestrator import 
 from app.modules.projects.projects_service import ProjectService
 from app.modules.conversations.conversation.conversation_model import Conversation, ConversationStatus
 from app.modules.conversations.message.message_model import Message, MessageType, MessageStatus
-from app.modules.conversations.conversation.conversation_schema import CreateConversationRequest, ConversationResponse, ConversationInfoResponse
+from app.modules.conversations.conversation.conversation_schema import CreateConversationRequest, ConversationInfoResponse
 from app.modules.conversations.message.message_schema import MessageRequest, MessageResponse
 from app.modules.conversations.message.message_service import MessageService
 from app.modules.intelligence.tools.duckduckgo_search_tool import DuckDuckGoTool
@@ -27,7 +28,6 @@ class ConversationService:
         self.openai_key = os.getenv("OPENAI_API_KEY")
         if not self.openai_key:
             raise ValueError("The OpenAI API key is not set in the environment variable 'OPENAI_API_KEY'.")
-        # Initialize the orchestrator once
         self.orchestrator = self._initialize_orchestrator()
 
     def _initialize_orchestrator(self) -> IntelligentToolUsingOrchestrator:
@@ -36,22 +36,19 @@ class ConversationService:
             WikipediaTool(),
             DuckDuckGoTool(),
         ]
-        return IntelligentToolUsingOrchestrator(self.openai_key, tools, self.db)  # Pass the db session to the orchestrator
+        return IntelligentToolUsingOrchestrator(self.openai_key, tools, self.db)
 
     async def run_tool_using_orchestrator(self, query: str, user_id: str, conversation_id: str) -> AsyncGenerator[str, None]:
-        # Process the query using the orchestrator and return the results
         async for chunk in self.orchestrator.run(query, user_id, conversation_id):
             yield chunk
 
     async def message_stream(self, conversation_id: str, query: str) -> AsyncGenerator[str, None]:
         try:
             full_content = ""
-            # Use the orchestrator's run method to process the query with memory and tools
             async for content_update in self.run_tool_using_orchestrator(query, user_id="user_id", conversation_id=conversation_id):
                 if content_update:
                     full_content += content_update
                     yield content_update
-            # Ensure the memory is updated after generating the content
             await self.message_service.create_message(
                 conversation_id,
                 full_content.strip(),
@@ -83,7 +80,8 @@ class ConversationService:
                 MessageType.SYSTEM_GENERATED,
                 sender_id=None,
             )
-            await asyncio.create_task(self._async_create_conversation_post_commit(conversation_id, project_name))
+            # Await the async task to ensure it completes properly
+            await self._async_create_conversation_post_commit(conversation_id, project_name)
             return conversation_id, "Conversation created successfully."
         except IntegrityError as e:
             logger.error(f"IntegrityError in create_conversation: {e}")
@@ -117,7 +115,6 @@ class ConversationService:
 
     async def regenerate_last_message(self, conversation_id: str) -> AsyncGenerator[str, None]:
         try:
-            # Fetch the last human message
             last_human_message = (
                 self.db.query(Message)
                 .filter_by(conversation_id=conversation_id, type=MessageType.HUMAN)
@@ -127,14 +124,12 @@ class ConversationService:
             if not last_human_message:
                 raise ValueError("No human message found to regenerate from")
 
-            # Mark messages after the last human message as inactive
             self.db.query(Message).filter(
                 Message.conversation_id == conversation_id,
                 Message.created_at > last_human_message.created_at
             ).update({Message.status: MessageStatus.INACTIVE}, synchronize_session='fetch')
             self.db.commit()
 
-            # Regenerate new content
             full_content = ""
             async for chunk in self.run_tool_using_orchestrator(last_human_message.content, "user_id", conversation_id):
                 if chunk:
@@ -150,33 +145,21 @@ class ConversationService:
             self.db.rollback()
             raise e
 
-    def get_conversation(self, conversation_id: str) -> ConversationResponse:
-        try:
-            conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
-            if not conversation:
-                raise ValueError("Conversation not found")
-            return ConversationResponse(
-                id=conversation.id,
-                user_id=conversation.user_id,
-                title=conversation.title,
-                status=conversation.status,
-                project_ids=conversation.project_ids,
-                created_at=conversation.created_at.isoformat(),
-                updated_at=conversation.updated_at.isoformat(),
-            )
-        except Exception as e:
-            logger.error(f"Error in get_conversation: {e}")
-            raise e
-
     def get_conversation_info(self, conversation_id: str) -> ConversationInfoResponse:
         try:
             conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
             if not conversation:
                 raise ValueError("Conversation not found")
+            # Calculate total_messages based on active messages
+            total_messages = self.db.query(Message).filter_by(conversation_id=conversation_id, status=MessageStatus.ACTIVE).count()
             return ConversationInfoResponse(
                 id=conversation.id,
+                title=conversation.title,
+                status=conversation.status,
                 project_ids=conversation.project_ids,
-                total_messages=len(conversation.messages)
+                created_at=conversation.created_at,
+                updated_at=conversation.updated_at,
+                total_messages=total_messages
             )
         except Exception as e:
             logger.error(f"Error in get_conversation_info: {e}")
@@ -191,8 +174,6 @@ class ConversationService:
                 .limit(limit)
                 .all()
             )
-            if not messages:
-                return []
             return [
                 MessageResponse(
                     id=message.id,

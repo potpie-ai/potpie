@@ -14,23 +14,16 @@ class CreateConversationResponse(BaseModel):
     message: str
     conversation_id: str
 
-class ConversationResponse(BaseModel):
+class ConversationInfoResponse(BaseModel):
     id: str
-    user_id: str
     title: str
     status: ConversationStatus
     project_ids: List[str]
     created_at: datetime
     updated_at: datetime
-    class Config:
-        from_attributes = True
-
-class ConversationInfoResponse(BaseModel):
-    id: str
-    project_ids: List[str]
     total_messages: int 
     class Config:
         from_attributes = True
 
 # Resolve forward references
-ConversationResponse.update_forward_refs()
+ConversationInfoResponse.update_forward_refs()

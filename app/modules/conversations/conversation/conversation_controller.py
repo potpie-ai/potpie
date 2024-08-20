@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.modules.conversations.conversation.conversation_schema import ConversationInfoResponse, ConversationResponse, CreateConversationRequest, CreateConversationResponse
+from app.modules.conversations.conversation.conversation_schema import ConversationInfoResponse, CreateConversationRequest, CreateConversationResponse
 from app.modules.conversations.conversation.conversation_service import ConversationService
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import MessageRequest, MessageResponse
@@ -18,12 +18,6 @@ class ConversationController:
             return CreateConversationResponse(message=message, conversation_id=conversation_id)
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-
-    async def get_conversation(self, conversation_id: str) -> ConversationResponse:
-        try:
-            return self.service.get_conversation(conversation_id)
-        except Exception as e:
-            raise HTTPException(status_code=404, detail=e)
 
     async def delete_conversation(self, conversation_id: str) -> dict:
         try:

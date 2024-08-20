@@ -6,7 +6,6 @@ from app.modules.conversations.conversation.conversation_controller import Conve
 from .conversation.conversation_schema import (
     CreateConversationRequest, 
     CreateConversationResponse, 
-    ConversationResponse, 
     ConversationInfoResponse
 )
 from .message.message_schema import MessageRequest, MessageResponse
@@ -23,15 +22,6 @@ class ConversationAPI:
     ):
         controller = ConversationController(db)
         return await controller.create_conversation(conversation)
-
-    @staticmethod
-    @router.get("/conversations/{conversation_id}/", response_model=ConversationResponse)
-    async def get_conversation(
-        conversation_id: str,
-        db: Session = Depends(get_db)
-    ):
-        controller = ConversationController(db)
-        return await controller.get_conversation(conversation_id)
 
     @staticmethod
     @router.get("/conversations/{conversation_id}/info/", response_model=ConversationInfoResponse)
