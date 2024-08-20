@@ -14,3 +14,18 @@ grep-ast
 pygments
 networkx
 blar-graph
+openai
+duckduckgo-search
+uuid6
+aiohttp
+langchain
+langchain-openai
+langchain-community
+agentops
+
+# Additional dependencies for specific tools
+pytrends
+wikipedia-api
+langgraph
+langchain-postgres 
+psycopg[binary,pool]

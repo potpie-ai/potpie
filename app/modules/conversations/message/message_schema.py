@@ -1,7 +1,8 @@
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
-from .model import MessageType
+
+from app.modules.conversations.message.message_model import MessageType
 
 class MessageRequest(BaseModel):
     content: str

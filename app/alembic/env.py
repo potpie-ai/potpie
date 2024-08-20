@@ -6,11 +6,10 @@ from alembic import context
 from alembic.operations import ops
 
 from app.core.database import Base
-from app.modules.users.model import User  # Import all your models
-from app.modules.projects.model import Project
-from app.modules.conversations.conversation.model import Conversation
-from app.modules.conversations.message.model import Message
-
+from app.modules.users.user_model import User  # Import all your models
+from app.modules.projects.projects_model import Project
+from app.modules.conversations.conversation.conversation_model import Conversation
+from app.modules.conversations.message.message_model import Message
 
 from dotenv import load_dotenv
 
