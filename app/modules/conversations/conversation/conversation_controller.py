@@ -39,8 +39,8 @@ class ConversationController:
 
     async def post_message(self, conversation_id: str, message: MessageRequest, user_id: str) -> AsyncGenerator[str, None]:
         try:
-            stored_message = await self.service.store_message(conversation_id, message, MessageType.HUMAN, user_id)
-            async for chunk in self.service.message_stream(conversation_id, stored_message.content):
+            # Stream the response chunk by chunk
+            async for chunk in self.service.store_message(conversation_id, message, MessageType.HUMAN, user_id):
                 yield chunk
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))

@@ -37,23 +37,24 @@ class IntelligentToolUsingOrchestrator:
             HumanMessage(content=str(msg)) if isinstance(msg, (str, int, float)) else msg
             for msg in history
         ]
-        
         inputs = validated_history + [HumanMessage(content=query)]
 
         try:
-            # First, run tools and add their results to the conversation history
+            # Run tools and add their results to the inputs, but don't store in history
             tool_results = await self._run_tools(query)
             if tool_results:
                 tool_message = AIMessage(content=f"Tool results: {'; '.join(tool_results)}")
                 inputs.append(tool_message)
-                # Add tool results to history, but don't yield to user
-                self.history_manager.add_message(conversation_id, tool_message.content, MessageType.AI_GENERATED)
+                # Don't add tool results to history_manager
 
             # Now stream the LLM output
             async for chunk in self.llm.astream(inputs):
                 content = chunk.content if hasattr(chunk, 'content') else str(chunk)
-                self.history_manager.add_message(conversation_id, content, MessageType.AI_GENERATED)
+                self.history_manager.add_message_chunk(conversation_id, content, MessageType.AI_GENERATED)
                 yield content
+
+            # Flush the message buffer after streaming is complete
+            self.history_manager.flush_message_buffer(conversation_id, MessageType.AI_GENERATED)
 
         except Exception as e:
             logger.error(f"Error during LLM invocation: {str(e)}")
@@ -69,10 +70,8 @@ class IntelligentToolUsingOrchestrator:
                     tool_result = await asyncio.to_thread(tool.run, query)
                 else:
                     continue  # Skip tools without run or arun methods
-
                 if tool_result:
                     tool_results.append(f"{tool_name}: {tool_result}")
             except Exception as e:
                 logger.error(f"Error running tool {tool_name}: {str(e)}")
-
         return tool_results
