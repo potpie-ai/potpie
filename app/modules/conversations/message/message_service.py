@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy.orm import Session
@@ -9,8 +10,7 @@ class MessageService:
     def __init__(self, db: Session):
         self.db = db 
 
-    def create_message(self, conversation_id: str, content: str, message_type: MessageType, sender_id: Optional[str] = None) -> Message:
-        # Validate sender_id based on message_type
+    async def create_message(self, conversation_id: str, content: str, message_type: MessageType, sender_id: Optional[str] = None) -> Message:
         if (message_type == MessageType.HUMAN and sender_id is None) or \
            (message_type in {MessageType.AI_GENERATED, MessageType.SYSTEM_GENERATED} and sender_id is not None):
             raise ValueError("Invalid sender_id for the given message_type.")
@@ -27,20 +27,34 @@ class MessageService:
         )
 
         try:
+            await asyncio.get_event_loop().run_in_executor(None, self._sync_create_message, new_message)
+            return new_message
+        except IntegrityError as e:
+            raise RuntimeError("Database integrity error occurred") from e
+        except Exception as e:
+            raise RuntimeError("An unexpected error occurred") from e
+
+    def _sync_create_message(self, new_message: Message):
+        try:
             self.db.add(new_message)
             self.db.commit()
             self.db.refresh(new_message)
-            return new_message
         except IntegrityError as e:
             self.db.rollback()
-            # Handle specific SQLAlchemy IntegrityError
-            raise RuntimeError("Database integrity error occurred") from e
+            raise
         except Exception as e:
             self.db.rollback()
-            # Handle all other exceptions
+            raise
+
+    async def mark_message_inactive(self, message_id: str) -> None:
+        try:
+            await asyncio.get_event_loop().run_in_executor(None, self._sync_mark_message_inactive, message_id)
+        except IntegrityError as e:
+            raise RuntimeError("Database integrity error occurred") from e
+        except Exception as e:
             raise RuntimeError("An unexpected error occurred") from e
 
-    def mark_message_inactive(self, message_id: str) -> None:
+    def _sync_mark_message_inactive(self, message_id: str):
         try:
             message = self.db.query(Message).filter(Message.id == message_id).one_or_none()
             if message:
@@ -50,9 +64,7 @@ class MessageService:
                 raise ValueError("Message not found.")
         except IntegrityError as e:
             self.db.rollback()
-            # Handle specific SQLAlchemy IntegrityError
-            raise RuntimeError("Database integrity error occurred") from e
+            raise
         except Exception as e:
             self.db.rollback()
-            # Handle all other exceptions
-            raise RuntimeError("An unexpected error occurred") from e
+            raise
