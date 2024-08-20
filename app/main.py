@@ -6,7 +6,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import Base, engine
-# import app.models
 
 from app.modules.conversations.conversations_router import router as conversations_router
 from app.modules.users.user_router import router as user_router

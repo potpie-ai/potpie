@@ -7,7 +7,7 @@ import enum
 class MessageStatus(str, enum.Enum):
     ACTIVE = "ACTIVE"
     ARCHIVED = "ARCHIVED"
-    # DELETED = "DELETED"  # Possible Future extension
+    DELETED = "DELETED"  # Possible Future extension
 
 class MessageType(str, enum.Enum):
     AI_GENERATED = "AI_GENERATED"
