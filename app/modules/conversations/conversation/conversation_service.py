@@ -5,6 +5,8 @@ from uuid6 import uuid7
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import SQLAlchemyError
+
 
 from app.modules.intelligence.agents.intelligent_tool_using_orchestrator import IntelligentToolUsingOrchestrator
 from app.modules.intelligence.tools.duckduckgo_search_tool import DuckDuckGoTool
@@ -191,20 +193,40 @@ class ConversationService:
 
     async def delete_conversation(self, conversation_id: str) -> dict:
         try:
-            conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
-            if not conversation:
-                raise ConversationNotFoundError(f"Conversation with id {conversation_id} not found")
-            conversation.status = ConversationStatus.DELETED  # Soft delete
-            self.db.commit()
-            logger.info(f"Marked conversation {conversation_id} as deleted")
-            return {"status": "success", "message": f"Conversation {conversation_id} has been deleted successfully."}
+            # Start a new transaction
+            with self.db.begin():
+                # Delete related messages first
+                deleted_messages = self.db.query(Message).filter(Message.conversation_id == conversation_id).delete()
+                
+                # Delete the conversation
+                deleted_conversation = self.db.query(Conversation).filter(Conversation.id == conversation_id).delete()
+                
+                if deleted_conversation == 0:
+                    raise ConversationNotFoundError(f"Conversation with id {conversation_id} not found")
+                
+                # The transaction will be automatically committed if we reach this point
+            
+            logger.info(f"Deleted conversation {conversation_id} and {deleted_messages} related messages")
+            return {
+                "status": "success", 
+                "message": f"Conversation {conversation_id} and its messages have been permanently deleted.",
+                "deleted_messages_count": deleted_messages
+            }
+        
         except ConversationNotFoundError as e:
             logger.warning(str(e))
             raise
+        
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in delete_conversation: {e}", exc_info=True)
+            # The transaction will be automatically rolled back
+            raise ConversationServiceError(f"Failed to delete conversation {conversation_id} due to a database error") from e
+        
         except Exception as e:
-            logger.error(f"Error in delete_conversation: {e}", exc_info=True)
+            logger.error(f"Unexpected error in delete_conversation: {e}", exc_info=True)
+            # Ensure rollback in case of any other exception
             self.db.rollback()
-            raise ConversationServiceError(f"Failed to delete conversation {conversation_id}") from e
+            raise ConversationServiceError(f"Failed to delete conversation {conversation_id} due to an unexpected error") from e
 
     async def get_conversation_info(self, conversation_id: str) -> ConversationInfoResponse:
         try:
