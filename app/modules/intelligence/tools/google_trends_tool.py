@@ -8,7 +8,7 @@ class GoogleTrendsInput(BaseModel):
 
 class GoogleTrendsTool(LangchainToolBaseModel):
     name = "GoogleTrends"
-    description = "Provides Google Trends data summary for a specific query over the past 7 days. Use this for understanding the current popularity of topics."
+    description = "Fetches Google Trends data for a query over the past 7 days."
     args_schema: Type[BaseModel] = GoogleTrendsInput
 
     def _run(self, query: str) -> str:
@@ -16,14 +16,14 @@ class GoogleTrendsTool(LangchainToolBaseModel):
             pytrends_instance = TrendReq(hl='en-US', tz=360)
             pytrends_instance.build_payload([query], cat=0, timeframe='now 7-d', geo='', gprop='')
             trends = pytrends_instance.interest_over_time()
+
             if trends.empty:
-                return f"No trending data found for '{query}' in the past 7 days."
-            else:
-                trend_data = trends[query].tolist()
-                recent_trend = trend_data[-1]
-                return str(recent_trend)  # Ensure the trend is a string
+                return f"No trends data found for '{query}' in the past 7 days."
+            
+            recent_trend = trends[query].tolist()[-1]
+            return str(recent_trend).strip()
         except Exception as e:
-            return f"An error occurred while retrieving trends for '{query}': {str(e)}"
+            return f"Error retrieving Google Trends data: {str(e)}"
 
     async def _arun(self, query: str) -> str:
         return self._run(query)

@@ -3,6 +3,7 @@ from typing import AsyncGenerator, List
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, HumanMessagePromptTemplate
 from langchain_core.runnables import RunnableSequence
+from langchain.schema import BaseMessage, HumanMessage, AIMessage
 import logging
 from sqlalchemy.orm import Session
 from app.modules.conversations.message.message_model import MessageType
@@ -13,77 +14,65 @@ logger = logging.getLogger(__name__)
 
 class IntelligentToolUsingOrchestrator:
     def __init__(self, openai_key: str, tools: List, db: Session):
-        # Pass the API key directly to ChatOpenAI
-        self.llm = ChatOpenAI(api_key=openai_key, temperature=0.7)
-        self.tools = tools
+        self.llm = ChatOpenAI(api_key=openai_key, temperature=0.7, model_kwargs={"stream": True})
+        self.tools = {tool.name: tool for tool in tools}
         self.history_manager = PostgresChatHistoryManager(db)
         self.chain = self._create_chain()
 
     def _create_chain(self) -> RunnableSequence:
-        # Construct the prompt template
         prompt_template = ChatPromptTemplate(
             messages=[
                 MessagesPlaceholder(variable_name="history"),
                 HumanMessagePromptTemplate.from_template("{input}")
             ]
         )
-
-        # Create a sequence of operations by chaining them together
         return prompt_template | self.llm
 
     async def run(self, query: str, user_id: str, conversation_id: str) -> AsyncGenerator[str, None]:
-        # Ensure the query is a string
         if not isinstance(query, str):
             raise ValueError("Query must be a string.")
 
-        # Load the chat history
         history = self.history_manager.get_session_history(user_id, conversation_id)
+        validated_history = [
+            HumanMessage(content=str(msg)) if isinstance(msg, (str, int, float)) else msg
+            for msg in history
+        ]
+        
+        inputs = validated_history + [HumanMessage(content=query)]
 
-        # Prepare the input dictionary for the chain
-        inputs = {
-            "input": query,
-            "history": history
-        }
+        try:
+            # First, run tools and add their results to the conversation history
+            tool_results = await self._run_tools(query)
+            if tool_results:
+                tool_message = AIMessage(content=f"Tool results: {'; '.join(tool_results)}")
+                inputs.append(tool_message)
+                # Add tool results to history, but don't yield to user
+                self.history_manager.add_message(conversation_id, tool_message.content, MessageType.AI_GENERATED)
 
-        # Invoke the chain with the prepared inputs
-        result = await self.chain.ainvoke(inputs)
+            # Now stream the LLM output
+            async for chunk in self.llm.astream(inputs):
+                content = chunk.content if hasattr(chunk, 'content') else str(chunk)
+                self.history_manager.add_message(conversation_id, content, MessageType.AI_GENERATED)
+                yield content
 
-        # Ensure result is a string
-        if not isinstance(result, str):
-            result = str(result)
-
-        # Handle tool invocation here
-        tool_results = await self._run_tools(query)
-
-        # Combine the results from the LLM and tools if needed
-        combined_tool_results = "\n".join(tool_results)
-        final_result = f"{result}\n\n{combined_tool_results}"
-
-        # Save the new interaction (query and final result) to the database
-        self.history_manager.add_message(conversation_id, query, MessageType.HUMAN, user_id)
-        self.history_manager.add_message(conversation_id, final_result, MessageType.AI_GENERATED)
-
-        # Ensure the final result is a string before yielding
-        yield str(final_result)
+        except Exception as e:
+            logger.error(f"Error during LLM invocation: {str(e)}")
+            yield f"An error occurred: {str(e)}"
 
     async def _run_tools(self, query: str) -> List[str]:
-        """Run all tools asynchronously and gather their results."""
         tool_results = []
-        for tool in self.tools:
+        for tool_name, tool in self.tools.items():
             try:
-                if hasattr(tool, 'run'):
-                    tool_result = await asyncio.to_thread(tool.run, query)
-                elif hasattr(tool, 'arun'):
+                if hasattr(tool, 'arun'):
                     tool_result = await tool.arun(query)
+                elif hasattr(tool, 'run'):
+                    tool_result = await asyncio.to_thread(tool.run, query)
                 else:
-                    tool_result = ""
+                    continue  # Skip tools without run or arun methods
+
+                if tool_result:
+                    tool_results.append(f"{tool_name}: {tool_result}")
             except Exception as e:
-                logger.error(f"Error running tool {tool.name}: {str(e)}")
-                tool_result = f"Error running tool {tool.name}: {str(e)}"
-            
-            # Ensure tool_result is a string
-            if not isinstance(tool_result, str):
-                tool_result = str(tool_result)
-                
-            tool_results.append(tool_result)
+                logger.error(f"Error running tool {tool_name}: {str(e)}")
+
         return tool_results

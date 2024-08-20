@@ -9,18 +9,16 @@ class WikipediaInput(BaseModel):
 
 class WikipediaTool(LangchainToolBaseModel):
     name = "Wikipedia"
-    description = "Fetch information from Wikipedia. Use this for factual queries about various topics."
+    description = "Fetch factual information from Wikipedia on various topics."
     args_schema: Type[BaseModel] = WikipediaInput
 
     def _run(self, query: str) -> str:
         try:
             query_run = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper())
             result = query_run.run(query)
-            if query.lower() not in result.lower():
-                return f"Relevant information not found directly related to '{query}'."
-            return str(result)  # Ensure the result is a string
+            return result.strip()  # Clean up any leading/trailing whitespace
         except Exception as e:
-            return f"An error occurred while fetching information from Wikipedia: {str(e)}"
+            return f"Error fetching Wikipedia information: {str(e)}"
 
     async def _arun(self, query: str) -> str:
         return self._run(query)
