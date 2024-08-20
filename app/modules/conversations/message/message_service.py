@@ -46,19 +46,19 @@ class MessageService:
             self.db.rollback()
             raise
 
-    async def mark_message_inactive(self, message_id: str) -> None:
+    async def mark_message_archived(self, message_id: str) -> None:
         try:
-            await asyncio.get_event_loop().run_in_executor(None, self._sync_mark_message_inactive, message_id)
+            await asyncio.get_event_loop().run_in_executor(None, self._sync_mark_message_archived, message_id)
         except IntegrityError as e:
             raise RuntimeError("Database integrity error occurred") from e
         except Exception as e:
             raise RuntimeError("An unexpected error occurred") from e
 
-    def _sync_mark_message_inactive(self, message_id: str):
+    def _sync_mark_message_archived(self, message_id: str):
         try:
             message = self.db.query(Message).filter(Message.id == message_id).one_or_none()
             if message:
-                message.status = MessageStatus.INACTIVE
+                message.status = MessageStatus.ARCHIVED
                 self.db.commit()
             else:
                 raise ValueError("Message not found.")

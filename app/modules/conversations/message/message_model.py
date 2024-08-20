@@ -6,7 +6,7 @@ import enum
 
 class MessageStatus(str, enum.Enum):
     ACTIVE = "ACTIVE"
-    INACTIVE = "INACTIVE"
+    ARCHIVED = "ARCHIVED"
     # DELETED = "DELETED"  # Possible Future extension
 
 class MessageType(str, enum.Enum):

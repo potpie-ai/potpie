@@ -127,7 +127,7 @@ class ConversationService:
             self.db.query(Message).filter(
                 Message.conversation_id == conversation_id,
                 Message.created_at > last_human_message.created_at
-            ).update({Message.status: MessageStatus.INACTIVE}, synchronize_session='fetch')
+            ).update({Message.status: MessageStatus.ARCHIVED}, synchronize_session='fetch')
             self.db.commit()
 
             full_content = ""
