@@ -13,6 +13,10 @@ from app.modules.users.user_router import router as user_router
 
 from app.modules.utils.dummy_setup import DummyDataSetup
 
+from app.firebase_setup import firebase_init
+from app.modules.parsing.graph_construction.parsing_router import router as parsing_router
+from app.modules.auth.auth_router import auth_router
+
 class MainApp:
     def __init__(self):
         load_dotenv(override=True)
@@ -57,6 +61,8 @@ class MainApp:
     def include_routers(self):
         self.app.include_router(user_router, prefix="/api/v1", tags=["User"])
         self.app.include_router(conversations_router, prefix="/api/v1", tags=["Conversations"])
+        self.app.include_router(parsing_router,  prefix="/api/v1", tags=["Parsing"])
+        self.app.include_router(auth_router,  prefix="/api/v1", tags=["Auth"])
 
 
     def add_health_check(self):
@@ -68,7 +74,14 @@ class MainApp:
         self.add_health_check()
         return self.app
 
+if os.getenv("isDevelopmentMode") == "enabled":
+    
+    #TODO: setup dummy user
+    print("Setting up dummy user")
+else:
+    firebase_init()
 
 # Create an instance of MainApp and run it
 main_app = MainApp()
 app = main_app.run()
+

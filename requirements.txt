@@ -4,6 +4,8 @@ sqlalchemy
 alembic
 gunicorn
 python-dotenv
+postgres
+# psycopg2
 psycopg2-binary
 neo4j
 tree-sitter<=0.21.3
@@ -27,4 +29,9 @@ pytrends
 wikipedia-api
 langgraph
 langchain-postgres 
-psycopg[binary,pool]
+# psycopg2[binary,pool]
+pymongo
+firebase_admin
+portkey_ai
+gitPython
+PyGithub

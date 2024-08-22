@@ -1,5 +1,5 @@
 from neo4j import GraphDatabase
-from repomap import RepoMap
+from app.modules.parsing.graph_construction.parsing_helper import RepoMap
 import os 
 import traceback
 import uuid
@@ -85,7 +85,7 @@ class CodeGraphService:
             return [record.data() for record in result]
 
 # Example usage
-if __name__ == "__main__":
+async def analyze_directory(repo_dir):
     service = CodeGraphService("bolt://localhost:7687", "neo4j", "mysecretpassword")
     
     try:

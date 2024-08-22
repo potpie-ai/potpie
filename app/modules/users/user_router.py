@@ -1,5 +1,6 @@
 from typing import List
-from fastapi import APIRouter, Depends, Query
+from fastapi import Depends, Query
+from app.modules.utils.APIRouter import APIRouter
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.modules.users.user_controller import UserController
@@ -18,3 +19,6 @@ class UserAPI:
     ):
         controller = UserController(db)
         return await controller.get_conversations_for_user(user_id, start, limit)
+    
+
+

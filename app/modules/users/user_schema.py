@@ -1,5 +1,6 @@
 from typing import List, Optional
 from pydantic import BaseModel
+from datetime import datetime
 
 class UserConversationListRequest(BaseModel):
     user_id: str
@@ -14,3 +15,13 @@ class UserConversationListResponse(BaseModel):
     project_ids: Optional[List[str]]
     created_at: str
     updated_at: str
+
+class CreateUser(BaseModel):
+    uid: str
+    email: str
+    display_name: str
+    email_verified: bool
+    created_at: datetime
+    last_login_at: datetime
+    provider_info: dict
+    provider_username: str

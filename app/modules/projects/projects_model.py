@@ -1,22 +1,13 @@
-from sqlalchemy import Column, ForeignKey, String, TIMESTAMP, Boolean, CheckConstraint, func, Integer, Text
+from sqlalchemy import Column, ForeignKey, String, TIMESTAMP, Boolean, CheckConstraint, ForeignKeyConstraint, func, Integer, Text
 from sqlalchemy.dialects.postgresql import BYTEA
 from app.core.database import Base
 from sqlalchemy.orm import relationship
 
-import enum
-
-class ProjectStatusEnum(str, enum.Enum):
-    CREATED = 'created'
-    READY = 'ready'
-    ERROR = 'error'
 
 class Project(Base):
     __tablename__ = "projects"
     
     id = Column(Integer, primary_key=True)
-    directory = Column(Text, unique=True)
-    is_default = Column(Boolean, default=False)
-    project_name = Column(Text)
     properties = Column(BYTEA)
     repo_name = Column(Text)
     branch_name = Column(Text)
@@ -28,7 +19,8 @@ class Project(Base):
     status = Column(String(255), default='created')
 
     __table_args__ = (
-        CheckConstraint("status IN ('created', 'ready', 'error')", name='check_status'),
+        ForeignKeyConstraint(["user_id"], ["users.uid"], ondelete="CASCADE"),
+        CheckConstraint("status IN ('submitted', 'cloned', 'parsed', 'ready', 'error')", name='check_status'),
     )
     
 # Project relationships
