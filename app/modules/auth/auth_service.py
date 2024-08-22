@@ -34,6 +34,7 @@ class AuthService:
         return user
 
     @classmethod
+    @staticmethod
     async def check_auth(
         request: Request,
         res: Response,

@@ -38,13 +38,11 @@ class DummyDataSetup:
             dummy_user = self.db.query(User).filter_by(uid=os.getenv("defaultUsername")).first()
             if dummy_user:
                 # Check if the dummy project already exists
-                project_exists = self.db.query(Project).filter_by(directory="dummy_directory").first()
+                project_exists = self.db.query(Project).filter_by(repo_name="dummy_repo").first()
                 if not project_exists:
                     # Create a dummy project
                     dummy_project = Project(
-                        directory="dummy_directory",
-                        is_default=True,
-                        project_name="Dummy Project Created To Test AI Agent",
+                        
                         properties=b'{}',
                         repo_name="dummy_repo",
                         branch_name="main",

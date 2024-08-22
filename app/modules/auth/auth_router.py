@@ -4,11 +4,12 @@ import os
 from datetime import datetime
 from dotenv import load_dotenv
 
-from fastapi import Request
+from fastapi import Depends, Request
 from fastapi.responses import JSONResponse, Response
-
+from sqlalchemy.orm import Session
+from app.core.database import get_db
 from app.modules.auth.auth_service import auth_handler
-from app.modules.users.user_service import user_service
+from app.modules.users.user_service import UserService
 
 from app.modules.utils.APIRouter import APIRouter
 
@@ -35,9 +36,10 @@ class AuthAPI:
             )
 
     @auth_router.post("/signup")
-    async def signup(request: Request):
+    async def signup(request: Request, db: Session = Depends(get_db)):
         body = json.loads(await request.body())
         uid = body["uid"]
+        user_service = UserService(db)
         user = user_service.get_user_by_uid(uid)
         if user:
             message, error = user_service.update_last_login(uid)

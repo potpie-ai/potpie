@@ -46,12 +46,12 @@ class GithubService:
             return True
 
     @staticmethod
-    def fetch_method_from_repo(node):
+    def fetch_method_from_repo(node, db):
         method_content = None
         github = None
         try:
             project_id = node["project_id"]
-            project_manager = ProjectService()
+            project_manager = ProjectService(db)
             repo_details = project_manager.get_repo_and_branch_name(project_id=project_id)
             repo_name = repo_details[0]
             branch_name = repo_details[1]

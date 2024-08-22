@@ -92,7 +92,7 @@ async def analyze_directory(repo_dir):
 
         # repo_dir = "/Users/dhirenmathur/Downloads/dispatch-master"
         # repo_dir = "/Users/dhirenmathur/Downloads/litellm-main"
-        repo_dir = "/Users/dhirenmathur/Downloads/simplQ-backend-master"
+        # repo_dir = "/Users/dhirenmathur/Downloads/simplQ-backend-master"
         # Basic language detection based on file extensions and character count
         def detect_repo_language(repo_dir):
             lang_count = {"python": 0, "javascript": 0, "typescript": 0, "other": 0}

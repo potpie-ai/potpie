@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from typing import Dict, Tuple
 from app.modules.github.github_service import GithubService
 from github import Github
-from app.modules.parsing.graph_construction.parsing_helper import setup_project_directory, download_and_extract_tarball, extract_repository_metadata
+from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
 from app.modules.parsing.graph_construction.parsing_service import analyze_directory
 
 router = APIRouter()
@@ -38,7 +38,7 @@ class ParsingAPI:
         finally:
             os.chdir(old_dir)
             
-    async def clone_or_copy_repository(repo_details: RepoDetails, user_id: str) -> Tuple[Any, str, Any]:
+    async def clone_or_copy_repository(repo_details: RepoDetails, db: Session, user_id: str) -> Tuple[Any, str, Any]:
         if repo_details.repo_path:
             if not os.path.exists(repo_details.repo_path):
                 raise HTTPException(status_code=400, detail="Local repository does not exist on given path")
@@ -46,7 +46,7 @@ class ParsingAPI:
             owner = None
             auth = None
         else:
-            github_service = GithubService()
+            github_service = GithubService(db)
             response, auth, owner = github_service.get_github_repo_details(repo_details.repo_name)
             if response.status_code != 200:
                 raise HTTPException(status_code=400, detail="Failed to get installation ID")
@@ -61,23 +61,24 @@ class ParsingAPI:
     @router.post("/parse")
     async def parse_directory(
         repo_details: ParsingRequest,
+        db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth)
     ):
         user_id = user["user_id"]
-        project_manager = ProjectService()
+        project_manager = ProjectService(db)
         project_id = None
-
+        parse_helper = ParseHelper(db)
         try:
             # Step 1: Validate input
             ParsingAPI.validate_input(repo_details, user_id)
-            project_manager.update_project_status(project_id, ProjectStatusEnum.SUBMITTED)
+            await project_manager.update_project_status(project_id, ProjectStatusEnum.SUBMITTED)
 
             # Step 2: Clone or copy repository
-            repo, owner, auth = await ParsingAPI.clone_or_copy_repository(repo_details, user_id)
-            project_manager.update_project_status(project_id, ProjectStatusEnum.CLONED)
+            repo, owner, auth = await ParsingAPI.clone_or_copy_repository(repo_details, db, user_id)
+            await project_manager.update_project_status(project_id, ProjectStatusEnum.CLONED)
 
             # Step 3: Setup project directory
-            extracted_dir, project_id, should_parse_repo = setup_project_directory(
+            extracted_dir, project_id, should_parse_repo = await parse_helper.setup_project_directory(
                 owner, repo, repo_details.branch_name, auth, repo, user_id
             )
 
@@ -85,20 +86,20 @@ class ParsingAPI:
             if should_parse_repo:
                 await analyze_directory(extracted_dir)
                 message = "The project has been parsed successfully"
-                project_manager.update_project_status(project_id, ProjectStatusEnum.READY)
+                await project_manager.update_project_status(project_id, ProjectStatusEnum.READY)
             else:
                 message = "Repository doesn't consist of a language currently supported."
-                project_manager.update_project_status(project_id, ProjectStatusEnum.ERROR)
+                await project_manager.update_project_status(project_id, ProjectStatusEnum.ERROR)
 
             return {"message": message, "id": project_id}
 
         except HTTPException as http_ex:
             if project_id:
-                project_manager.update_project_status(project_id, ProjectStatusEnum.ERROR)
+                await project_manager.update_project_status(project_id, ProjectStatusEnum.ERROR)
             raise http_ex
         except Exception as e:
             if project_id:
-                project_manager.update_project_status(project_id, ProjectStatusEnum.ERROR)
+                await project_manager.update_project_status(project_id, ProjectStatusEnum.ERROR)
             tb_str = "".join(traceback.format_exception(None, e, e.__traceback__))
             raise HTTPException(status_code=500, detail=f"{str(e)}\nTraceback: {tb_str}")
 
