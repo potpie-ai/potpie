@@ -13,7 +13,6 @@ from app.modules.users.user_router import router as user_router
 
 from app.modules.utils.dummy_setup import DummyDataSetup
 
-
 class MainApp:
     def __init__(self):
         load_dotenv(override=True)

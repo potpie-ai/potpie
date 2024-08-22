@@ -1,4 +1,3 @@
-import asyncio
 import os
 import logging
 from typing import AsyncGenerator, Optional, List
@@ -6,193 +5,270 @@ from uuid6 import uuid7
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import SQLAlchemyError
+
+
 from app.modules.intelligence.agents.intelligent_tool_using_orchestrator import IntelligentToolUsingOrchestrator
-from app.modules.projects.projects_service import ProjectService
-from app.modules.conversations.conversation.conversation_model import Conversation, ConversationStatus
-from app.modules.conversations.message.message_model import Message, MessageType
-from app.modules.conversations.conversation.conversation_schema import CreateConversationRequest, ConversationResponse, ConversationInfoResponse
-from app.modules.conversations.message.message_schema import MessageRequest, MessageResponse
-from app.modules.conversations.message.message_service import MessageService
+from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.tools.duckduckgo_search_tool import DuckDuckGoTool
 from app.modules.intelligence.tools.google_trends_tool import GoogleTrendsTool
 from app.modules.intelligence.tools.wikipedia_tool import WikipediaTool
+from app.modules.projects.projects_service import ProjectService
+from app.modules.conversations.conversation.conversation_model import Conversation, ConversationStatus
+from app.modules.conversations.message.message_model import Message, MessageType, MessageStatus
+from app.modules.conversations.conversation.conversation_schema import CreateConversationRequest, ConversationInfoResponse
+from app.modules.conversations.message.message_schema import MessageRequest, MessageResponse
 
-# Set up logging
 logger = logging.getLogger(__name__)
 
+class ConversationServiceError(Exception):
+    """Base exception class for ConversationService errors."""
+
+class ConversationNotFoundError(ConversationServiceError):
+    """Raised when a conversation is not found."""
+
+class MessageNotFoundError(ConversationServiceError):
+    """Raised when a message is not found."""
+
 class ConversationService:
-    def __init__(self, db: Session):
+    def __init__(self, 
+                 db: Session, 
+                 project_service: ProjectService, 
+                 history_manager: ChatHistoryService, 
+                 orchestrator: IntelligentToolUsingOrchestrator):
         self.db = db
-        self.project_service = ProjectService(db)
-        self.message_service = MessageService(db)
-        self.openai_key = os.getenv("OPENAI_API_KEY")
-        if not self.openai_key:
-            raise ValueError("The OpenAI API key is not set in the environment variable 'OPENAI_API_KEY'.")
-        # Initialize the orchestrator once
-        self.orchestrator = self._initialize_orchestrator()
+        self.project_service = project_service
+        self.history_manager = history_manager
+        self.orchestrator = orchestrator
 
-    def _initialize_orchestrator(self) -> IntelligentToolUsingOrchestrator:
-        tools = [
-            GoogleTrendsTool(),
-            WikipediaTool(),
-            DuckDuckGoTool(),
-        ]
-        return IntelligentToolUsingOrchestrator(self.openai_key, tools, self.db)  # Pass the db session to the orchestrator
+    @classmethod
+    def create(cls, db: Session):
+        project_service = ProjectService(db)
+        history_manager = ChatHistoryService(db)
+        openai_key = cls._get_openai_key()
+        orchestrator = cls._initialize_orchestrator(openai_key, db)
+        return cls(db, project_service, history_manager, orchestrator)
 
-    async def run_tool_using_orchestrator(self, query: str, user_id: str, conversation_id: str) -> AsyncGenerator[str, None]:
-        # Process the query using the orchestrator and return the results
-        async for chunk in self.orchestrator.run(query, user_id, conversation_id):
-            yield chunk
+    @staticmethod
+    def _get_openai_key() -> str:
+        key = os.getenv("OPENAI_API_KEY")
+        if not key:
+            raise ConversationServiceError("The OpenAI API key is not set in the environment variable 'OPENAI_API_KEY'.")
+        return key
 
-    async def message_stream(self, conversation_id: str, query: str) -> AsyncGenerator[str, None]:
-        try:
-            full_content = ""
-            # Use the orchestrator's run method to process the query with memory and tools
-            async for content_update in self.run_tool_using_orchestrator(query, user_id="user_id", conversation_id=conversation_id):
-                if content_update:
-                    full_content += content_update
-                    yield content_update
-            # Ensure the memory is updated after generating the content
-            await self.message_service.create_message(
-                conversation_id,
-                full_content.strip(),
-                MessageType.AI_GENERATED
-            )
-        except Exception as e:
-            logger.error(f"Error in message_stream: {e}")
-            raise e
+    @staticmethod
+    def _initialize_orchestrator(openai_key: str, db: Session) -> IntelligentToolUsingOrchestrator:
+        tools = [GoogleTrendsTool(), WikipediaTool(), DuckDuckGoTool()]
+        return IntelligentToolUsingOrchestrator(openai_key, tools, db)
 
     async def create_conversation(self, conversation: CreateConversationRequest) -> tuple[str, str]:
         try:
-            project_ids = conversation.project_ids
-            project_name = await self.project_service.get_project_name(project_ids)
-            conversation_id = str(uuid7())
-            new_conversation = Conversation(
-                id=conversation_id,
-                user_id=conversation.user_id,
-                title=project_name,
-                status=ConversationStatus.ACTIVE,
-                project_ids=project_ids,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
-            )
-            self.db.add(new_conversation)
-            self.db.commit()
-            await self.message_service.create_message(
-                conversation_id,
-                f"Project {project_name} has been parsed successfully.",
-                MessageType.SYSTEM_GENERATED,
-                sender_id=None,
-            )
-            await asyncio.create_task(self._async_create_conversation_post_commit(conversation_id, project_name))
+            project_name = await self.project_service.get_project_name(conversation.project_ids)
+            
+            title = conversation.title.strip() if conversation.title else project_name
+            
+            conversation_id = self._create_conversation_record(conversation, title)
+            
+            await self._add_system_message(conversation_id, title)
+            await self._generate_initial_ai_response(conversation_id, title)
+            
             return conversation_id, "Conversation created successfully."
         except IntegrityError as e:
-            logger.error(f"IntegrityError in create_conversation: {e}")
+            logger.error(f"IntegrityError in create_conversation: {e}", exc_info=True)
             self.db.rollback()
-            raise e
+            raise ConversationServiceError("Failed to create conversation due to a database integrity error.") from e
         except Exception as e:
-            logger.error(f"Error in create_conversation: {e}")
+            logger.error(f"Unexpected error in create_conversation: {e}", exc_info=True)
             self.db.rollback()
-            raise e
+            raise ConversationServiceError("An unexpected error occurred while creating the conversation.") from e
 
-    async def _async_create_conversation_post_commit(self, conversation_id: str, project_name: str):
-        try:
-            search_result = []
-            async for result in self.run_tool_using_orchestrator(project_name, "user_id", conversation_id):
-                if result:
-                    search_result.append(result)
-            combined_search_result = "\n".join(search_result)
-            await self.message_service.create_message(conversation_id, combined_search_result, MessageType.AI_GENERATED)
-        except Exception as e:
-            logger.error(f"Error in async processing after transaction: {e}")
+    def _create_conversation_record(self, conversation: CreateConversationRequest, title: str) -> str:
+        conversation_id = str(uuid7())
+        new_conversation = Conversation(
+            id=conversation_id,
+            user_id=conversation.user_id,
+            title=title,
+            status=ConversationStatus.ACTIVE,
+            project_ids=conversation.project_ids,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        self.db.add(new_conversation)
+        self.db.commit()
+        logger.info(f"Created new conversation with ID: {conversation_id}, title: {title}")
+        return conversation_id
 
-    async def store_message(self, conversation_id: str, message: MessageRequest, message_type: MessageType, user_id: Optional[str] = None) -> Message:
+    async def _add_system_message(self, conversation_id: str, project_name: str):
+        content = f"Project {project_name} has been parsed successfully."
         try:
-            return await self.message_service.create_message(conversation_id, message.content, message_type, user_id)
-        except IntegrityError as e:
-            logger.error(f"IntegrityError in store_message: {e}")
-            raise e
+            self.history_manager.add_message_chunk(conversation_id, content, MessageType.SYSTEM_GENERATED)
+            self.history_manager.flush_message_buffer(conversation_id, MessageType.SYSTEM_GENERATED)
+            logger.info(f"Added system message to conversation {conversation_id}")
         except Exception as e:
-            logger.error(f"Error in store_message: {e}")
-            raise e
+            logger.error(f"Failed to add system message to conversation {conversation_id}: {e}", exc_info=True)
+            raise ConversationServiceError("Failed to add system message to the conversation.") from e
+
+    async def _generate_initial_ai_response(self, conversation_id: str, project_name: str):
+        query = f"Summarize the project: {project_name}"
+        try:
+            await self._generate_ai_response(query, conversation_id)
+            logger.info(f"Generated initial AI response for conversation {conversation_id}")
+        except Exception as e:
+            logger.error(f"Failed to generate initial AI response for conversation {conversation_id}: {e}", exc_info=True)
+            raise ConversationServiceError("Failed to generate initial AI response.") from e
+
+    async def store_message(self, conversation_id: str, message: MessageRequest, message_type: MessageType, user_id: Optional[str] = None) -> AsyncGenerator[str, None]:
+        try:
+            self.history_manager.add_message_chunk(conversation_id, message.content, message_type, user_id)
+            self.history_manager.flush_message_buffer(conversation_id, message_type, user_id)
+            logger.info(f"Stored message in conversation {conversation_id}")
+            if message_type == MessageType.HUMAN:
+                async for chunk in self._generate_and_stream_ai_response(message.content, conversation_id):
+                    yield chunk
+        except Exception as e:
+            logger.error(f"Error in store_message for conversation {conversation_id}: {e}", exc_info=True)
+            raise ConversationServiceError("Failed to store message or generate AI response.") from e
 
     async def regenerate_last_message(self, conversation_id: str) -> AsyncGenerator[str, None]:
         try:
-            last_human_message = (
-                self.db.query(Message)
-                .filter_by(conversation_id=conversation_id, type=MessageType.HUMAN)
-                .order_by(Message.created_at.desc())
-                .first()
-            )
+            last_human_message = await self._get_last_human_message(conversation_id)
             if not last_human_message:
-                raise ValueError("No human message found to regenerate from")
-            messages_to_delete = (
-                self.db.query(Message)
-                .filter(
-                    Message.conversation_id == conversation_id,
-                    Message.id > last_human_message.id
-                )
-            )
-            messages_to_delete.delete(synchronize_session='fetch')
+                raise MessageNotFoundError("No human message found to regenerate from")
+
+            await self._archive_subsequent_messages(conversation_id, last_human_message.created_at)
+            
+            async for chunk in self._generate_and_stream_ai_response(last_human_message.content, conversation_id):
+                yield chunk
+        except MessageNotFoundError as e:
+            logger.warning(f"No message to regenerate in conversation {conversation_id}: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Error in regenerate_last_message for conversation {conversation_id}: {e}", exc_info=True)
+            raise ConversationServiceError("Failed to regenerate last message.") from e
+
+    async def _get_last_human_message(self, conversation_id: str):
+        message = (
+            self.db.query(Message)
+            .filter_by(conversation_id=conversation_id, type=MessageType.HUMAN)
+            .order_by(Message.created_at.desc())
+            .first()
+        )
+        if not message:
+            logger.warning(f"No human message found in conversation {conversation_id}")
+        return message
+
+    async def _archive_subsequent_messages(self, conversation_id: str, timestamp: datetime):
+        try:
+            self.db.query(Message).filter(
+                Message.conversation_id == conversation_id,
+                Message.created_at > timestamp
+            ).update({Message.status: MessageStatus.ARCHIVED}, synchronize_session='fetch')
             self.db.commit()
-            full_content = ""
-            async for chunk in self.run_tool_using_orchestrator(last_human_message.content, "user_id", conversation_id):
+            logger.info(f"Archived subsequent messages in conversation {conversation_id}")
+        except Exception as e:
+            logger.error(f"Failed to archive messages in conversation {conversation_id}: {e}", exc_info=True)
+            self.db.rollback()
+            raise ConversationServiceError("Failed to archive subsequent messages.") from e
+
+    async def _generate_ai_response(self, query: str, conversation_id: str) -> str:
+        full_content = ""
+        try:
+            async for chunk in self.orchestrator.run(query, "user_id", conversation_id):
                 if chunk:
                     full_content += chunk
-                    yield f"data: {{'content': {chunk}}}\n\n"
-            await self.message_service.create_message(conversation_id, full_content.strip(), MessageType.AI_GENERATED)
-        except IntegrityError as e:
-            logger.error(f"IntegrityError in regenerate_last_message: {e}")
-            self.db.rollback()
-            raise e
+            logger.info(f"Generated AI response for conversation {conversation_id}")
+            return full_content.strip()
         except Exception as e:
-            logger.error(f"Error in regenerate_last_message: {e}")
-            self.db.rollback()
-            raise e
+            logger.error(f"Failed to generate AI response for conversation {conversation_id}: {e}", exc_info=True)
+            raise ConversationServiceError("Failed to generate AI response.") from e
 
-    def get_conversation(self, conversation_id: str) -> ConversationResponse:
+    async def _generate_and_stream_ai_response(self, query: str, conversation_id: str) -> AsyncGenerator[str, None]:
+        full_content = ""
+        try:
+            async for chunk in self.orchestrator.run(query, "user_id", conversation_id):
+                if chunk:
+                    full_content += chunk
+                    yield chunk  # Stream to the client
+            logger.info(f"Generated and streamed AI response for conversation {conversation_id}")
+        except Exception as e:
+            logger.error(f"Failed to generate and stream AI response for conversation {conversation_id}: {e}", exc_info=True)
+            raise ConversationServiceError("Failed to generate and stream AI response.") from e
+
+    async def delete_conversation(self, conversation_id: str) -> dict:
+        try:
+            # Start a new transaction
+            with self.db.begin():
+                # Delete related messages first
+                deleted_messages = self.db.query(Message).filter(Message.conversation_id == conversation_id).delete()
+                
+                # Delete the conversation
+                deleted_conversation = self.db.query(Conversation).filter(Conversation.id == conversation_id).delete()
+                
+                if deleted_conversation == 0:
+                    raise ConversationNotFoundError(f"Conversation with id {conversation_id} not found")
+                
+                # The transaction will be automatically committed if we reach this point
+            
+            logger.info(f"Deleted conversation {conversation_id} and {deleted_messages} related messages")
+            return {
+                "status": "success", 
+                "message": f"Conversation {conversation_id} and its messages have been permanently deleted.",
+                "deleted_messages_count": deleted_messages
+            }
+        
+        except ConversationNotFoundError as e:
+            logger.warning(str(e))
+            raise
+        
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in delete_conversation: {e}", exc_info=True)
+            # The transaction will be automatically rolled back
+            raise ConversationServiceError(f"Failed to delete conversation {conversation_id} due to a database error") from e
+        
+        except Exception as e:
+            logger.error(f"Unexpected error in delete_conversation: {e}", exc_info=True)
+            # Ensure rollback in case of any other exception
+            self.db.rollback()
+            raise ConversationServiceError(f"Failed to delete conversation {conversation_id} due to an unexpected error") from e
+
+    async def get_conversation_info(self, conversation_id: str) -> ConversationInfoResponse:
         try:
             conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
             if not conversation:
-                raise ValueError("Conversation not found")
-            return ConversationResponse(
+                raise ConversationNotFoundError(f"Conversation with id {conversation_id} not found")
+            total_messages = self.db.query(Message).filter_by(conversation_id=conversation_id, status=MessageStatus.ACTIVE).count()
+            return ConversationInfoResponse(
                 id=conversation.id,
-                user_id=conversation.user_id,
                 title=conversation.title,
                 status=conversation.status,
                 project_ids=conversation.project_ids,
-                created_at=conversation.created_at.isoformat(),
-                updated_at=conversation.updated_at.isoformat(),
+                created_at=conversation.created_at,
+                updated_at=conversation.updated_at,
+                total_messages=total_messages
             )
+        except ConversationNotFoundError as e:
+            logger.warning(str(e))
+            raise
         except Exception as e:
-            logger.error(f"Error in get_conversation: {e}")
-            raise e
+            logger.error(f"Error in get_conversation_info: {e}", exc_info=True)
+            raise ConversationServiceError(f"Failed to get conversation info for {conversation_id}") from e
 
-    def get_conversation_info(self, conversation_id: str) -> ConversationInfoResponse:
+    async def get_conversation_messages(self, conversation_id: str, start: int, limit: int) -> List[MessageResponse]:
         try:
             conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
             if not conversation:
-                raise ValueError("Conversation not found")
-            return ConversationInfoResponse(
-                id=conversation.id,
-                project_ids=conversation.project_ids,
-                total_messages=len(conversation.messages)
-            )
-        except Exception as e:
-            logger.error(f"Error in get_conversation_info: {e}")
-            raise e
-
-    def get_conversation_messages(self, conversation_id: str, start: int, limit: int) -> List[MessageResponse]:
-        try:
+                raise ConversationNotFoundError(f"Conversation with id {conversation_id} not found")
+            
             messages = (
                 self.db.query(Message)
                 .filter_by(conversation_id=conversation_id)
+                .filter_by(status=MessageStatus.ACTIVE)  # Only fetch active messages
+                .order_by(Message.created_at)
                 .offset(start)
                 .limit(limit)
                 .all()
             )
-            if not messages:
-                return []
+            
             return [
                 MessageResponse(
                     id=message.id,
@@ -200,29 +276,19 @@ class ConversationService:
                     content=message.content,
                     sender_id=message.sender_id,
                     type=message.type,
-                    created_at=message.created_at
+                    status=message.status,  # Include the status field
+                    created_at=message.created_at,
                 ) for message in messages
             ]
+        except ConversationNotFoundError as e:
+            logger.warning(str(e))
+            raise
         except Exception as e:
-            logger.error(f"Error in get_conversation_messages: {e}")
-            raise e
+            logger.error(f"Error in get_conversation_messages: {e}", exc_info=True)
+            raise ConversationServiceError(f"Failed to get messages for conversation {conversation_id}") from e
 
-    def delete_conversation(self, conversation_id: str) -> dict:
-        try:
-            conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
-            if not conversation:
-                raise ValueError("Conversation not found")
-            self.db.delete(conversation)
-            self.db.commit()
-            return {"status": "success"}
-        except IntegrityError as e:
-            logger.error(f"IntegrityError in delete_conversation: {e}")
-            self.db.rollback()
-            raise e
-        except Exception as e:
-            logger.error(f"Error in delete_conversation: {e}")
-            self.db.rollback()
-            raise e
-
-    def stop_generation(self, conversation_id: str):
-        pass
+    async def stop_generation(self, conversation_id: str) -> dict:
+        # Implement the logic to stop the generation process
+        # This might involve setting a flag in the orchestrator or cancelling an ongoing task
+        logger.info(f"Attempting to stop generation for conversation {conversation_id}")
+        return {"status": "success", "message": "Generation stop request received"}
