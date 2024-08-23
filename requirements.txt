@@ -18,5 +18,13 @@ agentops
 pytrends
 wikipedia-api
 langgraph
-langchain-postgres 
+langchain-postgres
 psycopg[binary,pool]
+
+# dependencies for linting
+pre-commit
+isort
+black
+flake8
+pylint
+bandit

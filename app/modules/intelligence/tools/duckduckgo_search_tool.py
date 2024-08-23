@@ -1,10 +1,13 @@
 from typing import Type
-from langchain_community.tools import DuckDuckGoSearchRun
+
 from langchain.tools import BaseTool as LangchainToolBaseModel
+from langchain_community.tools import DuckDuckGoSearchRun
 from pydantic import BaseModel
+
 
 class DuckDuckGoInput(BaseModel):
     query: str
+
 
 class DuckDuckGoTool(LangchainToolBaseModel):
     name = "DuckDuckGoSearch"
@@ -15,7 +18,7 @@ class DuckDuckGoTool(LangchainToolBaseModel):
         try:
             search_run = DuckDuckGoSearchRun()
             result = search_run.run(query)
-            return result.split('\n')[0].strip()  # Return the first relevant result
+            return result.split("\n")[0].strip()  # Return the first relevant result
         except Exception as e:
             return f"Error searching DuckDuckGo: {str(e)}"
 

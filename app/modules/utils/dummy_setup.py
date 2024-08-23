@@ -1,8 +1,11 @@
 import os
+
+from sqlalchemy.sql import func
+
 from app.core.database import SessionLocal
 from app.modules.projects.projects_model import Project
 from app.modules.users.user_model import User
-from sqlalchemy.sql import func
+
 
 class DummyDataSetup:
     def __init__(self):
@@ -11,7 +14,9 @@ class DummyDataSetup:
     def setup_dummy_user(self):
         try:
             # Check if the dummy user already exists
-            user_exists = self.db.query(User).filter_by(uid=os.getenv("defaultUsername")).first()
+            user_exists = (
+                self.db.query(User).filter_by(uid=os.getenv("defaultUsername")).first()
+            )
             if not user_exists:
                 # Create a dummy user
                 user = User(
@@ -35,17 +40,23 @@ class DummyDataSetup:
     def setup_dummy_project(self):
         try:
             # Check if the dummy user exists
-            dummy_user = self.db.query(User).filter_by(uid=os.getenv("defaultUsername")).first()
+            dummy_user = (
+                self.db.query(User).filter_by(uid=os.getenv("defaultUsername")).first()
+            )
             if dummy_user:
                 # Check if the dummy project already exists
-                project_exists = self.db.query(Project).filter_by(directory="dummy_directory").first()
+                project_exists = (
+                    self.db.query(Project)
+                    .filter_by(directory="dummy_directory")
+                    .first()
+                )
                 if not project_exists:
                     # Create a dummy project
                     dummy_project = Project(
                         directory="dummy_directory",
                         is_default=True,
                         project_name="Dummy Project Created To Test AI Agent",
-                        properties=b'{}',
+                        properties=b"{}",
                         repo_name="dummy_repo",
                         branch_name="main",
                         user_id=dummy_user.uid,
@@ -53,7 +64,7 @@ class DummyDataSetup:
                         commit_id="dummy_commit_id",
                         is_deleted=False,
                         updated_at=func.now(),
-                        status="created"
+                        status="created",
                     )
                     self.db.add(dummy_project)
                     self.db.commit()

@@ -1,11 +1,14 @@
 from typing import Type
+
+from langchain.tools import BaseTool as LangchainToolBaseModel
 from langchain_community.tools import WikipediaQueryRun
 from langchain_community.utilities import WikipediaAPIWrapper
-from langchain.tools import BaseTool as LangchainToolBaseModel
 from pydantic import BaseModel
+
 
 class WikipediaInput(BaseModel):
     query: str
+
 
 class WikipediaTool(LangchainToolBaseModel):
     name = "Wikipedia"

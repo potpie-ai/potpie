@@ -1,10 +1,13 @@
 from typing import List, Optional
+
 from pydantic import BaseModel
+
 
 class UserConversationListRequest(BaseModel):
     user_id: str
     start: int = 0  # Default start index
     limit: int = 10  # Default limit
+
 
 class UserConversationListResponse(BaseModel):
     id: str

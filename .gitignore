@@ -18,3 +18,6 @@ cli/momentum_cli/.momentum
 !.env.template
 **/node_modules/
 *.log
+
+.pre-commit-config.yaml
+.flake8

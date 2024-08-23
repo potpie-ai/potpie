@@ -1,15 +1,20 @@
-from sqlalchemy.orm import Session
 from typing import List
+
+from sqlalchemy.orm import Session
+
 from app.modules.users.user_schema import UserConversationListResponse
 from app.modules.users.user_service import UserService
+
 
 class UserController:
     def __init__(self, db: Session):
         self.service = UserService(db)
 
-    async def get_conversations_for_user(self, user_id: str, start: int, limit: int) -> List[UserConversationListResponse]:
+    async def get_conversations_for_user(
+        self, user_id: str, start: int, limit: int
+    ) -> List[UserConversationListResponse]:
         conversations = self.service.get_conversations_for_user(user_id, start, limit)
-        
+
         response = [
             UserConversationListResponse(
                 id=conversation.id,
@@ -19,7 +24,8 @@ class UserController:
                 project_ids=conversation.project_ids,
                 created_at=conversation.created_at.isoformat(),
                 updated_at=conversation.updated_at.isoformat(),
-            ) for conversation in conversations
+            )
+            for conversation in conversations
         ]
-        
+
         return response
