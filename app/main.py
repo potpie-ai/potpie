@@ -1,5 +1,6 @@
 import os
 import logging
+import agentops
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -16,11 +17,16 @@ class MainApp:
     def __init__(self):
         load_dotenv(override=True)
         self.app = FastAPI()
+        self.setup_agentops()
         self.setup_cors()
         self.initialize_database()
         self.check_and_set_env_vars()
         self.setup_data()
         self.include_routers()
+
+    def setup_agentops(self):
+        agentopskey =  os.getenv("AGENTOPS_API_KEY")
+        agentops.init(agentopskey)
 
     def setup_cors(self):
         origins = ["*"]
