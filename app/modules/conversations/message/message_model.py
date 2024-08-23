@@ -3,7 +3,6 @@ import enum
 from sqlalchemy import TIMESTAMP, CheckConstraint, Column
 from sqlalchemy import Enum as SQLAEnum
 from sqlalchemy import ForeignKey, String, Text, func
-from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base

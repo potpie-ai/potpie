@@ -1,7 +1,6 @@
 from typing import AsyncGenerator, List
 
 from fastapi import HTTPException
-from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.modules.conversations.conversation.conversation_schema import (

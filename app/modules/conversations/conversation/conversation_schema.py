@@ -4,7 +4,6 @@ from typing import List
 from pydantic import BaseModel
 
 from app.modules.conversations.conversation.conversation_model import ConversationStatus
-from app.modules.conversations.message.message_schema import MessageResponse
 
 
 class CreateConversationRequest(BaseModel):
