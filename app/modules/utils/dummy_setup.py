@@ -42,7 +42,7 @@ class DummyDataSetup:
                 if not project_exists:
                     # Create a dummy project
                     dummy_project = Project(
-                        
+                        id="dummy_project_id",
                         properties=b'{}',
                         repo_name="dummy_repo",
                         branch_name="main",
@@ -51,7 +51,7 @@ class DummyDataSetup:
                         commit_id="dummy_commit_id",
                         is_deleted=False,
                         updated_at=func.now(),
-                        status="created"
+                        status="ready"
                     )
                     self.db.add(dummy_project)
                     self.db.commit()

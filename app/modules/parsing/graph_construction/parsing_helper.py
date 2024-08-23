@@ -18,16 +18,26 @@ import tarfile
 import requests
 from fastapi import HTTPException
 from git import Repo, GitCommandError
+from uuid6 import uuid7
+from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 import networkx as nx
-from sqlalchemy.orm import Session  # Import SQLAlchemy Session
+from sqlalchemy.orm import Session 
+from app.core import crud_utils
 # tree_sitter is throwing a FutureWarning
 warnings.simplefilter("ignore", category=FutureWarning)
 Tag = namedtuple("Tag", "rel_fname fname line end_line name kind type".split())
 
+class ParsingServiceError(Exception):
+    """Base exception class for ParsingService errors."""
+
+class ParsingFailedError(ParsingServiceError):
+    """Raised when a parsing fails."""
+    
 class ParseHelper:
     def __init__(self, db_session: Session):
-        self.project_manager = ProjectService(db_session)  # Initialize ProjectService with db session
+        self.project_manager = ProjectService(db_session) 
+        self.db = db_session
 
     def download_and_extract_tarball(self, repo, branch, target_dir, auth, repo_details, user_id):
         try:
@@ -80,13 +90,77 @@ class ParseHelper:
 
         return final_dir
 
-
+    @staticmethod
+    def detect_repo_language(repo_dir):
+        lang_count = {
+            "c_sharp": 0, "c": 0, "cpp": 0, "elisp": 0, "elixir": 0, "elm": 0,
+            "go": 0, "java": 0, "javascript": 0, "ocaml": 0, "php": 0, "python": 0,
+            "ql": 0, "ruby": 0, "rust": 0, "typescript": 0, "other": 0
+        }
+        total_chars = 0
+        for root, _, files in os.walk(repo_dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+                ext = os.path.splitext(file)[1].lower()
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                        total_chars += len(content)
+                        if ext == '.cs':
+                            lang_count["c_sharp"] += 1
+                        elif ext == '.c':
+                            lang_count["c"] += 1
+                        elif ext in ['.cpp', '.cxx', '.cc']:
+                            lang_count["cpp"] += 1
+                        elif ext == '.el':
+                            lang_count["elisp"] += 1
+                        elif ext == '.ex' or ext == '.exs':
+                            lang_count["elixir"] += 1
+                        elif ext == '.elm':
+                            lang_count["elm"] += 1
+                        elif ext == '.go':
+                            lang_count["go"] += 1
+                        elif ext == '.java':
+                            lang_count["java"] += 1
+                        elif ext in ['.js', '.jsx']:
+                            lang_count["javascript"] += 1
+                        elif ext == '.ml' or ext == '.mli':
+                            lang_count["ocaml"] += 1
+                        elif ext == '.php':
+                            lang_count["php"] += 1
+                        elif ext == '.py':
+                            lang_count["python"] += 1
+                        elif ext == '.ql':
+                            lang_count["ql"] += 1
+                        elif ext == '.rb':
+                            lang_count["ruby"] += 1
+                        elif ext == '.rs':
+                            lang_count["rust"] += 1
+                        elif ext in ['.ts', '.tsx']:
+                            lang_count["typescript"] += 1
+                        else:
+                            lang_count["other"] += 1
+                except (UnicodeDecodeError, FileNotFoundError):
+                    continue
+        # Determine the predominant language based on counts
+        predominant_language = max(lang_count, key=lang_count.get)
+        return predominant_language if lang_count[predominant_language] > 0 else "other"
+    
+    
     async def setup_project_directory(
-        self, owner, repo, branch, auth, repo_details, user_id, project_id=None
+        self,  repo, branch, auth, repo_details, user_id, project_id = None # Change type to str
     ):
-        should_parse_repo = True
-        default = False
 
+        if not project_id:
+            pid = str(uuid7())
+            project_id = await self.project_manager.register_project(
+                f"{repo.full_name}",
+            branch,
+            user_id,
+            pid,
+        )
+        
+        
         if isinstance(repo_details, Repo):
             extracted_dir = repo_details.working_tree_dir
             try:
@@ -103,49 +177,19 @@ class ParseHelper:
             branch_details = repo_details.head.commit
             latest_commit_sha = branch_details.hexsha
         else:
-            if branch == repo_details.default_branch:
-                default = True
+            
             extracted_dir = self.download_and_extract_tarball(
                 repo, branch, os.getenv("PROJECT_PATH"), auth, repo_details, user_id
             )
             branch_details = repo_details.get_branch(branch)
             latest_commit_sha = branch_details.commit.sha
 
-        momentum_dir = os.path.join(extracted_dir, ".momentum")
-        os.makedirs(momentum_dir, exist_ok=True)
-        with open(os.path.join(momentum_dir, "momentum.db"), "w") as fp:
-            pass
-
         repo_metadata = ParseHelper.extract_repository_metadata(repo_details)
         repo_metadata["error_message"] = None
+        project_metadata = json.dumps(repo_metadata).encode("utf-8")
+        crud_utils.update_project(self.db, project_id, properties=project_metadata, commit_id=latest_commit_sha, status=ProjectStatusEnum.CLONED.value)
 
-        if os.getenv("isDevelopmentMode") == "disabled":
-            python_percentage = (
-                (
-                    repo_metadata["languages"]["breakdown"]["Python"]
-                    / repo_metadata["languages"]["total_bytes"]
-                    * 100
-                )
-                if "Python" in repo_metadata["languages"]["breakdown"]
-                else 0
-            )
-            if python_percentage < 50:
-                repo_metadata["error_message"] = (
-                    "Repository doesn't consist of a language currently supported."
-                )
-                should_parse_repo = False
-            else:
-                repo_metadata["error_message"] = None
-
-        project_id = await self.project_manager.register_project(
-            f"{repo.full_name}",
-            branch,
-            user_id,
-            latest_commit_sha,
-            json.dumps(repo_metadata).encode("utf-8"),
-            project_id,
-        )
-        return extracted_dir, project_id, should_parse_repo
+        return extracted_dir, project_id
     
     def extract_repository_metadata(repo):
         if isinstance(repo, Repo):

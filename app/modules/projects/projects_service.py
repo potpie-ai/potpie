@@ -1,6 +1,7 @@
 import logging
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
+from uuid6 import uuid7
 from app.modules.projects.projects_model import Project
 from app.core import crud_utils
 from app.modules.projects.projects_schema import ProjectStatusEnum
@@ -43,18 +44,15 @@ class ProjectService:
             raise ProjectServiceError(f"An unexpected error occurred while retrieving project name for project IDs {project_ids}") from e
 
     
-    async def register_project(self, repo_name: str, branch_name: str, user_id: str, commit_id: str,
-                               project_metadata, project_id: int = None):
-        if project_id:
-            crud_utils.update_project(self.db, project_id, commit_id=commit_id)
-            message = f"Project '{project_id}' updated successfully."
-        else:
-            project = Project(repo_name=repo_name,
-                                 branch_name=branch_name, user_id=user_id, commit_id=commit_id,
-                                  properties=project_metadata)
-            project = crud_utils.create_project(self.db, project)
-            message = f"Project id '{project.id}' for repo '{repo_name}' and branch '{branch_name}' registered successfully."
-            project_id = project.id
+    async def register_project(self, repo_name: str, branch_name: str, user_id: str, project_id: str):
+        
+        
+        
+        project = Project(id=project_id, repo_name=repo_name,
+                                branch_name=branch_name, user_id=user_id,
+                                 status=ProjectStatusEnum.SUBMITTED.value)
+        project = crud_utils.create_project(self.db, project)
+        message = f"Project id '{project.id}' for repo '{repo_name}' and branch '{branch_name}' registered successfully."
         logging.info(message)
         return project_id
 
@@ -74,22 +72,9 @@ class ProjectService:
         crud_utils.update_project(self.db, project_id, status=status.value)
         logging.info(f"Project with ID {project_id} has now been updated with status {status}.")
 
-    async def get_active_project(self, user_id: str):
-        project = self.db.query(Project).filter(Project.is_default == True, Project.user_id == user_id).first()
-        if project:
-            return project.id
-        else:
-            return None
 
-    async def get_active_dir(self, user_id: str):
-        project = self.db.query(Project).filter(Project.is_default == True, Project.user_id == user_id).first()
-        if project:
-            return project.directory
-        else:
-            return None
-
-    async def get_project_from_db(self, project_name: str, user_id: str):
-        project = self.db.query(Project).filter(Project.project_name == project_name, Project.user_id == user_id).first()
+    async def get_project_from_db(self, repo_name: str, user_id: str):
+        project = self.db.query(Project).filter(Project.repo_name == repo_name, Project.user_id == user_id).first()
         if project:
             return project
         else:

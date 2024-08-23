@@ -1,10 +1,14 @@
+import hashlib
 from neo4j import GraphDatabase
-from app.modules.parsing.graph_construction.parsing_helper import RepoMap
+from app.modules.parsing.graph_construction.parsing_helper import ParsingFailedError, RepoMap
 import os 
 import traceback
 import uuid
 from blar_graph.db_managers import Neo4jManager
 from blar_graph.graph_construction.core.graph_builder import GraphConstructor
+from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
+from app.modules.projects.projects_schema import ProjectStatusEnum
+from app.modules.projects.projects_service import ProjectService
 
 class SimpleIO:
     def read_text(self, fname):
@@ -25,10 +29,24 @@ class CodeGraphService:
     def __init__(self, neo4j_uri, neo4j_user, neo4j_password):
         self.driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
         
+    @staticmethod
+    def generate_node_id(path: str, user_id: str):
+        # Concatenate path and signature
+        combined_string = f"{user_id}:{path}"
+
+        # Create a SHA-1 hash of the combined string
+        hash_object = hashlib.md5()
+        hash_object.update(combined_string.encode("utf-8"))
+
+        # Get the hexadecimal representation of the hash
+        node_id = hash_object.hexdigest()
+
+        return node_id
+        
     def close(self):
         self.driver.close()
 
-    def create_and_store_graph(self, repo_dir):
+    def create_and_store_graph(self, repo_dir, project_id, user_id):
         # Create the graph using RepoMap
         self.repo_map = RepoMap(
             root=repo_dir,
@@ -40,8 +58,6 @@ class CodeGraphService:
         nx_graph = self.repo_map.create_graph(repo_dir)
 
         with self.driver.session() as session:
-            # Clear existing data in Neo4j
-            session.run("MATCH (n) DETACH DELETE n")
 
             # Create nodes
             import time
@@ -56,8 +72,9 @@ class CodeGraphService:
                 batch_nodes = list(nx_graph.nodes(data=True))[i:i + batch_size]
                 session.run(
                     "UNWIND $nodes AS node "
-                    "CREATE (d:Definition {name: node.name, file: node.file, line: node.line})",
-                    nodes=[{'name': node[0], 'file': node[1].get('file', ''), 'line': node[1].get('line', -1)} for node in batch_nodes]
+                    "CREATE (d:Definition {name: node.name, file: node.file, start_line: node.line, repoId: node.repoId, node_id: node.node_id, entityId: node.entityId})",
+                    nodes=[{'name': node[0], 'file': node[1].get('file', ''), 'start_line': node[1].get('line', -1), 
+                             'repoId': project_id, 'node_id': CodeGraphService.generate_node_id(node[1].get('file', ''), user_id), 'entityId': user_id} for node in batch_nodes]
                 )
 
             relationship_count = nx_graph.number_of_edges()
@@ -84,73 +101,46 @@ class CodeGraphService:
             result = session.run(query)
             return [record.data() for record in result]
 
-# Example usage
-async def analyze_directory(repo_dir):
-    service = CodeGraphService("bolt://localhost:7687", "neo4j", "mysecretpassword")
     
-    try:
+    
+class ParsingService:
 
-        # repo_dir = "/Users/dhirenmathur/Downloads/dispatch-master"
-        # repo_dir = "/Users/dhirenmathur/Downloads/litellm-main"
-        # repo_dir = "/Users/dhirenmathur/Downloads/simplQ-backend-master"
-        # Basic language detection based on file extensions and character count
-        def detect_repo_language(repo_dir):
-            lang_count = {"python": 0, "javascript": 0, "typescript": 0, "other": 0}
-            total_chars = 0
+    
+    async def analyze_directory(repo_dir, project_id, user_id, db):
 
-            for root, _, files in os.walk(repo_dir):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    ext = os.path.splitext(file)[1].lower()
-                    try:
-                        with open(file_path, 'r', encoding='utf-8') as f:
-                            content = f.read()
-                            total_chars += len(content)
-                            if ext == '.py':
-                                lang_count["python"] += 1
-                            elif ext in ['.js', '.jsx']:
-                                lang_count["javascript"] += 1
-                            elif ext in ['.ts', '.tsx']:
-                                lang_count["typescript"] += 1
-                            else:
-                                lang_count["other"] += 1
-                    except (UnicodeDecodeError, FileNotFoundError):
-                        continue
 
-            # Determine the predominant language based on counts
-            if lang_count["python"] > lang_count["javascript"] and lang_count["python"] > lang_count["typescript"]:
-                return "python"
-            elif lang_count["javascript"] > lang_count["python"] and lang_count["javascript"] > lang_count["typescript"]:
-                return "javascript"
-            elif lang_count["typescript"] > lang_count["python"] and lang_count["typescript"] > lang_count["javascript"]:
-                return "typescript"
-            else:
-                return "other"
-
-        repo_lang = detect_repo_language(repo_dir)
+        repo_lang = ParseHelper(db).detect_repo_language(repo_dir)
         
-        if repo_lang not in ["python", "javascript", "typescript"]:
-            service.create_and_store_graph(repo_dir)
-        
-            # Example query
-            result = service.query_graph("MATCH (n:Definition) RETURN n.name, n.file, n.line LIMIT 5")
-            print(result)
-        else: 
-        
-   
-
-            repoId = str(uuid.uuid4())
-            entityId = str(uuid.uuid4())
-            graph_manager = Neo4jManager(repoId, entityId)
+        if repo_lang in [ "python", "javascript", "typescript"]:
+            
+            graph_manager = Neo4jManager(project_id, user_id)
 
             try:
-                graph_constructor = GraphConstructor(graph_manager, entityId)
-                n,r = graph_constructor.build_graph(repo_dir)
-                graph_manager.save_graph(n,r)
-                graph_manager.close()
+                graph_constructor = GraphConstructor(graph_manager, user_id)
+                n, r = graph_constructor.build_graph(repo_dir)
+                graph_manager.save_graph(n, r)
+                await ProjectService(db).update_project_status(project_id, ProjectStatusEnum.PARSED)
             except Exception as e:
                 print(e)
                 print(traceback.format_exc())
+                
+            finally:
                 graph_manager.close()
-    finally:
-        service.close()
+        elif repo_lang != "other":
+            try: 
+                service = CodeGraphService(
+                    os.getenv("NEO4J_URI", "bolt://localhost:7687"),
+                    os.getenv("NEO4J_USER", "neo4j"),
+                    os.getenv("NEO4J_PASSWORD", "mysecretpassword")
+                )
+
+                service.create_and_store_graph(repo_dir, project_id, user_id)
+                await ProjectService(db).update_project_status(project_id, ProjectStatusEnum.PARSED)
+            
+            finally:
+                service.close()
+        else:
+            await ProjectService(db).update_project_status(project_id, ProjectStatusEnum.ERROR)
+            return ParsingFailedError("Repository doesn't consist of a language currently supported.")
+            
+            

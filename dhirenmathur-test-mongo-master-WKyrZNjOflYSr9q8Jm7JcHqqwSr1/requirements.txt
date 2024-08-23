@@ -1,8 +1,0 @@
-fastapi
-uvicorn
-motor
-python-dotenv
-pydantic
-firebase-admin
-httpx
-pytest-asyncio

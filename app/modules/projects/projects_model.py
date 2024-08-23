@@ -7,7 +7,7 @@ from sqlalchemy.orm import relationship
 class Project(Base):
     __tablename__ = "projects"
     
-    id = Column(Integer, primary_key=True)
+    id = Column(Text, primary_key=True)
     properties = Column(BYTEA)
     repo_name = Column(Text)
     branch_name = Column(Text)

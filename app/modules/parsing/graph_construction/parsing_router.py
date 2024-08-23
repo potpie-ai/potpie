@@ -21,8 +21,9 @@ from contextlib import contextmanager
 from typing import Dict, Tuple
 from app.modules.github.github_service import GithubService
 from github import Github
-from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
-from app.modules.parsing.graph_construction.parsing_service import analyze_directory
+from app.modules.parsing.graph_construction.parsing_helper import ParseHelper, ParsingServiceError
+from app.modules.parsing.graph_construction.parsing_service import ParsingService
+from uuid6 import uuid7
 
 router = APIRouter()
 from git import Repo, GitCommandError
@@ -68,31 +69,32 @@ class ParsingAPI:
         project_manager = ProjectService(db)
         project_id = None
         parse_helper = ParseHelper(db)
+        project = await project_manager.get_project_from_db(repo_details.repo_name, user_id)
+        extracted_dir = None
+        if project:
+            project_id = project.id
+            
         try:
             # Step 1: Validate input
             ParsingAPI.validate_input(repo_details, user_id)
-            await project_manager.update_project_status(project_id, ProjectStatusEnum.SUBMITTED)
-
-            # Step 2: Clone or copy repository
             repo, owner, auth = await ParsingAPI.clone_or_copy_repository(repo_details, db, user_id)
-            await project_manager.update_project_status(project_id, ProjectStatusEnum.CLONED)
 
-            # Step 3: Setup project directory
-            extracted_dir, project_id, should_parse_repo = await parse_helper.setup_project_directory(
-                owner, repo, repo_details.branch_name, auth, repo, user_id
-            )
-
-            # Step 4: Analyze directory if needed
-            if should_parse_repo:
-                await analyze_directory(extracted_dir)
-                message = "The project has been parsed successfully"
-                await project_manager.update_project_status(project_id, ProjectStatusEnum.READY)
-            else:
-                message = "Repository doesn't consist of a language currently supported."
-                await project_manager.update_project_status(project_id, ProjectStatusEnum.ERROR)
+            extracted_dir, project_id = await parse_helper.setup_project_directory(
+                    repo, repo_details.branch_name, auth, repo, user_id, project_id
+                )
+            
+            await ParsingService.analyze_directory(extracted_dir, project_id, user_id, db)
+            shutil.rmtree(extracted_dir, ignore_errors=True)
+            message = "The project has been parsed successfully"
+            await project_manager.update_project_status(project_id, ProjectStatusEnum.READY)
+             
 
             return {"message": message, "id": project_id}
 
+        except ParsingServiceError as e:
+            message = str(f"{project_id} Failed during parsing: " + e.message)
+            await project_manager.update_project_status(project_id, ProjectStatusEnum.ERROR)
+            raise HTTPException(status_code=500, detail=message)
         except HTTPException as http_ex:
             if project_id:
                 await project_manager.update_project_status(project_id, ProjectStatusEnum.ERROR)
@@ -102,13 +104,15 @@ class ParsingAPI:
                 await project_manager.update_project_status(project_id, ProjectStatusEnum.ERROR)
             tb_str = "".join(traceback.format_exception(None, e, e.__traceback__))
             raise HTTPException(status_code=500, detail=f"{str(e)}\nTraceback: {tb_str}")
+        finally:
+            if extracted_dir:
+                shutil.rmtree(extracted_dir, ignore_errors=True)
 
     def validate_input(repo_details: ParsingRequest, user_id: str):
         if os.getenv("isDevelopmentMode") != "enabled" and repo_details.repo_path:
             raise HTTPException(status_code=403, detail="Development mode is not enabled, cannot parse local repository.")
         if user_id == os.getenv("defaultUsername") and repo_details.repo_name:
             raise HTTPException(status_code=403, detail="Cannot parse remote repository without auth token")
-
 
 
 
