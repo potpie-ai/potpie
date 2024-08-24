@@ -112,29 +112,3 @@ class SecretManager:
             raise HTTPException(status_code=404, detail="Secret not found")
         
         
-    @router.post("/samples/")
-    def create_sample(sample_data: dict, user=Depends(AuthService.check_auth)):
-        mongo_manager = MongoManager.get_instance()
-        customer_id = user["user_id"]
-        mongo_manager.put("SampleCollection", customer_id, sample_data)
-        return {"message": "Sample created successfully"}
-
-    @router.get("/samples/{customer_id}")
-    def read_sample(customer_id: str, user=Depends(AuthService.check_auth)):
-        mongo_manager = MongoManager.get_instance()
-        sample = mongo_manager.get("SampleCollection", customer_id)
-        if sample:
-            return sample
-        raise HTTPException(status_code=404, detail="Sample not found")
-
-    @router.put("/samples/{customer_id}")
-    def update_sample(customer_id: str, sample_data: dict, user=Depends(AuthService.check_auth)):
-        mongo_manager = MongoManager.get_instance()
-        mongo_manager.put("SampleCollection", customer_id, sample_data)
-        return {"message": "Sample updated successfully"}
-
-    @router.delete("/samples/{customer_id}")
-    def delete_sample(customer_id: str, user=Depends(AuthService.check_auth)):
-        mongo_manager = MongoManager.get_instance()
-        mongo_manager.delete("SampleCollection", customer_id)
-        return {"message": "Sample deleted successfully"}
