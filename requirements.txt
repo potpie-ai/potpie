@@ -22,16 +22,13 @@ aiohttp
 langchain
 langchain-openai
 langchain-community
-agentops
-
-# Additional dependencies for specific tools
 pytrends
 wikipedia-api
 langgraph
 langchain-postgres 
-# psycopg2[binary,pool]
 pymongo
 firebase_admin
 portkey_ai
 gitPython
 PyGithub
+google-cloud-secret-manager

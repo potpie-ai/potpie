@@ -3,6 +3,7 @@ from app.core.database import SessionLocal
 from app.modules.projects.projects_model import Project
 from app.modules.users.user_model import User
 from sqlalchemy.sql import func
+import logging
 
 class DummyDataSetup:
     def __init__(self):
@@ -26,9 +27,9 @@ class DummyDataSetup:
                 )
                 self.db.add(user)
                 self.db.commit()
-                print(f"Created dummy user with uid: {user.uid}")
+                logging.info(f"Created dummy user with uid: {user.uid}")
             else:
-                print("Dummy user already exists")
+                logging.info("Dummy user already exists")
         finally:
             self.db.close()
 
@@ -55,10 +56,10 @@ class DummyDataSetup:
                     )
                     self.db.add(dummy_project)
                     self.db.commit()
-                    print(f"Created dummy project with id: {dummy_project.id}")
+                    logging.info(f"Created dummy project with id: {dummy_project.id}")
                 else:
-                    print("Dummy project already exists")
+                    logging.info("Dummy project already exists")
             else:
-                print("Dummy user not found, cannot create dummy project")
+                logging.info("Dummy user not found, cannot create dummy project")
         finally:
             self.db.close()

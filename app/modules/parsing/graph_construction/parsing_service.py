@@ -1,14 +1,14 @@
 import hashlib
 from neo4j import GraphDatabase
 from app.modules.parsing.graph_construction.parsing_helper import ParsingFailedError, RepoMap
-import os 
 import traceback
-import uuid
+import logging
 from blar_graph.db_managers import Neo4jManager
 from blar_graph.graph_construction.core.graph_builder import GraphConstructor
 from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
+from app.core.config import config_provider
 
 class SimpleIO:
     def read_text(self, fname):
@@ -16,10 +16,10 @@ class SimpleIO:
             return f.read()
 
     def tool_error(self, message):
-        print(f"Error: {message}")
+        logging.error(f"Error: {message}")
 
     def tool_output(self, message):
-        print(message)
+        logging.info(message)
         
 class SimpleTokenCounter:
     def token_count(self, text):
@@ -64,7 +64,7 @@ class CodeGraphService:
 
             start_time = time.time()  # Start timing
             node_count = nx_graph.number_of_nodes()
-            print(f"Creating {node_count} nodes")
+            logging.info(f"Creating {node_count} nodes")
 
             # Batch insert nodes
             batch_size = 300
@@ -78,7 +78,7 @@ class CodeGraphService:
                 )
 
             relationship_count = nx_graph.number_of_edges()
-            print(f"Creating {relationship_count} relationships")
+            logging.info(f"Creating {relationship_count} relationships")
 
             # Create relationships in batches
             for i in range(0, relationship_count, batch_size):
@@ -93,7 +93,7 @@ class CodeGraphService:
                 )
 
             end_time = time.time()  # End timing
-            print(f"Time taken to create graph: {end_time - start_time:.2f} seconds")  # Log time taken
+            logging.info(f"Time taken to create graph: {end_time - start_time:.2f} seconds")  # Log time taken
 
 
     def query_graph(self, query):
@@ -121,17 +121,18 @@ class ParsingService:
                 graph_manager.save_graph(n, r)
                 await ProjectService(db).update_project_status(project_id, ProjectStatusEnum.PARSED)
             except Exception as e:
-                print(e)
-                print(traceback.format_exc())
+                logging.error(e)
+                logging.error(traceback.format_exc())
                 
             finally:
                 graph_manager.close()
         elif repo_lang != "other":
             try: 
+                neo4j_config = config_provider.get_neo4j_config()
                 service = CodeGraphService(
-                    os.getenv("NEO4J_URI", "bolt://localhost:7687"),
-                    os.getenv("NEO4J_USER", "neo4j"),
-                    os.getenv("NEO4J_PASSWORD", "mysecretpassword")
+                    neo4j_config["uri"],
+                    neo4j_config["username"],
+                    neo4j_config["password"]
                 )
 
                 service.create_and_store_graph(repo_dir, project_id, user_id)

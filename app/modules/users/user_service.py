@@ -7,9 +7,9 @@ from datetime import datetime
 
 import logging
 
-from app.core.database import SessionManager
 from app.modules.users.user_schema import CreateUser
 from app.modules.users.user_model import User
+
 
 logger = logging.getLogger(__name__)
 
@@ -44,12 +44,12 @@ class UserService:
         message: str = ""
         error: bool = False
         try:
-            with SessionManager() as db:
-                user = db.query(User).filter(User.uid == uid).first()
+            
+                user = self.db.query(User).filter(User.uid == uid).first()
                 if user:
                     user.last_login_at = datetime.utcnow()
-                    db.commit()
-                    db.refresh(user)
+                    self.db.commit()
+                    self.db.refresh(user)
                     error = False
                     message = f"Updated last login time for user with ID: {user.uid}"
                 else:
@@ -80,13 +80,13 @@ class UserService:
         message: str = ""
         error: bool = False
         try:
-            with SessionManager() as db:
-                db.add(new_user)
-                db.commit()
-                db.refresh(new_user)
-                error = False
-                message = f"User created with ID: {new_user.uid}"
-                uid = new_user.uid
+        
+            self.db.add(new_user)
+            self.db.commit()
+            self.db.refresh(new_user)
+            error = False
+            message = f"User created with ID: {new_user.uid}"
+            uid = new_user.uid
 
         except Exception as e:
             logging.error(f"Error creating user: {e}")
@@ -98,11 +98,36 @@ class UserService:
 
     def get_user_by_uid(self, uid: str):
         try:
-            with SessionManager() as db:
-                user = db.query(User).filter(User.uid == uid).first()
-                return user
+            user = self.db.query(User).filter(User.uid == uid).first()
+            return user
         except Exception as e:
             logging.error(f"Error fetching user: {e}")
             return None
+        
+
+# User CRUD operations
+    def get_user_by_email(db: Session, email: str):
+        return db.query(User).filter(User.email == email).first()
+
+    def get_user_by_username(db: Session, username: str):
+        return db.query(User).filter(User.provider_username == username).first()
+
+    def create_user(db: Session, user: User):
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return user
+
+    def update_user(db: Session, user_id: str, **kwargs):
+        db.query(User).filter(User.uid == user_id).update(kwargs)
+        db.commit()
+
+    def delete_user(db: Session, user_id: str):
+        db.query(User).filter(User.uid == user_id).delete()
+        db.commit()
+
+
+
+
 
 

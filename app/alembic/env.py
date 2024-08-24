@@ -21,7 +21,6 @@ fileConfig(context.config.config_file_name)
 
 # Construct the database URL from environment variables
 POSTGRES_SERVER = os.getenv("POSTGRES_SERVER", "localhost")
-print(POSTGRES_SERVER)
 
 # Set the SQLAlchemy URL dynamically from the constructed DATABASE_URL
 config = context.config

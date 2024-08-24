@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
-from app.core.config import github_key
+from app.core.config import config_provider
 logger = logging.getLogger(__name__)
 
 class GithubService:
@@ -21,7 +21,7 @@ class GithubService:
 
     @staticmethod
     def get_github_repo_details(repo_name):
-        private_key = "-----BEGIN RSA PRIVATE KEY-----\n" + github_key + "\n-----END RSA PRIVATE KEY-----\n"
+        private_key = "-----BEGIN RSA PRIVATE KEY-----\n" + config_provider.get_github_key() + "\n-----END RSA PRIVATE KEY-----\n"
         app_id = os.environ["GITHUB_APP_ID"]
         auth = AppAuth(app_id=app_id, private_key=private_key)
         jwt = auth.create_jwt()

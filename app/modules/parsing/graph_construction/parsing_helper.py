@@ -23,7 +23,7 @@ from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 import networkx as nx
 from sqlalchemy.orm import Session 
-from app.core import crud_utils
+
 # tree_sitter is throwing a FutureWarning
 warnings.simplefilter("ignore", category=FutureWarning)
 Tag = namedtuple("Tag", "rel_fname fname line end_line name kind type".split())
@@ -187,7 +187,7 @@ class ParseHelper:
         repo_metadata = ParseHelper.extract_repository_metadata(repo_details)
         repo_metadata["error_message"] = None
         project_metadata = json.dumps(repo_metadata).encode("utf-8")
-        crud_utils.update_project(self.db, project_id, properties=project_metadata, commit_id=latest_commit_sha, status=ProjectStatusEnum.CLONED.value)
+        ProjectService.update_project(self.db, project_id, properties=project_metadata, commit_id=latest_commit_sha, status=ProjectStatusEnum.CLONED.value)
 
         return extracted_dir, project_id
     
@@ -596,7 +596,7 @@ class RepoMap:
         # dump(ranked_definitions)
 
         for (fname, ident), rank in ranked_definitions:
-            # print(f"{rank:.03f} {fname} {ident}")
+            
             if fname in chat_rel_fnames:
                 continue
             ranked_tags += list(definitions.get((fname, ident), []))
@@ -704,7 +704,7 @@ class RepoMap:
     def create_graph(self, repo_dir):
         
         start_time = time.time()
-        print("Starting parsing of codebase")  # Log start
+        logging.info("Starting parsing of codebase")  # Log start
 
         G = nx.MultiDiGraph()
         defines = defaultdict(list)
@@ -713,7 +713,7 @@ class RepoMap:
         for root, _, files in os.walk(repo_dir):
             for file in files:
                 file_count += 1  # Increment file counter
-                print(f"Processing file number: {file_count}")  # Log file number
+                logging.info(f"Processing file number: {file_count}")  # Log file number
                 
                 file_path = os.path.join(root, file)
                 rel_path = os.path.relpath(file_path, repo_dir)
@@ -768,7 +768,7 @@ class RepoMap:
                             G.add_edge(source, target, type=ref_type, ident=ident, ref_line=ref_line, end_ref_line=end_ref_line, def_line=def_line, end_def_line=end_def_line)
 
         end_time = time.time()
-        print(f"Parsing completed, time taken: {end_time - start_time} seconds")  # Log end
+        logging.info(f"Parsing completed, time taken: {end_time - start_time} seconds")  # Log end
         return G
     
     def is_text_file(self, file_path):

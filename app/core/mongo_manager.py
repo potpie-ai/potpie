@@ -1,7 +1,9 @@
 import os
+import logging
 from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure
+from pymongo.errors import ConnectionFailure, OperationFailure
 from typing import Optional
+import certifi
 
 class MongoManager:
     _instance = None
@@ -20,44 +22,110 @@ class MongoManager:
         self._connect()
 
     def _connect(self):
+        if self._client is None:
+            try:
+                mongodb_uri = os.environ.get("MONGO_URI")
+                if not mongodb_uri:
+                    raise ValueError("MONGO_URI environment variable is not set")
+                
+                self._client = MongoClient(
+                    mongodb_uri,
+                    maxPoolSize=50,
+                    waitQueueTimeoutMS=2500,
+                    tlsCAFile=certifi.where()  # Use the certifi package to locate the CA bundle
+                )
+                
+                db_name = os.environ.get("MONGODB_DB_NAME")
+                if not db_name:
+                    raise ValueError("MONGODB_DB_NAME environment variable is not set")
+                
+                self._db = self._client[db_name]
+                
+                # Verify the connection and database
+                self.verify_connection()
+                
+            except (ConnectionFailure, ValueError) as e:
+                logging.error(f"Failed to connect to MongoDB: {str(e)}")
+                raise
+
+    def verify_connection(self):
         try:
-            self._client = MongoClient(
-                os.environ.get("MONGODB_URI"),
-                maxPoolSize=50,  # Adjust based on your needs
-                waitQueueTimeoutMS=2500  # Adjust based on your needs
-            )
-            self._db = self._client[os.environ.get("MONGODB_DB_NAME")]
             # Ping the server to check the connection
             self._client.admin.command('ping')
-        except ConnectionFailure:
-            print("Server not available")
+            
+            # List all collections to verify database access
+            self._db.list_collection_names()
+            
+            logging.info("Successfully connected to MongoDB and verified database access")
+        except OperationFailure as e:
+            logging.error(f"Failed to verify MongoDB connection: {str(e)}")
             raise
 
     def get_collection(self, collection_name: str):
+        self._connect()  # Ensure connection is established
         return self._db[collection_name]
 
     def put(self, collection_name: str, document_id: str, data: dict):
-        collection = self.get_collection(collection_name)
-        collection.update_one(
-            {"_id": document_id},
-            {"$set": data},
-            upsert=True
-        )
+        try:
+            collection = self.get_collection(collection_name)
+            result = collection.update_one(
+                {"_id": document_id},
+                {"$set": data},
+                upsert=True
+            )
+            logging.info(f"Document {'updated' if result.modified_count else 'inserted'} in {collection_name}")
+            return result
+        except Exception as e:
+            logging.error(f"Failed to put document in {collection_name}: {str(e)}")
+            raise
 
     def get(self, collection_name: str, document_id: str):
-        collection = self.get_collection(collection_name)
-        return collection.find_one({"_id": document_id})
+        try:
+            collection = self.get_collection(collection_name)
+            document = collection.find_one({"_id": document_id})
+            if document:
+                logging.info(f"Document retrieved from {collection_name}")
+            else:
+                logging.info(f"Document not found in {collection_name}")
+            return document
+        except Exception as e:
+            logging.error(f"Failed to get document from {collection_name}: {str(e)}")
+            raise
 
     def delete(self, collection_name: str, document_id: str):
-        collection = self.get_collection(collection_name)
-        collection.delete_one({"_id": document_id})
+        try:
+            collection = self.get_collection(collection_name)
+            result = collection.delete_one({"_id": document_id})
+            if result.deleted_count:
+                logging.info(f"Document deleted from {collection_name}")
+            else:
+                logging.info(f"Document not found in {collection_name}")
+            return result
+        except Exception as e:
+            logging.error(f"Failed to delete document from {collection_name}: {str(e)}")
+            raise
 
     def close(self):
         if self._client:
             self._client.close()
+            self._client = None
+            self._db = None
+            logging.info("MongoDB connection closed")
+
+    def reconnect(self):
+        self.close()
+        self._connect()
+        logging.info("Reconnected to MongoDB")
+
+    @classmethod
+    def close_connection(cls):
+        if cls._instance:
+            cls._instance.close()
+            cls._instance = None
+            logging.info("MongoDB connection closed and instance reset")
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
+        pass  # Don't close the connection here

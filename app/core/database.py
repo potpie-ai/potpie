@@ -34,15 +34,3 @@ def get_db():
         yield db
     finally:
         db.close()
-
-
-
-class SessionManager:
-    def __init__(self):
-        self.db = SessionLocal()
-
-    def __enter__(self):
-        return self.db
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.db.close()
