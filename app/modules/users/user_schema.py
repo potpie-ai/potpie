@@ -1,11 +1,14 @@
-from typing import List, Optional
-from pydantic import BaseModel
 from datetime import datetime
+from typing import List, Optional
+
+from pydantic import BaseModel
+
 
 class UserConversationListRequest(BaseModel):
     user_id: str
     start: int = 0  # Default start index
     limit: int = 10  # Default limit
+
 
 class UserConversationListResponse(BaseModel):
     id: str
@@ -15,6 +18,7 @@ class UserConversationListResponse(BaseModel):
     project_ids: Optional[List[str]]
     created_at: str
     updated_at: str
+
 
 class CreateUser(BaseModel):
     uid: str

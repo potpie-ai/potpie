@@ -1,25 +1,22 @@
 import json
-import os
-
 from datetime import datetime
-from dotenv import load_dotenv
 
+from dotenv import load_dotenv
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
+
 from app.core.database import get_db
 from app.modules.auth.auth_service import auth_handler
+from app.modules.users.user_schema import CreateUser
 from app.modules.users.user_service import UserService
-
 from app.modules.utils.APIRouter import APIRouter
 
 from .auth_schema import LoginRequest
-from app.modules.users.user_schema import CreateUser
-
-import logging
 
 auth_router = APIRouter()
 load_dotenv(override=True)
+
 
 class AuthAPI:
     @auth_router.post("/login")
@@ -31,9 +28,7 @@ class AuthAPI:
             id_token = res.get("idToken")
             return JSONResponse(content={"token": id_token}, status_code=200)
         except Exception as e:
-            return JSONResponse(
-                content={"error": f"ERROR: {str(e)}"}, status_code=400
-            )
+            return JSONResponse(content={"error": f"ERROR: {str(e)}"}, status_code=400)
 
     @auth_router.post("/signup")
     async def signup(request: Request, db: Session = Depends(get_db)):
@@ -57,7 +52,7 @@ class AuthAPI:
                 created_at=first_login,
                 last_login_at=first_login,
                 provider_info=body["providerData"][0],
-                provider_username=body["providerUsername"]
+                provider_username=body["providerUsername"],
             )
             uid, message, error = user_service.create_user(user)
             if error:

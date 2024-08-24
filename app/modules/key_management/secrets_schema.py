@@ -1,11 +1,14 @@
-from pydantic import BaseModel, validator
+import re
 from typing import Literal
-import re    
+
+from pydantic import BaseModel, validator
+
 
 def validate_openai_api_key_format(api_key: str) -> bool:
     pattern = r"^sk-[a-zA-Z0-9]{48}$"
     proj_pattern = r"^sk-proj-[a-zA-Z0-9]{48}$"
     return bool(re.match(pattern, api_key)) or bool(re.match(proj_pattern, api_key))
+
 
 class BaseSecretRequest(BaseModel):
     api_key: str
@@ -17,8 +20,10 @@ class BaseSecretRequest(BaseModel):
             raise ValueError("Invalid OpenAI API key format")
         return v
 
+
 class UpdateSecretRequest(BaseSecretRequest):
     pass
+
 
 class CreateSecretRequest(BaseSecretRequest):
     pass

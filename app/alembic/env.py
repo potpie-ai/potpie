@@ -1,17 +1,13 @@
 import os
 import time
 from logging.config import fileConfig
-from sqlalchemy import engine_from_config, pool
+
 from alembic import context
 from alembic.operations import ops
+from dotenv import load_dotenv
+from sqlalchemy import engine_from_config, pool
 
 from app.core.database import Base
-from app.modules.users.user_model import User  # Import all your models
-from app.modules.projects.projects_model import Project
-from app.modules.conversations.conversation.conversation_model import Conversation
-from app.modules.conversations.message.message_model import Message
-
-from dotenv import load_dotenv
 
 # Load environment variables from .env
 load_dotenv()
@@ -29,14 +25,16 @@ config.set_main_option("sqlalchemy.url", POSTGRES_SERVER)
 # Add your models' metadata object for 'autogenerate' support
 target_metadata = Base.metadata
 
+
 def process_revision_directives(context, revision, directives):
     """Automatically prepend timestamp to migration filenames."""
     for directive in directives:
         if isinstance(directive, ops.MigrationScript):
             # Get the current timestamp
-            timestamp = time.strftime('%Y%m%d%H%M%S')
+            timestamp = time.strftime("%Y%m%d%H%M%S")
             # Modify the revision ID to include the timestamp
             directive.rev_id = f"{timestamp}_{directive.rev_id}"
+
 
 def run_migrations_online():
     connectable = engine_from_config(
@@ -56,6 +54,7 @@ def run_migrations_online():
 
         with context.begin_transaction():
             context.run_migrations()
+
 
 if context.is_offline_mode():
     raise Exception("Offline migrations not supported")

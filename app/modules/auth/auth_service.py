@@ -1,9 +1,11 @@
 import logging
 import os
+
 import requests
-from firebase_admin import auth
-from fastapi import Request, HTTPException, Response, Depends, status
+from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from firebase_admin import auth
+
 
 class AuthService:
     def login(self, email, password):
@@ -28,9 +30,7 @@ class AuthService:
             raise Exception(user_auth_response.json())
 
     def signup(self, email, password, name):
-        user = auth.create_user(
-            email=email, password=password, display_name=name
-        )
+        user = auth.create_user(email=email, password=password, display_name=name)
         return user
 
     @classmethod
@@ -39,13 +39,13 @@ class AuthService:
         request: Request,
         res: Response,
         credential: HTTPAuthorizationCredentials = Depends(
-        HTTPBearer(auto_error=False)
-    ),
-):
-     # Check if the application is in debug mode
+            HTTPBearer(auto_error=False)
+        ),
+    ):
+        # Check if the application is in debug mode
         if os.getenv("isDevelopmentMode") == "enabled" and credential is None:
             request.state.user = {"user_id": os.getenv("defaultUsername")}
-            return {"user_id":os.getenv("defaultUsername")}
+            return {"user_id": os.getenv("defaultUsername")}
         else:
             if credential is None:
                 raise HTTPException(
@@ -64,8 +64,6 @@ class AuthService:
                 )
             res.headers["WWW-Authenticate"] = 'Bearer realm="auth_required"'
             return decoded_token
-
-
 
 
 auth_handler = AuthService()

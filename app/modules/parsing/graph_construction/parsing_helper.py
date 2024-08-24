@@ -1,45 +1,50 @@
+import json
+import logging
 import math
+import os
+import tarfile
 import time
 import warnings
 from collections import Counter, defaultdict, namedtuple
 from pathlib import Path
 
+import networkx as nx
+import requests
+from fastapi import HTTPException
+from git import GitCommandError, Repo
 from grep_ast import TreeContext, filename_to_lang
 from pygments.lexers import guess_lexer_for_filename
 from pygments.token import Token
 from pygments.util import ClassNotFound
+from sqlalchemy.orm import Session
 from tqdm import tqdm
 from tree_sitter_languages import get_language, get_parser  # noqa: E402
-import json
-import logging
-import os
-import shutil
-import tarfile
-import requests
-from fastapi import HTTPException
-from git import Repo, GitCommandError
 from uuid6 import uuid7
+
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
-import networkx as nx
-from sqlalchemy.orm import Session 
 
 # tree_sitter is throwing a FutureWarning
 warnings.simplefilter("ignore", category=FutureWarning)
 Tag = namedtuple("Tag", "rel_fname fname line end_line name kind type".split())
 
+
 class ParsingServiceError(Exception):
     """Base exception class for ParsingService errors."""
 
+
 class ParsingFailedError(ParsingServiceError):
     """Raised when a parsing fails."""
-    
+
+
 class ParseHelper:
     def __init__(self, db_session: Session):
-        self.project_manager = ProjectService(db_session) 
+        self.project_manager = ProjectService(db_session)
         self.db = db_session
 
-    def download_and_extract_tarball(self, repo, branch, target_dir, auth, repo_details, user_id):
+    def download_and_extract_tarball(
+        self, repo, branch, target_dir, auth, repo_details, user_id
+    ):
         try:
             tarball_url = repo_details.get_archive_link("tarball", branch)
             response = requests.get(
@@ -52,7 +57,9 @@ class ParseHelper:
             logging.error(f"Error fetching tarball: {e}")
             return e
 
-        tarball_path = os.path.join(target_dir, f"{repo.full_name.replace('/', '-')}-{branch}.tar.gz")
+        tarball_path = os.path.join(
+            target_dir, f"{repo.full_name.replace('/', '-')}-{branch}.tar.gz"
+        )
         try:
             with open(tarball_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
@@ -61,7 +68,9 @@ class ParseHelper:
             logging.error(f"Error writing tarball to file: {e}")
             return e
 
-        final_dir = os.path.join(target_dir, f"{repo.full_name.replace('/', '-')}-{branch}-{user_id}")
+        final_dir = os.path.join(
+            target_dir, f"{repo.full_name.replace('/', '-')}-{branch}-{user_id}"
+        )
         try:
             with tarfile.open(tarball_path, "r:gz") as tar:
                 for member in tar.getmembers():
@@ -93,9 +102,23 @@ class ParseHelper:
     @staticmethod
     def detect_repo_language(repo_dir):
         lang_count = {
-            "c_sharp": 0, "c": 0, "cpp": 0, "elisp": 0, "elixir": 0, "elm": 0,
-            "go": 0, "java": 0, "javascript": 0, "ocaml": 0, "php": 0, "python": 0,
-            "ql": 0, "ruby": 0, "rust": 0, "typescript": 0, "other": 0
+            "c_sharp": 0,
+            "c": 0,
+            "cpp": 0,
+            "elisp": 0,
+            "elixir": 0,
+            "elm": 0,
+            "go": 0,
+            "java": 0,
+            "javascript": 0,
+            "ocaml": 0,
+            "php": 0,
+            "python": 0,
+            "ql": 0,
+            "ruby": 0,
+            "rust": 0,
+            "typescript": 0,
+            "other": 0,
         }
         total_chars = 0
         for root, _, files in os.walk(repo_dir):
@@ -103,40 +126,40 @@ class ParseHelper:
                 file_path = os.path.join(root, file)
                 ext = os.path.splitext(file)[1].lower()
                 try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
+                    with open(file_path, "r", encoding="utf-8") as f:
                         content = f.read()
                         total_chars += len(content)
-                        if ext == '.cs':
+                        if ext == ".cs":
                             lang_count["c_sharp"] += 1
-                        elif ext == '.c':
+                        elif ext == ".c":
                             lang_count["c"] += 1
-                        elif ext in ['.cpp', '.cxx', '.cc']:
+                        elif ext in [".cpp", ".cxx", ".cc"]:
                             lang_count["cpp"] += 1
-                        elif ext == '.el':
+                        elif ext == ".el":
                             lang_count["elisp"] += 1
-                        elif ext == '.ex' or ext == '.exs':
+                        elif ext == ".ex" or ext == ".exs":
                             lang_count["elixir"] += 1
-                        elif ext == '.elm':
+                        elif ext == ".elm":
                             lang_count["elm"] += 1
-                        elif ext == '.go':
+                        elif ext == ".go":
                             lang_count["go"] += 1
-                        elif ext == '.java':
+                        elif ext == ".java":
                             lang_count["java"] += 1
-                        elif ext in ['.js', '.jsx']:
+                        elif ext in [".js", ".jsx"]:
                             lang_count["javascript"] += 1
-                        elif ext == '.ml' or ext == '.mli':
+                        elif ext == ".ml" or ext == ".mli":
                             lang_count["ocaml"] += 1
-                        elif ext == '.php':
+                        elif ext == ".php":
                             lang_count["php"] += 1
-                        elif ext == '.py':
+                        elif ext == ".py":
                             lang_count["python"] += 1
-                        elif ext == '.ql':
+                        elif ext == ".ql":
                             lang_count["ql"] += 1
-                        elif ext == '.rb':
+                        elif ext == ".rb":
                             lang_count["ruby"] += 1
-                        elif ext == '.rs':
+                        elif ext == ".rs":
                             lang_count["rust"] += 1
-                        elif ext in ['.ts', '.tsx']:
+                        elif ext in [".ts", ".tsx"]:
                             lang_count["typescript"] += 1
                         else:
                             lang_count["other"] += 1
@@ -145,22 +168,25 @@ class ParseHelper:
         # Determine the predominant language based on counts
         predominant_language = max(lang_count, key=lang_count.get)
         return predominant_language if lang_count[predominant_language] > 0 else "other"
-    
-    
-    async def setup_project_directory(
-        self,  repo, branch, auth, repo_details, user_id, project_id = None # Change type to str
-    ):
 
+    async def setup_project_directory(
+        self,
+        repo,
+        branch,
+        auth,
+        repo_details,
+        user_id,
+        project_id=None,  # Change type to str
+    ):
         if not project_id:
             pid = str(uuid7())
             project_id = await self.project_manager.register_project(
                 f"{repo.full_name}",
-            branch,
-            user_id,
-            pid,
-        )
-        
-        
+                branch,
+                user_id,
+                pid,
+            )
+
         if isinstance(repo_details, Repo):
             extracted_dir = repo_details.working_tree_dir
             try:
@@ -177,7 +203,6 @@ class ParseHelper:
             branch_details = repo_details.head.commit
             latest_commit_sha = branch_details.hexsha
         else:
-            
             extracted_dir = self.download_and_extract_tarball(
                 repo, branch, os.getenv("PROJECT_PATH"), auth, repo_details, user_id
             )
@@ -187,10 +212,16 @@ class ParseHelper:
         repo_metadata = ParseHelper.extract_repository_metadata(repo_details)
         repo_metadata["error_message"] = None
         project_metadata = json.dumps(repo_metadata).encode("utf-8")
-        ProjectService.update_project(self.db, project_id, properties=project_metadata, commit_id=latest_commit_sha, status=ProjectStatusEnum.CLONED.value)
+        ProjectService.update_project(
+            self.db,
+            project_id,
+            properties=project_metadata,
+            commit_id=latest_commit_sha,
+            status=ProjectStatusEnum.CLONED.value,
+        )
 
         return extracted_dir, project_id
-    
+
     def extract_repository_metadata(repo):
         if isinstance(repo, Repo):
             metadata = ParseHelper.extract_local_repo_metadata(repo)
@@ -221,11 +252,9 @@ class ParseHelper:
                 "breakdown": languages,
                 "total_bytes": total_bytes,
             },
-            "commit_info": {
-                "total_commits": len(list(repo.iter_commits()))
-            },
+            "commit_info": {"total_commits": len(list(repo.iter_commits()))},
             "contributors": {
-                "count": len(list(repo.iter_commits('--all'))),
+                "count": len(list(repo.iter_commits("--all"))),
             },
             "topics": [],
         }
@@ -242,13 +271,13 @@ class ParseHelper:
                 file_path = os.path.join(dirpath, filename)
                 file_size = os.path.getsize(file_path)
                 total_bytes += file_size
-                if file_extension == '.py':
+                if file_extension == ".py":
                     python_bytes += file_size
 
         languages = {}
         if total_bytes > 0:
-            languages['Python'] = python_bytes
-            languages['Other'] = total_bytes - python_bytes
+            languages["Python"] = python_bytes
+            languages["Other"] = total_bytes - python_bytes
 
         return languages
 
@@ -275,9 +304,7 @@ class ParseHelper:
                 "breakdown": languages,
                 "total_bytes": total_bytes,
             },
-            "commit_info": {
-                "total_commits": repo.get_commits().totalCount
-            },
+            "commit_info": {"total_commits": repo.get_commits().totalCount},
             "contributors": {
                 "count": repo.get_contributors().totalCount,
             },
@@ -288,8 +315,6 @@ class ParseHelper:
 
 
 class RepoMap:
-
-
     warned_files = set()
 
     def __init__(
@@ -310,16 +335,15 @@ class RepoMap:
             root = os.getcwd()
         self.root = root
 
-     
-
         self.max_map_tokens = map_tokens
         self.map_mul_no_files = map_mul_no_files
         self.max_context_window = max_context_window
 
-            
         self.repo_content_prefix = repo_content_prefix
 
-    def get_repo_map(self, chat_files, other_files, mentioned_fnames=None, mentioned_idents=None):
+    def get_repo_map(
+        self, chat_files, other_files, mentioned_fnames=None, mentioned_idents=None
+    ):
         if self.max_map_tokens <= 0:
             return
         if not other_files:
@@ -345,7 +369,11 @@ class RepoMap:
 
         try:
             files_listing = self.get_ranked_tags_map(
-                chat_files, other_files, max_map_tokens, mentioned_fnames, mentioned_idents
+                chat_files,
+                other_files,
+                max_map_tokens,
+                mentioned_fnames,
+                mentioned_idents,
             )
         except RecursionError:
             self.io.tool_error("Disabling repo map, git repo too large?")
@@ -380,7 +408,6 @@ class RepoMap:
         path = os.path.relpath(path, self.root)
         return [path + ":"]
 
-
     def save_tags_cache(self):
         pass
 
@@ -397,7 +424,6 @@ class RepoMap:
             return []
 
         data = list(self.get_tags_raw(fname, rel_fname))
-
 
         return data
 
@@ -429,10 +455,10 @@ class RepoMap:
         for node, tag in captures:
             if tag.startswith("name.definition."):
                 kind = "def"
-                type = tag.split(".")[-1]  # 
+                type = tag.split(".")[-1]  #
             elif tag.startswith("name.reference."):
                 kind = "ref"
-                type = tag.split(".")[-1]  # 
+                type = tag.split(".")[-1]  #
             else:
                 continue
 
@@ -478,7 +504,9 @@ class RepoMap:
                 type="unknown",
             )
 
-    def get_ranked_tags(self, chat_fnames, other_fnames, mentioned_fnames, mentioned_idents):
+    def get_ranked_tags(
+        self, chat_fnames, other_fnames, mentioned_fnames, mentioned_idents
+    ):
         defines = defaultdict(set)
         references = defaultdict(list)
         definitions = defaultdict(set)
@@ -494,9 +522,7 @@ class RepoMap:
         # https://networkx.org/documentation/stable/_modules/networkx/algorithms/link_analysis/pagerank_alg.html#pagerank
         personalize = 100 / len(fnames)
 
-        
         fnames = tqdm(fnames)
-        
 
         for fname in fnames:
             if not Path(fname).is_file():
@@ -506,7 +532,9 @@ class RepoMap:
                             f"Repo-map can't include {fname}, it is not a normal file"
                         )
                     else:
-                        self.io.tool_error(f"Repo-map can't include {fname}, it no longer exists")
+                        self.io.tool_error(
+                            f"Repo-map can't include {fname}, it no longer exists"
+                        )
 
                 self.warned_files.add(fname)
                 continue
@@ -583,7 +611,9 @@ class RepoMap:
         ranked_definitions = defaultdict(float)
         for src in G.nodes:
             src_rank = ranked[src]
-            total_weight = sum(data["weight"] for _src, _dst, data in G.out_edges(src, data=True))
+            total_weight = sum(
+                data["weight"] for _src, _dst, data in G.out_edges(src, data=True)
+            )
             # dump(src, src_rank, total_weight)
             for _src, dst, data in G.out_edges(src, data=True):
                 data["rank"] = src_rank * data["weight"] / total_weight
@@ -591,21 +621,26 @@ class RepoMap:
                 ranked_definitions[(dst, ident)] += data["rank"]
 
         ranked_tags = []
-        ranked_definitions = sorted(ranked_definitions.items(), reverse=True, key=lambda x: x[1])
+        ranked_definitions = sorted(
+            ranked_definitions.items(), reverse=True, key=lambda x: x[1]
+        )
 
         # dump(ranked_definitions)
 
         for (fname, ident), rank in ranked_definitions:
-            
             if fname in chat_rel_fnames:
                 continue
             ranked_tags += list(definitions.get((fname, ident), []))
 
-        rel_other_fnames_without_tags = set(self.get_rel_fname(fname) for fname in other_fnames)
+        rel_other_fnames_without_tags = set(
+            self.get_rel_fname(fname) for fname in other_fnames
+        )
 
         fnames_already_included = set(rt[0] for rt in ranked_tags)
 
-        top_rank = sorted([(rank, node) for (node, rank) in ranked.items()], reverse=True)
+        top_rank = sorted(
+            [(rank, node) for (node, rank) in ranked.items()], reverse=True
+        )
         for rank, fname in top_rank:
             if fname in rel_other_fnames_without_tags:
                 rel_other_fnames_without_tags.remove(fname)
@@ -681,17 +716,17 @@ class RepoMap:
             code += "\n"
 
         context = TreeContext(
-                rel_fname,
-                code,
-                color=False,
-                line_number=False,
-                child_context=False,
-                last_line=False,
-                margin=0,
-                mark_lois=False,
-                loi_pad=0,
-                show_top_of_file_parent_scope=False,
-            )
+            rel_fname,
+            code,
+            color=False,
+            line_number=False,
+            child_context=False,
+            last_line=False,
+            margin=0,
+            mark_lois=False,
+            loi_pad=0,
+            show_top_of_file_parent_scope=False,
+        )
 
         for start, end in lois:
             context.add_lines_of_interest(range(start, end + 1))
@@ -700,9 +735,7 @@ class RepoMap:
         self.tree_cache[key] = res
         return res
 
-
     def create_graph(self, repo_dir):
-        
         start_time = time.time()
         logging.info("Starting parsing of codebase")  # Log start
 
@@ -714,15 +747,15 @@ class RepoMap:
             for file in files:
                 file_count += 1  # Increment file counter
                 logging.info(f"Processing file number: {file_count}")  # Log file number
-                
+
                 file_path = os.path.join(root, file)
                 rel_path = os.path.relpath(file_path, repo_dir)
-                
+
                 if not self.is_text_file(file_path):
                     continue
-                
+
                 tags = self.get_tags(file_path, rel_path)
-                
+
                 current_class = None
                 current_function = None
                 for tag in tags:
@@ -732,54 +765,143 @@ class RepoMap:
                             current_function = None
                         elif tag.type == "function":
                             current_function = tag.name
-                        node_name = f"{current_class}.{tag.name}@{rel_path}" if current_class else f"{rel_path}:{tag.name}"
-                        defines[tag.name].append((node_name, tag.line, tag.end_line, tag.type, rel_path, current_class))
-                        G.add_node(node_name, file=rel_path, line=tag.line, end_line=tag.end_line, type=tag.type)
+                        node_name = (
+                            f"{current_class}.{tag.name}@{rel_path}"
+                            if current_class
+                            else f"{rel_path}:{tag.name}"
+                        )
+                        defines[tag.name].append(
+                            (
+                                node_name,
+                                tag.line,
+                                tag.end_line,
+                                tag.type,
+                                rel_path,
+                                current_class,
+                            )
+                        )
+                        G.add_node(
+                            node_name,
+                            file=rel_path,
+                            line=tag.line,
+                            end_line=tag.end_line,
+                            type=tag.type,
+                        )
                     elif tag.kind == "ref":
-                        source = f"{current_class}.{current_function}@{rel_path}" if current_class and current_function else f"{rel_path}:{current_function}" if current_function else rel_path
-                        references[tag.name].append((source, tag.line, tag.end_line, tag.type, rel_path, current_class))
-        
+                        source = (
+                            f"{current_class}.{current_function}@{rel_path}"
+                            if current_class and current_function
+                            else (
+                                f"{rel_path}:{current_function}"
+                                if current_function
+                                else rel_path
+                            )
+                        )
+                        references[tag.name].append(
+                            (
+                                source,
+                                tag.line,
+                                tag.end_line,
+                                tag.type,
+                                rel_path,
+                                current_class,
+                            )
+                        )
+
         # Create edges
         for ident, refs in references.items():
             if ident in defines:
                 if len(defines[ident]) == 1:  # Unique definition
-                    target, def_line, end_def_line, def_type, def_file, def_class = defines[ident][0]
-                    for (source, ref_line, end_ref_line, ref_type, ref_file, ref_class) in refs:
-                        G.add_edge(source, target, type=ref_type, ident=ident, ref_line=ref_line, end_ref_line=end_ref_line, def_line=def_line, end_def_line=end_def_line)
+                    target, def_line, end_def_line, def_type, def_file, def_class = (
+                        defines[ident][0]
+                    )
+                    for (
+                        source,
+                        ref_line,
+                        end_ref_line,
+                        ref_type,
+                        ref_file,
+                        ref_class,
+                    ) in refs:
+                        G.add_edge(
+                            source,
+                            target,
+                            type=ref_type,
+                            ident=ident,
+                            ref_line=ref_line,
+                            end_ref_line=end_ref_line,
+                            def_line=def_line,
+                            end_def_line=end_def_line,
+                        )
                 else:  # Apply scoring system for non-unique definitions
-                    for (source, ref_line, end_ref_line, ref_type, ref_file, ref_class) in refs:
+                    for (
+                        source,
+                        ref_line,
+                        end_ref_line,
+                        ref_type,
+                        ref_file,
+                        ref_class,
+                    ) in refs:
                         best_match = None
                         best_match_score = -1
-                        for (target, def_line, end_def_line, def_type, def_file, def_class) in defines[ident]:
+                        for (
+                            target,
+                            def_line,
+                            end_def_line,
+                            def_type,
+                            def_file,
+                            def_class,
+                        ) in defines[ident]:
                             if source != target:  # Avoid self-references
                                 match_score = 0
                                 if ref_file == def_file:
                                     match_score += 2
-                                elif os.path.dirname(ref_file) == os.path.dirname(def_file):
-                                    match_score += 1  # Add a point for being in the same directory
+                                elif os.path.dirname(ref_file) == os.path.dirname(
+                                    def_file
+                                ):
+                                    match_score += (
+                                        1  # Add a point for being in the same directory
+                                    )
                                 if ref_class == def_class:
                                     match_score += 1
                                 if match_score > best_match_score:
-                                    best_match = (target, def_line, end_def_line, def_type)
+                                    best_match = (
+                                        target,
+                                        def_line,
+                                        end_def_line,
+                                        def_type,
+                                    )
                                     best_match_score = match_score
-                
+
                         if best_match:
                             target, def_line, end_def_line, def_type = best_match
-                            G.add_edge(source, target, type=ref_type, ident=ident, ref_line=ref_line, end_ref_line=end_ref_line, def_line=def_line, end_def_line=end_def_line)
+                            G.add_edge(
+                                source,
+                                target,
+                                type=ref_type,
+                                ident=ident,
+                                ref_line=ref_line,
+                                end_ref_line=end_ref_line,
+                                def_line=def_line,
+                                end_def_line=end_def_line,
+                            )
 
         end_time = time.time()
-        logging.info(f"Parsing completed, time taken: {end_time - start_time} seconds")  # Log end
+        logging.info(
+            f"Parsing completed, time taken: {end_time - start_time} seconds"
+        )  # Log end
         return G
-    
+
     def is_text_file(self, file_path):
         # Simple check to determine if a file is likely to be a text file
         # You might want to expand this based on your specific needs
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 f.read(1024)
             return True
         except UnicodeDecodeError:
             return False
+
     def to_tree(self, tags, chat_rel_fnames):
         if not tags:
             return ""
@@ -820,14 +942,11 @@ class RepoMap:
         return output
 
 
-
-
-
 def get_scm_fname(lang):
     # Load the tags queries
     try:
-        return Path(os.path.dirname(__file__)).joinpath("queries", f"tree-sitter-{lang}-tags.scm")
+        return Path(os.path.dirname(__file__)).joinpath(
+            "queries", f"tree-sitter-{lang}-tags.scm"
+        )
     except KeyError:
         return
-
-

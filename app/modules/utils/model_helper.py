@@ -1,6 +1,7 @@
 from sqlalchemy.orm import class_mapper
 from sqlalchemy.orm.exc import DetachedInstanceError
 
+
 class ModelHelper:
     @staticmethod
     def model_to_dict(model, max_depth=1, current_depth=0):
@@ -11,7 +12,7 @@ class ModelHelper:
 
         try:
             mapper = class_mapper(model.__class__)
-        except:
+        except Exception:
             # If it's not a SQLAlchemy model class, return the object as is
             return model
 
@@ -24,9 +25,17 @@ class ModelHelper:
                 related_obj = getattr(model, rel_name)
                 if related_obj is not None:
                     if isinstance(related_obj, list):
-                        result[rel_name] = [ModelHelper.model_to_dict(item, max_depth, current_depth + 1) for item in related_obj if item is not None]
+                        result[rel_name] = [
+                            ModelHelper.model_to_dict(
+                                item, max_depth, current_depth + 1
+                            )
+                            for item in related_obj
+                            if item is not None
+                        ]
                     else:
-                        result[rel_name] = ModelHelper.model_to_dict(related_obj, max_depth, current_depth + 1)
+                        result[rel_name] = ModelHelper.model_to_dict(
+                            related_obj, max_depth, current_depth + 1
+                        )
             except DetachedInstanceError:
                 # Skip this relationship if it's not loaded
                 pass

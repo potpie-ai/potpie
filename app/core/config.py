@@ -1,7 +1,9 @@
-from dotenv import load_dotenv
 import os
 
+from dotenv import load_dotenv
+
 load_dotenv()
+
 
 class ConfigProvider:
     def __init__(self):
@@ -17,5 +19,6 @@ class ConfigProvider:
 
     def get_github_key(self):
         return self.github_key
+
 
 config_provider = ConfigProvider()

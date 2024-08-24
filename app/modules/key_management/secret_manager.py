@@ -3,13 +3,17 @@ from typing import Literal
 
 from fastapi import Depends, HTTPException
 from google.cloud import secretmanager
+
+from app.core.mongo_manager import MongoManager
+from app.modules.auth.auth_service import AuthService
+from app.modules.key_management.secrets_schema import (
+    CreateSecretRequest,
+    UpdateSecretRequest,
+)
 from app.modules.utils.APIRouter import APIRouter
 
-from app.modules.auth.auth_service import AuthService
-from app.core.mongo_manager import MongoManager
-from app.modules.key_management.secrets_schema import CreateSecretRequest, UpdateSecretRequest
-
 router = APIRouter()
+
 
 class SecretManager:
     @staticmethod
@@ -23,16 +27,14 @@ class SecretManager:
         return client, project_id
 
     @router.post("/secrets")
-    def create_secret(request: CreateSecretRequest, user=Depends(AuthService.check_auth)):
+    def create_secret(
+        request: CreateSecretRequest, user=Depends(AuthService.check_auth)
+    ):
         customer_id = user["user_id"]
         client, project_id = SecretManager.get_client_and_project()
-        
+
         mongo_manager = MongoManager.get_instance()
-        mongo_manager.put(
-            "preferences",
-            customer_id,
-            {"provider": request.provider}
-        )
+        mongo_manager.put("preferences", customer_id, {"provider": request.provider})
 
         api_key = request.api_key
         secret_id = SecretManager.get_secret_id(request.provider, customer_id)
@@ -59,7 +61,9 @@ class SecretManager:
         return secret_id
 
     @router.get("/secrets/{provider}")
-    def get_secret_for_provider(provider: Literal["openai"], user=Depends(AuthService.check_auth)):
+    def get_secret_for_provider(
+        provider: Literal["openai"], user=Depends(AuthService.check_auth)
+    ):
         customer_id = user["user_id"]
         return SecretManager.get_secret(provider, customer_id)
 
@@ -77,7 +81,9 @@ class SecretManager:
             raise HTTPException(status_code=404, detail="Secret not found")
 
     @router.put("/secrets/")
-    def update_secret(request: UpdateSecretRequest, user=Depends(AuthService.check_auth)):
+    def update_secret(
+        request: UpdateSecretRequest, user=Depends(AuthService.check_auth)
+    ):
         customer_id = user["user_id"]
         api_key = request.api_key
         secret_id = SecretManager.get_secret_id(request.provider, customer_id)
@@ -88,16 +94,14 @@ class SecretManager:
             request={"parent": parent, "payload": version["payload"]}
         )
         mongo_manager = MongoManager.get_instance()
-        mongo_manager.put(
-            "preferences",
-            customer_id,
-            {"provider": request.provider}
-        )
+        mongo_manager.put("preferences", customer_id, {"provider": request.provider})
 
         return {"message": "Secret updated successfully"}
 
     @router.delete("/secrets/{provider}")
-    def delete_secret(provider: Literal["openai"], user=Depends(AuthService.check_auth)):
+    def delete_secret(
+        provider: Literal["openai"], user=Depends(AuthService.check_auth)
+    ):
         customer_id = user["user_id"]
         secret_id = SecretManager.get_secret_id(provider, customer_id)
         client, project_id = SecretManager.get_client_and_project()
@@ -110,5 +114,3 @@ class SecretManager:
             return {"message": "Secret deleted successfully"}
         except Exception:
             raise HTTPException(status_code=404, detail="Secret not found")
-        
-        

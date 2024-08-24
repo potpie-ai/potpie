@@ -25,10 +25,16 @@ langchain-community
 pytrends
 wikipedia-api
 langgraph
-langchain-postgres 
+langchain-postgres
 pymongo
 firebase_admin
 portkey_ai
 gitPython
 PyGithub
 google-cloud-secret-manager
+pre-commit
+isort
+black
+ruff
+pylint
+bandit

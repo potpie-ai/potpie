@@ -1,8 +1,10 @@
-from pydantic import BaseModel
-from typing import List
 from datetime import datetime
+from typing import List
+
+from pydantic import BaseModel
+
 from app.modules.conversations.conversation.conversation_model import ConversationStatus
-from app.modules.conversations.message.message_schema import MessageResponse
+
 
 class CreateConversationRequest(BaseModel):
     user_id: str
@@ -10,9 +12,11 @@ class CreateConversationRequest(BaseModel):
     status: ConversationStatus
     project_ids: List[str]
 
+
 class CreateConversationResponse(BaseModel):
     message: str
     conversation_id: str
+
 
 class ConversationInfoResponse(BaseModel):
     id: str
@@ -21,9 +25,11 @@ class ConversationInfoResponse(BaseModel):
     project_ids: List[str]
     created_at: datetime
     updated_at: datetime
-    total_messages: int 
+    total_messages: int
+
     class Config:
         from_attributes = True
+
 
 # Resolve forward references
 ConversationInfoResponse.update_forward_refs()

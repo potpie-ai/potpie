@@ -1,9 +1,11 @@
-import os
 import logging
+import os
+from typing import Optional
+
+import certifi
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, OperationFailure
-from typing import Optional
-import certifi
+
 
 class MongoManager:
     _instance = None
@@ -27,23 +29,23 @@ class MongoManager:
                 mongodb_uri = os.environ.get("MONGO_URI")
                 if not mongodb_uri:
                     raise ValueError("MONGO_URI environment variable is not set")
-                
+
                 self._client = MongoClient(
                     mongodb_uri,
                     maxPoolSize=50,
                     waitQueueTimeoutMS=2500,
-                    tlsCAFile=certifi.where()  # Use the certifi package to locate the CA bundle
+                    tlsCAFile=certifi.where(),  # Use the certifi package to locate the CA bundle
                 )
-                
+
                 db_name = os.environ.get("MONGODB_DB_NAME")
                 if not db_name:
                     raise ValueError("MONGODB_DB_NAME environment variable is not set")
-                
+
                 self._db = self._client[db_name]
-                
+
                 # Verify the connection and database
                 self.verify_connection()
-                
+
             except (ConnectionFailure, ValueError) as e:
                 logging.error(f"Failed to connect to MongoDB: {str(e)}")
                 raise
@@ -51,12 +53,14 @@ class MongoManager:
     def verify_connection(self):
         try:
             # Ping the server to check the connection
-            self._client.admin.command('ping')
-            
+            self._client.admin.command("ping")
+
             # List all collections to verify database access
             self._db.list_collection_names()
-            
-            logging.info("Successfully connected to MongoDB and verified database access")
+
+            logging.info(
+                "Successfully connected to MongoDB and verified database access"
+            )
         except OperationFailure as e:
             logging.error(f"Failed to verify MongoDB connection: {str(e)}")
             raise
@@ -69,11 +73,11 @@ class MongoManager:
         try:
             collection = self.get_collection(collection_name)
             result = collection.update_one(
-                {"_id": document_id},
-                {"$set": data},
-                upsert=True
+                {"_id": document_id}, {"$set": data}, upsert=True
             )
-            logging.info(f"Document {'updated' if result.modified_count else 'inserted'} in {collection_name}")
+            logging.info(
+                f"Document {'updated' if result.modified_count else 'inserted'} in {collection_name}"
+            )
             return result
         except Exception as e:
             logging.error(f"Failed to put document in {collection_name}: {str(e)}")
