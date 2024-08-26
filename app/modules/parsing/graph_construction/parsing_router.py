@@ -8,9 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
-from app.modules.parsing.graph_construction.parsing_helper import (
-    ParsingServiceError,
-)
+from app.modules.parsing.graph_construction.parsing_helper import ParsingServiceError
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
