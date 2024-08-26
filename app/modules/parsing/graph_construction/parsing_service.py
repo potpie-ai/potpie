@@ -1,11 +1,12 @@
+import asyncio
 import hashlib
 import logging
 import traceback
-import asyncio
 
 from blar_graph.db_managers import Neo4jManager
 from blar_graph.graph_construction.core.graph_builder import GraphConstructor
 from neo4j import GraphDatabase
+from sqlalchemy.orm import Session
 
 from app.core.config import config_provider
 from app.modules.parsing.graph_construction.parsing_helper import (
@@ -16,7 +17,8 @@ from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
-from sqlalchemy.orm import Session
+
+
 class SimpleIO:
     def read_text(self, fname):
         with open(fname, "r") as f:
@@ -96,12 +98,14 @@ class CodeGraphService:
                     }
                     nodes_to_create.append(node_data)
                     # Create search index for each node
-                    asyncio.run(search_service.create_search_index(project_id, node_data))
+                    asyncio.run(
+                        search_service.create_search_index(project_id, node_data)
+                    )
 
                 session.run(
                     "UNWIND $nodes AS node "
                     "CREATE (d:Definition {name: node.name, file: node.file, start_line: node.start_line, repoId: node.repoId, node_id: node.node_id, entityId: node.entityId})",
-                    nodes=nodes_to_create
+                    nodes=nodes_to_create,
                 )
 
             # Commit the search indices
@@ -164,7 +168,9 @@ class ParsingService:
                 # Create search index
                 search_service = SearchService(db)
                 for node in n:
-                    await search_service.create_search_index(project_id, node["attributes"])
+                    await search_service.create_search_index(
+                        project_id, node["attributes"]
+                    )
 
                 await ProjectService(db).update_project_status(
                     project_id, ProjectStatusEnum.PARSED
@@ -184,7 +190,7 @@ class ParsingService:
                     neo4j_config["uri"],
                     neo4j_config["username"],
                     neo4j_config["password"],
-                    db
+                    db,
                 )
 
                 service.create_and_store_graph(extracted_dir, project_id, user_id)

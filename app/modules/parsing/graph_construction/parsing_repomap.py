@@ -2,23 +2,22 @@ import logging
 import math
 import os
 import time
-
+import warnings
 from collections import Counter, defaultdict, namedtuple
 from pathlib import Path
 
 import networkx as nx
-
 from grep_ast import TreeContext, filename_to_lang
 from pygments.lexers import guess_lexer_for_filename
 from pygments.token import Token
 from pygments.util import ClassNotFound
 from tqdm import tqdm
 from tree_sitter_languages import get_language, get_parser  # noqa: E402
-import warnings
-from collections import namedtuple
+
 # tree_sitter is throwing a FutureWarning
 warnings.simplefilter("ignore", category=FutureWarning)
 Tag = namedtuple("Tag", "rel_fname fname line end_line name kind type".split())
+
 
 class RepoMap:
     warned_files = set()

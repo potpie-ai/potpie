@@ -1,6 +1,8 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, Float
+from sqlalchemy import Column, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
+
 from app.core.database import Base
+
 
 class SearchIndex(Base):
     __tablename__ = "search_indices"
@@ -11,8 +13,9 @@ class SearchIndex(Base):
     name = Column(String, index=True)
     file_path = Column(String, index=True)
     content = Column(Text)
-    
+
     project = relationship("Project", back_populates="search_indices")
+
 
 # Add this to the Project model in projects_model.py
 SearchIndex.project = relationship("Project", back_populates="search_indices")

@@ -1,7 +1,5 @@
-import logging
 import os
 import shutil
-import time
 import traceback
 from contextlib import contextmanager
 
@@ -11,13 +9,9 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
 from app.modules.parsing.graph_construction.parsing_helper import (
-    ParseHelper,
     ParsingServiceError,
 )
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
-from app.modules.parsing.knowledge_graph.code_inference_service import (
-    CodebaseInferenceService,
-)
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.utils.APIRouter import APIRouter
@@ -46,7 +40,6 @@ class ParsingAPI:
         user_id = user["user_id"]
         project_manager = ProjectService(db)
         project_id = None
-        parse_helper = ParseHelper(db)
         project = await project_manager.get_project_from_db(
             repo_details.repo_name, user_id
         )
@@ -73,8 +66,8 @@ class ParsingAPI:
             # logging.info(
             #     f"Duration for processing repository: {end_time - start_time:.2f} seconds"
             # )
-            extracted_dir = '/Users/dhirenmathur/Documents/momentum-server/dhirenmathur-test-mongo-master-WKyrZNjOflYSr9q8Jm7JcHqqwSr1'
-            project_id = '01918f6c-1eb1-746d-be4d-9076c9b5021c'
+            extracted_dir = "/Users/dhirenmathur/Documents/momentum-server/dhirenmathur-test-mongo-master-WKyrZNjOflYSr9q8Jm7JcHqqwSr1"
+            project_id = "01918f6c-1eb1-746d-be4d-9076c9b5021c"
             await ParsingService.analyze_directory(
                 extracted_dir, project_id, user_id, db
             )

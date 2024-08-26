@@ -8,6 +8,14 @@ from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
 
 from app.core.database import Base
+from app.modules.conversations.conversation.conversation_model import (  # noqa
+    Conversation,
+)
+from app.modules.conversations.message.message_model import Message  # noqa
+from app.modules.projects.projects_model import Project  # noqa
+from app.modules.search.search_models import SearchIndex  # noqa
+from app.modules.tasks.task_model import Task  # noqa
+from app.modules.users.user_model import User  # noqa
 
 # Load environment variables from .env
 load_dotenv()
