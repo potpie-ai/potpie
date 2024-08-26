@@ -29,6 +29,17 @@ services:
     networks:
       - app-network
 
+  mongodb:
+    image: mongo:latest
+    container_name: mongodb
+    restart: always
+    environment:
+      - MONGO_INITDB_DATABASE=momentum
+    ports:
+      - "27017:27017"
+    networks:
+      - app-network
+
   redis:
     image: redis:latest
     container_name: redis_broker

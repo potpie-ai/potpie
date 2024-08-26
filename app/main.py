@@ -16,6 +16,7 @@ from app.modules.parsing.graph_construction.parsing_router import (
     router as parsing_router,
 )
 from app.modules.users.user_router import router as user_router
+from app.modules.projects.projects_router import router as projects_router
 from app.modules.utils.dummy_setup import DummyDataSetup
 from app.modules.utils.firebase_setup import FirebaseSetup
 
@@ -88,6 +89,7 @@ class MainApp:
         self.app.include_router(
             secret_manager_router, prefix="/api/v1", tags=["Secret Manager"]
         )
+        self.app.include_router(projects_router, prefix="/api/v1", tags=["Projects"])
 
     def add_health_check(self):
         @self.app.get("/health", tags=["Health"])

@@ -21,7 +21,7 @@ class GithubService:
         self.project_manager = ProjectService(db)
 
     @staticmethod
-    def get_github_repo_details(repo_name):
+    def get_github_repo_details(repo_name: str):
         private_key = (
             "-----BEGIN RSA PRIVATE KEY-----\n"
             + config_provider.get_github_key()
@@ -38,8 +38,14 @@ class GithubService:
             "Authorization": f"Bearer {jwt}",
             "X-GitHub-Api-Version": "2022-11-28",
         }
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            raise HTTPException(status_code=400, detail="Failed to get installation ID")
+        app_auth = auth.get_installation_auth(response.json()["id"])
+                                              
+        github = Github(auth=app_auth)
 
-        return requests.get(url, headers=headers), auth, owner
+        return github, response, auth, owner
 
     @staticmethod
     def check_is_commit_added(repo_details, project_details, branch_name):
