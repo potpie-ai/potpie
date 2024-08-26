@@ -18,3 +18,4 @@ cli/momentum_cli/.momentum
 !.env.template
 **/node_modules/
 *.log
+.cursorrules

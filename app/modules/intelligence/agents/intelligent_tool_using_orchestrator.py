@@ -9,7 +9,7 @@ from langchain_core.prompts import (
     MessagesPlaceholder,
 )
 from langchain_core.runnables import RunnableSequence
-from langchain_openai import ChatOpenAI
+from langchain_openai.chat_models import ChatOpenAI
 from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType

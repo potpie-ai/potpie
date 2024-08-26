@@ -4,9 +4,11 @@ import math
 import os
 import tarfile
 import time
+from typing import Any, Tuple
 import warnings
 from collections import Counter, defaultdict, namedtuple
 from pathlib import Path
+from github import Github
 
 import networkx as nx
 import requests
@@ -20,6 +22,8 @@ from sqlalchemy.orm import Session
 from tqdm import tqdm
 from tree_sitter_languages import get_language, get_parser  # noqa: E402
 from uuid6 import uuid7
+from app.modules.github.github_service import GithubService
+from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
 
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
@@ -41,8 +45,41 @@ class ParseHelper:
     def __init__(self, db_session: Session):
         self.project_manager = ProjectService(db_session)
         self.db = db_session
+        
+    @staticmethod
+    async def clone_or_copy_repository(
+        repo_details: RepoDetails, db: Session, user_id: str
+    ) -> Tuple[Any, str, Any]:
+        if repo_details.repo_path:
+            if not os.path.exists(repo_details.repo_path):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Local repository does not exist on given path",
+                )
+            repo = Repo(repo_details.repo_path)
+            owner = None
+            auth = None
+        else:
+            github_service = GithubService(db)
+            response, auth, owner = github_service.get_github_repo_details(
+                repo_details.repo_name
+            )
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=400, detail="Failed to get installation ID"
+                )
+            app_auth = auth.get_installation_auth(response.json()["id"])
+            github = Github(auth=app_auth)
+            try:
+                repo = github.get_repo(repo_details.repo_name)
+            except Exception:
+                raise HTTPException(
+                    status_code=400, detail="Repository not found on GitHub"
+                )
 
-    def download_and_extract_tarball(
+        return repo, owner, auth
+
+    async def download_and_extract_tarball(
         self, repo, branch, target_dir, auth, repo_details, user_id
     ):
         try:
@@ -52,7 +89,7 @@ class ParseHelper:
                 stream=True,
                 headers={"Authorization": f"{auth.token}"},
             )
-            response.raise_for_status()  # Check for request errors
+            response.raise_for_status()  
         except requests.exceptions.RequestException as e:
             logging.error(f"Error fetching tarball: {e}")
             return e
@@ -203,7 +240,7 @@ class ParseHelper:
             branch_details = repo_details.head.commit
             latest_commit_sha = branch_details.hexsha
         else:
-            extracted_dir = self.download_and_extract_tarball(
+            extracted_dir = await self.download_and_extract_tarball(
                 repo, branch, os.getenv("PROJECT_PATH"), auth, repo_details, user_id
             )
             branch_details = repo_details.get_branch(branch)
