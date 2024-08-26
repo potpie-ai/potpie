@@ -1,21 +1,23 @@
+import logging
 import os
 import shutil
+import time
 import traceback
 from contextlib import contextmanager
-import time
-from fastapi import Depends, HTTPException
 
+from fastapi import Depends, HTTPException
 from sqlalchemy.orm import Session
-import logging
+
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
-from app.modules.github.github_service import GithubService
 from app.modules.parsing.graph_construction.parsing_helper import (
     ParseHelper,
     ParsingServiceError,
 )
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
-from app.modules.parsing.knowledge_graph.code_inference_service import CodebaseInferenceService
+from app.modules.parsing.knowledge_graph.code_inference_service import (
+    CodebaseInferenceService,
+)
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.utils.APIRouter import APIRouter
@@ -34,7 +36,6 @@ class ParsingAPI:
             yield
         finally:
             os.chdir(old_dir)
-
 
     @router.post("/parse")
     async def parse_directory(
@@ -64,31 +65,20 @@ class ParsingAPI:
                 repo, repo_details.branch_name, auth, repo, user_id, project_id
             )
 
-            # Update Celery task invocations
-            # inference_task = celery_worker_instance.celery_instance.send_task(
-            #     'app.modules.parsing.knowledge_graph.code_inference_service.process_repository',
-            #     args=[repo_details.repo_name, user_id, project_id],
-            #     queue=celery_worker_instance.process_repository_queue
-            # )
-
-            # analyze_task = celery_worker_instance.celery_instance.send_task(
-            #     'app.modules.parsing.graph_construction.parsing_service.analyze_directory',
-            #     args=[extracted_dir, project_id, user_id],
-            #     queue=celery_worker_instance.analyze_directory_queue
-            # )
-
-            # Wait for all tasks to complete
-            # inference_result = inference_task.get()
-            # analyze_result = analyze_task.get()
-
             start_time = time.time()
-            await CodebaseInferenceService(db).process_repository(repo_details, user_id, project_id)
+            await CodebaseInferenceService(db).process_repository(
+                repo_details, user_id, project_id
+            )
             end_time = time.time()
-            logging.info(f"Duration for processing repository: {end_time - start_time:.2f} seconds")
-            await ParsingService.analyze_directory(extracted_dir, project_id, user_id, db)
+            logging.info(
+                f"Duration for processing repository: {end_time - start_time:.2f} seconds"
+            )
+            await ParsingService.analyze_directory(
+                extracted_dir, project_id, user_id, db
+            )
             shutil.rmtree(extracted_dir, ignore_errors=True)
             message = "The project has been parsed successfully"
-            
+
             await project_manager.update_project_status(
                 project_id, ProjectStatusEnum.READY
             )
@@ -118,7 +108,7 @@ class ParsingAPI:
             )
         finally:
             if extracted_dir:
-                #shutil.rmtree(extracted_dir, ignore_errors=True)
+                # shutil.rmtree(extracted_dir, ignore_errors=True)
                 pass
 
     def validate_input(repo_details: ParsingRequest, user_id: str):
