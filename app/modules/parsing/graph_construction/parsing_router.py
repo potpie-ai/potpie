@@ -1,5 +1,7 @@
+import logging
 import os
 import shutil
+import time
 import traceback
 from contextlib import contextmanager
 
@@ -8,8 +10,14 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
-from app.modules.parsing.graph_construction.parsing_helper import ParsingServiceError
+from app.modules.parsing.graph_construction.parsing_helper import (
+    ParseHelper,
+    ParsingServiceError,
+)
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
+from app.modules.parsing.knowledge_graph.code_inference_service import (
+    CodebaseInferenceService,
+)
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.utils.APIRouter import APIRouter
@@ -44,28 +52,27 @@ class ParsingAPI:
         extracted_dir = None
         if project:
             project_id = project.id
-
+        parse_helper = ParseHelper(db)
         try:
             # Step 1: Validate input
-            # ParsingAPI.validate_input(repo_details, user_id)
-            # repo, owner, auth = await parse_helper.clone_or_copy_repository(
-            #     repo_details, db, user_id
-            # )
+            ParsingAPI.validate_input(repo_details, user_id)
+            repo, owner, auth = await parse_helper.clone_or_copy_repository(
+                repo_details, db, user_id
+            )
 
-            # extracted_dir, project_id = await parse_helper.setup_project_directory(
-            #     repo, repo_details.branch_name, auth, repo, user_id, project_id
-            # )
+            extracted_dir, project_id = await parse_helper.setup_project_directory(
+                repo, repo_details.branch_name, auth, repo, user_id, project_id
+            )
 
-            # start_time = time.time()
-            # await CodebaseInferenceService(db).process_repository(
-            #     repo_details, user_id, project_id
-            # )
-            # end_time = time.time()
-            # logging.info(
-            #     f"Duration for processing repository: {end_time - start_time:.2f} seconds"
-            # )
-            extracted_dir = "/Users/dhirenmathur/Documents/momentum-server/dhirenmathur-test-mongo-master-WKyrZNjOflYSr9q8Jm7JcHqqwSr1"
-            project_id = "01918f6c-1eb1-746d-be4d-9076c9b5021c"
+            start_time = time.time()
+            await CodebaseInferenceService(db).process_repository(
+                repo_details, user_id, project_id
+            )
+            end_time = time.time()
+            logging.info(
+                f"Duration for processing repository: {end_time - start_time:.2f} seconds"
+            )
+
             await ParsingService.analyze_directory(
                 extracted_dir, project_id, user_id, db
             )
