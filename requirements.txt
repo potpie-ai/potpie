@@ -43,3 +43,5 @@ langchain
 langchain-community
 redis
 aiofiles
+sentence-transformers
+scikit-learn

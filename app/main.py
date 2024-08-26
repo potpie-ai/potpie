@@ -18,6 +18,7 @@ from app.modules.parsing.graph_construction.parsing_router import (
 from app.modules.users.user_router import router as user_router
 from app.modules.utils.dummy_setup import DummyDataSetup
 from app.modules.utils.firebase_setup import FirebaseSetup
+from app.modules.search.search_router import router as search_router
 
 # Configure logging
 logging.basicConfig(
@@ -88,6 +89,7 @@ class MainApp:
         self.app.include_router(
             secret_manager_router, prefix="/api/v1", tags=["Secret Manager"]
         )
+        self.app.include_router(search_router, prefix="/api/v1/search", tags=["search"])
 
     def add_health_check(self):
         @self.app.get("/health", tags=["Health"])

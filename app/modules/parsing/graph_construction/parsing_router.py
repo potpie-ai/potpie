@@ -56,23 +56,25 @@ class ParsingAPI:
 
         try:
             # Step 1: Validate input
-            ParsingAPI.validate_input(repo_details, user_id)
-            repo, owner, auth = await parse_helper.clone_or_copy_repository(
-                repo_details, db, user_id
-            )
+            # ParsingAPI.validate_input(repo_details, user_id)
+            # repo, owner, auth = await parse_helper.clone_or_copy_repository(
+            #     repo_details, db, user_id
+            # )
 
-            extracted_dir, project_id = await parse_helper.setup_project_directory(
-                repo, repo_details.branch_name, auth, repo, user_id, project_id
-            )
+            # extracted_dir, project_id = await parse_helper.setup_project_directory(
+            #     repo, repo_details.branch_name, auth, repo, user_id, project_id
+            # )
 
-            start_time = time.time()
-            await CodebaseInferenceService(db).process_repository(
-                repo_details, user_id, project_id
-            )
-            end_time = time.time()
-            logging.info(
-                f"Duration for processing repository: {end_time - start_time:.2f} seconds"
-            )
+            # start_time = time.time()
+            # await CodebaseInferenceService(db).process_repository(
+            #     repo_details, user_id, project_id
+            # )
+            # end_time = time.time()
+            # logging.info(
+            #     f"Duration for processing repository: {end_time - start_time:.2f} seconds"
+            # )
+            extracted_dir = '/Users/dhirenmathur/Documents/momentum-server/dhirenmathur-test-mongo-master-WKyrZNjOflYSr9q8Jm7JcHqqwSr1'
+            project_id = '01918f6c-1eb1-746d-be4d-9076c9b5021c'
             await ParsingService.analyze_directory(
                 extracted_dir, project_id, user_id, db
             )
@@ -108,8 +110,7 @@ class ParsingAPI:
             )
         finally:
             if extracted_dir:
-                # shutil.rmtree(extracted_dir, ignore_errors=True)
-                pass
+                shutil.rmtree(extracted_dir, ignore_errors=True)
 
     def validate_input(repo_details: ParsingRequest, user_id: str):
         if os.getenv("isDevelopmentMode") != "enabled" and repo_details.repo_path:
