@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import logging
 import traceback
@@ -5,15 +6,17 @@ import traceback
 from blar_graph.db_managers import Neo4jManager
 from blar_graph.graph_construction.core.graph_builder import GraphConstructor
 from neo4j import GraphDatabase
+from sqlalchemy.orm import Session
 
 from app.core.config import config_provider
 from app.modules.parsing.graph_construction.parsing_helper import (
     ParseHelper,
     ParsingFailedError,
-    RepoMap,
 )
+from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
+from app.modules.search.search_service import SearchService
 
 
 class SimpleIO:
@@ -34,8 +37,9 @@ class SimpleTokenCounter:
 
 
 class CodeGraphService:
-    def __init__(self, neo4j_uri, neo4j_user, neo4j_password):
+    def __init__(self, neo4j_uri, neo4j_user, neo4j_password, db: Session):
         self.driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
+        self.db = db
 
     @staticmethod
     def generate_node_id(path: str, user_id: str):
@@ -73,27 +77,39 @@ class CodeGraphService:
             node_count = nx_graph.number_of_nodes()
             logging.info(f"Creating {node_count} nodes")
 
+            # Initialize SearchService
+            search_service = SearchService(self.db)
+
             # Batch insert nodes
             batch_size = 300
             for i in range(0, node_count, batch_size):
                 batch_nodes = list(nx_graph.nodes(data=True))[i : i + batch_size]
+                nodes_to_create = []
+                for node in batch_nodes:
+                    node_data = {
+                        "name": node[0],
+                        "file": node[1].get("file", ""),
+                        "start_line": node[1].get("line", -1),
+                        "repoId": project_id,
+                        "node_id": CodeGraphService.generate_node_id(
+                            node[1].get("file", ""), user_id
+                        ),
+                        "entityId": user_id,
+                    }
+                    nodes_to_create.append(node_data)
+                    # Create search index for each node
+                    asyncio.run(
+                        search_service.create_search_index(project_id, node_data)
+                    )
+
                 session.run(
                     "UNWIND $nodes AS node "
-                    "CREATE (d:Definition {name: node.name, file: node.file, start_line: node.line, repoId: node.repoId, node_id: node.node_id, entityId: node.entityId})",
-                    nodes=[
-                        {
-                            "name": node[0],
-                            "file": node[1].get("file", ""),
-                            "start_line": node[1].get("line", -1),
-                            "repoId": project_id,
-                            "node_id": CodeGraphService.generate_node_id(
-                                node[1].get("file", ""), user_id
-                            ),
-                            "entityId": user_id,
-                        }
-                        for node in batch_nodes
-                    ],
+                    "CREATE (d:Definition {name: node.name, file: node.file, start_line: node.start_line, repoId: node.repoId, node_id: node.node_id, entityId: node.entityId})",
+                    nodes=nodes_to_create,
                 )
+
+            # Commit the search indices
+            asyncio.run(search_service.commit_indices())
 
             relationship_count = nx_graph.number_of_edges()
             logging.info(f"Creating {relationship_count} relationships")
@@ -115,7 +131,7 @@ class CodeGraphService:
 
             end_time = time.time()  # End timing
             logging.info(
-                f"Time taken to create graph: {end_time - start_time:.2f} seconds"
+                f"Time taken to create graph and search index: {end_time - start_time:.2f} seconds"
             )  # Log time taken
 
     def query_graph(self, query):
@@ -125,23 +141,46 @@ class CodeGraphService:
 
 
 class ParsingService:
-    async def analyze_directory(repo_dir, project_id, user_id, db):
-        repo_lang = ParseHelper(db).detect_repo_language(repo_dir)
+    # @celery_worker_instance.celery_instance.task(name='app.modules.parsing.graph_construction.parsing_service.analyze_directory')
+    @staticmethod
+    async def analyze_directory(extracted_dir: str, project_id: int, user_id: str, db):
+        logging.info(f"Analyzing directory: {extracted_dir}")
+
+        try:
+            await ParsingService._analyze_directory(
+                extracted_dir, project_id, user_id, db
+            )
+        finally:
+            db.close()
+
+    async def _analyze_directory(extracted_dir: str, project_id: int, user_id: str, db):
+        logging.info(f"_Analyzing directory: {extracted_dir}")
+        repo_lang = ParseHelper(db).detect_repo_language(extracted_dir)
 
         if repo_lang in ["python", "javascript", "typescript"]:
             graph_manager = Neo4jManager(project_id, user_id)
 
             try:
                 graph_constructor = GraphConstructor(graph_manager, user_id)
-                n, r = graph_constructor.build_graph(repo_dir)
+                n, r = graph_constructor.build_graph(extracted_dir)
                 graph_manager.save_graph(n, r)
+
+                # Create search index
+                search_service = SearchService(db)
+                for node in n:
+                    await search_service.create_search_index(
+                        project_id, node["attributes"]
+                    )
+
                 await ProjectService(db).update_project_status(
                     project_id, ProjectStatusEnum.PARSED
                 )
             except Exception as e:
                 logging.error(e)
                 logging.error(traceback.format_exc())
-
+                await ProjectService(db).update_project_status(
+                    project_id, ProjectStatusEnum.ERROR
+                )
             finally:
                 graph_manager.close()
         elif repo_lang != "other":
@@ -151,13 +190,13 @@ class ParsingService:
                     neo4j_config["uri"],
                     neo4j_config["username"],
                     neo4j_config["password"],
+                    db,
                 )
 
-                service.create_and_store_graph(repo_dir, project_id, user_id)
+                service.create_and_store_graph(extracted_dir, project_id, user_id)
                 await ProjectService(db).update_project_status(
                     project_id, ProjectStatusEnum.PARSED
                 )
-
             finally:
                 service.close()
         else:

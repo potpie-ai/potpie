@@ -38,3 +38,10 @@ black
 ruff
 pylint
 bandit
+celery
+langchain
+langchain-community
+redis
+aiofiles
+sentence-transformers
+scikit-learn

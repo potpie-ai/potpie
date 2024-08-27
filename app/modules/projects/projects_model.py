@@ -44,3 +44,5 @@ class Project(Base):
 
 # Project relationships
 Project.user = relationship("User", back_populates="projects")
+Project.tasks = relationship("Task", back_populates="project")
+Project.search_indices = relationship("SearchIndex", back_populates="project")
