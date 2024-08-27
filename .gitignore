@@ -3,6 +3,7 @@
 *__pycache__
 .venv
 firebase_service_account.json
+firebase_service_account.json:Zone.Identifier
 cli/dist
 cli/.venv
 venv/

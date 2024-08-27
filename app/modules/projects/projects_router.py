@@ -12,7 +12,7 @@ from app.modules.utils.APIRouter import APIRouter
 
 load_dotenv(override=True)
 router = APIRouter()
-db = Depends(get_db)
+
 
 github_client = None
 
