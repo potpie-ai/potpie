@@ -98,3 +98,39 @@ class GithubService:
             logger.error(f"An error occurred: {e}", exc_info=True)
 
         return method_content
+
+    @staticmethod
+    def get_repos_for_user():
+        private_key = (
+            "-----BEGIN RSA PRIVATE KEY-----\n"
+            + config_provider.get_github_key()
+            + "\n-----END RSA PRIVATE KEY-----\n"
+        )
+        app_id = os.environ["GITHUB_APP_ID"]
+        auth = AppAuth(app_id=app_id, private_key=private_key)
+        jwt = auth.create_jwt()
+
+        url = f"https://api.github.com/app/installations"
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {jwt}",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            raise HTTPException(status_code=400, detail="Failed to get installations")
+
+        installations = response.json()
+        repos = []
+
+        for installation in installations:
+            app_auth = auth.get_installation_auth(installation["id"])
+            github = Github(auth=app_auth)
+            repos_url = installation["repositories_url"]
+            repos_response = requests.get(repos_url, headers={"Authorization": f"Bearer {app_auth.token}"})
+            if repos_response.status_code == 200:
+                repos.extend(repos_response.json().get('repositories', []))
+            else:
+                logger.error(f"Failed to fetch repositories for installation ID {installation['id']}")
+
+        return repos
