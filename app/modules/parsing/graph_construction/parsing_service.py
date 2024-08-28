@@ -10,7 +10,7 @@ from blar_graph.graph_construction.core.graph_builder import GraphConstructor
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.config_provider import ConfigProvider
+from app.core.config import config_provider
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.parsing.graph_construction.parsing_helper import (
     ParseHelper,
@@ -30,7 +30,6 @@ from .parsing_schema import ParsingRequest
 class ParsingService:
     def __init__(self, db: Session):
         self.db = db
-        self.config_provider = ConfigProvider()
 
     @contextmanager
     def change_dir(self, path):
