@@ -8,7 +8,7 @@ from github import Github
 from github.Auth import AppAuth
 from sqlalchemy.orm import Session
 
-from app.core.config import config_provider
+from app.core.config_provider import config_provider
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 
