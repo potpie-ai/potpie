@@ -8,7 +8,7 @@ from github import Github
 from github.Auth import AppAuth
 from sqlalchemy.orm import Session
 
-from app.core.config import config_provider
+from app.core.config_provider import ConfigProvider
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 
@@ -19,6 +19,7 @@ class GithubService:
     # Start Generation Here
     def __init__(self, db: Session):
         self.project_manager = ProjectService(db)
+        self.config_provider = ConfigProvider()
 
     @staticmethod
     def get_github_repo_details(repo_name: str):

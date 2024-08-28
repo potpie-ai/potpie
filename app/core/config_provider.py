@@ -19,6 +19,3 @@ class ConfigProvider:
 
     def get_github_key(self):
         return self.github_key
-
-
-config_provider = ConfigProvider()
