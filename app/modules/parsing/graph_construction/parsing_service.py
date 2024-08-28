@@ -1,21 +1,97 @@
 import logging
+import os
+import shutil
+import time
 import traceback
+from contextlib import contextmanager
 
 from blar_graph.db_managers import Neo4jManager
 from blar_graph.graph_construction.core.graph_builder import GraphConstructor
+from fastapi import HTTPException
+from sqlalchemy.orm import Session
 
 from app.core.config import config_provider
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.parsing.graph_construction.parsing_helper import (
     ParseHelper,
     ParsingFailedError,
+    ParsingServiceError,
+)
+from app.modules.parsing.knowledge_graph.code_inference_service import (
+    CodebaseInferenceService,
 )
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
 
+from .parsing_schema import ParsingRequest
+
 
 class ParsingService:
+    def __init__(self, db: Session):
+        self.db = db
+
+    @contextmanager
+    def change_dir(self, path):
+        old_dir = os.getcwd()
+        os.chdir(path)
+        try:
+            yield
+        finally:
+            os.chdir(old_dir)
+
+    async def parse_directory(
+        self, repo_details: ParsingRequest, user_id: str, project_id: int
+    ):
+        project_manager = ProjectService(self.db)
+        parse_helper = ParseHelper(self.db)
+        extracted_dir = None
+
+        try:
+            repo, owner, auth = await parse_helper.clone_or_copy_repository(
+                repo_details, self.db, user_id
+            )
+            extracted_dir, project_id = await parse_helper.setup_project_directory(
+                repo, repo_details.branch_name, auth, repo, user_id, project_id
+            )
+
+            start_time = time.time()
+            await CodebaseInferenceService(self.db).process_repository(
+                repo_details, user_id, project_id
+            )
+            end_time = time.time()
+            logging.info(
+                f"Duration for processing repository: {end_time - start_time:.2f} seconds"
+            )
+
+            await self.analyze_directory(extracted_dir, project_id, user_id)
+
+            message = "The project has been parsed successfully"
+            await project_manager.update_project_status(
+                project_id, ProjectStatusEnum.READY
+            )
+            return {"message": message, "id": project_id}
+
+        except ParsingServiceError as e:
+            message = str(f"{project_id} Failed during parsing: " + e.message)
+            await project_manager.update_project_status(
+                project_id, ProjectStatusEnum.ERROR
+            )
+            raise HTTPException(status_code=500, detail=message)
+
+        except Exception as e:
+            await project_manager.update_project_status(
+                project_id, ProjectStatusEnum.ERROR
+            )
+            tb_str = "".join(traceback.format_exception(None, e, e.__traceback__))
+            raise HTTPException(
+                status_code=500, detail=f"{str(e)}\nTraceback: {tb_str}"
+            )
+
+        finally:
+            if extracted_dir:
+                shutil.rmtree(extracted_dir, ignore_errors=True)
+
     # @celery_worker_instance.celery_instance.task(name='app.modules.parsing.graph_construction.parsing_service.analyze_directory')
     @staticmethod
     async def analyze_directory(extracted_dir: str, project_id: int, user_id: str, db):

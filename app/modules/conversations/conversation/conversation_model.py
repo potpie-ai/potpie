@@ -1,14 +1,18 @@
 import enum
+
 from sqlalchemy import ARRAY, TIMESTAMP, Column
 from sqlalchemy import Enum as SQLAEnum
 from sqlalchemy import ForeignKey, String, func
 from sqlalchemy.orm import relationship
+
 from app.core.database import Base
+
 
 class ConversationStatus(enum.Enum):
     ACTIVE = "active"
     ARCHIVED = "archived"
     DELETED = "deleted"
+
 
 class Conversation(Base):
     __tablename__ = "conversations"

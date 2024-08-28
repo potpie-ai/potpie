@@ -11,14 +11,14 @@ from app.modules.auth.auth_router import auth_router
 from app.modules.conversations.conversations_router import (
     router as conversations_router,
 )
+from app.modules.github.github_router import router as github_router
 from app.modules.key_management.secret_manager import router as secret_manager_router
 from app.modules.parsing.graph_construction.parsing_router import (
     router as parsing_router,
 )
+from app.modules.projects.projects_router import router as projects_router
 from app.modules.search.search_router import router as search_router
 from app.modules.users.user_router import router as user_router
-from app.modules.projects.projects_router import router as projects_router
-from app.modules.github.github_router import router as github_router
 from app.modules.utils.dummy_setup import DummyDataSetup
 from app.modules.utils.firebase_setup import FirebaseSetup
 

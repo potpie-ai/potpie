@@ -26,7 +26,9 @@ from app.modules.conversations.message.message_schema import (
     MessageResponse,
 )
 from app.modules.intelligence.agents.codebase_qna_agent import CodebaseQnAAgent
-from app.modules.intelligence.agents.debugging_agent import DebuggingWithKnowledgeGraphAgent
+from app.modules.intelligence.agents.debugging_agent import (
+    DebuggingWithKnowledgeGraphAgent,
+)
 from app.modules.intelligence.agents.intelligent_tool_using_orchestrator import (
     IntelligentToolUsingOrchestrator,
 )
@@ -70,7 +72,6 @@ class ConversationService:
             "codebase_qna_agent": codebase_qna_agent,
         }
 
-
     @classmethod
     def create(cls, db: Session):
         project_service = ProjectService(db)
@@ -79,18 +80,23 @@ class ConversationService:
         orchestrator = cls._initialize_orchestrator(openai_key, db)
         debugging_agent = cls._initialize_debugging_agent(openai_key, db)
         qna_agent = cls._initialize_qna_agent(openai_key, db)
-        return cls(db, project_service, history_manager, orchestrator, debugging_agent,qna_agent)
+        return cls(
+            db,
+            project_service,
+            history_manager,
+            orchestrator,
+            debugging_agent,
+            qna_agent,
+        )
 
     @staticmethod
     def _initialize_debugging_agent(
         openai_key: str, db: Session
     ) -> DebuggingWithKnowledgeGraphAgent:
         return DebuggingWithKnowledgeGraphAgent(openai_key, db)
-    
+
     @staticmethod
-    def _initialize_qna_agent(
-        openai_key: str, db: Session
-    ) -> CodebaseQnAAgent:
+    def _initialize_qna_agent(openai_key: str, db: Session) -> CodebaseQnAAgent:
         return CodebaseQnAAgent(openai_key, db)
 
     @staticmethod
@@ -109,13 +115,14 @@ class ConversationService:
         tools = [GoogleTrendsTool(), WikipediaTool(), DuckDuckGoTool()]
         return IntelligentToolUsingOrchestrator(openai_key, tools, db)
 
-
     async def create_conversation(
         self, conversation: CreateConversationRequest, user_id: str
     ) -> tuple[str, str]:
         try:
             if conversation.agent_id not in self.agents:
-                raise ConversationServiceError(f"Invalid agent_id: {conversation.agent_id}")
+                raise ConversationServiceError(
+                    f"Invalid agent_id: {conversation.agent_id}"
+                )
 
             project_name = await self.project_service.get_project_name(
                 conversation.project_ids
@@ -123,10 +130,14 @@ class ConversationService:
 
             title = conversation.title.strip() if conversation.title else project_name
 
-            conversation_id = self._create_conversation_record(conversation, title, user_id)
+            conversation_id = self._create_conversation_record(
+                conversation, title, user_id
+            )
 
             await self._add_system_message(conversation_id, title, user_id)
-            await self._generate_initial_ai_response(conversation_id, title, user_id, conversation.agent_id)
+            await self._generate_initial_ai_response(
+                conversation_id, title, user_id, conversation.agent_id
+            )
 
             return conversation_id, "Conversation created successfully."
         except IntegrityError as e:
@@ -163,7 +174,9 @@ class ConversationService:
         )
         return conversation_id
 
-    async def _add_system_message(self, conversation_id: str, project_name: str, user_id: str):
+    async def _add_system_message(
+        self, conversation_id: str, project_name: str, user_id: str
+    ):
         content = f"Project {project_name} has been parsed successfully."
         try:
             self.history_manager.add_message_chunk(
@@ -172,7 +185,9 @@ class ConversationService:
             self.history_manager.flush_message_buffer(
                 conversation_id, MessageType.SYSTEM_GENERATED, user_id
             )
-            logger.info(f"Added system message to conversation {conversation_id} for user {user_id}")
+            logger.info(
+                f"Added system message to conversation {conversation_id} for user {user_id}"
+            )
         except Exception as e:
             logger.error(
                 f"Failed to add system message to conversation {conversation_id}: {e}",
@@ -230,7 +245,7 @@ class ConversationService:
             ) from e
 
     async def regenerate_last_message(
-        self, conversation_id: str, user_id:str
+        self, conversation_id: str, user_id: str
     ) -> AsyncGenerator[str, None]:
         try:
             last_human_message = await self._get_last_human_message(conversation_id)
@@ -292,13 +307,17 @@ class ConversationService:
                 "Failed to archive subsequent messages."
             ) from e
 
-    async def _generate_ai_response(self, query: str, conversation_id: str, user_id: str) -> str:
+    async def _generate_ai_response(
+        self, query: str, conversation_id: str, user_id: str
+    ) -> str:
         full_content = ""
         try:
             async for chunk in self.orchestrator.run(query, user_id, conversation_id):
                 if chunk:
                     full_content += chunk
-            logger.info(f"Generated AI response for conversation {conversation_id} for user {user_id}")
+            logger.info(
+                f"Generated AI response for conversation {conversation_id} for user {user_id}"
+            )
             return full_content.strip()
         except Exception as e:
             logger.error(
@@ -312,7 +331,9 @@ class ConversationService:
     ) -> AsyncGenerator[str, None]:
         conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
         if not conversation:
-            raise ConversationNotFoundError(f"Conversation with id {conversation_id} not found")
+            raise ConversationNotFoundError(
+                f"Conversation with id {conversation_id} not found"
+            )
 
         agent = self.agents.get(conversation.agent_id)
         if not agent:
@@ -334,7 +355,7 @@ class ConversationService:
                 "Failed to generate and stream AI response."
             ) from e
 
-    async def delete_conversation(self, conversation_id: str, user_id:str) -> dict:
+    async def delete_conversation(self, conversation_id: str, user_id: str) -> dict:
         try:
             # Start a new transaction
             with self.db.begin():
@@ -388,7 +409,7 @@ class ConversationService:
             ) from e
 
     async def get_conversation_info(
-        self, conversation_id: str, user_id:str
+        self, conversation_id: str, user_id: str
     ) -> ConversationInfoResponse:
         try:
             conversation = (
@@ -422,7 +443,7 @@ class ConversationService:
             ) from e
 
     async def get_conversation_messages(
-        self, conversation_id: str, start: int, limit: int, user_id:str
+        self, conversation_id: str, start: int, limit: int, user_id: str
     ) -> List[MessageResponse]:
         try:
             conversation = (
@@ -464,15 +485,14 @@ class ConversationService:
                 f"Failed to get messages for conversation {conversation_id}"
             ) from e
 
-    async def stop_generation(self, conversation_id: str, user_id:str) -> dict:
+    async def stop_generation(self, conversation_id: str, user_id: str) -> dict:
         # Implement the logic to stop the generation process
         # This might involve setting a flag in the orchestrator or cancelling an ongoing task
         logger.info(f"Attempting to stop generation for conversation {conversation_id}")
         return {"status": "success", "message": "Generation stop request received"}
 
-
     async def list_available_agents(self) -> List[AgentInfo]:
-       return [
+        return [
             AgentInfo(
                 id="debugging_agent",
                 name="Debugging with Knowledge Graph Agent",

@@ -1,12 +1,15 @@
 import os
-import requests
 from typing import Type
+
+import requests
 from langchain.tools import BaseTool as LangchainToolBaseModel
 from pydantic import BaseModel
+
 
 class KnowledgeGraphQueryInput(BaseModel):
     query: str
     project_id: str
+
 
 class KnowledgeGraphQueryTool(LangchainToolBaseModel):
     name = "KnowledgeGraphQuery"
@@ -28,17 +31,12 @@ class KnowledgeGraphQueryTool(LangchainToolBaseModel):
         Synchronously query the code knowledge graph using natural language questions.
         This method sends a query and project_id to the knowledge graph and returns the response.
         """
-        data = {
-            "project_id": project_id,
-            "query": query
-        }
-        headers = {
-            "Content-Type": "application/json"
-        }
+        data = {"project_id": project_id, "query": query}
+        headers = {"Content-Type": "application/json"}
         kg_query_url = os.getenv("KNOWLEDGE_GRAPH_URL")
         if not kg_query_url:
             raise ValueError("KNOWLEDGE_GRAPH_URL environment variable is not set")
-        
+
         try:
             response = requests.post(kg_query_url, json=data, headers=headers)
             response.raise_for_status()  # Raise an error for bad responses

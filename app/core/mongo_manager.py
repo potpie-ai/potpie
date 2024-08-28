@@ -1,6 +1,7 @@
 import logging
 import os
 from typing import Optional
+
 import certifi
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, OperationFailure
@@ -26,35 +27,35 @@ class MongoManager:
         try:
             db_name = os.getenv("MONGODB_DB_NAME", "test")
             mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-            env = os.getenv("ENV", "development")  # Assume development if ENV is not set
+            env = os.getenv(
+                "ENV", "development"
+            )  # Assume development if ENV is not set
 
             if not mongo_uri:
                 raise ValueError("MONGO_URI environment variable is not set")
-            
+
             if not db_name:
                 raise ValueError("MONGODB_DB_NAME environment variable is not set")
 
             # Establish the connection based on the environment
             if env in ["production", "staging"]:
-                    self.client = MongoClient(
+                self.client = MongoClient(
                     mongo_uri,
                     maxPoolSize=50,
                     waitQueueTimeoutMS=2500,
-                    tlsCAFile=certifi.where(),  
+                    tlsCAFile=certifi.where(),
                 )
             else:
-                  self.client = MongoClient(
+                self.client = MongoClient(
                     mongo_uri,
                     maxPoolSize=50,
                     waitQueueTimeoutMS=2500,
-                  )
-                
+                )
 
             # Return the established connection
             db_connection = self.client[db_name]
             db_connection.command("ping")  # Verify the connection
             return self.client
-
 
         except (ConnectionFailure, ValueError) as e:
             logging.error(f"Failed to connect to MongoDB: {str(e)}")

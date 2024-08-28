@@ -1,11 +1,13 @@
 import logging
 from typing import List
+
 from langchain.tools import Tool
 
 from app.modules.github.github_service import GithubService
 from app.modules.utils.neo4j_helper import Neo4jGraph
 
 neo4j_graph = Neo4jGraph()
+
 
 class CodeTools:
     """
@@ -60,7 +62,7 @@ class CodeTools:
         inheritance_tree = neo4j_graph.get_class_hierarchy(classname, project_id)
         class_definition_added = ""
         for class_node in inheritance_tree:
-            class_content = CodeTools.get_code_for_function(class_node['id'])
+            class_content = CodeTools.get_code_for_function(class_node["id"])
             class_definition_added += f"{class_content}\n\n"
         return class_definition_added
 
@@ -71,12 +73,16 @@ class CodeTools:
         """
         definitions = ""
         try:
-            inheritance_nodes = neo4j_graph.get_multiple_class_hierarchies(classnames, project_id)
+            inheritance_nodes = neo4j_graph.get_multiple_class_hierarchies(
+                classnames, project_id
+            )
             for class_node in inheritance_nodes:
-                class_content = CodeTools.get_code_for_function(class_node['id'])
+                class_content = CodeTools.get_code_for_function(class_node["id"])
                 definitions += f"{class_content}\n\n"
         except Exception:
-            logging.exception(f"project_id: {project_id} something went wrong during fetching definition for {classnames}")
+            logging.exception(
+                f"project_id: {project_id} something went wrong during fetching definition for {classnames}"
+            )
         return definitions
 
     @staticmethod
@@ -99,21 +105,21 @@ class CodeTools:
             Tool(
                 name="Get Code",
                 func=cls.get_code,
-                description="Get accurate code context for given endpoint identifier. Use this to fetch actual code."
+                description="Get accurate code context for given endpoint identifier. Use this to fetch actual code.",
             ),
             Tool(
                 name="Get Pydantic Definition",
                 func=cls.get_pydantic_definition,
-                description="Get the pydantic class definition for a single class name."
+                description="Get the pydantic class definition for a single class name.",
             ),
             Tool(
                 name="Get Pydantic Definitions",
                 func=cls.get_pydantic_definitions,
-                description="Get the pydantic class definitions for a list of class names."
+                description="Get the pydantic class definitions for a list of class names.",
             ),
             Tool(
                 name="Ask Knowledge Graph",
                 func=cls.ask_knowledge_graph,
-                description="Query the code knowledge graph with specific directed questions using natural language. Do not use this to query code directly."
-            )
+                description="Query the code knowledge graph with specific directed questions using natural language. Do not use this to query code directly.",
+            ),
         ]

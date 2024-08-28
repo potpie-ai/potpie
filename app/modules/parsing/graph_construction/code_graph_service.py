@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
 from app.modules.search.search_service import SearchService
 
+
 class CodeGraphService:
     def __init__(self, neo4j_uri, neo4j_user, neo4j_password, db: Session):
         self.driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))

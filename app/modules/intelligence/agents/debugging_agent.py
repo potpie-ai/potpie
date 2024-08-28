@@ -1,9 +1,13 @@
 import logging
 from typing import AsyncGenerator, List
 
-from langchain_core.prompts import ChatPromptTemplate, HumanMessagePromptTemplate, MessagesPlaceholder
-from langchain_openai import ChatOpenAI
 from langchain.agents import AgentExecutor, create_openai_functions_agent
+from langchain_core.prompts import (
+    ChatPromptTemplate,
+    HumanMessagePromptTemplate,
+    MessagesPlaceholder,
+)
+from langchain_openai import ChatOpenAI
 from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
@@ -12,29 +16,39 @@ from app.modules.intelligence.tools.query_knowledge_graph_tool import CodeTools
 
 logger = logging.getLogger(__name__)
 
+
 class DebuggingWithKnowledgeGraphAgent:
     def __init__(self, openai_key: str, db: Session):
-        self.llm = ChatOpenAI(api_key=openai_key, temperature=0.7, model_kwargs={"stream": True})
+        self.llm = ChatOpenAI(
+            api_key=openai_key, temperature=0.7, model_kwargs={"stream": True}
+        )
         self.history_manager = ChatHistoryService(db)
         self.tools = CodeTools.get_tools()
         self.agent_executor = self._create_agent_executor()
 
     def _create_agent_executor(self) -> AgentExecutor:
-        prompt = ChatPromptTemplate.from_messages([
-            MessagesPlaceholder(variable_name="chat_history"),
-            HumanMessagePromptTemplate.from_template(
-                "Given the context provided, the available tools, and any logs or stacktraces, help debug the following issue: {input}"
-                "\n\nPlease provide step-by-step analysis, suggest debug statements, and recommend fixes."
-                "\n\nUse the available tools to gather accurate information and context."
-            ),
-            MessagesPlaceholder("agent_scratchpad"),
-        ])
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                MessagesPlaceholder(variable_name="chat_history"),
+                HumanMessagePromptTemplate.from_template(
+                    "Given the context provided, the available tools, and any logs or stacktraces, help debug the following issue: {input}"
+                    "\n\nPlease provide step-by-step analysis, suggest debug statements, and recommend fixes."
+                    "\n\nUse the available tools to gather accurate information and context."
+                ),
+                MessagesPlaceholder("agent_scratchpad"),
+            ]
+        )
         agent = create_openai_functions_agent(self.llm, self.tools, prompt)
         return AgentExecutor(agent=agent, tools=self.tools, verbose=True)
 
     async def run(
-        self, query: str, project_id: str, user_id: str, conversation_id: str,
-        logs: str = "", stacktrace: str = ""
+        self,
+        query: str,
+        project_id: str,
+        user_id: str,
+        conversation_id: str,
+        logs: str = "",
+        stacktrace: str = "",
     ) -> AsyncGenerator[str, None]:
         if not isinstance(query, str):
             raise ValueError("Query must be a string.")
@@ -42,18 +56,20 @@ class DebuggingWithKnowledgeGraphAgent:
             raise ValueError("Project ID must be a string.")
 
         history = self.history_manager.get_session_history(user_id, conversation_id)
-        
+
         try:
             result = await self.agent_executor.arun(
                 input=query,
                 chat_history=history,
                 project_id=project_id,
                 logs=logs,
-                stacktrace=stacktrace
+                stacktrace=stacktrace,
             )
 
             # Process the result for actionable items and debug suggestions
-            processed_result, action_items, debug_suggestions = self._process_result(result)
+            processed_result, action_items, debug_suggestions = self._process_result(
+                result
+            )
 
             # Yield the processed result
             yield processed_result
@@ -81,7 +97,7 @@ class DebuggingWithKnowledgeGraphAgent:
             yield f"An error occurred: {str(e)}"
 
     def _process_result(self, response: str) -> tuple[str, List[str], List[str]]:
-        lines = response.split('\n')
+        lines = response.split("\n")
         processed_lines = []
         action_items = []
         debug_suggestions = []
@@ -92,7 +108,7 @@ class DebuggingWithKnowledgeGraphAgent:
                 current_section = "action_items"
             elif line.strip().lower() == "debug suggestions:":
                 current_section = "debug_suggestions"
-            elif line.strip() and line.strip()[0] == '-':
+            elif line.strip() and line.strip()[0] == "-":
                 if current_section == "action_items":
                     action_items.append(line.strip()[2:])
                 elif current_section == "debug_suggestions":
@@ -103,4 +119,4 @@ class DebuggingWithKnowledgeGraphAgent:
                 processed_lines.append(line)
                 current_section = None
 
-        return '\n'.join(processed_lines), action_items, debug_suggestions
+        return "\n".join(processed_lines), action_items, debug_suggestions

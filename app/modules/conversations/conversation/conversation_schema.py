@@ -35,7 +35,6 @@ class ConversationInfoResponse(BaseModel):
     total_messages: int
     agent_id: str  # New field
 
-
     class Config:
         from_attributes = True
 

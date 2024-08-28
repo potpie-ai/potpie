@@ -22,7 +22,6 @@ router = APIRouter()
 
 
 class ConversationAPI:
-
     @staticmethod
     @router.get("/list-available-agents/", response_model=List[AgentInfo])
     async def list_available_agents(
@@ -55,7 +54,7 @@ class ConversationAPI:
     ):
         user_id = user["user_id"]
         controller = ConversationController(db)
-        return await controller.get_conversation_info(conversation_id,user_id)
+        return await controller.get_conversation_info(conversation_id, user_id)
 
     @staticmethod
     @router.get(
@@ -71,7 +70,9 @@ class ConversationAPI:
     ):
         user_id = user["user_id"]
         controller = ConversationController(db)
-        return await controller.get_conversation_messages(conversation_id, start, limit,user_id)
+        return await controller.get_conversation_messages(
+            conversation_id, start, limit, user_id
+        )
 
     @staticmethod
     @router.post("/conversations/{conversation_id}/message/")
@@ -99,7 +100,7 @@ class ConversationAPI:
         user_id = user["user_id"]
         controller = ConversationController(db)
         return StreamingResponse(
-            controller.regenerate_last_message(conversation_id,user_id),
+            controller.regenerate_last_message(conversation_id, user_id),
             media_type="text/event-stream",
         )
 
@@ -112,7 +113,7 @@ class ConversationAPI:
     ):
         user_id = user["user_id"]
         controller = ConversationController(db)
-        return await controller.delete_conversation(conversation_id,user_id)
+        return await controller.delete_conversation(conversation_id, user_id)
 
     @staticmethod
     @router.post("/conversations/{conversation_id}/stop/", response_model=dict)
@@ -123,4 +124,4 @@ class ConversationAPI:
     ):
         user_id = user["user_id"]
         controller = ConversationController(db)
-        return await controller.stop_generation(conversation_id,user_id)
+        return await controller.stop_generation(conversation_id, user_id)

@@ -85,7 +85,9 @@ class ConversationController:
         self, conversation_id: str, user_id: str
     ) -> AsyncGenerator[str, None]:
         try:
-            async for chunk in self.service.regenerate_last_message(conversation_id, user_id):
+            async for chunk in self.service.regenerate_last_message(
+                conversation_id, user_id
+            ):
                 yield chunk
         except ConversationNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e))
@@ -99,7 +101,6 @@ class ConversationController:
             raise HTTPException(status_code=404, detail=str(e))
         except ConversationServiceError as e:
             raise HTTPException(status_code=500, detail=str(e))
-
 
     async def list_available_agents(self) -> List[AgentInfo]:
         try:

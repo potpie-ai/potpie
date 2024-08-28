@@ -42,7 +42,7 @@ class GithubService:
         if response.status_code != 200:
             raise HTTPException(status_code=400, detail="Failed to get installation ID")
         app_auth = auth.get_installation_auth(response.json()["id"])
-                                              
+
         github = Github(auth=app_auth)
 
         return github, response, auth, owner
@@ -119,7 +119,9 @@ class GithubService:
             }
             response = requests.get(url, headers=headers)
             if response.status_code != 200:
-                raise HTTPException(status_code=400, detail="Failed to get installations")
+                raise HTTPException(
+                    status_code=400, detail="Failed to get installations"
+                )
 
             installations = response.json()
             repos = []
@@ -128,30 +130,32 @@ class GithubService:
                 app_auth = auth.get_installation_auth(installation["id"])
                 # github = Github(auth=app_auth)
                 repos_url = installation["repositories_url"]
-                repos_response = requests.get(repos_url, headers={"Authorization": f"Bearer {app_auth.token}"})
+                repos_response = requests.get(
+                    repos_url, headers={"Authorization": f"Bearer {app_auth.token}"}
+                )
                 if repos_response.status_code == 200:
-                    repos.extend(repos_response.json().get('repositories', []))
+                    repos.extend(repos_response.json().get("repositories", []))
                 else:
-                    logger.error(f"Failed to fetch repositories for installation ID {installation['id']}")
+                    logger.error(
+                        f"Failed to fetch repositories for installation ID {installation['id']}"
+                    )
             repo_list = [
-                    {
-                        "id": repo["id"],
-                        "name": repo["name"],
-                        "full_name": repo["full_name"],
-                        "private": repo["private"],
-                        "url": repo["html_url"],
-                        "owner": repo["owner"]["login"],
-                    }
-                    for repo in repos
+                {
+                    "id": repo["id"],
+                    "name": repo["name"],
+                    "full_name": repo["full_name"],
+                    "private": repo["private"],
+                    "url": repo["html_url"],
+                    "owner": repo["owner"]["login"],
+                }
+                for repo in repos
             ]
             return {"repositories": repo_list}
         except Exception as e:
             logger.error(f"Failed to fetch repositories: {str(e)}", exc_info=True)
             raise HTTPException(
-                status_code=500,
-                detail=f"Failed to fetch repositories: {str(e)}"
+                status_code=500, detail=f"Failed to fetch repositories: {str(e)}"
             )
-            
 
     @staticmethod
     def get_branch_list(repo_name: str):
@@ -162,8 +166,10 @@ class GithubService:
             branch_list = [branch.name for branch in branches]
             return {"branches": branch_list}
         except Exception as e:
-            logger.error(f"Error fetching branches for repo {repo_name}: {str(e)}", exc_info=True)
+            logger.error(
+                f"Error fetching branches for repo {repo_name}: {str(e)}", exc_info=True
+            )
             raise HTTPException(
                 status_code=404,
-                detail=f"Repository not found or error fetching branches: {str(e)}"
+                detail=f"Repository not found or error fetching branches: {str(e)}",
             )

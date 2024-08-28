@@ -1,6 +1,8 @@
 from fastapi import Depends
+
 from app.modules.auth.auth_service import AuthService
 from app.modules.github.github_service import GithubService
+
 
 class GithubController:
     @staticmethod

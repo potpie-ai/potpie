@@ -1,6 +1,8 @@
 import os
 from functools import wraps
+
 from fastapi import HTTPException
+
 
 def validate_parsing_input(func):
     @wraps(func)
@@ -8,7 +10,7 @@ def validate_parsing_input(func):
         # Extract the required arguments from *args or **kwargs
         repo_details = kwargs.get("repo_details")
         user_id = kwargs.get("user_id")
-        
+
         if repo_details and user_id:
             if os.getenv("isDevelopmentMode") != "enabled" and repo_details.repo_path:
                 raise HTTPException(
@@ -21,5 +23,5 @@ def validate_parsing_input(func):
                     detail="Cannot parse remote repository without auth token",
                 )
         return await func(*args, **kwargs)
-    
+
     return wrapper
