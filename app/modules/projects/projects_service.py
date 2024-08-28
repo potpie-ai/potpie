@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import and_
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from sqlalchemy import cast, String
 
 from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_schema import ProjectStatusEnum
@@ -312,9 +313,13 @@ class ProjectService:
 
         return None
 
-    def delete_project(db: Session, project_id: int):
-        db.query(Project).filter(Project.id == project_id).delete()
-        db.commit()
+    def delete_project(self, project_id: int):
+        project = self.db.query(Project).filter(cast(Project.id, String) == str(project_id)).first()
+        if not project:
+         raise HTTPException(status_code=404, detail="Project not found.")
+        self.db.delete(project)
+        self.db.commit()
+
 
     def get_projects_by_repo_name(
         db: Session, repo_name: str, user_id: str, is_deleted: bool = False
@@ -339,3 +344,15 @@ class ProjectService:
             logging.error(f"Error fetching projects: {str(e)}")
             # You might want to raise a custom exception here instead of returning None
             return None
+        
+async def list_projects(self, user_id: str):
+    projects = ProjectService.get_projects_by_user_id(self.db, user_id)
+    project_list = []
+    for project in projects:
+        project_dict = {
+            "id": project.id,
+            "directory": project.directory,
+            "active": project.is_default,
+        }
+        project_list.append(project_dict)
+    return project_list

@@ -37,14 +37,25 @@ class MongoManager:
 
             # Establish the connection based on the environment
             if env in ["production", "staging"]:
-                connect(db_name, host=mongo_uri, tlsCAFile=certifi.where())
+                    self.client = MongoClient(
+                    mongo_uri,
+                    maxPoolSize=50,
+                    waitQueueTimeoutMS=2500,
+                    tlsCAFile=certifi.where(),  
+                )
             else:
-                connect(db_name, host=mongo_uri)
+                  self.client = MongoClient(
+                    mongo_uri,
+                    maxPoolSize=50,
+                    waitQueueTimeoutMS=2500,
+                  )
+                
 
             # Return the established connection
-            db_connection = connection.get_connection()
-            db_connection.server_info()  # This will raise an exception if the connection is not valid
-            return db_connection
+            db_connection = self.client[db_name]
+            db_connection.command("ping")  # Verify the connection
+            return self.client
+
 
         except (ConnectionFailure, ValueError) as e:
             logging.error(f"Failed to connect to MongoDB: {str(e)}")
