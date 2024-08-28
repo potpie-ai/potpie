@@ -95,7 +95,7 @@ class MainApp:
         )
 
         self.app.include_router(projects_router, prefix="/api/v1", tags=["Projects"])
-        self.app.include_router(search_router, prefix="/api/v1/search", tags=["search"])
+        self.app.include_router(search_router, prefix="/api/v1/search", tags=["Search"])
         self.app.include_router(github_router, prefix="/api/v1", tags=["Github"])
         self.app.include_router(agent_router,prefix="/api/v1", tags=["Agents"])
     def add_health_check(self):
