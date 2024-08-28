@@ -34,7 +34,7 @@ class ProjectService:
                 raise ProjectNotFoundError(
                     "No valid projects found for the provided project IDs."
                 )
-            project_name = projects[0].project_name if projects else "Unnamed Project"
+            project_name = projects[0].repo_name
             logger.info(
                 f"Retrieved project name: {project_name} for project IDs: {project_ids}"
             )
