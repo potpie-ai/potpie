@@ -1,18 +1,14 @@
 import enum
-
 from sqlalchemy import ARRAY, TIMESTAMP, Column
 from sqlalchemy import Enum as SQLAEnum
 from sqlalchemy import ForeignKey, String, func
 from sqlalchemy.orm import relationship
-
 from app.core.database import Base
-
 
 class ConversationStatus(enum.Enum):
     ACTIVE = "active"
     ARCHIVED = "archived"
     DELETED = "deleted"
-
 
 class Conversation(Base):
     __tablename__ = "conversations"
@@ -29,6 +25,7 @@ class Conversation(Base):
         SQLAEnum(ConversationStatus), default=ConversationStatus.ACTIVE, nullable=False
     )
     project_ids = Column(ARRAY(String), nullable=False)
+    agent_id = Column(String(255), nullable=False)
     created_at = Column(TIMESTAMP(timezone=True), default=func.now(), nullable=False)
     updated_at = Column(
         TIMESTAMP(timezone=True),
@@ -37,13 +34,11 @@ class Conversation(Base):
         nullable=False,
     )
 
+    # Relationships
+    user = relationship("User", back_populates="conversations")
     messages = relationship(
         "Message", back_populates="conversation", cascade="all, delete-orphan"
     )
 
-
-# Conversation relationships
-Conversation.user = relationship("User", back_populates="conversations")
-Conversation.messages = relationship(
-    "Message", back_populates="conversation", cascade="all, delete-orphan"
-)
+    def __repr__(self):
+        return f"<Conversation(id={self.id}, user_id={self.user_id}, title={self.title}, status={self.status}, agent_id={self.agent_id})>"

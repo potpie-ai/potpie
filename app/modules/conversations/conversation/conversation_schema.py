@@ -6,11 +6,18 @@ from pydantic import BaseModel
 from app.modules.conversations.conversation.conversation_model import ConversationStatus
 
 
+class AgentInfo(BaseModel):
+    id: str
+    name: str
+    description: str
+
+
 class CreateConversationRequest(BaseModel):
     user_id: str
     title: str
     status: ConversationStatus
     project_ids: List[str]
+    agent_id: str  # New field
 
 
 class CreateConversationResponse(BaseModel):
@@ -26,6 +33,8 @@ class ConversationInfoResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     total_messages: int
+    agent_id: str  # New field
+
 
     class Config:
         from_attributes = True

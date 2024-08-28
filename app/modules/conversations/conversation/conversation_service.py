@@ -12,6 +12,7 @@ from app.modules.conversations.conversation.conversation_model import (
     ConversationStatus,
 )
 from app.modules.conversations.conversation.conversation_schema import (
+    AgentInfo,
     ConversationInfoResponse,
     CreateConversationRequest,
 )
@@ -24,6 +25,7 @@ from app.modules.conversations.message.message_schema import (
     MessageRequest,
     MessageResponse,
 )
+from app.modules.intelligence.agents.codebase_qna_agent import CodebaseQnAAgent
 from app.modules.intelligence.agents.debugging_agent import DebuggingWithKnowledgeGraphAgent
 from app.modules.intelligence.agents.intelligent_tool_using_orchestrator import (
     IntelligentToolUsingOrchestrator,
@@ -58,12 +60,16 @@ class ConversationService:
         history_manager: ChatHistoryService,
         orchestrator: IntelligentToolUsingOrchestrator,
         debugging_agent: DebuggingWithKnowledgeGraphAgent,
+        codebase_qna_agent: CodebaseQnAAgent,
     ):
         self.db = db
         self.project_service = project_service
         self.history_manager = history_manager
-        self.orchestrator = orchestrator
-        self.debugging_agent = debugging_agent
+        self.agents = {
+            "chat_llm_orchestrator": orchestrator,
+            "debugging_agent": debugging_agent,
+            "codebase_qna_agent": codebase_qna_agent,
+        }
 
 
     @classmethod
@@ -98,10 +104,14 @@ class ConversationService:
         tools = [GoogleTrendsTool(), WikipediaTool(), DuckDuckGoTool()]
         return IntelligentToolUsingOrchestrator(openai_key, tools, db)
 
+
     async def create_conversation(
-        self, conversation: CreateConversationRequest, user_id:str
+        self, conversation: CreateConversationRequest, user_id: str
     ) -> tuple[str, str]:
         try:
+            if conversation.agent_id not in self.agents:
+                raise ConversationServiceError(f"Invalid agent_id: {conversation.agent_id}")
+
             project_name = await self.project_service.get_project_name(
                 conversation.project_ids
             )
@@ -111,7 +121,7 @@ class ConversationService:
             conversation_id = self._create_conversation_record(conversation, title, user_id)
 
             await self._add_system_message(conversation_id, title, user_id)
-            await self._generate_initial_ai_response(conversation_id, title, user_id)
+            await self._generate_initial_ai_response(conversation_id, title, user_id, conversation.agent_id)
 
             return conversation_id, "Conversation created successfully."
         except IntegrityError as e:
@@ -128,7 +138,7 @@ class ConversationService:
             ) from e
 
     def _create_conversation_record(
-        self, conversation: CreateConversationRequest, title: str, user_id:str
+        self, conversation: CreateConversationRequest, title: str, user_id: str
     ) -> str:
         conversation_id = str(uuid7())
         new_conversation = Conversation(
@@ -137,13 +147,14 @@ class ConversationService:
             title=title,
             status=ConversationStatus.ACTIVE,
             project_ids=conversation.project_ids,
+            agent_id=conversation.agent_id,  # Store the agent_id
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
         self.db.add(new_conversation)
         self.db.commit()
         logger.info(
-            f"Created new conversation with ID: {conversation_id}, title: {title}, user_id: {user_id}"
+            f"Created new conversation with ID: {conversation_id}, title: {title}, user_id: {user_id}, agent_id: {conversation.agent_id}"
         )
         return conversation_id
 
@@ -294,14 +305,20 @@ class ConversationService:
     async def _generate_and_stream_ai_response(
         self, query: str, conversation_id: str, user_id: str
     ) -> AsyncGenerator[str, None]:
-        full_content = ""
+        conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
+        if not conversation:
+            raise ConversationNotFoundError(f"Conversation with id {conversation_id} not found")
+
+        agent = self.agents.get(conversation.agent_id)
+        if not agent:
+            raise ConversationServiceError(f"Invalid agent_id: {conversation.agent_id}")
+
         try:
-            async for chunk in self.orchestrator.run(query, user_id, conversation_id):
+            async for chunk in agent.run(query, user_id, conversation_id):
                 if chunk:
-                    full_content += chunk
-                    yield chunk  # Stream to the client
+                    yield chunk
             logger.info(
-                f"Generated and streamed AI response for conversation {conversation_id} for user {user_id}"
+                f"Generated and streamed AI response for conversation {conversation_id} for user {user_id} using agent {conversation.agent_id}"
             )
         except Exception as e:
             logger.error(
@@ -449,21 +466,21 @@ class ConversationService:
         return {"status": "success", "message": "Generation stop request received"}
 
 
-    async def list_available_agents(self, conversation_id: str, user_id:str) -> List[dict]:
+    async def list_available_agents(self) -> List[AgentInfo]:
        return [
-            {
-                "id": "debugging_agent",
-                "name": "Debugging with Knowledge Graph Agent",
-                "description": "An agent specialized in debugging using knowledge graphs.",
-            },
-            {
-                "id": "chat_llm_orchestrator",
-                "name": "Intelligent Tool-Using Orchestrator",
-                "description": "A versatile chat LLM that can use various tools to assist with a wide range of tasks.",
-            },
-            {
-                "id": "codebase_qna_agent",
-                "name": "Codebase Q&A Agent",
-                "description": "An agent specialized in answering questions about the codebase using the knowledge graph and code analysis tools.",
-            },
+            AgentInfo(
+                id="debugging_agent",
+                name="Debugging with Knowledge Graph Agent",
+                description="An agent specialized in debugging using knowledge graphs.",
+            ),
+            AgentInfo(
+                id="chat_llm_orchestrator",
+                name="Intelligent Tool-Using Orchestrator",
+                description="A versatile chat LLM that can use various tools to assist with a wide range of tasks.",
+            ),
+            AgentInfo(
+                id="codebase_qna_agent",
+                name="Codebase Q&A Agent",
+                description="An agent specialized in answering questions about the codebase using the knowledge graph and code analysis tools.",
+            ),
         ]
