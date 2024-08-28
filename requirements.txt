@@ -5,7 +5,6 @@ alembic
 gunicorn
 python-dotenv
 postgres
-# psycopg2
 psycopg2-binary
 neo4j
 tree-sitter<=0.21.3
@@ -39,9 +38,10 @@ ruff
 pylint
 bandit
 celery
-langchain
-langchain-community
 redis
 aiofiles
 sentence-transformers
 scikit-learn
+requests
+embedchain
+embedchain[weaviate]
