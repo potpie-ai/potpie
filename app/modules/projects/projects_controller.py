@@ -7,26 +7,14 @@ from app.modules.projects.projects_service import ProjectService
 class ProjectController:
     
     @staticmethod
-    async def get_project_list(user=Depends(AuthService.check_auth), db=Depends(get_db)):
+    async def get_project_list(user=Depends(AuthService.check_auth), db = Depends(get_db)):
         user_id = user["user_id"]
-        project_service = ProjectService(db)
         try:
-            branch_list = []
-            project_details = await project_service.get_parsed_project_branches(user_id=user_id)
-            branch_list.extend(
-                {
-                    "project_id": branch[0],
-                    "branch_name": branch[1],
-                    "repo_name": branch[2],
-                    "last_updated_at": branch[3],
-                    "is_default": branch[4],
-                    "project_status": branch[5],
-                }
-                for branch in project_details
-            )
-            return branch_list
+            project_service = ProjectService(db)
+            project_list = await project_service.list_projects(user_id)
+            return project_list
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"{str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
 
     @staticmethod
     def delete_project(project_id: int, user=Depends(AuthService.check_auth), db=Depends(get_db)):

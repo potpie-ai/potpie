@@ -100,37 +100,70 @@ class GithubService:
         return method_content
 
     @staticmethod
-    def get_repos_for_user():
-        private_key = (
-            "-----BEGIN RSA PRIVATE KEY-----\n"
-            + config_provider.get_github_key()
-            + "\n-----END RSA PRIVATE KEY-----\n"
-        )
-        app_id = os.environ["GITHUB_APP_ID"]
-        auth = AppAuth(app_id=app_id, private_key=private_key)
-        jwt = auth.create_jwt()
+    def get_repos_for_user(user):
+        try:
+            private_key = (
+                "-----BEGIN RSA PRIVATE KEY-----\n"
+                + config_provider.get_github_key()
+                + "\n-----END RSA PRIVATE KEY-----\n"
+            )
+            app_id = os.environ["GITHUB_APP_ID"]
+            auth = AppAuth(app_id=app_id, private_key=private_key)
+            jwt = auth.create_jwt()
 
-        url = f"https://api.github.com/app/installations"
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {jwt}",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
-        response = requests.get(url, headers=headers)
-        if response.status_code != 200:
-            raise HTTPException(status_code=400, detail="Failed to get installations")
+            url = f"https://api.github.com/app/installations"
+            headers = {
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {jwt}",
+                "X-GitHub-Api-Version": "2022-11-28",
+            }
+            response = requests.get(url, headers=headers)
+            if response.status_code != 200:
+                raise HTTPException(status_code=400, detail="Failed to get installations")
 
-        installations = response.json()
-        repos = []
+            installations = response.json()
+            repos = []
 
-        for installation in installations:
-            app_auth = auth.get_installation_auth(installation["id"])
-            github = Github(auth=app_auth)
-            repos_url = installation["repositories_url"]
-            repos_response = requests.get(repos_url, headers={"Authorization": f"Bearer {app_auth.token}"})
-            if repos_response.status_code == 200:
-                repos.extend(repos_response.json().get('repositories', []))
-            else:
-                logger.error(f"Failed to fetch repositories for installation ID {installation['id']}")
+            for installation in installations:
+                app_auth = auth.get_installation_auth(installation["id"])
+                github = Github(auth=app_auth)
+                repos_url = installation["repositories_url"]
+                repos_response = requests.get(repos_url, headers={"Authorization": f"Bearer {app_auth.token}"})
+                if repos_response.status_code == 200:
+                    repos.extend(repos_response.json().get('repositories', []))
+                else:
+                    logger.error(f"Failed to fetch repositories for installation ID {installation['id']}")
+            repo_list = [
+                    {
+                        "id": repo["id"],
+                        "name": repo["name"],
+                        "full_name": repo["full_name"],
+                        "private": repo["private"],
+                        "url": repo["html_url"],
+                        "owner": repo["owner"]["login"],
+                    }
+                    for repo in repos
+            ]
+            return {"repositories": repo_list}
+        except Exception as e:
+            logger.error(f"Failed to fetch repositories: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to fetch repositories: {str(e)}"
+            )
+            
 
-        return repos
+    @staticmethod
+    def get_branch_list(repo_name: str):
+        try:
+            github_client, _, _, _ = GithubService.get_github_repo_details(repo_name)
+            repo = github_client.get_repo(repo_name)
+            branches = repo.get_branches()
+            branch_list = [branch.name for branch in branches]
+            return {"branches": branch_list}
+        except Exception as e:
+            logger.error(f"Error fetching branches for repo {repo_name}: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=404,
+                detail=f"Repository not found or error fetching branches: {str(e)}"
+            )
