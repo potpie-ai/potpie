@@ -41,11 +41,8 @@ class GithubService:
         response = requests.get(url, headers=headers)
         if response.status_code != 200:
             raise HTTPException(status_code=400, detail="Failed to get installation ID")
-        app_auth = auth.get_installation_auth(response.json()["id"])
 
-        github = Github(auth=app_auth)
-
-        return github, response, auth, owner
+        return response, auth, owner
 
     @staticmethod
     def check_is_commit_added(repo_details, project_details, branch_name):

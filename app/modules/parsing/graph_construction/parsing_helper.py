@@ -58,7 +58,7 @@ class ParseHelper:
                 repo = github.get_repo(repo_details.repo_name)
             except Exception:
                 raise HTTPException(
-                    status_code=400, detail="Repository not found on GitHub"
+                    status_code=400, detail="Repository not found on c"
                 )
 
         return repo, owner, auth
@@ -142,50 +142,56 @@ class ParseHelper:
             "other": 0,
         }
         total_chars = 0
-        for root, _, files in os.walk(repo_dir):
-            for file in files:
-                file_path = os.path.join(root, file)
-                ext = os.path.splitext(file)[1].lower()
-                try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        content = f.read()
-                        total_chars += len(content)
-                        if ext == ".cs":
-                            lang_count["c_sharp"] += 1
-                        elif ext == ".c":
-                            lang_count["c"] += 1
-                        elif ext in [".cpp", ".cxx", ".cc"]:
-                            lang_count["cpp"] += 1
-                        elif ext == ".el":
-                            lang_count["elisp"] += 1
-                        elif ext == ".ex" or ext == ".exs":
-                            lang_count["elixir"] += 1
-                        elif ext == ".elm":
-                            lang_count["elm"] += 1
-                        elif ext == ".go":
-                            lang_count["go"] += 1
-                        elif ext == ".java":
-                            lang_count["java"] += 1
-                        elif ext in [".js", ".jsx"]:
-                            lang_count["javascript"] += 1
-                        elif ext == ".ml" or ext == ".mli":
-                            lang_count["ocaml"] += 1
-                        elif ext == ".php":
-                            lang_count["php"] += 1
-                        elif ext == ".py":
-                            lang_count["python"] += 1
-                        elif ext == ".ql":
-                            lang_count["ql"] += 1
-                        elif ext == ".rb":
-                            lang_count["ruby"] += 1
-                        elif ext == ".rs":
-                            lang_count["rust"] += 1
-                        elif ext in [".ts", ".tsx"]:
-                            lang_count["typescript"] += 1
-                        else:
-                            lang_count["other"] += 1
-                except (UnicodeDecodeError, FileNotFoundError):
-                    continue
+
+        try:
+            for root, _, files in os.walk(repo_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    ext = os.path.splitext(file)[1].lower()
+                    try:
+                        with open(file_path, "r", encoding="utf-8") as f:
+                            content = f.read()
+                            total_chars += len(content)
+                            if ext == ".cs":
+                                lang_count["c_sharp"] += 1
+                            elif ext == ".c":
+                                lang_count["c"] += 1
+                            elif ext in [".cpp", ".cxx", ".cc"]:
+                                lang_count["cpp"] += 1
+                            elif ext == ".el":
+                                lang_count["elisp"] += 1
+                            elif ext == ".ex" or ext == ".exs":
+                                lang_count["elixir"] += 1
+                            elif ext == ".elm":
+                                lang_count["elm"] += 1
+                            elif ext == ".go":
+                                lang_count["go"] += 1
+                            elif ext == ".java":
+                                lang_count["java"] += 1
+                            elif ext in [".js", ".jsx"]:
+                                lang_count["javascript"] += 1
+                            elif ext == ".ml" or ext == ".mli":
+                                lang_count["ocaml"] += 1
+                            elif ext == ".php":
+                                lang_count["php"] += 1
+                            elif ext == ".py":
+                                lang_count["python"] += 1
+                            elif ext == ".ql":
+                                lang_count["ql"] += 1
+                            elif ext == ".rb":
+                                lang_count["ruby"] += 1
+                            elif ext == ".rs":
+                                lang_count["rust"] += 1
+                            elif ext in [".ts", ".tsx"]:
+                                lang_count["typescript"] += 1
+                            else:
+                                lang_count["other"] += 1
+                    except (UnicodeDecodeError, FileNotFoundError, PermissionError) as e:
+                        logging.warning(f"Error reading file {file_path}: {e}")
+                        continue
+        except (TypeError, FileNotFoundError, PermissionError) as e:
+            logging.error(f"Error accessing directory '{repo_dir}': {e}")
+
         # Determine the predominant language based on counts
         predominant_language = max(lang_count, key=lang_count.get)
         return predominant_language if lang_count[predominant_language] > 0 else "other"

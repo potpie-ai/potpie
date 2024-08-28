@@ -9,7 +9,7 @@ from neo4j.exceptions import Neo4jError
 
 class Neo4jDriverSingleton:
     _instance = None
-    load_dotenv()
+    load_dotenv(override=True)
 
     neo4j_config = {
         "uri": os.getenv("NEO4J_URI"),

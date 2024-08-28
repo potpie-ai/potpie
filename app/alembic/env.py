@@ -18,7 +18,7 @@ from app.modules.tasks.task_model import Task  # noqa
 from app.modules.users.user_model import User  # noqa
 
 # Load environment variables from .env
-load_dotenv()
+load_dotenv(override=True)
 
 # Interpret the config file for Python logging.
 fileConfig(context.config.config_file_name)

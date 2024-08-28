@@ -64,7 +64,7 @@ class ParsingService:
                 f"Duration for processing repository: {end_time - start_time:.2f} seconds"
             )
 
-            await self.analyze_directory(extracted_dir, project_id, user_id)
+            await self.analyze_directory(extracted_dir, project_id, user_id, self.db)
 
             message = "The project has been parsed successfully"
             await project_manager.update_project_status(
