@@ -1,9 +1,7 @@
 import logging
-from typing import AsyncGenerator, Dict, List
+from typing import AsyncGenerator, Dict
 
-from langchain.schema import AIMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, HumanMessagePromptTemplate, MessagesPlaceholder
-from langchain_core.runnables import RunnableSequence
 from langchain_openai import ChatOpenAI
 from langchain.agents import AgentExecutor, create_openai_functions_agent
 from sqlalchemy.orm import Session

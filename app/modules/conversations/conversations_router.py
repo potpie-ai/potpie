@@ -116,7 +116,7 @@ class ConversationAPI:
 
     @staticmethod
     @router.get("/conversations/{conversation_id}/list-available-agents/", response_model=dict)
-    async def stop_generation(
+    async def list_available_agents(
         conversation_id: str,
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),

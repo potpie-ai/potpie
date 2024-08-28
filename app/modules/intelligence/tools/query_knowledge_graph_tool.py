@@ -75,7 +75,7 @@ class CodeTools:
             for class_node in inheritance_nodes:
                 class_content = CodeTools.get_code_for_function(class_node['id'])
                 definitions += f"{class_content}\n\n"
-        except Exception as e:
+        except Exception:
             logging.exception(f"project_id: {project_id} something went wrong during fetching definition for {classnames}")
         return definitions
 

@@ -366,7 +366,7 @@ class Neo4jGraph:
 
     @staticmethod
     def _find_neighbors(tx, identifier, project_id, with_bodies, outbound, inbound):
-        match_clause = f"MATCH (start:Function {{id: $identifier, project_id: $project_id}})"
+        match_clause = "MATCH (start:Function {id: $identifier, project_id: $project_id})"
         recursive_match = ""
 
         if outbound and inbound:
