@@ -111,7 +111,7 @@ class GithubService:
             auth = AppAuth(app_id=app_id, private_key=private_key)
             jwt = auth.create_jwt()
 
-            url = f"https://api.github.com/app/installations"
+            url = "https://api.github.com/app/installations"
             headers = {
                 "Accept": "application/vnd.github+json",
                 "Authorization": f"Bearer {jwt}",
@@ -126,7 +126,7 @@ class GithubService:
 
             for installation in installations:
                 app_auth = auth.get_installation_auth(installation["id"])
-                github = Github(auth=app_auth)
+                # github = Github(auth=app_auth)
                 repos_url = installation["repositories_url"]
                 repos_response = requests.get(repos_url, headers={"Authorization": f"Bearer {app_auth.token}"})
                 if repos_response.status_code == 200:

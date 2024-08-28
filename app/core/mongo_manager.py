@@ -1,7 +1,6 @@
 import logging
 import os
 from typing import Optional
-from mongoengine import connect, connection
 import certifi
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, OperationFailure

@@ -33,7 +33,6 @@ from app.modules.intelligence.agents.intelligent_tool_using_orchestrator import 
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.tools.duckduckgo_search_tool import DuckDuckGoTool
 from app.modules.intelligence.tools.google_trends_tool import GoogleTrendsTool
-from app.modules.intelligence.tools.query_knowledge_graph_tool import CodeTools
 from app.modules.intelligence.tools.wikipedia_tool import WikipediaTool
 from app.modules.projects.projects_service import ProjectService
 
