@@ -1,7 +1,7 @@
 import logging
 import os
 from typing import Optional
-
+from mongoengine import connect, connection
 import certifi
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure, OperationFailure
@@ -23,19 +23,38 @@ class MongoManager:
             raise RuntimeError("Use get_instance() to get the MongoManager instance")
         self._connect()
 
+    def get_mongo_connection(self):
+        try:
+            db_name = os.getenv("MONGODB_DB_NAME", "test")
+            mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+            env = os.getenv("ENV", "development")  # Assume development if ENV is not set
+
+            if not mongo_uri:
+                raise ValueError("MONGO_URI environment variable is not set")
+            
+            if not db_name:
+                raise ValueError("MONGODB_DB_NAME environment variable is not set")
+
+            # Establish the connection based on the environment
+            if env in ["production", "staging"]:
+                connect(db_name, host=mongo_uri, tlsCAFile=certifi.where())
+            else:
+                connect(db_name, host=mongo_uri)
+
+            # Return the established connection
+            db_connection = connection.get_connection()
+            db_connection.server_info()  # This will raise an exception if the connection is not valid
+            return db_connection
+
+        except (ConnectionFailure, ValueError) as e:
+            logging.error(f"Failed to connect to MongoDB: {str(e)}")
+            raise
+
     def _connect(self):
         if self._client is None:
             try:
-                mongodb_uri = os.environ.get("MONGO_URI")
-                if not mongodb_uri:
-                    raise ValueError("MONGO_URI environment variable is not set")
-
-                self._client = MongoClient(
-                    mongodb_uri,
-                    maxPoolSize=50,
-                    waitQueueTimeoutMS=2500,
-                    tlsCAFile=certifi.where(),  # Use the certifi package to locate the CA bundle
-                )
+                # Establish connection using the utility function
+                self._client = self.get_mongo_connection()
 
                 db_name = os.environ.get("MONGODB_DB_NAME")
                 if not db_name:

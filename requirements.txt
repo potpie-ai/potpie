@@ -45,3 +45,4 @@ scikit-learn
 requests
 embedchain
 embedchain[weaviate]
+mongoengine
