@@ -27,6 +27,7 @@ class DebuggingWithKnowledgeGraphAgent:
                 "\n\nPlease provide step-by-step analysis, suggest debug statements, and recommend fixes."
                 "\n\nUse the available tools to gather accurate information and context."
             ),
+            MessagesPlaceholder("agent_scratchpad"),
         ])
         agent = create_openai_functions_agent(self.llm, self.tools, prompt)
         return AgentExecutor(agent=agent, tools=self.tools, verbose=True)

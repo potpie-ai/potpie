@@ -79,14 +79,20 @@ class ConversationService:
         openai_key = cls._get_openai_key()
         orchestrator = cls._initialize_orchestrator(openai_key, db)
         debugging_agent = cls._initialize_debugging_agent(openai_key, db)
-        return cls(db, project_service, history_manager, orchestrator, debugging_agent)
+        qna_agent = cls._initialize_qna_agent(openai_key, db)
+        return cls(db, project_service, history_manager, orchestrator, debugging_agent,qna_agent)
 
     @staticmethod
     def _initialize_debugging_agent(
         openai_key: str, db: Session
     ) -> DebuggingWithKnowledgeGraphAgent:
-        tools = [CodeTools()]
-        return DebuggingWithKnowledgeGraphAgent(openai_key, tools, db)
+        return DebuggingWithKnowledgeGraphAgent(openai_key, db)
+    
+    @staticmethod
+    def _initialize_qna_agent(
+        openai_key: str, db: Session
+    ) -> CodebaseQnAAgent:
+        return CodebaseQnAAgent(openai_key, db)
 
     @staticmethod
     def _get_openai_key() -> str:

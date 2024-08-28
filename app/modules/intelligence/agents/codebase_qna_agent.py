@@ -27,6 +27,7 @@ class CodebaseQnAAgent:
                 "\n\nPlease provide citations for any files, APIs, or code snippets you refer to in your response."
                 "\n\nUse the available tools to gather accurate information and context."
             ),
+            MessagesPlaceholder("agent_scratchpad"),
         ])
         agent = create_openai_functions_agent(self.llm, self.tools, prompt)
         return AgentExecutor(agent=agent, tools=self.tools, verbose=True)
