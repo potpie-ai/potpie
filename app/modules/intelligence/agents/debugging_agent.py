@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
-from app.modules.intelligence.tools.query_knowledge_graph_tool import CodeTools
+from app.modules.intelligence.tools.code_tools import CodeTools
 
 logger = logging.getLogger(__name__)
 
