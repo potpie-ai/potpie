@@ -134,9 +134,6 @@ class ConversationService:
             )
 
             await self._add_system_message(conversation_id, title, user_id)
-            await self._generate_initial_ai_response(
-                conversation_id, title, user_id, conversation.agent_id
-            )
 
             return conversation_id, "Conversation created successfully."
         except IntegrityError as e:
@@ -162,7 +159,7 @@ class ConversationService:
             title=title,
             status=ConversationStatus.ACTIVE,
             project_ids=conversation.project_ids,
-            agent_id=conversation.agent_id,  # Store the agent_id
+            agent_id=conversation.agent_id,
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
@@ -194,24 +191,6 @@ class ConversationService:
             )
             raise ConversationServiceError(
                 "Failed to add system message to the conversation."
-            ) from e
-
-    async def _generate_initial_ai_response(
-        self, conversation_id: str, project_name: str, user_id: str
-    ):
-        query = f"Summarize the project: {project_name}"
-        try:
-            await self._generate_ai_response(query, conversation_id, user_id)
-            logger.info(
-                f"Generated initial AI response for conversation {conversation_id} for user {user_id}"
-            )
-        except Exception as e:
-            logger.error(
-                f"Failed to generate initial AI response for conversation {conversation_id}: {e}",
-                exc_info=True,
-            )
-            raise ConversationServiceError(
-                "Failed to generate initial AI response."
             ) from e
 
     async def store_message(
@@ -431,6 +410,7 @@ class ConversationService:
                 created_at=conversation.created_at,
                 updated_at=conversation.updated_at,
                 total_messages=total_messages,
+                agent_id=conversation.agent_id
             )
         except ConversationNotFoundError as e:
             logger.warning(str(e))
