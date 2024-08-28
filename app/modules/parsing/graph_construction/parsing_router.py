@@ -15,6 +15,7 @@ from app.modules.parsing.graph_construction.parsing_helper import (
     ParsingServiceError,
 )
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
+from app.modules.parsing.graph_construction.parsing_validator import validate_parsing_input
 from app.modules.parsing.knowledge_graph.code_inference_service import (
     CodebaseInferenceService,
 )
@@ -38,6 +39,7 @@ class ParsingAPI:
             os.chdir(old_dir)
 
     @router.post("/parse")
+    @validate_parsing_input
     async def parse_directory(
         repo_details: ParsingRequest,
         db: Session = Depends(get_db),
@@ -109,15 +111,3 @@ class ParsingAPI:
         finally:
             if extracted_dir:
                 shutil.rmtree(extracted_dir, ignore_errors=True)
-
-    def validate_input(repo_details: ParsingRequest, user_id: str):
-        if os.getenv("isDevelopmentMode") != "enabled" and repo_details.repo_path:
-            raise HTTPException(
-                status_code=403,
-                detail="Development mode is not enabled, cannot parse local repository.",
-            )
-        if user_id == os.getenv("defaultUsername") and repo_details.repo_name:
-            raise HTTPException(
-                status_code=403,
-                detail="Cannot parse remote repository without auth token",
-            )
