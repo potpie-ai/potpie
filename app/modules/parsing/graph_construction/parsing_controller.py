@@ -1,11 +1,14 @@
 from fastapi import Depends
 from sqlalchemy.orm import Session
+
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
+from app.modules.parsing.graph_construction.parsing_validator import (
+    validate_parsing_input,
+)
 from app.modules.projects.projects_service import ProjectService
-from app.modules.parsing.graph_construction.parsing_validator import validate_parsing_input
 
 
 class ParsingController:
