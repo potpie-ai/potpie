@@ -21,6 +21,18 @@ router = APIRouter()
 
 
 class ConversationAPI:
+
+    @staticmethod
+    @router.get("/conversations/{conversation_id}/list-available-agents/", response_model=dict)
+    async def list_available_agents(
+        conversation_id: str,
+        db: Session = Depends(get_db),
+        user=Depends(AuthService.check_auth),
+    ):
+        user_id = user["user_id"]
+        controller = ConversationController(db)
+        return await controller.list_available_agents(conversation_id,user_id)
+
     @staticmethod
     @router.post("/conversations/", response_model=CreateConversationResponse)
     async def create_conversation(
@@ -113,14 +125,3 @@ class ConversationAPI:
         user_id = user["user_id"]
         controller = ConversationController(db)
         return await controller.stop_generation(conversation_id,user_id)
-
-    @staticmethod
-    @router.get("/conversations/{conversation_id}/list-available-agents/", response_model=dict)
-    async def list_available_agents(
-        conversation_id: str,
-        db: Session = Depends(get_db),
-        user=Depends(AuthService.check_auth),
-    ):
-        user_id = user["user_id"]
-        controller = ConversationController(db)
-        return await controller.list_available_agents(conversation_id,user_id)
