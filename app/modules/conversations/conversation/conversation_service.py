@@ -12,7 +12,6 @@ from app.modules.conversations.conversation.conversation_model import (
     ConversationStatus,
 )
 from app.modules.conversations.conversation.conversation_schema import (
-    AgentInfo,
     ConversationInfoResponse,
     CreateConversationRequest,
 )
@@ -490,22 +489,3 @@ class ConversationService:
         # This might involve setting a flag in the orchestrator or cancelling an ongoing task
         logger.info(f"Attempting to stop generation for conversation {conversation_id}")
         return {"status": "success", "message": "Generation stop request received"}
-
-    async def list_available_agents(self) -> List[AgentInfo]:
-        return [
-            AgentInfo(
-                id="debugging_agent",
-                name="Debugging with Knowledge Graph Agent",
-                description="An agent specialized in debugging using knowledge graphs.",
-            ),
-            AgentInfo(
-                id="chat_llm_orchestrator",
-                name="Intelligent Tool-Using Orchestrator",
-                description="A versatile chat LLM that can use various tools to assist with a wide range of tasks.",
-            ),
-            AgentInfo(
-                id="codebase_qna_agent",
-                name="Codebase Q&A Agent",
-                description="An agent specialized in answering questions about the codebase using the knowledge graph and code analysis tools.",
-            ),
-        ]

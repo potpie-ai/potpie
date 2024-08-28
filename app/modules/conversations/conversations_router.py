@@ -11,7 +11,6 @@ from app.modules.conversations.conversation.conversation_controller import (
 )
 
 from .conversation.conversation_schema import (
-    AgentInfo,
     ConversationInfoResponse,
     CreateConversationRequest,
     CreateConversationResponse,
@@ -22,15 +21,6 @@ router = APIRouter()
 
 
 class ConversationAPI:
-    @staticmethod
-    @router.get("/list-available-agents/", response_model=List[AgentInfo])
-    async def list_available_agents(
-        db: Session = Depends(get_db),
-        user=Depends(AuthService.check_auth),
-    ):
-        controller = ConversationController(db)
-        return await controller.list_available_agents()
-
     @staticmethod
     @router.post("/conversations/", response_model=CreateConversationResponse)
     async def create_conversation(

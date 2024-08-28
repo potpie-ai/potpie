@@ -6,12 +6,6 @@ from pydantic import BaseModel
 from app.modules.conversations.conversation.conversation_model import ConversationStatus
 
 
-class AgentInfo(BaseModel):
-    id: str
-    name: str
-    description: str
-
-
 class CreateConversationRequest(BaseModel):
     user_id: str
     title: str

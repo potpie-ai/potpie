@@ -4,7 +4,6 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.modules.conversations.conversation.conversation_schema import (
-    AgentInfo,
     ConversationInfoResponse,
     CreateConversationRequest,
     CreateConversationResponse,
@@ -19,7 +18,6 @@ from app.modules.conversations.message.message_schema import (
     MessageRequest,
     MessageResponse,
 )
-
 
 class ConversationController:
     def __init__(self, db: Session):
@@ -99,11 +97,5 @@ class ConversationController:
             return await self.service.stop_generation(conversation_id, user_id)
         except ConversationNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e))
-        except ConversationServiceError as e:
-            raise HTTPException(status_code=500, detail=str(e))
-
-    async def list_available_agents(self) -> List[AgentInfo]:
-        try:
-            return await self.service.list_available_agents()
         except ConversationServiceError as e:
             raise HTTPException(status_code=500, detail=str(e))
