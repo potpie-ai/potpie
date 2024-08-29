@@ -235,7 +235,7 @@ class ConversationService:
             )
 
             async for chunk in self._generate_and_stream_ai_response(
-                last_human_message.content, conversation_id
+                last_human_message.content, conversation_id, user_id
             ):
                 yield chunk
         except MessageNotFoundError as e:
