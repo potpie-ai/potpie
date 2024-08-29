@@ -1,13 +1,13 @@
 import asyncio
 import logging
 from typing import AsyncGenerator, Dict, List
-from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.schema import AIMessage, HumanMessage
 from langchain_core.prompts import (
     ChatPromptTemplate,
     HumanMessagePromptTemplate,
     MessagesPlaceholder,
 )
+from langchain_core.runnables import RunnableSequence
 from langchain_openai import ChatOpenAI
 from sqlalchemy.orm import Session
 
@@ -24,25 +24,27 @@ class CodebaseQnAAgent:
         )
         self.history_manager = ChatHistoryService(db)
         self.tools = CodeTools.get_tools()
-        self.agent_executor = self._create_agent_executor()
+        self.chain = self._create_chain()
 
-    def _create_agent_executor(self) -> AgentExecutor:
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                MessagesPlaceholder(variable_name="chat_history"),
+    def _create_chain(self) -> RunnableSequence:
+        prompt_template = ChatPromptTemplate(
+            messages=[
+                MessagesPlaceholder(variable_name="history"),
                 HumanMessagePromptTemplate.from_template(
                     "Given the context provided and the available tools, answer the following question about the codebase: {input}"
                     "\n\nPlease provide citations for any files, APIs, or code snippets you refer to in your response."
                     "\n\nUse the available tools to gather accurate information and context."
                 ),
-                MessagesPlaceholder("agent_scratchpad"),
             ]
         )
-        agent = create_openai_functions_agent(self.llm, self.tools, prompt)
-        return AgentExecutor(agent=agent, tools=self.tools, verbose=True)
+        return prompt_template | self.llm
 
     async def run(
-        self, query: str, project_id: str, user_id: str, conversation_id: str
+        self,
+        query: str,
+        project_id: str,
+        user_id: str,
+        conversation_id: str,
     ) -> AsyncGenerator[str, None]:
         if not isinstance(query, str):
             raise ValueError("Query must be a string.")
@@ -80,7 +82,7 @@ class CodebaseQnAAgent:
                 )
                 yield content
 
-            # Process citations after full response is generated
+            # Process citations
             processed_result, citations = self._process_citations(full_response)
 
             # Yield citations
@@ -94,7 +96,7 @@ class CodebaseQnAAgent:
             )
 
         except Exception as e:
-            logger.error(f"Error during agent execution: {str(e)}")
+            logger.error(f"Error during LLM invocation: {str(e)}")
             yield f"An error occurred: {str(e)}"
 
     async def _run_tools(self, query: str, project_id: str) -> List[str]:
