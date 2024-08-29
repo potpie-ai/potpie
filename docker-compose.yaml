@@ -2,13 +2,13 @@ version: '3.8'
 services:
   postgres:
     image: postgres:latest
-    container_name: ${COMPOSE_PROJECT_NAME}_postgres
+    container_name: postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: mysecretpassword
       POSTGRES_DB: momentum
     ports:
-      - "5433:5432"
+      - "5432:5432"
     networks:
       - app-network
     healthcheck:
@@ -19,43 +19,43 @@ services:
 
   neo4j:
     image: neo4j:latest
-    container_name: ${COMPOSE_PROJECT_NAME}_neo4j
+    container_name: neo4j
     environment:
       NEO4J_AUTH: neo4j/mysecretpassword
       NEO4JLABS_PLUGINS: '["apoc"]' # Add this line to include APOC plugin
       NEO4J_dbms_security_procedures_unrestricted: 'apoc.*' # Allow APOC procedures
     ports:
-      - "7475:7474"
-      - "7688:7687"
+      - "7474:7474"
+      - "7687:7687"
     networks:
       - app-network
 
   mongodb:
     image: mongo:latest
-    container_name: ${COMPOSE_PROJECT_NAME}_mongodb
+    container_name: mongodb
     restart: always
     environment:
       - MONGO_INITDB_DATABASE=momentum
     ports:
-      - "27018:27017"
+      - "27017:27017"
     networks:
       - app-network
 
   redis:
     image: redis:latest
-    container_name: ${COMPOSE_PROJECT_NAME}_redis_broker
+    container_name: redis_broker
     ports:
-      - "6380:6379"
+      - "6379:6379"
     networks:
       - app-network
 
   weaviate:
     image: cr.weaviate.io/semitechnologies/weaviate:1.25.7
-    container_name: ${COMPOSE_PROJECT_NAME}_weaviate
+    container_name: weaviate
     command: "--host 0.0.0.0 --port 8082 --scheme http"
     ports:
-      - "8083:8082"
-      - "50052:50051"
+      - "8082:8082"
+      - "50051:50051"
     restart: on-failure
     environment:
       QUERY_DEFAULTS_LIMIT: 25
