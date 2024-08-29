@@ -1,14 +1,10 @@
-import logging
 import os
 from typing import List
 from langchain.tools import Tool, StructuredTool
 from pydantic import BaseModel, Field
 import requests
 
-from app.modules.github.github_service import GithubService
-from app.modules.utils.neo4j_helper import Neo4jGraph
 
-neo4j_graph = Neo4jGraph()
 
 class KnowledgeGraphInput(BaseModel):
     query: str = Field(description="A natural language question to ask the knowledge graph")

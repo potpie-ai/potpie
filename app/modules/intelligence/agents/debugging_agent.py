@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import AsyncGenerator, List, Dict
+from typing import AsyncGenerator, List
 from langchain.schema import AIMessage, HumanMessage
 from langchain_core.prompts import (
     ChatPromptTemplate,
