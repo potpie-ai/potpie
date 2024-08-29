@@ -80,33 +80,6 @@ class CodebaseQnAAgent:
         logger.debug(f"All tool results: {tool_results}")
         return tool_results
 
-    def _process_citations(self, response: str) -> Tuple[str, List[Dict[str, str]]]:
-        citations = []
-        lines = response.split("\n")
-        processed_lines = []
-        citation_pattern = re.compile(r'\[CITATION:([^:]+):([^:]*):([^\]]+)\]')
-        
-        for line in lines:
-            logger.debug(f"Processing line: {line}")
-            matches = citation_pattern.findall(line)
-            
-            if matches:
-                for filename, line_number, content in matches:
-                    citations.append({
-                        "file": filename,
-                        "line": line_number,
-                        "content": content.strip()
-                    })
-                
-                # Replace citation brackets with parentheses in the processed line
-                processed_line = citation_pattern.sub(r'(\1:\2: \3)', line)
-                processed_lines.append(processed_line)
-            else:
-                processed_lines.append(line)
-        
-        logger.debug(f"Processed citations: {citations}")
-        return "\n".join(processed_lines), citations
-
     async def run(
         self,
         query: str,
@@ -150,14 +123,6 @@ class CodebaseQnAAgent:
                 yield content
 
             logger.debug(f"Full LLM response: {full_response}")
-
-            processed_result, citations = self._process_citations(full_response)
-
-            yield "\n\nProcessed Response:"
-            yield processed_result
-
-            yield "\n\nCitations:"
-            yield json.dumps({"citations": citations}, indent=2)
 
             self.history_manager.flush_message_buffer(
                 conversation_id, MessageType.AI_GENERATED
