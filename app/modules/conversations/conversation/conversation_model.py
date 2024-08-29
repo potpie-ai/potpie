@@ -29,7 +29,7 @@ class Conversation(Base):
         SQLAEnum(ConversationStatus), default=ConversationStatus.ACTIVE, nullable=False
     )
     project_ids = Column(ARRAY(String), nullable=False)
-    agent_id = Column(String(255), nullable=False)
+    agent_ids = Column(ARRAY(String), nullable=False)
     created_at = Column(TIMESTAMP(timezone=True), default=func.now(), nullable=False)
     updated_at = Column(
         TIMESTAMP(timezone=True),

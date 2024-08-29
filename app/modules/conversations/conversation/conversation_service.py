@@ -159,7 +159,7 @@ class ConversationService:
             title=title,
             status=ConversationStatus.ACTIVE,
             project_ids=conversation.project_ids,
-            agent_id=conversation.agent_id,
+            agent_ids=[conversation.agent_id],             
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
@@ -313,7 +313,7 @@ class ConversationService:
                 f"Conversation with id {conversation_id} not found"
             )
 
-        agent = self.agents.get(conversation.agent_id)
+        agent = self.agents.get(conversation.agent_ids[0])
         if not agent:
             raise ConversationServiceError(f"Invalid agent_id: {conversation.agent_id}")
 
@@ -412,7 +412,7 @@ class ConversationService:
                 created_at=conversation.created_at,
                 updated_at=conversation.updated_at,
                 total_messages=total_messages,
-                agent_id=conversation.agent_id,
+                agent_id=conversation.agent_ids[0],
             )
         except ConversationNotFoundError as e:
             logger.warning(str(e))
