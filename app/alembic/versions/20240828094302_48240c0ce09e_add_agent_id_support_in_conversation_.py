@@ -24,11 +24,11 @@ def upgrade() -> None:
     op.add_column(
         "conversations", sa.Column("agent_ids", sa.ARRAY(sa.String()), nullable=False)
     )
-    # op.alter_column('messages', 'status',
-    #            existing_type=postgresql.ENUM('ACTIVE', 'ARCHIVED', 'DELETED', name='message_status_enum'),
-    #            type_=sa.Enum('ACTIVE', 'ARCHIVED', 'DELETED', name='messagestatus'),
-    #            existing_nullable=False,
-    #            existing_server_default=sa.text("'ACTIVE'::message_status_enum"))
+    op.alter_column('messages', 'status',
+               existing_type=postgresql.ENUM('ACTIVE', 'ARCHIVED', 'DELETED', name='message_status_enum'),
+               type_=sa.Enum('ACTIVE', 'ARCHIVED', 'DELETED', name='messagestatus'),
+               existing_nullable=False,
+               existing_server_default=sa.text("'ACTIVE'::message_status_enum"))
     # ### end Alembic commands ###
 
 
