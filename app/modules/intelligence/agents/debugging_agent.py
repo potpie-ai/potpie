@@ -20,7 +20,7 @@ from app.modules.intelligence.tools.code_tools import CodeTools
 logger = logging.getLogger(__name__)
 
 
-class DebuggingWithKnowledgeGraphAgent:
+class DebuggingAgent:
     def __init__(self, openai_key: str, db: Session):
         self.llm = ChatOpenAI(
             api_key=openai_key, temperature=0.7, model_kwargs={"stream": True}

@@ -24,9 +24,9 @@ from app.modules.conversations.message.message_schema import (
     MessageRequest,
     MessageResponse,
 )
-from app.modules.intelligence.agents.codebase_qna_agent import CodebaseQnAAgent
+from app.modules.intelligence.agents.qna_agent import  QNAAgent
 from app.modules.intelligence.agents.debugging_agent import (
-    DebuggingWithKnowledgeGraphAgent,
+    DebuggingAgent
 )
 from app.modules.intelligence.agents.intelligent_tool_using_orchestrator import (
     IntelligentToolUsingOrchestrator,
@@ -59,8 +59,8 @@ class ConversationService:
         project_service: ProjectService,
         history_manager: ChatHistoryService,
         orchestrator: IntelligentToolUsingOrchestrator,
-        debugging_agent: DebuggingWithKnowledgeGraphAgent,
-        codebase_qna_agent: CodebaseQnAAgent,
+        debugging_agent: DebuggingAgent,
+        codebase_qna_agent: QNAAgent,
     ):
         self.db = db
         self.project_service = project_service
@@ -91,12 +91,12 @@ class ConversationService:
     @staticmethod
     def _initialize_debugging_agent(
         openai_key: str, db: Session
-    ) -> DebuggingWithKnowledgeGraphAgent:
-        return DebuggingWithKnowledgeGraphAgent(openai_key, db)
+    ) -> DebuggingAgent:
+        return DebuggingAgent(openai_key, db)
 
     @staticmethod
-    def _initialize_qna_agent(openai_key: str, db: Session) -> CodebaseQnAAgent:
-        return CodebaseQnAAgent(openai_key, db)
+    def _initialize_qna_agent(openai_key: str, db: Session) -> QNAAgent:
+        return QNAAgent(openai_key, db)
 
     @staticmethod
     def _get_openai_key() -> str:
