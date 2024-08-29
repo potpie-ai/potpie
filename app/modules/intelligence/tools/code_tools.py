@@ -29,7 +29,6 @@ class CodeTools:
         data = {"project_id": 2, "query": query}
         headers = {"Content-Type": "application/json"}
         kg_query_url = os.getenv("KNOWLEDGE_GRAPH_URL")
-        print("hitting KG")
         response = requests.post(kg_query_url, json=data, headers=headers)
         return response.json()
 
