@@ -125,7 +125,6 @@ class GithubService:
 
             for installation in installations:
                 app_auth = auth.get_installation_auth(installation["id"])
-                # github = Github(auth=app_auth)
                 repos_url = installation["repositories_url"]
                 repos_response = requests.get(
                     repos_url, headers={"Authorization": f"Bearer {app_auth.token}"}
