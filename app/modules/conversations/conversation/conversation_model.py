@@ -43,6 +43,3 @@ class Conversation(Base):
     messages = relationship(
         "Message", back_populates="conversation", cascade="all, delete-orphan"
     )
-
-    def __repr__(self):
-        return f"<Conversation(id={self.id}, user_id={self.user_id}, title={self.title}, status={self.status}, agent_id={self.agent_id})>"

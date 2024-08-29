@@ -1,10 +1,13 @@
 import asyncio
 import logging
-from typing import AsyncGenerator, Dict, List
-from langchain.schema import AIMessage, HumanMessage
+import re
+import json
+from typing import AsyncGenerator, Dict, List, Tuple
+from langchain.schema import AIMessage, HumanMessage, SystemMessage
 from langchain_core.prompts import (
     ChatPromptTemplate,
     HumanMessagePromptTemplate,
+    SystemMessagePromptTemplate,
     MessagesPlaceholder,
 )
 from langchain_core.runnables import RunnableSequence
@@ -29,15 +32,80 @@ class CodebaseQnAAgent:
     def _create_chain(self) -> RunnableSequence:
         prompt_template = ChatPromptTemplate(
             messages=[
+                SystemMessagePromptTemplate.from_template(
+                    "You are an AI assistant analyzing a codebase. Use the provided context and tools to answer questions accurately. "
+                    "Always cite your sources using the format [CITATION:filename.ext:line_number:relevant information]. "
+                    "If line number is not applicable, use [CITATION:filename.ext::relevant information]. "
+                    "Ensure every piece of information from a file is cited."
+                ),
                 MessagesPlaceholder(variable_name="history"),
+                MessagesPlaceholder(variable_name="tool_results"),
                 HumanMessagePromptTemplate.from_template(
-                    "Given the context provided and the available tools, answer the following question about the codebase: {input}"
-                    "\n\nPlease provide citations for any files, APIs, or code snippets you refer to in your response."
-                    "\n\nUse the available tools to gather accurate information and context."
+                    "Given the context and tool results provided, answer the following question about the codebase: {input}"
+                    "\n\nEnsure to include at least one citation for each file you mention, even if you're describing its general purpose."
+                    "\n\nYour response should include both the answer and the citations."
+                    "\n\nAt the end of your response, include a JSON object with all citations used, in the format:"
+                    "\n```json\n{{\"citations\": [{{"
+                    "\n  \"file\": \"filename.ext\","
+                    "\n  \"line\": \"line_number_or_empty_string\","
+                    "\n  \"content\": \"relevant information\""
+                    "\n}}, ...]}}\n```"
                 ),
             ]
         )
         return prompt_template | self.llm
+
+    async def _run_tools(self, query: str, project_id: str) -> List[SystemMessage]:
+        tool_results = []
+        for tool in self.tools:
+            try:
+                tool_input = {"query": query, "project_id": project_id}
+                logger.debug(f"Running tool {tool.name} with input: {tool_input}")
+
+                if hasattr(tool, "arun"):
+                    tool_result = await tool.arun(tool_input)
+                elif hasattr(tool, "run"):
+                    tool_result = await asyncio.to_thread(tool.run, tool_input)
+                else:
+                    logger.warning(f"Tool {tool.name} has no run or arun method. Skipping.")
+                    continue
+
+                logger.debug(f"Tool {tool.name} result: {tool_result}")
+
+                if tool_result:
+                    tool_results.append(SystemMessage(content=f"Tool {tool.name} result: {tool_result}"))
+            except Exception as e:
+                logger.error(f"Error running tool {tool.name}: {str(e)}")
+        
+        logger.debug(f"All tool results: {tool_results}")
+        return tool_results
+
+    def _process_citations(self, response: str) -> Tuple[str, List[Dict[str, str]]]:
+        citations = []
+        lines = response.split("\n")
+        processed_lines = []
+        citation_pattern = re.compile(r'\[CITATION:([^:]+):([^:]*):([^\]]+)\]')
+        
+        for line in lines:
+            logger.debug(f"Processing line: {line}")
+            matches = citation_pattern.findall(line)
+            
+            if matches:
+                for filename, line_number, content in matches:
+                    citations.append({
+                        "file": filename,
+                        "line": line_number,
+                        "content": content.strip()
+                    })
+                
+                # Replace citation brackets with parentheses in the processed line
+                processed_line = citation_pattern.sub(r'(\1:\2: \3)', line)
+                processed_lines.append(processed_line)
+            else:
+                processed_lines.append(line)
+        
+        logger.debug(f"Processed citations: {citations}")
+        return "\n".join(processed_lines), citations
 
     async def run(
         self,
@@ -61,20 +129,19 @@ class CodebaseQnAAgent:
             for msg in history
         ]
 
-        inputs = validated_history + [HumanMessage(content=query)]
+        tool_results = await self._run_tools(query, project_id)
+        
+        inputs = {
+            "history": validated_history,
+            "tool_results": tool_results,
+            "input": query
+        }
 
         try:
-            # Run tools and add their results to the inputs
-            tool_results = await self._run_tools(query, project_id)
-            if tool_results:
-                tool_message = AIMessage(
-                    content=f"Tool results: {'; '.join(tool_results)}"
-                )
-                inputs.append(tool_message)
+            logger.debug(f"Inputs to LLM: {inputs}")
 
-            # Stream the LLM output
             full_response = ""
-            async for chunk in self.llm.astream(inputs):
+            async for chunk in self.chain.astream(inputs):
                 content = chunk.content if hasattr(chunk, "content") else str(chunk)
                 full_response += content
                 self.history_manager.add_message_chunk(
@@ -82,15 +149,16 @@ class CodebaseQnAAgent:
                 )
                 yield content
 
-            # Process citations
+            logger.debug(f"Full LLM response: {full_response}")
+
             processed_result, citations = self._process_citations(full_response)
 
-            # Yield citations
-            yield "\n\nCitations:"
-            for source, snippet in citations.items():
-                yield f"\n{source}: {snippet}"
+            yield "\n\nProcessed Response:"
+            yield processed_result
 
-            # Flush the message buffer after streaming is complete
+            yield "\n\nCitations:"
+            yield json.dumps({"citations": citations}, indent=2)
+
             self.history_manager.flush_message_buffer(
                 conversation_id, MessageType.AI_GENERATED
             )
@@ -98,37 +166,3 @@ class CodebaseQnAAgent:
         except Exception as e:
             logger.error(f"Error during LLM invocation: {str(e)}")
             yield f"An error occurred: {str(e)}"
-
-    async def _run_tools(self, query: str, project_id: str) -> List[str]:
-        tool_results = []
-        for tool in self.tools:
-            try:
-                tool_input = {"query": query, "project_id": project_id}
-                logger.debug(f"Running tool {tool.name} with input: {tool_input}")
-
-                if hasattr(tool, "arun"):
-                    tool_result = await tool.arun(tool_input)
-                elif hasattr(tool, "run"):
-                    tool_result = await asyncio.to_thread(tool.run, tool_input)
-                else:
-                    logger.warning(f"Tool {tool.name} has no run or arun method. Skipping.")
-                    continue
-
-                if tool_result:
-                    tool_results.append(f"{tool.name}: {tool_result}")
-            except Exception as e:
-                logger.error(f"Error running tool {tool.name}: {str(e)}")
-        return tool_results
-
-    def _process_citations(self, response: str) -> tuple[str, Dict[str, str]]:
-        citations = {}
-        lines = response.split("\n")
-        processed_lines = []
-        for line in lines:
-            if ": " in line:
-                source, content = line.split(": ", 1)
-                citations[source] = content
-                processed_lines.append(f"[{source}] {content}")
-            else:
-                processed_lines.append(line)
-        return "\n".join(processed_lines), citations
