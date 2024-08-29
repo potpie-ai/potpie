@@ -11,7 +11,7 @@ class CreateConversationRequest(BaseModel):
     title: str
     status: ConversationStatus
     project_ids: List[str]
-    agent_id: str 
+    agent_ids: List[str] 
 
 
 class CreateConversationResponse(BaseModel):
@@ -27,7 +27,7 @@ class ConversationInfoResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     total_messages: int
-    agent_id: str  # New field
+    agent_ids: List[str]
 
     class Config:
         from_attributes = True

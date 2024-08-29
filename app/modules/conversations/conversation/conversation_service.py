@@ -118,9 +118,9 @@ class ConversationService:
         self, conversation: CreateConversationRequest, user_id: str
     ) -> tuple[str, str]:
         try:
-            if conversation.agent_id not in self.agents:
+            if conversation.agent_ids[0] not in self.agents:
                 raise ConversationServiceError(
-                    f"Invalid agent_id: {conversation.agent_id}"
+                    f"Invalid agent_id: {conversation.agent_ids[0]}"
                 )
 
             project_name = await self.project_service.get_project_name(
@@ -159,14 +159,14 @@ class ConversationService:
             title=title,
             status=ConversationStatus.ACTIVE,
             project_ids=conversation.project_ids,
-            agent_ids=[conversation.agent_id],             
+            agent_ids=conversation.agent_ids,             
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
         self.db.add(new_conversation)
         self.db.commit()
         logger.info(
-            f"Created new conversation with ID: {conversation_id}, title: {title}, user_id: {user_id}, agent_id: {conversation.agent_id}"
+            f"Created new conversation with ID: {conversation_id}, title: {title}, user_id: {user_id}, agent_id: {conversation.agent_ids[0]}"
         )
         return conversation_id
 
@@ -315,7 +315,7 @@ class ConversationService:
 
         agent = self.agents.get(conversation.agent_ids[0])
         if not agent:
-            raise ConversationServiceError(f"Invalid agent_id: {conversation.agent_id}")
+            raise ConversationServiceError(f"Invalid agent_id: {conversation.agent_ids[0]}")
 
         try:
             async for chunk in agent.run(
@@ -324,7 +324,7 @@ class ConversationService:
                 if chunk:
                     yield chunk
             logger.info(
-                f"Generated and streamed AI response for conversation {conversation.id} for user {user_id} using agent {conversation.agent_id}"
+                f"Generated and streamed AI response for conversation {conversation.id} for user {user_id} using agent {conversation.agent_ids[0]}"
             )
         except Exception as e:
             logger.error(
@@ -412,7 +412,7 @@ class ConversationService:
                 created_at=conversation.created_at,
                 updated_at=conversation.updated_at,
                 total_messages=total_messages,
-                agent_id=conversation.agent_ids[0],
+                agent_ids=conversation.agent_ids,
             )
         except ConversationNotFoundError as e:
             logger.warning(str(e))
