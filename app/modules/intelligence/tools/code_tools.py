@@ -17,7 +17,14 @@ class KnowledgeGraphInput(BaseModel):
 
 class CodeTools:
     @staticmethod
-    def ask_knowledge_graph(query: str, project_id: str) -> str:
+    def get_project_id() -> str:
+        """
+        Fetch the project ID from the environment variable or use a default value.
+        """
+        return os.getenv("KNOWLEDGE_GRAPH_PROJECT_ID", "2")
+
+    @staticmethod
+    def ask_knowledge_graph(query: str, project_id: str = None) -> str:
         """
         Query the code knowledge graph using natural language questions.
         The knowledge graph contains information from various database tables including:
@@ -26,7 +33,8 @@ class CodeTools:
         - explanation: code explanations for function identifiers
         - pydantic: pydantic class definitions
         """
-        data = {"project_id": 2, "query": query}
+        project_id = CodeTools.get_project_id()
+        data = {"project_id": project_id, "query": query}
         headers = {"Content-Type": "application/json"}
         kg_query_url = os.getenv("KNOWLEDGE_GRAPH_URL")
         response = requests.post(kg_query_url, json=data, headers=headers)
