@@ -324,15 +324,15 @@ class ConversationService:
             raise ConversationServiceError(f"Invalid agent_id: {conversation.agent_id}")
 
         try:
-            async for chunk in agent.run(query, user_id, conversation_id):
+            async for chunk in agent.run(query, conversation.project_ids[0] ,user_id, conversation.id):
                 if chunk:
                     yield chunk
             logger.info(
-                f"Generated and streamed AI response for conversation {conversation_id} for user {user_id} using agent {conversation.agent_id}"
+                f"Generated and streamed AI response for conversation {conversation.id} for user {user_id} using agent {conversation.agent_id}"
             )
         except Exception as e:
             logger.error(
-                f"Failed to generate and stream AI response for conversation {conversation_id}: {e}",
+                f"Failed to generate and stream AI response for conversation {conversation.id}: {e}",
                 exc_info=True,
             )
             raise ConversationServiceError(
