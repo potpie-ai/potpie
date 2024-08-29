@@ -24,13 +24,11 @@ from app.modules.conversations.message.message_schema import (
     MessageRequest,
     MessageResponse,
 )
-from app.modules.intelligence.agents.qna_agent import  QNAAgent
-from app.modules.intelligence.agents.debugging_agent import (
-    DebuggingAgent
-)
+from app.modules.intelligence.agents.debugging_agent import DebuggingAgent
 from app.modules.intelligence.agents.intelligent_tool_using_orchestrator import (
     IntelligentToolUsingOrchestrator,
 )
+from app.modules.intelligence.agents.qna_agent import QNAAgent
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.tools.duckduckgo_search_tool import DuckDuckGoTool
 from app.modules.intelligence.tools.google_trends_tool import GoogleTrendsTool
@@ -89,9 +87,7 @@ class ConversationService:
         )
 
     @staticmethod
-    def _initialize_debugging_agent(
-        openai_key: str, db: Session
-    ) -> DebuggingAgent:
+    def _initialize_debugging_agent(openai_key: str, db: Session) -> DebuggingAgent:
         return DebuggingAgent(openai_key, db)
 
     @staticmethod
@@ -159,7 +155,7 @@ class ConversationService:
             title=title,
             status=ConversationStatus.ACTIVE,
             project_ids=conversation.project_ids,
-            agent_ids=conversation.agent_ids,             
+            agent_ids=conversation.agent_ids,
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
@@ -315,7 +311,9 @@ class ConversationService:
 
         agent = self.agents.get(conversation.agent_ids[0])
         if not agent:
-            raise ConversationServiceError(f"Invalid agent_id: {conversation.agent_ids[0]}")
+            raise ConversationServiceError(
+                f"Invalid agent_id: {conversation.agent_ids[0]}"
+            )
 
         try:
             async for chunk in agent.run(

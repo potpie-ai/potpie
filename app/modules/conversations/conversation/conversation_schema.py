@@ -11,7 +11,7 @@ class CreateConversationRequest(BaseModel):
     title: str
     status: ConversationStatus
     project_ids: List[str]
-    agent_ids: List[str] 
+    agent_ids: List[str]
 
 
 class CreateConversationResponse(BaseModel):
