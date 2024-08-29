@@ -12,6 +12,7 @@ from app.modules.conversations.conversations_router import (
     router as conversations_router,
 )
 from app.modules.github.github_router import router as github_router
+from app.modules.intelligence.agents.agents_router import router as agent_router
 from app.modules.key_management.secret_manager import router as secret_manager_router
 from app.modules.parsing.graph_construction.parsing_router import (
     router as parsing_router,
@@ -19,8 +20,6 @@ from app.modules.parsing.graph_construction.parsing_router import (
 from app.modules.projects.projects_router import router as projects_router
 from app.modules.search.search_router import router as search_router
 from app.modules.users.user_router import router as user_router
-from app.modules.intelligence.agents.agents_router import router as agent_router
-
 from app.modules.utils.dummy_setup import DummyDataSetup
 from app.modules.utils.firebase_setup import FirebaseSetup
 
@@ -97,7 +96,8 @@ class MainApp:
         self.app.include_router(projects_router, prefix="/api/v1", tags=["Projects"])
         self.app.include_router(search_router, prefix="/api/v1/search", tags=["Search"])
         self.app.include_router(github_router, prefix="/api/v1", tags=["Github"])
-        self.app.include_router(agent_router,prefix="/api/v1", tags=["Agents"])
+        self.app.include_router(agent_router, prefix="/api/v1", tags=["Agents"])
+
     def add_health_check(self):
         @self.app.get("/health", tags=["Health"])
         def health_check():

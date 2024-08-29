@@ -2,10 +2,11 @@ from typing import List
 
 from app.modules.intelligence.agents.agents_schema import AgentInfo
 
+
 class AgentsService:
     def __init__(self, db):
         self.db = db
-    
+
     @classmethod
     def create(cls, db):
         return cls(db)

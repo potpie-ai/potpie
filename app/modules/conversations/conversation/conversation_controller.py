@@ -19,6 +19,7 @@ from app.modules.conversations.message.message_schema import (
     MessageResponse,
 )
 
+
 class ConversationController:
     def __init__(self, db: Session):
         self.service = ConversationService.create(db)

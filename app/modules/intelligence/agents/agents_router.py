@@ -8,8 +8,8 @@ from app.modules.auth.auth_service import AuthService
 from app.modules.intelligence.agents.agents_controller import AgentsController
 from app.modules.intelligence.agents.agents_schema import AgentInfo
 
-
 router = APIRouter()
+
 
 class AgentsAPI:
     @staticmethod

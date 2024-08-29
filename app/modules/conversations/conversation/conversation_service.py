@@ -193,7 +193,6 @@ class ConversationService:
                 "Failed to add system message to the conversation."
             ) from e
 
-
     async def store_message(
         self,
         conversation_id: str,
@@ -223,7 +222,6 @@ class ConversationService:
                 "Failed to store message or generate AI response."
             ) from e
 
-
     async def regenerate_last_message(
         self, conversation_id: str, user_id: str
     ) -> AsyncGenerator[str, None]:
@@ -252,7 +250,6 @@ class ConversationService:
             )
             raise ConversationServiceError("Failed to regenerate last message.") from e
 
-
     async def _get_last_human_message(self, conversation_id: str):
         message = (
             self.db.query(Message)
@@ -263,7 +260,6 @@ class ConversationService:
         if not message:
             logger.warning(f"No human message found in conversation {conversation_id}")
         return message
-
 
     async def _archive_subsequent_messages(
         self, conversation_id: str, timestamp: datetime
@@ -289,7 +285,6 @@ class ConversationService:
                 "Failed to archive subsequent messages."
             ) from e
 
-
     async def _generate_ai_response(
         self, query: str, conversation_id: str, user_id: str
     ) -> str:
@@ -309,7 +304,6 @@ class ConversationService:
             )
             raise ConversationServiceError("Failed to generate AI response.") from e
 
-
     async def _generate_and_stream_ai_response(
         self, query: str, conversation_id: str, user_id: str
     ) -> AsyncGenerator[str, None]:
@@ -324,7 +318,9 @@ class ConversationService:
             raise ConversationServiceError(f"Invalid agent_id: {conversation.agent_id}")
 
         try:
-            async for chunk in agent.run(query, conversation.project_ids[0] ,user_id, conversation.id):
+            async for chunk in agent.run(
+                query, conversation.project_ids[0], user_id, conversation.id
+            ):
                 if chunk:
                     yield chunk
             logger.info(
@@ -338,7 +334,6 @@ class ConversationService:
             raise ConversationServiceError(
                 "Failed to generate and stream AI response."
             ) from e
-
 
     async def delete_conversation(self, conversation_id: str, user_id: str) -> dict:
         try:
@@ -393,7 +388,6 @@ class ConversationService:
                 f"Failed to delete conversation {conversation_id} due to an unexpected error"
             ) from e
 
-
     async def get_conversation_info(
         self, conversation_id: str, user_id: str
     ) -> ConversationInfoResponse:
@@ -418,7 +412,7 @@ class ConversationService:
                 created_at=conversation.created_at,
                 updated_at=conversation.updated_at,
                 total_messages=total_messages,
-                agent_id=conversation.agent_id
+                agent_id=conversation.agent_id,
             )
         except ConversationNotFoundError as e:
             logger.warning(str(e))
@@ -428,7 +422,6 @@ class ConversationService:
             raise ConversationServiceError(
                 f"Failed to get conversation info for {conversation_id}"
             ) from e
-
 
     async def get_conversation_messages(
         self, conversation_id: str, start: int, limit: int, user_id: str
@@ -472,7 +465,6 @@ class ConversationService:
             raise ConversationServiceError(
                 f"Failed to get messages for conversation {conversation_id}"
             ) from e
-
 
     async def stop_generation(self, conversation_id: str, user_id: str) -> dict:
         # Implement the logic to stop the generation process

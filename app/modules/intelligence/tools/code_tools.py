@@ -1,14 +1,19 @@
 import os
 from typing import List
-from langchain.tools import Tool, StructuredTool
-from pydantic import BaseModel, Field
-import requests
 
+import requests
+from langchain.tools import StructuredTool, Tool
+from pydantic import BaseModel, Field
 
 
 class KnowledgeGraphInput(BaseModel):
-    query: str = Field(description="A natural language question to ask the knowledge graph")
-    project_id: str = Field(description="The project id metadata for the project being evaluated")
+    query: str = Field(
+        description="A natural language question to ask the knowledge graph"
+    )
+    project_id: str = Field(
+        description="The project id metadata for the project being evaluated"
+    )
+
 
 class CodeTools:
     @staticmethod
@@ -21,13 +26,8 @@ class CodeTools:
         - explanation: code explanations for function identifiers
         - pydantic: pydantic class definitions
         """
-        data = {
-            "project_id": 2,
-            "query": query
-        }
-        headers = {
-            "Content-Type": "application/json"
-        }
+        data = {"project_id": 2, "query": query}
+        headers = {"Content-Type": "application/json"}
         kg_query_url = os.getenv("KNOWLEDGE_GRAPH_URL")
         print("hitting KG")
         response = requests.post(kg_query_url, json=data, headers=headers)
@@ -43,6 +43,6 @@ class CodeTools:
                 func=cls.ask_knowledge_graph,
                 name="Ask Knowledge Graph",
                 description="Query the code knowledge graph with specific directed questions using natural language. Do not use this to query code directly.",
-                args_schema=KnowledgeGraphInput
+                args_schema=KnowledgeGraphInput,
             ),
         ]

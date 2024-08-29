@@ -57,9 +57,7 @@ class ParseHelper:
             try:
                 repo = github.get_repo(repo_details.repo_name)
             except Exception:
-                raise HTTPException(
-                    status_code=400, detail="Repository not found on c"
-                )
+                raise HTTPException(status_code=400, detail="Repository not found on c")
 
         return repo, owner, auth
 
@@ -186,7 +184,11 @@ class ParseHelper:
                                 lang_count["typescript"] += 1
                             else:
                                 lang_count["other"] += 1
-                    except (UnicodeDecodeError, FileNotFoundError, PermissionError) as e:
+                    except (
+                        UnicodeDecodeError,
+                        FileNotFoundError,
+                        PermissionError,
+                    ) as e:
                         logging.warning(f"Error reading file {file_path}: {e}")
                         continue
         except (TypeError, FileNotFoundError, PermissionError) as e:

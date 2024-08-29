@@ -1,12 +1,13 @@
 import asyncio
 import logging
 from typing import AsyncGenerator, List
+
 from langchain.schema import HumanMessage, SystemMessage
 from langchain_core.prompts import (
     ChatPromptTemplate,
     HumanMessagePromptTemplate,
-    SystemMessagePromptTemplate,
     MessagesPlaceholder,
+    SystemMessagePromptTemplate,
 )
 from langchain_core.runnables import RunnableSequence
 from langchain_openai import ChatOpenAI
@@ -17,6 +18,7 @@ from app.modules.intelligence.memory.chat_history_service import ChatHistoryServ
 from app.modules.intelligence.tools.code_tools import CodeTools
 
 logger = logging.getLogger(__name__)
+
 
 class CodebaseQnAAgent:
     def __init__(self, openai_key: str, db: Session):
@@ -43,10 +45,10 @@ class CodebaseQnAAgent:
                     "\n\nEnsure to include at least one citation for each file you mention, even if you're describing its general purpose."
                     "\n\nYour response should include both the answer and the citations."
                     "\n\nAt the end of your response, include a JSON object with all citations used, in the format:"
-                    "\n```json\n{{\"citations\": [{{"
-                    "\n  \"file\": \"filename.ext\","
-                    "\n  \"line\": \"line_number_or_empty_string\","
-                    "\n  \"content\": \"relevant information\""
+                    '\n```json\n{{"citations": [{{'
+                    '\n  "file": "filename.ext",'
+                    '\n  "line": "line_number_or_empty_string",'
+                    '\n  "content": "relevant information"'
                     "\n}}, ...]}}\n```"
                 ),
             ]
@@ -65,16 +67,20 @@ class CodebaseQnAAgent:
                 elif hasattr(tool, "run"):
                     tool_result = await asyncio.to_thread(tool.run, tool_input)
                 else:
-                    logger.warning(f"Tool {tool.name} has no run or arun method. Skipping.")
+                    logger.warning(
+                        f"Tool {tool.name} has no run or arun method. Skipping."
+                    )
                     continue
 
                 logger.debug(f"Tool {tool.name} result: {tool_result}")
 
                 if tool_result:
-                    tool_results.append(SystemMessage(content=f"Tool {tool.name} result: {tool_result}"))
+                    tool_results.append(
+                        SystemMessage(content=f"Tool {tool.name} result: {tool_result}")
+                    )
             except Exception as e:
                 logger.error(f"Error running tool {tool.name}: {str(e)}")
-        
+
         logger.debug(f"All tool results: {tool_results}")
         return tool_results
 
@@ -101,11 +107,11 @@ class CodebaseQnAAgent:
         ]
 
         tool_results = await self._run_tools(query, project_id)
-        
+
         inputs = {
             "history": validated_history,
             "tool_results": tool_results,
-            "input": query
+            "input": query,
         }
 
         try:
