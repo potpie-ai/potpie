@@ -69,7 +69,6 @@ class ConversationAPI:
     async def post_message(
         conversation_id: str,
         message: MessageRequest,
-        user_id: str,
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):

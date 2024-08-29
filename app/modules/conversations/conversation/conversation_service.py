@@ -193,6 +193,7 @@ class ConversationService:
                 "Failed to add system message to the conversation."
             ) from e
 
+
     async def store_message(
         self,
         conversation_id: str,
@@ -210,7 +211,7 @@ class ConversationService:
             logger.info(f"Stored message in conversation {conversation_id}")
             if message_type == MessageType.HUMAN:
                 async for chunk in self._generate_and_stream_ai_response(
-                    message.content, conversation_id
+                    message.content, conversation_id, user_id
                 ):
                     yield chunk
         except Exception as e:
@@ -221,6 +222,7 @@ class ConversationService:
             raise ConversationServiceError(
                 "Failed to store message or generate AI response."
             ) from e
+
 
     async def regenerate_last_message(
         self, conversation_id: str, user_id: str
@@ -250,6 +252,7 @@ class ConversationService:
             )
             raise ConversationServiceError("Failed to regenerate last message.") from e
 
+
     async def _get_last_human_message(self, conversation_id: str):
         message = (
             self.db.query(Message)
@@ -260,6 +263,7 @@ class ConversationService:
         if not message:
             logger.warning(f"No human message found in conversation {conversation_id}")
         return message
+
 
     async def _archive_subsequent_messages(
         self, conversation_id: str, timestamp: datetime
@@ -285,6 +289,7 @@ class ConversationService:
                 "Failed to archive subsequent messages."
             ) from e
 
+
     async def _generate_ai_response(
         self, query: str, conversation_id: str, user_id: str
     ) -> str:
@@ -303,6 +308,7 @@ class ConversationService:
                 exc_info=True,
             )
             raise ConversationServiceError("Failed to generate AI response.") from e
+
 
     async def _generate_and_stream_ai_response(
         self, query: str, conversation_id: str, user_id: str
@@ -332,6 +338,7 @@ class ConversationService:
             raise ConversationServiceError(
                 "Failed to generate and stream AI response."
             ) from e
+
 
     async def delete_conversation(self, conversation_id: str, user_id: str) -> dict:
         try:
@@ -386,6 +393,7 @@ class ConversationService:
                 f"Failed to delete conversation {conversation_id} due to an unexpected error"
             ) from e
 
+
     async def get_conversation_info(
         self, conversation_id: str, user_id: str
     ) -> ConversationInfoResponse:
@@ -420,6 +428,7 @@ class ConversationService:
             raise ConversationServiceError(
                 f"Failed to get conversation info for {conversation_id}"
             ) from e
+
 
     async def get_conversation_messages(
         self, conversation_id: str, start: int, limit: int, user_id: str
@@ -463,6 +472,7 @@ class ConversationService:
             raise ConversationServiceError(
                 f"Failed to get messages for conversation {conversation_id}"
             ) from e
+
 
     async def stop_generation(self, conversation_id: str, user_id: str) -> dict:
         # Implement the logic to stop the generation process
