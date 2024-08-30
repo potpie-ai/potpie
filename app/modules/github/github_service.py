@@ -125,6 +125,7 @@ class GithubService:
 
             for installation in installations:
                 app_auth = auth.get_installation_auth(installation["id"])
+                github = Github(auth=app_auth)
                 repos_url = installation["repositories_url"]
                 repos_response = requests.get(
                     repos_url, headers={"Authorization": f"Bearer {app_auth.token}"}
@@ -169,3 +170,17 @@ class GithubService:
                 status_code=404,
                 detail=f"Repository not found or error fetching branches: {str(e)}",
             )
+    @staticmethod
+    def get_public_github_repo(repo_name: str):
+        owner = repo_name.split("/")[0]
+        repo = repo_name.split("/")[1]
+        url = f"https://api.github.com/repos/{owner}/{repo}"
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail="Failed to fetch public repository")
+        
+        return response.json(), owner   

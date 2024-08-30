@@ -45,19 +45,30 @@ class ParseHelper:
             auth = None
         else:
             github_service = GithubService(db)
-            response, auth, owner = github_service.get_github_repo_details(
-                repo_details.repo_name
-            )
-            if response.status_code != 200:
-                raise HTTPException(
-                    status_code=400, detail="Failed to get installation ID"
+            auth = None
+            try:
+                response, auth, owner = github_service.get_github_repo_details(
+                    repo_details.repo_name
                 )
-            app_auth = auth.get_installation_auth(response.json()["id"])
-            github = Github(auth=app_auth)
+                if response.status_code != 200:
+                    raise HTTPException(
+                        status_code=400, detail="Failed to get installation ID"
+                    )
+                app_auth = auth.get_installation_auth(response.json()["id"])
+                github = Github(auth=app_auth)
+            except HTTPException:
+                # Handling public repository
+                response, owner = github_service.get_public_github_repo(
+                    repo_details.repo_name
+                )
+                github = Github()  # No authentication for public repos
+
             try:
                 repo = github.get_repo(repo_details.repo_name)
             except Exception:
-                raise HTTPException(status_code=400, detail="Repository not found on c")
+                raise HTTPException(
+                    status_code=400, detail="Repository not found on GitHub"
+                )
 
         return repo, owner, auth
 
@@ -66,10 +77,13 @@ class ParseHelper:
     ):
         try:
             tarball_url = repo_details.get_archive_link("tarball", branch)
+            headers = {}
+            if auth is not None:
+                headers["Authorization"] = f"Bearer {auth.token}"
             response = requests.get(
                 tarball_url,
                 stream=True,
-                headers={"Authorization": f"{auth.token}"},
+                headers=headers,
             )
             response.raise_for_status()
         except requests.exceptions.RequestException as e:

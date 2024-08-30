@@ -17,6 +17,7 @@ from app.modules.parsing.graph_construction.parsing_helper import (
     ParsingFailedError,
     ParsingServiceError,
 )
+from app.modules.utils.email_helper import EmailHelper
 from app.modules.parsing.knowledge_graph.code_inference_service import (
     CodebaseInferenceService,
 )
@@ -41,7 +42,7 @@ class ParsingService:
             os.chdir(old_dir)
 
     async def parse_directory(
-        self, repo_details: ParsingRequest, user_id: str, project_id: int
+        self, repo_details: ParsingRequest, user_id: str, user_email: str ,project_id: int
     ):
         project_manager = ProjectService(self.db)
         parse_helper = ParseHelper(self.db)
@@ -70,6 +71,8 @@ class ParsingService:
             await project_manager.update_project_status(
                 project_id, ProjectStatusEnum.READY
             )
+            if(ProjectStatusEnum.READY):
+                await EmailHelper().send_email(user_email)
             return {"message": message, "id": project_id}
 
         except ParsingServiceError as e:

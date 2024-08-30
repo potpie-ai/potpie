@@ -46,3 +46,4 @@ requests
 embedchain
 embedchain[weaviate]
 mongoengine
+resend

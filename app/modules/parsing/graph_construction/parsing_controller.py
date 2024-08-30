@@ -20,6 +20,7 @@ class ParsingController:
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
+        user_email = user["email"]
         project_manager = ProjectService(db)
         project = await project_manager.get_project_from_db(
             repo_details.repo_name, user_id
@@ -27,4 +28,4 @@ class ParsingController:
         project_id = project.id if project else None
 
         parsing_service = ParsingService(db)
-        return await parsing_service.parse_directory(repo_details, user_id, project_id)
+        return await parsing_service.parse_directory(repo_details, user_id, user_email,project_id)
