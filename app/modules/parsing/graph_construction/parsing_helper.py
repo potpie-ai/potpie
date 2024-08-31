@@ -29,6 +29,7 @@ class ParseHelper:
     def __init__(self, db_session: Session):
         self.project_manager = ProjectService(db_session)
         self.db = db_session
+
     @staticmethod
     async def clone_or_copy_repository(
         repo_details: RepoDetails, db: Session, user_id: str
@@ -55,19 +56,21 @@ class ParseHelper:
                 github = Github()
                 repo = github.get_repo(repo_details.repo_name)
             except Exception as public_repo_error:
-                logging.error(f"Failed to fetch public repository: {str(public_repo_error)}")
-                
+                logging.error(
+                    f"Failed to fetch public repository: {str(public_repo_error)}"
+                )
+
                 # If public repo fetch fails, try private repo
                 try:
                     response, auth, owner = github_service.get_github_repo_details(
                         repo_details.repo_name
                     )
-                    
+
                     if response.status_code != 200:
                         raise HTTPException(
                             status_code=400, detail="Failed to get installation ID"
                         )
-                    
+
                     app_auth = auth.get_installation_auth(response.json()["id"])
                     github = Github(auth=app_auth)
                     repo = github.get_repo(repo_details.repo_name)
@@ -75,7 +78,9 @@ class ParseHelper:
                     if isinstance(private_repo_error, HTTPException):
                         raise private_repo_error
                     else:
-                        logging.error(f"Failed to fetch private repository: {str(private_repo_error)}")
+                        logging.error(
+                            f"Failed to fetch private repository: {str(private_repo_error)}"
+                        )
                         raise HTTPException(
                             status_code=404, detail="Repository not found on GitHub"
                         )
