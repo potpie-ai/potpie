@@ -29,11 +29,14 @@ class ParseHelper:
     def __init__(self, db_session: Session):
         self.project_manager = ProjectService(db_session)
         self.db = db_session
-
     @staticmethod
     async def clone_or_copy_repository(
         repo_details: RepoDetails, db: Session, user_id: str
     ) -> Tuple[Any, str, Any]:
+        owner = None
+        auth = None
+        repo = None
+
         if repo_details.repo_path:
             if not os.path.exists(repo_details.repo_path):
                 raise HTTPException(
@@ -41,39 +44,46 @@ class ParseHelper:
                     detail="Local repository does not exist on the given path",
                 )
             repo = Repo(repo_details.repo_path)
-            owner = None
-            auth = None
         else:
             github_service = GithubService(db)
-            auth = None
 
+            # First, attempt to get public repository details
             try:
-                # Attempt to get private repository details
-                response, auth, owner = github_service.get_github_repo_details(
+                response, owner = github_service.get_public_github_repo(
                     repo_details.repo_name
                 )
-                if response.status_code != 200:
-                    raise HTTPException(
-                        status_code=400, detail="Failed to get installation ID"
-                    )
-                app_auth = auth.get_installation_auth(response.json()["id"])
-                github = Github(auth=app_auth)
+                github = Github()
                 repo = github.get_repo(repo_details.repo_name)
-
-            except HTTPException as e:
-                if e.status_code == 400:
-                    try:
-                        response, owner = github_service.get_public_github_repo(
-                            repo_details.repo_name
+            except Exception as public_repo_error:
+                logging.error(f"Failed to fetch public repository: {str(public_repo_error)}")
+                
+                # If public repo fetch fails, try private repo
+                try:
+                    response, auth, owner = github_service.get_github_repo_details(
+                        repo_details.repo_name
+                    )
+                    
+                    if response.status_code != 200:
+                        raise HTTPException(
+                            status_code=400, detail="Failed to get installation ID"
                         )
-                        github = Github()
-                        repo = github.get_repo(repo_details.repo_name)
-                    except Exception:
+                    
+                    app_auth = auth.get_installation_auth(response.json()["id"])
+                    github = Github(auth=app_auth)
+                    repo = github.get_repo(repo_details.repo_name)
+                except Exception as private_repo_error:
+                    if isinstance(private_repo_error, HTTPException):
+                        raise private_repo_error
+                    else:
+                        logging.error(f"Failed to fetch private repository: {str(private_repo_error)}")
                         raise HTTPException(
                             status_code=404, detail="Repository not found on GitHub"
                         )
-                else:
-                    raise e  # Re-raise if it's not a 400 error
+
+            if repo is None:
+                raise HTTPException(
+                    status_code=404, detail="Failed to fetch repository"
+                )
 
         return repo, owner, auth
 
