@@ -60,11 +60,10 @@ class ParseHelper:
                 repo = github.get_repo(repo_details.repo_name)
             except HTTPException:
                 try:
-                    
                     response, owner = github_service.get_public_github_repo(
                         repo_details.repo_name
                     )
-                    github = Github()  
+                    github = Github()
                     repo = github.get_repo(repo_details.repo_name)
                 except Exception:
                     raise HTTPException(

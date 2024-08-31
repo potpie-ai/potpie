@@ -3,8 +3,9 @@ import os
 import shutil
 import time
 import traceback
-from contextlib import contextmanager
 from asyncio import create_task
+from contextlib import contextmanager
+
 from blar_graph.db_managers import Neo4jManager
 from blar_graph.graph_construction.core.graph_builder import GraphConstructor
 from fastapi import HTTPException
@@ -17,13 +18,13 @@ from app.modules.parsing.graph_construction.parsing_helper import (
     ParsingFailedError,
     ParsingServiceError,
 )
-from app.modules.utils.email_helper import EmailHelper
 from app.modules.parsing.knowledge_graph.code_inference_service import (
     CodebaseInferenceService,
 )
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
+from app.modules.utils.email_helper import EmailHelper
 
 from .parsing_schema import ParsingRequest
 
@@ -42,7 +43,11 @@ class ParsingService:
             os.chdir(old_dir)
 
     async def parse_directory(
-        self, repo_details: ParsingRequest, user_id: str, user_email: str ,project_id: int
+        self,
+        repo_details: ParsingRequest,
+        user_id: str,
+        user_email: str,
+        project_id: int,
     ):
         project_manager = ProjectService(self.db)
         parse_helper = ParseHelper(self.db)
@@ -71,7 +76,7 @@ class ParsingService:
             await project_manager.update_project_status(
                 project_id, ProjectStatusEnum.READY
             )
-            if(ProjectStatusEnum.READY):
+            if ProjectStatusEnum.READY:
                 create_task(EmailHelper().send_email(user_email))
             return {"message": message, "id": project_id}
 

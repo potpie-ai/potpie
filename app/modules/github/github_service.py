@@ -170,6 +170,7 @@ class GithubService:
                 status_code=404,
                 detail=f"Repository not found or error fetching branches: {str(e)}",
             )
+
     @staticmethod
     def get_public_github_repo(repo_name: str):
         owner = repo_name.split("/")[0]
@@ -181,6 +182,9 @@ class GithubService:
         }
         response = requests.get(url, headers=headers)
         if response.status_code != 200:
-            raise HTTPException(status_code=response.status_code, detail="Failed to fetch public repository")
-        
-        return response.json(), owner   
+            raise HTTPException(
+                status_code=response.status_code,
+                detail="Failed to fetch public repository",
+            )
+
+        return response.json(), owner

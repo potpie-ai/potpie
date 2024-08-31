@@ -28,4 +28,6 @@ class ParsingController:
         project_id = project.id if project else None
 
         parsing_service = ParsingService(db)
-        return await parsing_service.parse_directory(repo_details, user_id, user_email,project_id)
+        return await parsing_service.parse_directory(
+            repo_details, user_id, user_email, project_id
+        )
