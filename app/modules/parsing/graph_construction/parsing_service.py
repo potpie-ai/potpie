@@ -4,7 +4,7 @@ import shutil
 import time
 import traceback
 from contextlib import contextmanager
-
+from asyncio import create_task
 from blar_graph.db_managers import Neo4jManager
 from blar_graph.graph_construction.core.graph_builder import GraphConstructor
 from fastapi import HTTPException
@@ -72,7 +72,7 @@ class ParsingService:
                 project_id, ProjectStatusEnum.READY
             )
             if(ProjectStatusEnum.READY):
-                await EmailHelper().send_email(user_email)
+                create_task(EmailHelper().send_email(user_email))
             return {"message": message, "id": project_id}
 
         except ParsingServiceError as e:
