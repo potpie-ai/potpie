@@ -38,7 +38,7 @@ class ParseHelper:
             if not os.path.exists(repo_details.repo_path):
                 raise HTTPException(
                     status_code=400,
-                    detail="Local repository does not exist on given path",
+                    detail="Local repository does not exist on the given path",
                 )
             repo = Repo(repo_details.repo_path)
             owner = None
@@ -48,6 +48,7 @@ class ParseHelper:
             auth = None
 
             try:
+                # Attempt to get private repository details
                 response, auth, owner = github_service.get_github_repo_details(
                     repo_details.repo_name
                 )
@@ -58,17 +59,21 @@ class ParseHelper:
                 app_auth = auth.get_installation_auth(response.json()["id"])
                 github = Github(auth=app_auth)
                 repo = github.get_repo(repo_details.repo_name)
-            except HTTPException:
-                try:
-                    response, owner = github_service.get_public_github_repo(
-                        repo_details.repo_name
-                    )
-                    github = Github()
-                    repo = github.get_repo(repo_details.repo_name)
-                except Exception:
-                    raise HTTPException(
-                        status_code=404, detail="Repository not found on GitHub"
-                    )
+
+            except HTTPException as e:
+                if e.status_code == 400:
+                    try:
+                        response, owner = github_service.get_public_github_repo(
+                            repo_details.repo_name
+                        )
+                        github = Github()
+                        repo = github.get_repo(repo_details.repo_name)
+                    except Exception:
+                        raise HTTPException(
+                            status_code=404, detail="Repository not found on GitHub"
+                        )
+                else:
+                    raise e  # Re-raise if it's not a 400 error
 
         return repo, owner, auth
 

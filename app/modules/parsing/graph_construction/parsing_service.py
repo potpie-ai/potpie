@@ -76,8 +76,7 @@ class ParsingService:
             await project_manager.update_project_status(
                 project_id, ProjectStatusEnum.READY
             )
-            if ProjectStatusEnum.READY:
-                create_task(EmailHelper().send_email(user_email))
+            create_task(EmailHelper().send_email(user_email))
             return {"message": message, "id": project_id}
 
         except ParsingServiceError as e:

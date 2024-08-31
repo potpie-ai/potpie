@@ -80,8 +80,8 @@ class ProjectService:
         for project in projects:
             project_dict = {
                 "id": project.id,
-                "directory": project.directory,
-                "active": project.is_default,
+                "repo_name": project.repo_name,
+                "status": project.status,
             }
             project_list.append(project_dict)
         return project_list
@@ -346,16 +346,3 @@ class ProjectService:
             logging.error(f"Error fetching projects: {str(e)}")
             # You might want to raise a custom exception here instead of returning None
             return None
-
-
-async def list_projects(self, user_id: str):
-    projects = ProjectService.get_projects_by_user_id(self.db, user_id)
-    project_list = []
-    for project in projects:
-        project_dict = {
-            "id": project.id,
-            "directory": project.directory,
-            "active": project.is_default,
-        }
-        project_list.append(project_dict)
-    return project_list
