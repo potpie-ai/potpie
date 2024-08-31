@@ -50,32 +50,6 @@
   - `403 Forbidden`: Access denied due to restrictions.
   - `500 Internal Server Error`: Unexpected server error.
 
-### 2. Validate Input
-- **Endpoint**: `/parse/validate`
-- **Method**: `POST`
-- **Request Body**:
-  - **Type**: `ParsingRequest`
-  - **Description**: Contains the details required to validate input for parsing.
-- **Response**:
-  - **Type**: `dict`
-  - **Description**: Confirms whether the input is valid.
-- **Example Request**:
-    ```json
-    {
-      "repo_name": "user/repo",
-      "branch_name": "main"
-    }
-    ```
-- **Example Response**:
-    ```json
-    {
-      "message": "Input is valid."
-    }
-    ```
-- **Possible Status Codes**:
-  - `200 OK`: Input is valid.
-  - `400 Bad Request`: Invalid input data.
-
 ## Schema Definitions
 
 ### ParsingRequest
