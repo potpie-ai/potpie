@@ -50,27 +50,6 @@
   - `403 Forbidden`: Access denied due to restrictions.
   - `500 Internal Server Error`: Unexpected server error.
 
-## Schema Definitions
-
-### ParsingRequest
-- **Description**: Request body for parsing a directory.
-- **Fields**:
-  - `repo_name` (string, optional): Name of the repository.
-  - `repo_path` (string, optional): Local path to the repository.
-  - `branch_name` (string): Name of the branch to parse.
-
-### ParsingResponse
-- **Description**: Response body for a parsing operation.
-- **Fields**:
-  - `message` (string): Confirmation message indicating success or failure.
-  - `status` (string): Status of the parsing operation.
-  - `project_id` (string): Unique identifier for the parsed project.
-
-### RepoDetails
-- **Description**: Contains details about the repository.
-- **Fields**:
-  - `repo_name` (string): Name of the repository.
-  - `branch_name` (string): Name of the branch to parse.
 
 ## Error Handling
 
