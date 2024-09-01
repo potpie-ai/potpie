@@ -12,7 +12,6 @@ class UserConversationListRequest(BaseModel):
 
 class UserConversationListResponse(BaseModel):
     id: str
-    user_id: str
     title: Optional[str]
     status: Optional[str]
     project_ids: Optional[List[str]]
