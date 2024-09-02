@@ -1,37 +1,70 @@
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
 from typing import Optional
 
 from app.core.database import get_db
+from app.modules.auth.auth_service import AuthService
 from app.modules.intelligence.prompts.prompt_controller import PromptController
 from app.modules.intelligence.prompts.prompt_schema import PromptCreate, PromptListResponse, PromptResponse, PromptUpdate
-
+from app.modules.intelligence.prompts.prompt_service import PromptService
 
 router = APIRouter()
 
-@router.post("/prompts", response_model=PromptResponse)
-def create_prompt(prompt: PromptCreate, db=Depends(get_db)):
-    return PromptController.create_prompt(prompt, db)
+class PromptAPI:
+    @staticmethod
+    @router.post("/prompts/", response_model=PromptResponse)
+    async def create_prompt(
+        prompt: PromptCreate,
+        db: Session = Depends(get_db),
+        user=Depends(AuthService.check_auth),
+    ):
+        user_id = user["user_id"]
+        prompt_service = PromptService(db)
+        return await PromptController.create_prompt(prompt, prompt_service, user_id)
 
-@router.put("/prompts/{prompt_id}", response_model=PromptResponse)
-def update_prompt(prompt_id: str, prompt: PromptUpdate, db=Depends(get_db)):
-    return PromptController.update_prompt(prompt_id, prompt, db)
+    @staticmethod
+    @router.put("/prompts/{prompt_id}", response_model=PromptResponse)
+    async def update_prompt(
+        prompt_id: str,
+        prompt: PromptUpdate,
+        db: Session = Depends(get_db),
+        user=Depends(AuthService.check_auth),
+    ):
+        user_id = user["user_id"]
+        prompt_service = PromptService(db)
+        return await PromptController.update_prompt(prompt_id, prompt, prompt_service, user_id)
 
-@router.delete("/prompts/{prompt_id}", response_model=None)
-def delete_prompt(prompt_id: str, db=Depends(get_db)):
-    return PromptController.delete_prompt(prompt_id, db)
+    @staticmethod
+    @router.delete("/prompts/{prompt_id}", response_model=None)
+    async def delete_prompt(
+        prompt_id: str,
+        db: Session = Depends(get_db),
+        user=Depends(AuthService.check_auth),
+    ):
+        user_id = user["user_id"]
+        prompt_service = PromptService(db)
+        return await PromptController.delete_prompt(prompt_id, prompt_service, user_id)
 
-@router.get("/prompts/{prompt_id}", response_model=PromptResponse)
-def fetch_prompt(prompt_id: str, db=Depends(get_db)):
-    return PromptController.fetch_prompt(prompt_id, db)
+    @staticmethod
+    @router.get("/prompts/{prompt_id}", response_model=PromptResponse)
+    async def fetch_prompt(
+        prompt_id: str,
+        db: Session = Depends(get_db),
+        user=Depends(AuthService.check_auth),
+    ):
+        user_id = user["user_id"]
+        prompt_service = PromptService(db)
+        return await PromptController.fetch_prompt(prompt_id, prompt_service, user_id)
 
-@router.get("/prompts", response_model=PromptListResponse)
-def list_prompts(
-    query: Optional[str] = Query(None),
-    skip: int = Query(0, ge=0),
-    limit: int = Query(10, ge=1, le=100),
-    db=Depends(get_db)
-):
-    if query and len(query) >= 5:
-        return PromptController.list_prompts(query, skip, limit, db)
-    else:
-        return PromptController.get_all_prompts(skip, limit, db)
+    @staticmethod
+    @router.get("/prompts/", response_model=PromptListResponse)
+    async def list_prompts(
+        query: Optional[str] = Query(None),
+        skip: int = Query(0, ge=0),
+        limit: int = Query(10, ge=1, le=100),
+        db: Session = Depends(get_db),
+        user=Depends(AuthService.check_auth),
+    ):
+        user_id = user["user_id"]
+        prompt_service = PromptService(db)
+        return await PromptController.list_prompts(query, skip, limit, prompt_service, user_id)

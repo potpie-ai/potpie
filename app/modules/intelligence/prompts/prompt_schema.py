@@ -18,11 +18,8 @@ class PromptStatusType(str, Enum):
 # Request Schema for Creating a Prompt
 class PromptCreate(BaseModel):
     text: str = Field(..., min_length=1, max_length=1000, description="The text content of the prompt")
-    type: PromptType = Field(..., description="Type of the prompt (System or User)")
     visibility: PromptVisibilityType = Field(..., description="Visibility of the prompt (Public or Private)")
-    version: Optional[int] = Field(1, description="Version number of the prompt")
     status: Optional[PromptStatusType] = Field(PromptStatusType.ACTIVE, description="Status of the prompt (active or inactive)")
-    created_by: Optional[str] = Field(None, description="ID of the user who created the prompt")
 
 # Request Schema for Updating a Prompt
 class PromptUpdate(BaseModel):

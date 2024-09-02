@@ -1,5 +1,4 @@
 from typing import Optional
-from sqlalchemy.orm import Session
 
 from app.modules.intelligence.prompts.prompt_schema import PromptCreate, PromptListResponse, PromptResponse, PromptUpdate
 from app.modules.intelligence.prompts.prompt_service import PromptService
@@ -8,30 +7,27 @@ from app.modules.intelligence.prompts.prompt_service import PromptService
 class PromptController:
 
     @staticmethod
-    def create_prompt(prompt_data: PromptCreate, db: Session) -> PromptResponse:
-        prompt = PromptService.create_prompt(db, prompt_data)
-        return PromptResponse.from_orm(prompt)
+    async def create_prompt(prompt: PromptCreate, prompt_service: PromptService, user_id: str) -> PromptResponse:
+        return await prompt_service.create_prompt(prompt, user_id)
 
     @staticmethod
-    def update_prompt(prompt_id: str, prompt_data: PromptUpdate, db: Session) -> PromptResponse:
-        prompt = PromptService.update_prompt(db, prompt_id, prompt_data)
-        return PromptResponse.from_orm(prompt)
+    async def update_prompt(prompt_id: str, prompt: PromptUpdate, prompt_service: PromptService, user_id: str) -> PromptResponse:
+        return await prompt_service.update_prompt(prompt_id, prompt, user_id)
 
     @staticmethod
-    def delete_prompt(prompt_id: str, db: Session) -> None:
-        PromptService.delete_prompt(db, prompt_id)
+    async def delete_prompt(prompt_id: str, prompt_service: PromptService, user_id: str) -> None:
+        await prompt_service.delete_prompt(prompt_id, user_id)
 
     @staticmethod
-    def fetch_prompt(prompt_id: str, db: Session) -> PromptResponse:
-        prompt = PromptService.fetch_prompt(db, prompt_id)
-        return PromptResponse.from_orm(prompt)
+    async def fetch_prompt(prompt_id: str, prompt_service: PromptService, user_id: str) -> PromptResponse:
+        return await prompt_service.fetch_prompt(prompt_id, user_id)
 
     @staticmethod
-    def list_prompts(query: Optional[str], skip: int, limit: int, db: Session) -> PromptListResponse:
-        prompts = PromptService.list_prompts(db, query, skip, limit)
+    async def list_prompts(query: Optional[str], skip: int, limit: int, prompt_service: PromptService, user_id: str) -> PromptListResponse:
+        prompts = await prompt_service.list_prompts(query, skip, limit, user_id)
         return PromptListResponse(prompts=prompts, total=len(prompts))
 
     @staticmethod
-    def get_all_prompts(skip: int, limit: int, db: Session) -> PromptListResponse:
-        prompts = PromptService.get_all_prompts(db, skip, limit)
+    async def get_all_prompts(skip: int, limit: int, prompt_service: PromptService, user_id: str) -> PromptListResponse:
+        prompts = await prompt_service.get_all_prompts(skip, limit, user_id)
         return PromptListResponse(prompts=prompts, total=len(prompts))

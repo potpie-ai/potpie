@@ -84,21 +84,20 @@ class MainApp:
         dummy_data_setup.setup_dummy_project()
 
     def include_routers(self):
+        self.app.include_router(auth_router, prefix="/api/v1", tags=["Auth"])
         self.app.include_router(user_router, prefix="/api/v1", tags=["User"])
+        self.app.include_router(parsing_router, prefix="/api/v1", tags=["Parsing"])
         self.app.include_router(
             conversations_router, prefix="/api/v1", tags=["Conversations"]
         )
-        self.app.include_router(parsing_router, prefix="/api/v1", tags=["Parsing"])
-        self.app.include_router(auth_router, prefix="/api/v1", tags=["Auth"])
+        self.app.include_router(prompt_router, prefix="/api/v1", tags=["Prompts"])
         self.app.include_router(
             secret_manager_router, prefix="/api/v1", tags=["Secret Manager"]
         )
-
         self.app.include_router(projects_router, prefix="/api/v1", tags=["Projects"])
-        self.app.include_router(search_router, prefix="/api/v1/search", tags=["Search"])
+        self.app.include_router(search_router, prefix="/api/v1", tags=["Search"])
         self.app.include_router(github_router, prefix="/api/v1", tags=["Github"])
         self.app.include_router(agent_router, prefix="/api/v1", tags=["Agents"])
-        self.app.include_router(prompt_router, prefix="/api/v1", tags=["Prompts"])
 
     def add_health_check(self):
         @self.app.get("/health", tags=["Health"])
