@@ -36,17 +36,14 @@ class Prompt(Base):
     __table_args__ = (
         UniqueConstraint('text', 'version', name='unique_text_version'),
     )
-
-    # Relationships
-    creator = relationship("User", back_populates="prompts")
-    accesses = relationship("PromptAccess", back_populates="prompt")
-
 class PromptAccess(Base):
     __tablename__ = 'prompt_access'
     
     prompt_id = Column(String, ForeignKey('prompts.id', ondelete='CASCADE'), primary_key=True)
     user_id = Column(String, ForeignKey('users.uid', ondelete='CASCADE'), primary_key=True)
     
-    # Relationships
-    prompt = relationship("Prompt", back_populates="accesses")
-    user = relationship("User", back_populates="accessible_prompts")
+
+Prompt.creator = relationship("User", back_populates="created_prompts")
+Prompt.accesses = relationship("PromptAccess", back_populates="prompt")
+PromptAccess.prompt = relationship("Prompt", back_populates="accesses")
+PromptAccess.user = relationship("User", back_populates="accessible_prompts")

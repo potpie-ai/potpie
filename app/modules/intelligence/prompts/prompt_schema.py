@@ -45,7 +45,7 @@ class PromptResponse(BaseModel):
     updated_at: str = Field(..., description="Timestamp of when the prompt was last updated")
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # Response Schema for Listing Prompts
 class PromptListResponse(BaseModel):
