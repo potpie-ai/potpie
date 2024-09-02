@@ -31,7 +31,7 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.TIMESTAMP(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.ForeignKeyConstraint(['created_by'], ['users.uid'], ),
     sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('text', 'version', name='unique_text_version')
+    sa.UniqueConstraint('text', 'version', 'created_by', name='unique_text_version_user')
     )
     op.create_table('prompt_access',
     sa.Column('prompt_id', sa.String(), nullable=False),

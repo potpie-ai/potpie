@@ -1,6 +1,6 @@
 import enum
 
-from sqlalchemy import Column, String, Text, TIMESTAMP, ForeignKey, func, UniqueConstraint, Integer
+from sqlalchemy import Column, String, Text, TIMESTAMP, ForeignKey, func, UniqueConstraint, Integer, CheckConstraint
 from sqlalchemy import Enum as SQLAEnum
 from sqlalchemy.orm import relationship
 
@@ -8,16 +8,16 @@ from app.core.database import Base
 
 # Define enums for the Prompt model
 class PromptType(enum.Enum):
-    SYSTEM = "System"
-    USER = "User"
+    SYSTEM = "SYSTEM"
+    USER = "USER"
 
 class PromptVisibilityType(enum.Enum):
-    PUBLIC = "Public"
-    PRIVATE = "Private"
+    PUBLIC = "PUBLIC"
+    PRIVATE = "PRIVATE"
 
 class PromptStatusType(enum.Enum):
-    ACTIVE = "active"
-    INACTIVE = "inactive"
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
 
 class Prompt(Base):
     __tablename__ = 'prompts'
@@ -32,10 +32,17 @@ class Prompt(Base):
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
-     # Define constraints
+    # Define constraints
     __table_args__ = (
-        UniqueConstraint('text', 'version', name='unique_text_version'),
+        UniqueConstraint('text', 'version', 'created_by', name='unique_text_version_user'),
+        CheckConstraint('version > 0', name='check_version_positive'),
+        CheckConstraint('created_at <= updated_at', name='check_timestamps'),
+        CheckConstraint(
+            "(type = 'SYSTEM' AND created_by IS NULL) OR (type = 'USER' AND created_by IS NOT NULL)",
+            name='check_system_user_prompts'
+        ),
     )
+
 class PromptAccess(Base):
     __tablename__ = 'prompt_access'
     

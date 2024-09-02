@@ -4,16 +4,16 @@ from enum import Enum
 
 # Define Enums
 class PromptType(str, Enum):
-    SYSTEM = "System"
-    USER = "User"
+    SYSTEM = "SYSTEM"
+    USER = "USER"
 
 class PromptVisibilityType(str, Enum):
-    PUBLIC = "Public"
-    PRIVATE = "Private"
+    PUBLIC = "PUBLIC"
+    PRIVATE = "PRIVATE"
 
 class PromptStatusType(str, Enum):
-    ACTIVE = "active"
-    INACTIVE = "inactive"
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
 
 # Request Schema for Creating a Prompt
 class PromptCreate(BaseModel):
