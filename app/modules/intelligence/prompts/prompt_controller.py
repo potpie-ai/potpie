@@ -1,8 +1,9 @@
+from typing import Optional
 from sqlalchemy.orm import Session
-from fastapi import HTTPException
 
-from .prompt_service import PromptService
-from .schemas import PromptCreate, PromptUpdate, PromptResponse, PromptListResponse
+from app.modules.intelligence.prompts.prompt_schema import PromptCreate, PromptListResponse, PromptResponse, PromptUpdate
+from app.modules.intelligence.prompts.prompt_service import PromptService
+
 
 class PromptController:
 
