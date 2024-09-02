@@ -75,7 +75,7 @@ class GithubService:
             start_line = node["start"]
             end_line = node["end"]
 
-            _,response, auth, _ = GithubService.get_github_repo_details(repo_name)
+            _, response, auth, _ = GithubService.get_github_repo_details(repo_name)
 
             if response.status_code != 200:
                 raise HTTPException(
