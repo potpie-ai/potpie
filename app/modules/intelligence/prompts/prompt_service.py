@@ -64,37 +64,53 @@ class PromptService:
             logger.error(f"Unexpected error in create_prompt: {e}", exc_info=True)
             raise PromptCreationError("An unexpected error occurred while creating the prompt.") from e
 
-    async def map_agent_to_prompt(self, mapping: AgentPromptMappingCreate) -> AgentPromptMappingResponse:
+    async def update_prompt(self, prompt_id: str, prompt: PromptUpdate, user_id: str) -> PromptResponse:
         try:
-            existing_mapping = self.db.query(AgentPromptMapping).filter(
-                AgentPromptMapping.agent_id == mapping.agent_id,
-                AgentPromptMapping.prompt_stage == mapping.prompt_stage
-            ).first()
+            db_prompt = self.db.query(Prompt).filter(Prompt.id == prompt_id).first()
+            if not db_prompt:
+                raise PromptNotFoundError(f"Prompt with id {prompt_id} not found")
 
-            if existing_mapping:
-                existing_mapping.prompt_id = mapping.prompt_id
-                self.db.commit()
-                self.db.refresh(existing_mapping)
-                return AgentPromptMappingResponse.model_validate(existing_mapping)
-            else:
-                new_mapping = AgentPromptMapping(
-                    id=str(uuid7()),
-                    agent_id=mapping.agent_id,
-                    prompt_id=mapping.prompt_id,
-                    prompt_stage=mapping.prompt_stage
-                )
-                self.db.add(new_mapping)
-                self.db.commit()
-                self.db.refresh(new_mapping)
-                return AgentPromptMappingResponse.model_validate(new_mapping)
+            for field, value in prompt.model_dump(exclude_unset=True).items():
+                setattr(db_prompt, field, value)
+            
+            db_prompt.updated_at = datetime.now(timezone.utc)
+            db_prompt.version += 1
+
+            self.db.commit()
+            self.db.refresh(db_prompt)
+            
+            logger.info(f"Updated prompt with ID: {prompt_id}, user_id: {user_id}")
+            return PromptResponse.model_validate(db_prompt)
+        except PromptNotFoundError as e:
+            logger.warning(str(e))
+            raise
         except SQLAlchemyError as e:
             self.db.rollback()
-            logger.error(f"Database error in map_agent_to_prompt: {e}", exc_info=True)
-            raise PromptServiceError("Failed to map agent to prompt", e) from e
+            logger.error(f"Database error in update_prompt: {e}", exc_info=True)
+            raise PromptUpdateError(f"Failed to update prompt {prompt_id} due to a database error") from e
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Unexpected error in map_agent_to_prompt: {e}", exc_info=True)
-            raise PromptServiceError("Failed to map agent to prompt due to an unexpected error") from e
+            logger.error(f"Unexpected error in update_prompt: {e}", exc_info=True)
+            raise PromptUpdateError(f"Failed to update prompt {prompt_id} due to an unexpected error") from e
+
+    async def delete_prompt(self, prompt_id: str, user_id: str) -> None:
+        try:
+            result = self.db.query(Prompt).filter(Prompt.id == prompt_id).delete()
+            if result == 0:
+                raise PromptNotFoundError(f"Prompt with id {prompt_id} not found")
+            self.db.commit()
+            logger.info(f"Deleted prompt with ID: {prompt_id}, user_id: {user_id}")
+        except PromptNotFoundError as e:
+            logger.warning(str(e))
+            raise
+        except SQLAlchemyError as e:
+            self.db.rollback()
+            logger.error(f"Database error in delete_prompt: {e}", exc_info=True)
+            raise PromptDeletionError(f"Failed to delete prompt {prompt_id} due to a database error") from e
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Unexpected error in delete_prompt: {e}", exc_info=True)
+            raise PromptDeletionError(f"Failed to delete prompt {prompt_id} due to an unexpected error") from e
 
     async def fetch_prompt(self, prompt_id: str, user_id: str) -> PromptResponse:
         try:
@@ -130,6 +146,38 @@ class PromptService:
         except Exception as e:
             logger.error(f"Unexpected error in list_prompts: {e}", exc_info=True)
             raise PromptListError("Failed to list prompts due to an unexpected error") from e
+
+    async def map_agent_to_prompt(self, mapping: AgentPromptMappingCreate) -> AgentPromptMappingResponse:
+        try:
+            existing_mapping = self.db.query(AgentPromptMapping).filter(
+                AgentPromptMapping.agent_id == mapping.agent_id,
+                AgentPromptMapping.prompt_stage == mapping.prompt_stage
+            ).first()
+
+            if existing_mapping:
+                existing_mapping.prompt_id = mapping.prompt_id
+                self.db.commit()
+                self.db.refresh(existing_mapping)
+                return AgentPromptMappingResponse.model_validate(existing_mapping)
+            else:
+                new_mapping = AgentPromptMapping(
+                    id=str(uuid7()),
+                    agent_id=mapping.agent_id,
+                    prompt_id=mapping.prompt_id,
+                    prompt_stage=mapping.prompt_stage
+                )
+                self.db.add(new_mapping)
+                self.db.commit()
+                self.db.refresh(new_mapping)
+                return AgentPromptMappingResponse.model_validate(new_mapping)
+        except SQLAlchemyError as e:
+            self.db.rollback()
+            logger.error(f"Database error in map_agent_to_prompt: {e}", exc_info=True)
+            raise PromptServiceError("Failed to map agent to prompt", e) from e
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Unexpected error in map_agent_to_prompt: {e}", exc_info=True)
+            raise PromptServiceError("Failed to map agent to prompt due to an unexpected error") from e
 
     async def get_all_prompts(self, skip: int, limit: int, user_id: str) -> List[PromptResponse]:
         try:
