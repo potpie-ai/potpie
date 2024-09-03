@@ -34,10 +34,6 @@ def upgrade() -> None:
     sa.UniqueConstraint('text', 'version', 'created_by', name='unique_text_version_user'),
     sa.CheckConstraint('version > 0', name='check_version_positive'),
     sa.CheckConstraint('created_at <= updated_at', name='check_timestamps'),
-    sa.CheckConstraint(
-        "(visibility = 'PUBLIC' AND created_by IS NULL) OR (visibility = 'PRIVATE' AND created_by IS NOT NULL)",
-        name='check_system_user_prompts'
-    )
     )
     op.create_table('prompt_access',
     sa.Column('prompt_id', sa.String(), nullable=False),

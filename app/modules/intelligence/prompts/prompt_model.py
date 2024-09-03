@@ -37,10 +37,6 @@ class Prompt(Base):
         UniqueConstraint('text', 'version', 'created_by', name='unique_text_version_user'),
         CheckConstraint('version > 0', name='check_version_positive'),
         CheckConstraint('created_at <= updated_at', name='check_timestamps'),
-        CheckConstraint(
-            "(visibility = 'PUBLIC' AND created_by IS NULL) OR (visibility = 'PRIVATE' AND created_by IS NOT NULL)",
-            name='check_system_user_prompts'
-        ),
     )
 
 class PromptAccess(Base):
