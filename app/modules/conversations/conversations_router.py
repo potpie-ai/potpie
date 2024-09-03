@@ -14,6 +14,7 @@ from .conversation.conversation_schema import (
     ConversationInfoResponse,
     CreateConversationRequest,
     CreateConversationResponse,
+    RenameConversationRequest
 )
 from .message.message_schema import MessageRequest, MessageResponse
 
@@ -114,3 +115,15 @@ class ConversationAPI:
         user_id = user["user_id"]
         controller = ConversationController(db)
         return await controller.stop_generation(conversation_id, user_id)
+
+    @staticmethod
+    @router.patch("/conversations/{conversation_id}/rename/", response_model=dict)
+    async def rename_conversation(
+        conversation_id: str,
+        request: RenameConversationRequest,
+        db: Session = Depends(get_db),
+        user=Depends(AuthService.check_auth),
+    ):
+        user_id = user["user_id"]
+        controller = ConversationController(db)
+        return await controller.rename_conversation(conversation_id, request.title, user_id)
