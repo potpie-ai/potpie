@@ -183,3 +183,14 @@ class PromptService:
             return [PromptResponse.model_validate(prompt) for prompt in prompts]
         except SQLAlchemyError as e:
             raise PromptServiceError("Failed to get prompts by agent ID") from e
+
+    async def get_prompts_by_agent_id_and_types(self, agent_id: str, prompt_types: List[PromptType]) -> List[PromptResponse]:
+        try:
+            prompts = self.db.query(Prompt).join(AgentPromptMapping).filter(
+                AgentPromptMapping.agent_id == agent_id,
+                Prompt.type.in_(prompt_types)
+            ).all()
+            
+            return [PromptResponse.model_validate(prompt) for prompt in prompts]
+        except SQLAlchemyError as e:
+            raise PromptServiceError("Failed to get prompts by agent ID and types") from e

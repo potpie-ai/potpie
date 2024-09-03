@@ -7,33 +7,52 @@ from sqlalchemy.orm import Session
 
 
 class PromptController:
-
-    def __init__(self, db: Session):
-        self.prompt_service = PromptService(db)
-        self.system_prompt_setup = SystemPromptSetup(db)
+    @staticmethod
+    async def create_prompt(prompt: PromptCreate, prompt_service: PromptService, user_id: str) -> PromptResponse:
+        try:
+            return await prompt_service.create_prompt(prompt, user_id)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
     @staticmethod
-    async def create_prompt(prompt: PromptCreate, user_id: str):
-        return await self.prompt_service.create_prompt(prompt, user_id)
+    async def update_prompt(prompt_id: str, prompt: PromptUpdate, prompt_service: PromptService, user_id: str) -> PromptResponse:
+        try:
+            return await prompt_service.update_prompt(prompt_id, prompt, user_id)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
     @staticmethod
-    async def update_prompt(prompt_id: str, prompt: PromptUpdate, user_id: str):
-        return await self.prompt_service.update_prompt(prompt_id, prompt, user_id)
+    async def delete_prompt(prompt_id: str, prompt_service: PromptService, user_id: str) -> dict:
+        try:
+            await prompt_service.delete_prompt(prompt_id, user_id)
+            return {"message": "Prompt deleted successfully"}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
     @staticmethod
-    async def delete_prompt(prompt_id: str, user_id: str):
-        await self.prompt_service.delete_prompt(prompt_id, user_id)
+    async def fetch_prompt(prompt_id: str, prompt_service: PromptService, user_id: str) -> PromptResponse:
+        try:
+            return await prompt_service.fetch_prompt(prompt_id, user_id)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
     @staticmethod
-    async def fetch_prompt(prompt_id: str, user_id: str):
-        return await self.prompt_service.fetch_prompt(prompt_id, user_id)
+    async def list_prompts(query: Optional[str], skip: int, limit: int, prompt_service: PromptService, user_id: str) -> PromptListResponse:
+        try:
+            return await prompt_service.list_prompts(query, skip, limit, user_id)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
     @staticmethod
-    async def list_prompts(query: Optional[str], skip: int, limit: int, user_id: str):
-        return await self.prompt_service.list_prompts(query, skip, limit, user_id)
+    async def initialize_system_prompts(system_prompt_setup: SystemPromptSetup):
+        try:
+            await system_prompt_setup.initialize_system_prompts()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
-    async def initialize_system_prompts(self):
-        await self.system_prompt_setup.initialize_system_prompts()
-
-    async def get_system_prompts(self, agent_id: str):
-        return await self.system_prompt_setup.get_system_prompts(agent_id)
+    @staticmethod
+    async def get_system_prompts(agent_id: str, system_prompt_setup: SystemPromptSetup):
+        try:
+            return await system_prompt_setup.get_system_prompts(agent_id)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
