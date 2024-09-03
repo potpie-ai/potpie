@@ -18,9 +18,9 @@ class PromptAPI:
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
-        user_id = user["user_id"]
-        prompt_service = PromptService(db)
-        return await PromptController.create_prompt(prompt, prompt_service, user_id)
+        async with db.begin():
+            prompt_service = PromptService(db)
+            return await PromptController.create_prompt(prompt, prompt_service, user["user_id"])
 
     @staticmethod
     @router.put("/prompts/{prompt_id}", response_model=PromptResponse)
@@ -30,9 +30,9 @@ class PromptAPI:
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
-        user_id = user["user_id"]
-        prompt_service = PromptService(db)
-        return await PromptController.update_prompt(prompt_id, prompt, prompt_service, user_id)
+        async with db.begin():
+            prompt_service = PromptService(db)
+            return await PromptController.update_prompt(prompt_id, prompt, prompt_service, user["user_id"])
 
     @staticmethod
     @router.delete("/prompts/{prompt_id}", response_model=None)
@@ -41,9 +41,9 @@ class PromptAPI:
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
-        user_id = user["user_id"]
-        prompt_service = PromptService(db)
-        return await PromptController.delete_prompt(prompt_id, prompt_service, user_id)
+        async with db.begin():
+            prompt_service = PromptService(db)
+            return await PromptController.delete_prompt(prompt_id, prompt_service, user["user_id"])
 
     @staticmethod
     @router.get("/prompts/{prompt_id}", response_model=PromptResponse)
@@ -52,9 +52,8 @@ class PromptAPI:
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
-        user_id = user["user_id"]
         prompt_service = PromptService(db)
-        return await PromptController.fetch_prompt(prompt_id, prompt_service, user_id)
+        return await PromptController.fetch_prompt(prompt_id, prompt_service, user["user_id"])
 
     @staticmethod
     @router.get("/prompts/", response_model=PromptListResponse)
@@ -65,6 +64,5 @@ class PromptAPI:
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
-        user_id = user["user_id"]
         prompt_service = PromptService(db)
-        return await PromptController.list_prompts(query, skip, limit, prompt_service, user_id)
+        return await PromptController.list_prompts(query, skip, limit, prompt_service, user["user_id"])

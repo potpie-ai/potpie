@@ -4,9 +4,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from uuid6 import uuid7
 from datetime import datetime, timezone
-
-from app.modules.intelligence.prompts.prompt_schema import PromptCreate, PromptResponse, PromptType, PromptUpdate
-from app.modules.intelligence.prompts.prompt_model import Prompt, PromptStatusType
+from app.modules.intelligence.prompts.prompt_schema import PromptCreate, PromptResponse, PromptType, PromptUpdate, AgentPromptMappingCreate, AgentPromptMappingResponse
+from app.modules.intelligence.prompts.prompt_model import Prompt, PromptStatusType, AgentPromptMapping, PromptVisibilityType
 
 logger = logging.getLogger(__name__)
 
@@ -35,122 +34,74 @@ class PromptService:
     def __init__(self, db: Session):
         self.db = db
 
-    @classmethod
-    def create(cls, db: Session):
-        return cls(db)
-
-    async def create_prompt(self, prompt: PromptCreate, user_id: str) -> PromptResponse:
+    async def create_prompt(self, prompt: PromptCreate, user_id: Optional[str]) -> PromptResponse:
         try:
-            with self.db.begin():
-                prompt_id = str(uuid7())
-                now = datetime.now(timezone.utc)
-                new_prompt = Prompt(
-                    id=prompt_id,
-                    text=prompt.text,
-                    visibility=prompt.visibility,
-                    type=PromptType.USER,
-                    status=prompt.status or PromptStatusType.ACTIVE,
-                    created_by=user_id,
-                    created_at=now,
-                    updated_at=now,
-                    version=1  # Add version field
-                )
-                self.db.add(new_prompt)
-        
-            logger.info(f"Created new prompt with ID: {prompt_id}, user_id: {user_id}")
-            return PromptResponse(
-                id=new_prompt.id,
-                text=new_prompt.text,
-                type=new_prompt.type,
-                visibility=new_prompt.visibility,
-                version=new_prompt.version,
-                status=new_prompt.status,
-                created_by=new_prompt.created_by,
-                created_at=new_prompt.created_at.isoformat(),
-                updated_at=new_prompt.updated_at.isoformat()
+            prompt_id = str(uuid7())
+            now = datetime.now(timezone.utc)
+            new_prompt = Prompt(
+                id=prompt_id,
+                text=prompt.text,
+                visibility=prompt.visibility,
+                type=prompt.type,
+                status=prompt.status or PromptStatusType.ACTIVE,
+                created_by=user_id,
+                created_at=now,
+                updated_at=now,
+                version=1
             )
-        except IntegrityError as e:
-            logger.error(f"IntegrityError in create_prompt: {e}", exc_info=True)
-            raise PromptServiceError("Failed to create prompt due to a database integrity error.") from e
-        except Exception as e:
-            logger.error(f"Unexpected error in create_prompt: {e}", exc_info=True)
-            self.db.rollback()
-            raise PromptServiceError("An unexpected error occurred while creating the prompt.") from e
-
-    async def update_prompt(self, prompt_id: str, prompt: PromptUpdate, user_id: str) -> PromptResponse:
-        try:
-            with self.db.begin():
-                db_prompt = self.db.query(Prompt).filter(Prompt.id == prompt_id).first()
-                if not db_prompt:
-                    raise PromptNotFoundError(f"Prompt with id {prompt_id} not found")
-                
-                for field, value in prompt.model_dump(exclude_unset=True).items():
-                    setattr(db_prompt, field, value)
-                
-                db_prompt.updated_at = datetime.now(timezone.utc)
-                db_prompt.version += 1  # Increment version on update
-                # The transaction will be automatically committed if we reach this point
-            
-            logger.info(f"Updated prompt with ID: {prompt_id}, user_id: {user_id}")
-            return PromptResponse(
-                id=db_prompt.id,
-                text=db_prompt.text,
-                type=db_prompt.type,
-                visibility=db_prompt.visibility,
-                version=db_prompt.version,
-                status=db_prompt.status,
-                created_by=db_prompt.created_by,
-                created_at=db_prompt.created_at.isoformat(),
-                updated_at=db_prompt.updated_at.isoformat()
-            )
-        except PromptNotFoundError as e:
-            logger.warning(str(e))
-            raise
-        except SQLAlchemyError as e:
-            logger.error(f"Database error in update_prompt: {e}", exc_info=True)
-            # The transaction will be automatically rolled back
-            raise PromptServiceError(f"Failed to update prompt {prompt_id} due to a database error") from e
-        except Exception as e:
-            logger.error(f"Unexpected error in update_prompt: {e}", exc_info=True)
-            # Ensure rollback in case of any other exception
-            self.db.rollback()
-            raise PromptServiceError(f"Failed to update prompt {prompt_id} due to an unexpected error") from e
-
-    async def delete_prompt(self, prompt_id: str, user_id: str) -> None:
-        try:
-            deleted_prompt = self.db.query(Prompt).filter(Prompt.id == prompt_id).delete()
-            if deleted_prompt == 0:
-                raise PromptNotFoundError(f"Prompt with id {prompt_id} not found")
+            self.db.add(new_prompt)
             self.db.commit()
-            logger.info(f"Deleted prompt with ID: {prompt_id}, user_id: {user_id}")
-        except PromptNotFoundError as e:
-            logger.warning(str(e))
-            raise
-        except SQLAlchemyError as e:
-            logger.error(f"Database error in delete_prompt: {e}", exc_info=True)
+            self.db.refresh(new_prompt)
+            
+            logger.info(f"Created new prompt with ID: {prompt_id}, user_id: {user_id or 'System'}")
+            return PromptResponse.model_validate(new_prompt)
+        except IntegrityError as e:
             self.db.rollback()
-            raise PromptDeletionError(f"Failed to delete prompt {prompt_id} due to a database error") from e
+            logger.error(f"IntegrityError in create_prompt: {e}", exc_info=True)
+            raise PromptCreationError("Failed to create prompt due to a database integrity error.") from e
         except Exception as e:
-            logger.error(f"Unexpected error in delete_prompt: {e}", exc_info=True)
             self.db.rollback()
-            raise PromptDeletionError(f"Failed to delete prompt {prompt_id} due to an unexpected error") from e
+            logger.error(f"Unexpected error in create_prompt: {e}", exc_info=True)
+            raise PromptCreationError("An unexpected error occurred while creating the prompt.") from e
+
+    async def map_agent_to_prompt(self, mapping: AgentPromptMappingCreate) -> AgentPromptMappingResponse:
+        try:
+            existing_mapping = self.db.query(AgentPromptMapping).filter(
+                AgentPromptMapping.agent_id == mapping.agent_id,
+                AgentPromptMapping.prompt_stage == mapping.prompt_stage
+            ).first()
+
+            if existing_mapping:
+                existing_mapping.prompt_id = mapping.prompt_id
+                self.db.commit()
+                self.db.refresh(existing_mapping)
+                return AgentPromptMappingResponse.model_validate(existing_mapping)
+            else:
+                new_mapping = AgentPromptMapping(
+                    id=str(uuid7()),
+                    agent_id=mapping.agent_id,
+                    prompt_id=mapping.prompt_id,
+                    prompt_stage=mapping.prompt_stage
+                )
+                self.db.add(new_mapping)
+                self.db.commit()
+                self.db.refresh(new_mapping)
+                return AgentPromptMappingResponse.model_validate(new_mapping)
+        except SQLAlchemyError as e:
+            self.db.rollback()
+            logger.error(f"Database error in map_agent_to_prompt: {e}", exc_info=True)
+            raise PromptServiceError("Failed to map agent to prompt", e) from e
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Unexpected error in map_agent_to_prompt: {e}", exc_info=True)
+            raise PromptServiceError("Failed to map agent to prompt due to an unexpected error") from e
 
     async def fetch_prompt(self, prompt_id: str, user_id: str) -> PromptResponse:
         try:
             prompt = self.db.query(Prompt).filter(Prompt.id == prompt_id).first()
             if not prompt:
                 raise PromptNotFoundError(f"Prompt with id {prompt_id} not found")
-            return PromptResponse(
-                id=prompt.id,
-                text=prompt.text,
-                type=prompt.type,
-                visibility=prompt.visibility,
-                version=prompt.version,
-                status=prompt.status,
-                created_by=prompt.created_by,
-                created_at=prompt.created_at.isoformat(),
-                updated_at=prompt.updated_at.isoformat()
-            )
+            return PromptResponse.model_validate(prompt)
         except PromptNotFoundError as e:
             logger.warning(str(e))
             raise
@@ -167,11 +118,7 @@ class PromptService:
             if query:
                 prompts_query = prompts_query.filter(Prompt.text.ilike(f"%{query}%"))
             prompts = prompts_query.offset(skip).limit(limit).all()
-            return [PromptResponse.model_validate({
-                **prompt.__dict__,
-                'created_at': prompt.created_at.isoformat(),
-                'updated_at': prompt.updated_at.isoformat()
-            }) for prompt in prompts]
+            return [PromptResponse.model_validate(prompt) for prompt in prompts]
         except SQLAlchemyError as e:
             logger.error(f"Database error in list_prompts: {e}", exc_info=True)
             raise PromptListError("Failed to list prompts due to a database error") from e
@@ -182,14 +129,57 @@ class PromptService:
     async def get_all_prompts(self, skip: int, limit: int, user_id: str) -> List[PromptResponse]:
         try:
             prompts = self.db.query(Prompt).offset(skip).limit(limit).all()
-            return [PromptResponse.model_validate({
-                **prompt.__dict__,
-                'created_at': prompt.created_at.isoformat(),
-                'updated_at': prompt.updated_at.isoformat()
-            }) for prompt in prompts]
+            return [PromptResponse.model_validate(prompt) for prompt in prompts]
         except SQLAlchemyError as e:
             logger.error(f"Database error in get_all_prompts: {e}", exc_info=True)
             raise PromptListError("Failed to get all prompts due to a database error") from e
         except Exception as e:
             logger.error(f"Unexpected error in get_all_prompts: {e}", exc_info=True)
             raise PromptListError("Failed to get all prompts due to an unexpected error") from e
+
+    async def create_or_update_system_prompt(self, prompt: PromptCreate, agent_id: str, stage: int) -> PromptResponse:
+        try:
+            existing_prompt = self.db.query(Prompt).join(AgentPromptMapping).filter(
+                Prompt.type == prompt.type,
+                Prompt.visibility == PromptVisibilityType.PUBLIC,
+                Prompt.created_by.is_(None),
+                AgentPromptMapping.agent_id == agent_id,
+                AgentPromptMapping.prompt_stage == stage
+            ).first()
+
+            if existing_prompt:
+                for field, value in prompt.model_dump(exclude_unset=True).items():
+                    setattr(existing_prompt, field, value)
+                existing_prompt.updated_at = datetime.now(timezone.utc)
+                existing_prompt.version += 1
+                prompt_to_return = existing_prompt
+            else:
+                new_prompt = Prompt(
+                    id=str(uuid7()),
+                    text=prompt.text,
+                    type=prompt.type,
+                    visibility=PromptVisibilityType.PUBLIC,
+                    status=prompt.status or PromptStatusType.ACTIVE,
+                    created_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                    version=1
+                )
+                self.db.add(new_prompt)
+                prompt_to_return = new_prompt
+
+            self.db.commit()
+            self.db.refresh(prompt_to_return)
+            return PromptResponse.model_validate(prompt_to_return)
+        except SQLAlchemyError as e:
+            self.db.rollback()
+            raise PromptServiceError("Failed to create or update system prompt") from e
+
+    async def get_prompts_by_agent_id(self, agent_id: str) -> List[PromptResponse]:
+        try:
+            prompts = self.db.query(Prompt).join(AgentPromptMapping).filter(
+                AgentPromptMapping.agent_id == agent_id
+            ).order_by(AgentPromptMapping.prompt_stage).all()
+            
+            return [PromptResponse.model_validate(prompt) for prompt in prompts]
+        except SQLAlchemyError as e:
+            raise PromptServiceError("Failed to get prompts by agent ID") from e

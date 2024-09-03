@@ -1,11 +1,10 @@
 import logging
 import os
-
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-from app.core.database import Base, engine
+from app.modules.intelligence.prompts.system_prompt_setup import SystemPromptSetup
+from app.core.database import Base, SessionLocal, engine, get_db
 from app.core.mongo_manager import MongoManager
 from app.modules.auth.auth_router import auth_router
 from app.modules.conversations.conversations_router import (
@@ -21,8 +20,10 @@ from app.modules.projects.projects_router import router as projects_router
 from app.modules.search.search_router import router as search_router
 from app.modules.users.user_router import router as user_router
 from app.modules.intelligence.prompts.prompt_router import router as prompt_router
-from app.modules.utils.dummy_setup import DummyDataSetup
 from app.modules.utils.firebase_setup import FirebaseSetup
+from app.modules.intelligence.prompts.prompt_service import PromptService
+from sqlalchemy.orm import Session
+import asyncio
 
 # Configure logging
 logging.basicConfig(
@@ -77,12 +78,6 @@ class MainApp:
                 value = input(f"Enter value for {env_var}: ")
                 os.environ[env_var] = value
 
-    def setup_data(self):
-        # Setup dummy user and project during application startup
-        dummy_data_setup = DummyDataSetup()
-        dummy_data_setup.setup_dummy_user()
-        dummy_data_setup.setup_dummy_project()
-
     def include_routers(self):
         self.app.include_router(auth_router, prefix="/api/v1", tags=["Auth"])
         self.app.include_router(user_router, prefix="/api/v1", tags=["User"])
@@ -104,16 +99,28 @@ class MainApp:
         def health_check():
             return {"status": "ok"}
 
+    async def startup_event(self):
+        db = SessionLocal()
+        try:
+            system_prompt_setup = SystemPromptSetup(db)
+            await system_prompt_setup.initialize_system_prompts()
+            logging.info("System prompts initialized successfully")
+        except Exception as e:
+            logging.error(f"Failed to initialize system prompts: {str(e)}")
+            raise
+        finally:
+            db.close()
+
+    def shutdown_event(self):
+        MongoManager.close_connection()
+
     def run(self):
         self.add_health_check()
+        self.app.add_event_handler("startup", self.startup_event)
+        self.app.add_event_handler("shutdown", self.shutdown_event)
         return self.app
 
 
 # Create an instance of MainApp and run it
 main_app = MainApp()
 app = main_app.run()
-
-
-@app.on_event("shutdown")
-def shutdown_event():
-    MongoManager.close_connection()
