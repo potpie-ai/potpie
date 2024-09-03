@@ -25,7 +25,7 @@ class QNAAgent:
         self.prompt_service = PromptService(db)
         self.chain = None
 
-    @lru_cache(maxsize=1)
+    @lru_cache(maxsize=4)
     async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
         prompts = await self.prompt_service.get_prompts_by_agent_id_and_types("QNA_AGENT", [PromptType.SYSTEM, PromptType.HUMAN])
         return {prompt.type: prompt for prompt in prompts}
