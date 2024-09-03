@@ -102,16 +102,12 @@ class GithubService:
 
     def get_repos_for_user(self, user_id: str):
         try:
-            # Initialize UserService with the database session
             user_service = UserService(self.db)
-
-            # Get the user information for the logged-in user
             user = user_service.get_user_by_uid(user_id)
 
             if user is None:
                 raise HTTPException(status_code=404, detail="User not found")
-
-            # The provider_username should correspond to the GitHub username
+            
             github_username = user.provider_username
 
             if not github_username:
@@ -126,16 +122,8 @@ class GithubService:
             )
             app_id = os.environ["GITHUB_APP_ID"]
 
-            logger.info(f"Attempting to authenticate with GitHub App ID: {app_id}")
-
             auth = AppAuth(app_id=app_id, private_key=private_key)
             jwt = auth.create_jwt()
-
-            logger.info(
-                f"JWT token generated: {jwt[:10]}..."
-            )  # Log first 10 characters of JWT
-
-            # Change the URL to fetch all installations
             url = "https://api.github.com/app/installations"
             headers = {
                 "Accept": "application/vnd.github+json",
@@ -143,13 +131,7 @@ class GithubService:
                 "X-GitHub-Api-Version": "2022-11-28",
             }
 
-            logger.info(f"Sending request to GitHub API: {url}")
-            logger.info(f"Request headers: {headers}")
-
             response = requests.get(url, headers=headers)
-
-            logger.info(f"GitHub API response status code: {response.status_code}")
-            logger.info(f"GitHub API response content: {response.text}")
 
             if response.status_code != 200:
                 logger.error(f"Failed to get installations. Response: {response.text}")
@@ -166,10 +148,6 @@ class GithubService:
                 for installation in all_installations
                 if installation["account"]["login"].lower() == github_username.lower()
             ]
-
-            logger.info(
-                f"Found {len(user_installations)} installations for user {github_username}"
-            )
 
             repos = []
             for installation in user_installations:
@@ -197,10 +175,6 @@ class GithubService:
                 }
                 for repo in repos
             ]
-
-            logger.info(
-                f"Found {len(repo_list)} repositories for user {github_username}"
-            )
 
             return {"repositories": repo_list}
 
