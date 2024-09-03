@@ -62,9 +62,8 @@ class ParseHelper:
 
                 # If public repo fetch fails, try private repo
                 try:
-
-                    github, response, auth, owner = github_service.get_github_repo_details(
-                        repo_details.repo_name
+                    github, response, auth, owner = (
+                        github_service.get_github_repo_details(repo_details.repo_name)
                     )
 
                     if response.status_code != 200:
