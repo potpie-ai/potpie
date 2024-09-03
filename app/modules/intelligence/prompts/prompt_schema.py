@@ -49,8 +49,8 @@ class PromptResponse(BaseModel):
 
 # Response Schema for Listing Prompts
 class PromptListResponse(BaseModel):
-    prompts: List[PromptResponse] = Field(..., description="List of prompts")
-    total: int = Field(..., description="Total number of prompts returned")
+    prompts: List[PromptResponse]
+    total: int
 
 # Schema for Agent Prompt Mapping
 class AgentPromptMappingCreate(BaseModel):

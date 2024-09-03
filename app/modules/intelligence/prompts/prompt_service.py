@@ -1,10 +1,10 @@
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from uuid6 import uuid7
 from datetime import datetime, timezone
-from app.modules.intelligence.prompts.prompt_schema import PromptCreate, PromptResponse, PromptType, PromptUpdate, AgentPromptMappingCreate, AgentPromptMappingResponse
+from app.modules.intelligence.prompts.prompt_schema import PromptCreate, PromptResponse, PromptType, PromptUpdate, AgentPromptMappingCreate, AgentPromptMappingResponse, PromptListResponse
 from app.modules.intelligence.prompts.prompt_model import Prompt, PromptStatusType, AgentPromptMapping, PromptVisibilityType
 
 logger = logging.getLogger(__name__)
@@ -112,13 +112,18 @@ class PromptService:
             logger.error(f"Unexpected error in fetch_prompt: {e}", exc_info=True)
             raise PromptFetchError(f"Failed to fetch prompt {prompt_id} due to an unexpected error") from e
 
-    async def list_prompts(self, query: Optional[str], skip: int, limit: int, user_id: str) -> List[PromptResponse]:
+    async def list_prompts(self, query: Optional[str], skip: int, limit: int, user_id: str) -> PromptListResponse:
         try:
             prompts_query = self.db.query(Prompt)
             if query:
                 prompts_query = prompts_query.filter(Prompt.text.ilike(f"%{query}%"))
+            
+            total = prompts_query.count()
             prompts = prompts_query.offset(skip).limit(limit).all()
-            return [PromptResponse.model_validate(prompt) for prompt in prompts]
+            
+            prompt_responses = [PromptResponse.model_validate(prompt) for prompt in prompts]
+            
+            return PromptListResponse(prompts=prompt_responses, total=total)
         except SQLAlchemyError as e:
             logger.error(f"Database error in list_prompts: {e}", exc_info=True)
             raise PromptListError("Failed to list prompts due to a database error") from e
