@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.modules.intelligence.prompts.system_prompt_setup import SystemPromptSetup
-from app.core.database import Base, SessionLocal, engine, get_db
+from app.core.database import Base, SessionLocal, engine
 from app.core.mongo_manager import MongoManager
 from app.modules.auth.auth_router import auth_router
 from app.modules.conversations.conversations_router import (
@@ -21,9 +21,6 @@ from app.modules.search.search_router import router as search_router
 from app.modules.users.user_router import router as user_router
 from app.modules.intelligence.prompts.prompt_router import router as prompt_router
 from app.modules.utils.firebase_setup import FirebaseSetup
-from app.modules.intelligence.prompts.prompt_service import PromptService
-from sqlalchemy.orm import Session
-import asyncio
 
 # Configure logging
 logging.basicConfig(

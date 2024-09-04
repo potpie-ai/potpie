@@ -1,5 +1,5 @@
 import logging
-from typing import List, Optional, Dict
+from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from uuid6 import uuid7
@@ -66,7 +66,7 @@ class PromptService:
 
     async def update_prompt(self, prompt_id: str, prompt: PromptUpdate, user_id: str) -> PromptResponse:
         try:
-            db_prompt = self.db.query(Prompt).filter(Prompt.id == prompt_id).first()
+            db_prompt = self.db.query(Prompt).filter(Prompt.id == prompt_id, Prompt.created_by == user_id).first()
             if not db_prompt:
                 raise PromptNotFoundError(f"Prompt with id {prompt_id} not found")
 
@@ -95,7 +95,10 @@ class PromptService:
 
     async def delete_prompt(self, prompt_id: str, user_id: str) -> None:
         try:
-            result = self.db.query(Prompt).filter(Prompt.id == prompt_id).delete()
+            result = self.db.query(Prompt).filter(
+                Prompt.id == prompt_id,
+                Prompt.created_by == user_id
+            ).delete()
             if result == 0:
                 raise PromptNotFoundError(f"Prompt with id {prompt_id} not found")
             self.db.commit()
@@ -114,7 +117,10 @@ class PromptService:
 
     async def fetch_prompt(self, prompt_id: str, user_id: str) -> PromptResponse:
         try:
-            prompt = self.db.query(Prompt).filter(Prompt.id == prompt_id).first()
+            prompt = self.db.query(Prompt).filter(
+                (Prompt.visibility == PromptVisibilityType.PUBLIC) |
+                ((Prompt.visibility == PromptVisibilityType.PRIVATE) & (Prompt.created_by == user_id))
+            ).first()
             if not prompt:
                 raise PromptNotFoundError(f"Prompt with id {prompt_id} not found")
             return PromptResponse.model_validate(prompt)
@@ -130,7 +136,11 @@ class PromptService:
 
     async def list_prompts(self, query: Optional[str], skip: int, limit: int, user_id: str) -> PromptListResponse:
         try:
-            prompts_query = self.db.query(Prompt)
+            prompts_query = self.db.query(Prompt).filter(
+                (Prompt.visibility == PromptVisibilityType.PUBLIC) |
+                ((Prompt.visibility == PromptVisibilityType.PRIVATE) & (Prompt.created_by == user_id))
+            ).order_by(Prompt.text)
+
             if query:
                 prompts_query = prompts_query.filter(Prompt.text.ilike(f"%{query}%"))
             
@@ -178,17 +188,6 @@ class PromptService:
             self.db.rollback()
             logger.error(f"Unexpected error in map_agent_to_prompt: {e}", exc_info=True)
             raise PromptServiceError("Failed to map agent to prompt due to an unexpected error") from e
-
-    async def get_all_prompts(self, skip: int, limit: int, user_id: str) -> List[PromptResponse]:
-        try:
-            prompts = self.db.query(Prompt).offset(skip).limit(limit).all()
-            return [PromptResponse.model_validate(prompt) for prompt in prompts]
-        except SQLAlchemyError as e:
-            logger.error(f"Database error in get_all_prompts: {e}", exc_info=True)
-            raise PromptListError("Failed to get all prompts due to a database error") from e
-        except Exception as e:
-            logger.error(f"Unexpected error in get_all_prompts: {e}", exc_info=True)
-            raise PromptListError("Failed to get all prompts due to an unexpected error") from e
 
     async def create_or_update_system_prompt(self, prompt: PromptCreate, agent_id: str, stage: int) -> PromptResponse:
         try:
