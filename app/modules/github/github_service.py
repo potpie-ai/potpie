@@ -107,7 +107,7 @@ class GithubService:
 
             if user is None:
                 raise HTTPException(status_code=404, detail="User not found")
-            
+
             github_username = user.provider_username
 
             if not github_username:

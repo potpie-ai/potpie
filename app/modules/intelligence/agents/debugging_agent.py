@@ -1,7 +1,7 @@
 import asyncio
 import logging
-from typing import AsyncGenerator, List, Dict
 from functools import lru_cache
+from typing import AsyncGenerator, Dict, List
 
 from langchain.schema import HumanMessage, SystemMessage
 from langchain_core.prompts import (
@@ -16,9 +16,9 @@ from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
-from app.modules.intelligence.tools.code_tools import CodeTools
+from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.prompts.prompt_schema import PromptType, PromptResponse
+from app.modules.intelligence.tools.code_tools import CodeTools
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +65,10 @@ class DebuggingAgent:
                 tool_input = {"query": query, "project_id": project_id}
                 logger.debug(f"Running tool {tool.name} with input: {tool_input}")
 
-                tool_result = await tool.arun(tool_input) if hasattr(tool, "arun") else await asyncio.to_thread(
-                    tool.run, tool_input
+                tool_result = (
+                    await tool.arun(tool_input)
+                    if hasattr(tool, "arun")
+                    else await asyncio.to_thread(tool.run, tool_input)
                 )
 
                 if tool_result:

@@ -1,9 +1,10 @@
 import logging
 import os
+
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.modules.intelligence.prompts.system_prompt_setup import SystemPromptSetup
+
 from app.core.database import Base, SessionLocal, engine
 from app.core.mongo_manager import MongoManager
 from app.modules.auth.auth_router import auth_router
@@ -12,6 +13,8 @@ from app.modules.conversations.conversations_router import (
 )
 from app.modules.github.github_router import router as github_router
 from app.modules.intelligence.agents.agents_router import router as agent_router
+from app.modules.intelligence.prompts.prompt_router import router as prompt_router
+from app.modules.intelligence.prompts.system_prompt_setup import SystemPromptSetup
 from app.modules.key_management.secret_manager import router as secret_manager_router
 from app.modules.parsing.graph_construction.parsing_router import (
     router as parsing_router,
@@ -19,7 +22,6 @@ from app.modules.parsing.graph_construction.parsing_router import (
 from app.modules.projects.projects_router import router as projects_router
 from app.modules.search.search_router import router as search_router
 from app.modules.users.user_router import router as user_router
-from app.modules.intelligence.prompts.prompt_router import router as prompt_router
 from app.modules.utils.firebase_setup import FirebaseSetup
 
 # Configure logging

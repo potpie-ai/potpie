@@ -1,14 +1,21 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from typing import Optional
 
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
 from app.modules.intelligence.prompts.prompt_controller import PromptController
-from app.modules.intelligence.prompts.prompt_schema import PromptCreate, PromptListResponse, PromptResponse, PromptUpdate
+from app.modules.intelligence.prompts.prompt_schema import (
+    PromptCreate,
+    PromptListResponse,
+    PromptResponse,
+    PromptUpdate,
+)
 from app.modules.intelligence.prompts.prompt_service import PromptService
 
 router = APIRouter()
+
 
 class PromptAPI:
     @staticmethod
@@ -19,7 +26,9 @@ class PromptAPI:
         user=Depends(AuthService.check_auth),
     ):
         prompt_service = PromptService(db)
-        return await PromptController.create_prompt(prompt, prompt_service, user["user_id"])
+        return await PromptController.create_prompt(
+            prompt, prompt_service, user["user_id"]
+        )
 
     @staticmethod
     @router.put("/prompts/{prompt_id}", response_model=PromptResponse)
@@ -30,7 +39,9 @@ class PromptAPI:
         user=Depends(AuthService.check_auth),
     ):
         prompt_service = PromptService(db)
-        return await PromptController.update_prompt(prompt_id, prompt, prompt_service, user["user_id"])
+        return await PromptController.update_prompt(
+            prompt_id, prompt, prompt_service, user["user_id"]
+        )
 
     @staticmethod
     @router.delete("/prompts/{prompt_id}", response_model=None)
@@ -40,7 +51,9 @@ class PromptAPI:
         user=Depends(AuthService.check_auth),
     ):
         prompt_service = PromptService(db)
-        return await PromptController.delete_prompt(prompt_id, prompt_service, user["user_id"])
+        return await PromptController.delete_prompt(
+            prompt_id, prompt_service, user["user_id"]
+        )
 
     @staticmethod
     @router.get("/prompts/{prompt_id}", response_model=PromptResponse)
@@ -50,7 +63,9 @@ class PromptAPI:
         user=Depends(AuthService.check_auth),
     ):
         prompt_service = PromptService(db)
-        return await PromptController.fetch_prompt(prompt_id, prompt_service, user["user_id"])
+        return await PromptController.fetch_prompt(
+            prompt_id, prompt_service, user["user_id"]
+        )
 
     @staticmethod
     @router.get("/prompts/", response_model=PromptListResponse)
@@ -62,4 +77,6 @@ class PromptAPI:
         user=Depends(AuthService.check_auth),
     ):
         prompt_service = PromptService(db)
-        return await PromptController.list_prompts(query, skip, limit, prompt_service, user["user_id"])
+        return await PromptController.list_prompts(
+            query, skip, limit, prompt_service, user["user_id"]
+        )

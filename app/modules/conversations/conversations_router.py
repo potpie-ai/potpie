@@ -14,7 +14,7 @@ from .conversation.conversation_schema import (
     ConversationInfoResponse,
     CreateConversationRequest,
     CreateConversationResponse,
-    RenameConversationRequest
+    RenameConversationRequest,
 )
 from .message.message_schema import MessageRequest, MessageResponse
 
@@ -126,4 +126,6 @@ class ConversationAPI:
     ):
         user_id = user["user_id"]
         controller = ConversationController(db)
-        return await controller.rename_conversation(conversation_id, request.title, user_id)
+        return await controller.rename_conversation(
+            conversation_id, request.title, user_id
+        )

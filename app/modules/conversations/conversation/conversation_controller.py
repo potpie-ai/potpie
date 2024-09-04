@@ -100,10 +100,14 @@ class ConversationController:
             raise HTTPException(status_code=404, detail=str(e))
         except ConversationServiceError as e:
             raise HTTPException(status_code=500, detail=str(e))
-        
-    async def rename_conversation(self, conversation_id: str, new_title: str, user_id: str) -> dict:
+
+    async def rename_conversation(
+        self, conversation_id: str, new_title: str, user_id: str
+    ) -> dict:
         try:
-            return await self.service.rename_conversation(conversation_id, new_title, user_id)
+            return await self.service.rename_conversation(
+                conversation_id, new_title, user_id
+            )
         except ConversationNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e))
         except ConversationServiceError as e:

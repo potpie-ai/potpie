@@ -36,5 +36,6 @@ class ConversationInfoResponse(BaseModel):
 # Resolve forward references
 ConversationInfoResponse.update_forward_refs()
 
+
 class RenameConversationRequest(BaseModel):
     title: str

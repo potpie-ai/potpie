@@ -470,26 +470,42 @@ class ConversationService:
         logger.info(f"Attempting to stop generation for conversation {conversation_id}")
         return {"status": "success", "message": "Generation stop request received"}
 
-
-    async def rename_conversation(self, conversation_id: str, new_title: str, user_id: str) -> dict:
+    async def rename_conversation(
+        self, conversation_id: str, new_title: str, user_id: str
+    ) -> dict:
         try:
-            conversation = self.db.query(Conversation).filter_by(id=conversation_id, user_id=user_id).first()
+            conversation = (
+                self.db.query(Conversation)
+                .filter_by(id=conversation_id, user_id=user_id)
+                .first()
+            )
             if not conversation:
-                raise ConversationNotFoundError(f"Conversation with id {conversation_id} not found")
+                raise ConversationNotFoundError(
+                    f"Conversation with id {conversation_id} not found"
+                )
 
             conversation.title = new_title
             conversation.updated_at = datetime.now(timezone.utc)
             self.db.commit()
 
-            logger.info(f"Renamed conversation {conversation_id} to '{new_title}' by user {user_id}")
-            return {"status": "success", "message": f"Conversation renamed to '{new_title}'"}
+            logger.info(
+                f"Renamed conversation {conversation_id} to '{new_title}' by user {user_id}"
+            )
+            return {
+                "status": "success",
+                "message": f"Conversation renamed to '{new_title}'",
+            }
 
         except SQLAlchemyError as e:
             logger.error(f"Database error in rename_conversation: {e}", exc_info=True)
             self.db.rollback()
-            raise ConversationServiceError("Failed to rename conversation due to a database error") from e
+            raise ConversationServiceError(
+                "Failed to rename conversation due to a database error"
+            ) from e
 
         except Exception as e:
             logger.error(f"Unexpected error in rename_conversation: {e}", exc_info=True)
             self.db.rollback()
-            raise ConversationServiceError("Failed to rename conversation due to an unexpected error") from e
+            raise ConversationServiceError(
+                "Failed to rename conversation due to an unexpected error"
+            ) from e
