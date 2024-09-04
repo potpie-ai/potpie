@@ -9,7 +9,6 @@ from fastapi import HTTPException
 from git import GitCommandError, Repo
 from github import Github
 from sqlalchemy.orm import Session
-from uuid6 import uuid7
 
 from app.modules.github.github_service import GithubService
 from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
@@ -241,13 +240,13 @@ class ParseHelper:
         user_id,
         project_id=None,  # Change type to str
     ):
-        if not project_id:
-            pid = str(uuid7())
-            project_id = await self.project_manager.register_project(
+        project = await self.project_manager.get_project_from_db(f"{repo.full_name}", user_id)
+        if not project:
+            await self.project_manager.register_project(
                 f"{repo.full_name}",
                 branch,
                 user_id,
-                pid,
+                project_id,
             )
 
         if isinstance(repo_details, Repo):
