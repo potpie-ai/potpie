@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.config_provider import config_provider
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
+from app.modules.users.user_service import UserService
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ class GithubService:
     # Start Generation Here
     def __init__(self, db: Session):
         self.project_manager = ProjectService(db)
+        self.db = db
 
     @staticmethod
     def get_github_repo_details(repo_name: str):
@@ -98,34 +100,57 @@ class GithubService:
 
         return method_content
 
-    @staticmethod
-    def get_repos_for_user(user):
+    def get_repos_for_user(self, user_id: str):
         try:
+            user_service = UserService(self.db)
+            user = user_service.get_user_by_uid(user_id)
+
+            if user is None:
+                raise HTTPException(status_code=404, detail="User not found")
+            
+            github_username = user.provider_username
+
+            if not github_username:
+                raise HTTPException(
+                    status_code=400, detail="GitHub username not found for this user"
+                )
+
             private_key = (
                 "-----BEGIN RSA PRIVATE KEY-----\n"
                 + config_provider.get_github_key()
                 + "\n-----END RSA PRIVATE KEY-----\n"
             )
             app_id = os.environ["GITHUB_APP_ID"]
+
             auth = AppAuth(app_id=app_id, private_key=private_key)
             jwt = auth.create_jwt()
-
             url = "https://api.github.com/app/installations"
             headers = {
                 "Accept": "application/vnd.github+json",
                 "Authorization": f"Bearer {jwt}",
                 "X-GitHub-Api-Version": "2022-11-28",
             }
+
             response = requests.get(url, headers=headers)
+
             if response.status_code != 200:
+                logger.error(f"Failed to get installations. Response: {response.text}")
                 raise HTTPException(
-                    status_code=400, detail="Failed to get installations"
+                    status_code=response.status_code,
+                    detail=f"Failed to get installations: {response.text}",
                 )
 
-            installations = response.json()
-            repos = []
+            all_installations = response.json()
 
-            for installation in installations:
+            # Filter installations for the specific user
+            user_installations = [
+                installation
+                for installation in all_installations
+                if installation["account"]["login"].lower() == github_username.lower()
+            ]
+
+            repos = []
+            for installation in user_installations:
                 app_auth = auth.get_installation_auth(installation["id"])
                 github = Github(auth=app_auth)
                 repos_url = installation["repositories_url"]
@@ -138,6 +163,7 @@ class GithubService:
                     logger.error(
                         f"Failed to fetch repositories for installation ID {installation['id']}"
                     )
+
             repo_list = [
                 {
                     "id": repo["id"],
@@ -149,7 +175,11 @@ class GithubService:
                 }
                 for repo in repos
             ]
+
             return {"repositories": repo_list}
+
+        except HTTPException as he:
+            raise he
         except Exception as e:
             logger.error(f"Failed to fetch repositories: {str(e)}", exc_info=True)
             raise HTTPException(
