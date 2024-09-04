@@ -1,4 +1,6 @@
 import asyncio
+from fastapi import HTTPException
+from requests import Session
 from uuid6 import uuid7
 
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
@@ -12,8 +14,8 @@ class ParsingController:
     @validate_parsing_input
     async def parse_directory(
         repo_details: ParsingRequest,
-        db,
-        user,
+        db: Session,
+        user: dict
     ):
         user_id = user["user_id"]
         user_email = user["email"]
@@ -29,7 +31,7 @@ class ParsingController:
             response = {"project_id": new_project_id, "status": ProjectStatusEnum.SUBMITTED.value}
 
             asyncio.create_task(ParsingController._process_parsing(repo_details, user_id, user_email, new_project_id, db))
-            
+
             return response
         
         else:
@@ -52,3 +54,12 @@ class ParsingController:
         await parsing_service.parse_directory(
             repo_details, user_id, user_email, project_id
         )
+
+    @staticmethod
+    async def fetch_parsing_status(project_id: str, db: Session, user: dict):
+         project_service = ProjectService(db)
+         project = await project_service.get_project_from_db_by_id_and_user_id(project_id, user["user_id"])
+         if project:
+             return {"status": project['status']}
+         else:
+             raise HTTPException(status_code=404, detail="Project not found")

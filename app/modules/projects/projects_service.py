@@ -150,8 +150,6 @@ class ProjectService:
         )
         if project:
             return {
-                "project_name": project.project_name,
-                "directory": project.directory,
                 "id": project.id,
                 "commit_id": project.commit_id,
                 "status": project.status,
