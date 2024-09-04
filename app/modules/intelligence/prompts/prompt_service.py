@@ -269,6 +269,7 @@ class PromptService:
                 "Failed to map agent to prompt due to an unexpected error"
             ) from e
 
+    # internal method for now - can exposed later when agent creation is public, since right now its only supported by pull requests - this method can be used
     async def create_or_update_system_prompt(
         self, prompt: PromptCreate, agent_id: str, stage: int
     ) -> PromptResponse:
