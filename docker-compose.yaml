@@ -1,8 +1,9 @@
 version: '3.8'
+
 services:
   postgres:
     image: postgres:latest
-    container_name: postgres
+    container_name: potpie_postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: mysecretpassword
@@ -19,7 +20,7 @@ services:
 
   neo4j:
     image: neo4j:latest
-    container_name: neo4j
+    container_name: potpie_neo4j
     environment:
       NEO4J_AUTH: neo4j/mysecretpassword
       NEO4JLABS_PLUGINS: '["apoc"]' # Add this line to include APOC plugin
@@ -32,7 +33,7 @@ services:
 
   mongodb:
     image: mongo:latest
-    container_name: mongodb
+    container_name: potpie_mongodb
     restart: always
     environment:
       - MONGO_INITDB_DATABASE=momentum
@@ -43,7 +44,7 @@ services:
 
   redis:
     image: redis:latest
-    container_name: redis_broker
+    container_name: potpie_redis_broker
     ports:
       - "6379:6379"
     networks:
@@ -51,7 +52,7 @@ services:
 
   weaviate:
     image: cr.weaviate.io/semitechnologies/weaviate:1.25.7
-    container_name: weaviate
+    container_name: potpie_weaviate
     command: "--host 0.0.0.0 --port 8082 --scheme http"
     ports:
       - "8082:8082"
