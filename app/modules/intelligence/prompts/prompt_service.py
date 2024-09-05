@@ -269,7 +269,6 @@ class PromptService:
                 "Failed to map agent to prompt due to an unexpected error"
             ) from e
 
-    # internal method for now - can exposed later when agent creation is public, since right now its only supported by pull requests - this method can be used
     async def create_or_update_system_prompt(
         self, prompt: PromptCreate, agent_id: str, stage: int
     ) -> PromptResponse:
@@ -288,12 +287,31 @@ class PromptService:
             )
 
             if existing_prompt:
-                for field, value in prompt.model_dump(exclude_unset=True).items():
-                    setattr(existing_prompt, field, value)
-                existing_prompt.updated_at = datetime.now(timezone.utc)
-                existing_prompt.version += 1
-                prompt_to_return = existing_prompt
+                # Check if the prompt needs to be updated
+                update_needed = False
+                update_reasons = []
+
+                if existing_prompt.text != prompt.text:
+                    update_needed = True
+                    update_reasons.append("text changed")
+
+                if str(existing_prompt.status) != str(prompt.status):
+                    update_needed = True
+                    update_reasons.append("status changed")
+                    logger.info(f"Status changed from {existing_prompt.status} to {prompt.status}")
+
+                if update_needed:
+                    existing_prompt.text = prompt.text
+                    existing_prompt.status = prompt.status
+                    existing_prompt.updated_at = datetime.now(timezone.utc)
+                    existing_prompt.version += 1
+                    prompt_to_return = existing_prompt
+                    logger.info(f"Existing prompt is updated. Reasons: {', '.join(update_reasons)}")
+                else:
+                    prompt_to_return = existing_prompt
+                    logger.info("Existing prompt is kept as it is. No changes detected.")
             else:
+                # Create new prompt
                 new_prompt = Prompt(
                     id=str(uuid7()),
                     text=prompt.text,
@@ -306,12 +324,14 @@ class PromptService:
                 )
                 self.db.add(new_prompt)
                 prompt_to_return = new_prompt
+                print("Inserting a new prompt.")
 
             self.db.commit()
             self.db.refresh(prompt_to_return)
             return PromptResponse.model_validate(prompt_to_return)
         except SQLAlchemyError as e:
             self.db.rollback()
+            logger.error(f"Database error in create_or_update_system_prompt: {e}", exc_info=True)
             raise PromptServiceError("Failed to create or update system prompt") from e
 
     async def get_prompts_by_agent_id_and_types(
