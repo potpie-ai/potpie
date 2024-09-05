@@ -12,6 +12,7 @@ from pygments.lexers import guess_lexer_for_filename
 from pygments.token import Token
 from pygments.util import ClassNotFound
 from tqdm import tqdm
+from tree_sitter import Parser, Language
 from tree_sitter_languages import get_language, get_parser  # noqa: E402
 
 # tree_sitter is throwing a FutureWarning
@@ -442,16 +443,17 @@ class RepoMap:
 
     def create_graph(self, repo_dir):
         start_time = time.time()
-        logging.info("Starting parsing of codebase")  # Log start
+        logging.info("Starting parsing of codebase")
 
         G = nx.MultiDiGraph()
         defines = defaultdict(list)
         references = defaultdict(list)
-        file_count = 0  # Initialize file counter
+        file_count = 0
+
         for root, _, files in os.walk(repo_dir):
             for file in files:
-                file_count += 1  # Increment file counter
-                logging.info(f"Processing file number: {file_count}")  # Log file number
+                file_count += 1
+                logging.info(f"Processing file number: {file_count}")
 
                 file_path = os.path.join(root, file)
                 rel_path = os.path.relpath(file_path, repo_dir)
@@ -461,6 +463,19 @@ class RepoMap:
 
                 tags = self.get_tags(file_path, rel_path)
 
+                # Extract full file content
+                file_content = self.io.read_text(file_path) or ""
+                if not file_content.endswith("\n"):
+                    file_content += "\n"
+
+                # Parse the file using tree-sitter
+                language = self.get_language_for_file(file_path)
+                if language:
+                    parser = Parser()
+                    parser.set_language(language)
+                    tree = parser.parse(bytes(file_content, "utf8"))
+                    root_node = tree.root_node
+
                 current_class = None
                 current_function = None
                 for tag in tags:
@@ -468,19 +483,38 @@ class RepoMap:
                         if tag.type == "class":
                             current_class = tag.name
                             current_function = None
+                            node_type = 'class'
                         elif tag.type == "function":
                             current_function = tag.name
+                            node_type = 'function'
+                        else:
+                            node_type = 'other'
+                        
                         node_name = (
-                            f"{current_class}.{tag.name}@{rel_path}"
-                            if current_class
-                            else f"{rel_path}:{tag.name}"
+                             f"{rel_path}:{tag.name}"
                         )
+                        
+                        # Extract code for the current tag using AST
+                        if language:
+                            node = self.find_node_by_range(root_node, tag.line, node_type)
+                            if node:
+                                code_context = file_content[node.start_byte:node.end_byte]
+                                node_end_line = node.end_point[0] + 1  # Adding 1 to match 1-based line numbering
+                            else:
+                                code_context = ""
+                                node_end_line = tag.end_line
+                                continue
+                        else:
+                            code_context = ""
+                            node_end_line = tag.end_line
+                            continue
+                        
                         defines[tag.name].append(
                             (
                                 node_name,
                                 tag.line,
-                                tag.end_line,
-                                tag.type,
+                                node_end_line,  # Use node's end line instead of tag's
+                                node_type,
                                 rel_path,
                                 current_class,
                             )
@@ -489,8 +523,9 @@ class RepoMap:
                             node_name,
                             file=rel_path,
                             line=tag.line,
-                            end_line=tag.end_line,
+                            end_line=node_end_line,  # Use node's end line instead of tag's
                             type=tag.type,
+                            text=code_context,  # Add the extracted code
                         )
                     elif tag.kind == "ref":
                         source = (
@@ -513,21 +548,20 @@ class RepoMap:
                             )
                         )
 
-        # Create edges
+                # Add a node for the entire file
+                G.add_node(
+                    rel_path,
+                    file=rel_path,
+                    type="file",
+                    text=file_content,  # Add the full file content
+                )
+
+        # Create edges (unchanged)
         for ident, refs in references.items():
             if ident in defines:
-                if len(defines[ident]) == 1:  # Unique definition
-                    target, def_line, end_def_line, def_type, def_file, def_class = (
-                        defines[ident][0]
-                    )
-                    for (
-                        source,
-                        ref_line,
-                        end_ref_line,
-                        ref_type,
-                        ref_file,
-                        ref_class,
-                    ) in refs:
+                if len(defines[ident]) == 1:
+                    target, def_line, end_def_line, def_type, def_file, def_class = defines[ident][0]
+                    for source, ref_line, end_ref_line, ref_type, ref_file, ref_class in refs:
                         G.add_edge(
                             source,
                             target,
@@ -538,44 +572,21 @@ class RepoMap:
                             def_line=def_line,
                             end_def_line=end_def_line,
                         )
-                else:  # Apply scoring system for non-unique definitions
-                    for (
-                        source,
-                        ref_line,
-                        end_ref_line,
-                        ref_type,
-                        ref_file,
-                        ref_class,
-                    ) in refs:
+                else:
+                    for source, ref_line, end_ref_line, ref_type, ref_file, ref_class in refs:
                         best_match = None
                         best_match_score = -1
-                        for (
-                            target,
-                            def_line,
-                            end_def_line,
-                            def_type,
-                            def_file,
-                            def_class,
-                        ) in defines[ident]:
-                            if source != target:  # Avoid self-references
+                        for target, def_line, end_def_line, def_type, def_file, def_class in defines[ident]:
+                            if source != target:
                                 match_score = 0
                                 if ref_file == def_file:
                                     match_score += 2
-                                elif os.path.dirname(ref_file) == os.path.dirname(
-                                    def_file
-                                ):
-                                    match_score += (
-                                        1  # Add a point for being in the same directory
-                                    )
+                                elif os.path.dirname(ref_file) == os.path.dirname(def_file):
+                                    match_score += 1
                                 if ref_class == def_class:
                                     match_score += 1
                                 if match_score > best_match_score:
-                                    best_match = (
-                                        target,
-                                        def_line,
-                                        end_def_line,
-                                        def_type,
-                                    )
+                                    best_match = (target, def_line, end_def_line, def_type)
                                     best_match_score = match_score
 
                         if best_match:
@@ -592,9 +603,7 @@ class RepoMap:
                             )
 
         end_time = time.time()
-        logging.info(
-            f"Parsing completed, time taken: {end_time - start_time} seconds"
-        )  # Log end
+        logging.info(f"Parsing completed, time taken: {end_time - start_time} seconds")
         return G
 
     def is_text_file(self, file_path):
@@ -606,6 +615,32 @@ class RepoMap:
             return True
         except UnicodeDecodeError:
             return False
+
+    def get_language_for_file(self, file_path):
+        # Map file extensions to tree-sitter languages
+        extension = os.path.splitext(file_path)[1].lower()
+        language_map = {
+            '.py': get_language('python'),
+            '.js': get_language('javascript'),
+            '.ts': get_language('typescript'),
+            # Add more mappings as needed
+        }
+        return language_map.get(extension)
+
+    def find_node_by_range(self, root_node, start_line, node_type):
+        def traverse(node):
+            if node.start_point[0] <= start_line and node.end_point[0] >= start_line:
+                if node_type == 'function' and node.type == 'function_definition':
+                    return node
+                elif node_type == 'class' and node.type == 'class_definition':
+                    return node
+                for child in node.children:
+                    result = traverse(child)
+                    if result:
+                        return result
+            return None
+
+        return traverse(root_node)
 
     def to_tree(self, tags, chat_rel_fnames):
         if not tags:

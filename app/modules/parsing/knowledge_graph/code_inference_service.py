@@ -78,8 +78,9 @@ class CodebaseInferenceService:
         repo, owner, auth = await self.parse_helper.clone_or_copy_repository(
             repo_details, self.db, user_id
         )
+
         extracted_dir = await self.parse_helper.download_and_extract_tarball(
-            repo, repo_details.branch_name, "/tmp", auth, repo, user_id
+            repo, repo_details.branch_name, os.getenv("PROJECT_PATH"), auth, repo, user_id
         )
         logger.info(
             f"Cloned repository {repo_details} with owner {owner} to {extracted_dir}"

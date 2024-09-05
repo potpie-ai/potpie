@@ -59,30 +59,41 @@ class CodeGraphService:
                 batch_nodes = list(nx_graph.nodes(data=True))[i : i + batch_size]
                 nodes_to_create = []
                 for node in batch_nodes:
+                    node_type = node[1].get("type")
+                    label = node_type
                     node_data = {
                         "name": node[0],
-                        "file": node[1].get("file", ""),
+                        "file": node[1].get("file"),
                         "start_line": node[1].get("line", -1),
+                        "end_line": node[1].get("end_line", -1),
                         "repoId": project_id,
                         "node_id": CodeGraphService.generate_node_id(
-                            node[1].get("file", ""), user_id
+                            node[0], user_id
                         ),
                         "entityId": user_id,
+                        "type": node_type,
+                        "text": node[1].get("text", " "),
+                        "labels": ["NODE", label]
                     }
                     nodes_to_create.append(node_data)
-                    # Create search index for each node
-                    asyncio.run(
-                        search_service.create_search_index(project_id, node_data)
-                    )
+                    # # Create search index for each node
+                    # asyncio.run(
+                    #     search_service.create_search_index(project_id, node_data)
+                    # )
 
                 session.run(
-                    "UNWIND $nodes AS node "
-                    "CREATE (d:Definition {name: node.name, file: node.file, start_line: node.start_line, repoId: node.repoId, node_id: node.node_id, entityId: node.entityId})",
-                    nodes=nodes_to_create,
+                    """
+                    CALL apoc.cypher.doIt(
+                        'UNWIND $nodes AS node CALL apoc.create.node(node.labels, node) YIELD node AS n RETURN count(*)',
+                        {nodes: $nodes}
+                    ) YIELD value
+                    RETURN value.count AS created_count
+                    """,
+                    nodes=nodes_to_create
                 )
 
-            # Commit the search indices
-            asyncio.run(search_service.commit_indices())
+            # # Commit the search indices
+            # asyncio.run(search_service.commit_indices())
 
             relationship_count = nx_graph.number_of_edges()
             logging.info(f"Creating {relationship_count} relationships")
@@ -90,16 +101,26 @@ class CodeGraphService:
             # Create relationships in batches
             for i in range(0, relationship_count, batch_size):
                 batch_edges = list(nx_graph.edges(data=True))[i : i + batch_size]
+                edges_to_create = []
+                for source, target, data in batch_edges:
+                    
+                    edge_data = {
+                        "source_id": CodeGraphService.generate_node_id(source, user_id),
+                        "target_id": CodeGraphService.generate_node_id(target, user_id),
+                        "type": data.get("type", "REFERENCES"),
+                        "repoId": project_id,
+                    }
+                    edges_to_create.append(edge_data)
+
                 session.run(
                     """
                     UNWIND $edges AS edge
-                    MATCH (s:Definition {name: edge.source}), (t:Definition {name: edge.target})
-                    CREATE (s)-[:REFERENCES {type: edge.type}]->(t)
+                    MATCH (source:NODE {node_id: edge.source_id, repoId: edge.repoId})
+                    MATCH (target:NODE {node_id: edge.target_id, repoId: edge.repoId})
+                    CALL apoc.create.relationship(source, edge.type, {repoId: edge.repoId}, target) YIELD rel
+                    RETURN count(rel) AS created_count
                     """,
-                    edges=[
-                        {"source": edge[0], "target": edge[1], "type": edge[2]["type"]}
-                        for edge in batch_edges
-                    ],
+                    edges=edges_to_create
                 )
 
             end_time = time.time()  # End timing
@@ -128,3 +149,14 @@ class SimpleIO:
 class SimpleTokenCounter:
     def token_count(self, text):
         return len(text.split())
+
+@staticmethod
+def get_node_label(node_type):
+    if node_type == "file":
+        return "File"
+    elif node_type == "class":
+        return "Class"
+    elif node_type == "function":
+        return "Function"
+    else:
+        return "Folder"  # Default to Folder for any other type

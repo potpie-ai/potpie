@@ -62,14 +62,6 @@ class ParsingService:
                 repo, repo_details.branch_name, auth, repo, user_id, project_id
             )
 
-            start_time = time.time()
-            await CodebaseInferenceService(self.db).process_repository(
-                repo_details, user_id, project_id
-            )
-            end_time = time.time()
-            logging.info(
-                f"Duration for processing repository: {end_time - start_time:.2f} seconds"
-            )
 
             await self.analyze_directory(extracted_dir, project_id, user_id, self.db)
 
@@ -116,7 +108,7 @@ class ParsingService:
         logging.info(f"_Analyzing directory: {extracted_dir}")
         repo_lang = ParseHelper(db).detect_repo_language(extracted_dir)
 
-        if repo_lang in ["python", "javascript", "typescript"]:
+        if repo_lang in ["javascript", "typescript"]:
             graph_manager = Neo4jManager(project_id, user_id)
 
             try:
