@@ -3,6 +3,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
+from app.modules.users.user_preferences_model import UserPreferences
 
 
 class User(Base):
@@ -17,9 +18,9 @@ class User(Base):
     provider_info = Column(JSONB)
     provider_username = Column(String(255))
 
-
-# User relationships
-User.projects = relationship("Project", back_populates="user")
-User.conversations = relationship("Conversation", back_populates="user")
-User.accessible_prompts = relationship("PromptAccess", back_populates="user")
-User.created_prompts = relationship("Prompt", back_populates="creator")
+    # User relationships
+    projects = relationship("Project", back_populates="user")
+    conversations = relationship("Conversation", back_populates="user")
+    accessible_prompts = relationship("PromptAccess", back_populates="user")
+    created_prompts = relationship("Prompt", back_populates="creator")
+    preferences = relationship("UserPreferences", back_populates="user", uselist=False)
