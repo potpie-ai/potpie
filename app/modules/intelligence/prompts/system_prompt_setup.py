@@ -3,7 +3,6 @@ from sqlalchemy.orm import Session
 from app.modules.intelligence.prompts.prompt_model import (
     PromptStatusType,
     PromptType,
-    PromptVisibilityType,
 )
 from app.modules.intelligence.prompts.prompt_schema import (
     AgentPromptMappingCreate,
@@ -81,7 +80,6 @@ class SystemPromptSetup:
                 create_data = PromptCreate(
                     text=prompt_data["text"],
                     type=prompt_data["type"],
-                    visibility=PromptVisibilityType.PUBLIC,
                     status=PromptStatusType.ACTIVE,
                 )
 

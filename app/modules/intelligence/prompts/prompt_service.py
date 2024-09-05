@@ -10,7 +10,6 @@ from app.modules.intelligence.prompts.prompt_model import (
     AgentPromptMapping,
     Prompt,
     PromptStatusType,
-    PromptVisibilityType,
 )
 from app.modules.intelligence.prompts.prompt_schema import (
     AgentPromptMappingCreate,
@@ -66,7 +65,6 @@ class PromptService:
             new_prompt = Prompt(
                 id=prompt_id,
                 text=prompt.text,
-                visibility=prompt.visibility,
                 type=prompt.type,
                 status=prompt.status or PromptStatusType.ACTIVE,
                 created_by=user_id,
@@ -165,13 +163,7 @@ class PromptService:
         try:
             prompt = (
                 self.db.query(Prompt)
-                .filter(
-                    (Prompt.visibility == PromptVisibilityType.PUBLIC)
-                    | (
-                        (Prompt.visibility == PromptVisibilityType.PRIVATE)
-                        & (Prompt.created_by == user_id)
-                    )
-                )
+                .filter(Prompt.id == prompt_id)
                 .first()
             )
             if not prompt:
@@ -197,13 +189,7 @@ class PromptService:
         try:
             prompts_query = (
                 self.db.query(Prompt)
-                .filter(
-                    (Prompt.visibility == PromptVisibilityType.PUBLIC)
-                    | (
-                        (Prompt.visibility == PromptVisibilityType.PRIVATE)
-                        & (Prompt.created_by == user_id)
-                    )
-                )
+                .filter(Prompt.created_by == user_id)
                 .order_by(Prompt.text)
             )
 
@@ -278,7 +264,6 @@ class PromptService:
                 .join(AgentPromptMapping)
                 .filter(
                     Prompt.type == prompt.type,
-                    Prompt.visibility == PromptVisibilityType.PUBLIC,
                     Prompt.created_by.is_(None),
                     AgentPromptMapping.agent_id == agent_id,
                     AgentPromptMapping.prompt_stage == stage,
@@ -316,7 +301,6 @@ class PromptService:
                     id=str(uuid7()),
                     text=prompt.text,
                     type=prompt.type,
-                    visibility=PromptVisibilityType.PUBLIC,
                     status=prompt.status or PromptStatusType.ACTIVE,
                     created_at=datetime.now(timezone.utc),
                     updated_at=datetime.now(timezone.utc),

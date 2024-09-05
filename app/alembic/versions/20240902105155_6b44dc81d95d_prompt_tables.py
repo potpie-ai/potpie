@@ -27,11 +27,7 @@ def upgrade() -> None:
         sa.Column(
             "type", sa.Enum("SYSTEM", "HUMAN", name="prompttype"), nullable=False
         ),
-        sa.Column(
-            "visibility",
-            sa.Enum("PUBLIC", "PRIVATE", name="promptvisibilitytype"),
-            nullable=False,
-        ),
+
         sa.Column("version", sa.Integer(), nullable=False, server_default="1"),
         sa.Column(
             "status",

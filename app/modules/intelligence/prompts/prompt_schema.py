@@ -6,11 +6,6 @@ from pydantic import BaseModel, Field
 
 
 # Define Enums
-class PromptVisibilityType(str, Enum):
-    PUBLIC = "PUBLIC"
-    PRIVATE = "PRIVATE"
-
-
 class PromptStatusType(str, Enum):
     ACTIVE = "ACTIVE"
     INACTIVE = "INACTIVE"
@@ -27,9 +22,6 @@ class PromptCreate(BaseModel):
         ..., min_length=1, max_length=1000, description="The text content of the prompt"
     )
     type: PromptType = Field(..., description="Type of the prompt (System or Human)")
-    visibility: PromptVisibilityType = Field(
-        ..., description="Visibility of the prompt (Public or Private)"
-    )
     status: Optional[PromptStatusType] = Field(
         PromptStatusType.ACTIVE, description="Status of the prompt (active or inactive)"
     )
@@ -47,9 +39,6 @@ class PromptUpdate(BaseModel):
     type: Optional[PromptType] = Field(
         None, description="Type of the prompt (System or Human)"
     )
-    visibility: Optional[PromptVisibilityType] = Field(
-        None, description="Visibility of the prompt (Public or Private)"
-    )
     status: Optional[PromptStatusType] = Field(
         None, description="Status of the prompt (active or inactive)"
     )
@@ -61,9 +50,6 @@ class PromptResponse(BaseModel):
     id: str = Field(..., description="Unique identifier of the prompt")
     text: str = Field(..., description="The text content of the prompt")
     type: PromptType = Field(..., description="Type of the prompt (System or Human)")
-    visibility: PromptVisibilityType = Field(
-        ..., description="Visibility of the prompt (Public or Private)"
-    )
     version: int = Field(..., description="Version number of the prompt")
     status: PromptStatusType = Field(
         ..., description="Status of the prompt (active or inactive)"
