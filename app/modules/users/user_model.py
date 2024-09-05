@@ -3,7 +3,6 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
-from app.modules.users.user_preferences_model import UserPreferences
 
 
 class User(Base):
