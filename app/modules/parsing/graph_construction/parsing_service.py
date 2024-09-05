@@ -18,9 +18,7 @@ from app.modules.parsing.graph_construction.parsing_helper import (
     ParsingFailedError,
     ParsingServiceError,
 )
-from app.modules.parsing.knowledge_graph.code_inference_service import (
-    CodebaseInferenceService,
-)
+from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
@@ -32,6 +30,10 @@ from .parsing_schema import ParsingRequest
 class ParsingService:
     def __init__(self, db: Session):
         self.db = db
+        self.parse_helper = ParseHelper(db)
+        self.project_service = ProjectService(db)
+        self.inference_service = InferenceService()
+        self.search_service = SearchService(db)
 
     @contextmanager
     def change_dir(self, path):
@@ -62,7 +64,6 @@ class ParsingService:
                 repo, repo_details.branch_name, auth, repo, user_id, project_id
             )
 
-
             await self.analyze_directory(extracted_dir, project_id, user_id, self.db)
 
             message = "The project has been parsed successfully"
@@ -92,21 +93,9 @@ class ParsingService:
             if extracted_dir:
                 shutil.rmtree(extracted_dir, ignore_errors=True)
 
-    # @celery_worker_instance.celery_instance.task(name='app.modules.parsing.graph_construction.parsing_service.analyze_directory')
-    @staticmethod
-    async def analyze_directory(extracted_dir: str, project_id: int, user_id: str, db):
+    async def analyze_directory(self, extracted_dir: str, project_id: int, user_id: str, db):
         logging.info(f"Analyzing directory: {extracted_dir}")
-
-        try:
-            await ParsingService._analyze_directory(
-                extracted_dir, project_id, user_id, db
-            )
-        finally:
-            db.close()
-
-    async def _analyze_directory(extracted_dir: str, project_id: int, user_id: str, db):
-        logging.info(f"_Analyzing directory: {extracted_dir}")
-        repo_lang = ParseHelper(db).detect_repo_language(extracted_dir)
+        repo_lang = self.parse_helper.detect_repo_language(extracted_dir)
 
         if repo_lang in ["javascript", "typescript"]:
             graph_manager = Neo4jManager(project_id, user_id)
@@ -116,20 +105,26 @@ class ParsingService:
                 n, r = graph_constructor.build_graph(extracted_dir)
                 graph_manager.save_graph(n, r)
 
+                await self.project_service.update_project_status(
+                    project_id, ProjectStatusEnum.PARSED
+                )
                 # Create search index
-                search_service = SearchService(db)
                 for node in n:
-                    await search_service.create_search_index(
+                    await self.search_service.create_search_index(
                         project_id, node["attributes"]
                     )
+                await self.search_service.commit_indices()
 
-                await ProjectService(db).update_project_status(
-                    project_id, ProjectStatusEnum.PARSED
+                # Generate docstrings using InferenceService
+                await self.inference_service.run_inference(project_id)
+
+                await self.project_service.update_project_status(
+                    project_id, ProjectStatusEnum.READY
                 )
             except Exception as e:
                 logging.error(e)
                 logging.error(traceback.format_exc())
-                await ProjectService(db).update_project_status(
+                await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.ERROR
                 )
             finally:
@@ -144,16 +139,23 @@ class ParsingService:
                     db,
                 )
 
-                service.create_and_store_graph(extracted_dir, project_id, user_id)
-                await ProjectService(db).update_project_status(
+                await service.create_and_store_graph(extracted_dir, project_id, user_id)
+
+                await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.PARSED
+                )
+                # Generate docstrings using InferenceService
+                await self.inference_service.run_inference(project_id)
+
+                await self.project_service.update_project_status(
+                    project_id, ProjectStatusEnum.READY
                 )
             finally:
                 service.close()
         else:
-            await ProjectService(db).update_project_status(
+            await self.project_service.update_project_status(
                 project_id, ProjectStatusEnum.ERROR
             )
-            return ParsingFailedError(
+            raise ParsingFailedError(
                 "Repository doesn't consist of a language currently supported."
             )
