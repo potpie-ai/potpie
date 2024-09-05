@@ -1,6 +1,16 @@
 #!/bin/bash
 source .env
 
+# Set up Service Account Credentials
+export GOOGLE_APPLICATION_CREDENTIALS="./service-account.json"
+
+# Check if the credentials file exists
+if [ ! -f "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
+    echo "Service Account Credentials file not found at $GOOGLE_APPLICATION_CREDENTIALS"
+    echo "Please ensure the service-account.json file is in the current directory."
+    exit 1
+fi
+
 docker compose up -d
 
 # Wait for postgres to be ready
