@@ -20,6 +20,5 @@ class User(Base):
     # User relationships
     projects = relationship("Project", back_populates="user")
     conversations = relationship("Conversation", back_populates="user")
-    accessible_prompts = relationship("PromptAccess", back_populates="user")
     created_prompts = relationship("Prompt", back_populates="creator")
     preferences = relationship("UserPreferences", back_populates="user", uselist=False)

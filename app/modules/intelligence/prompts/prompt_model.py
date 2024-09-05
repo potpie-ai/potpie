@@ -9,11 +9,6 @@ from app.core.database import Base
 
 
 # Define enums for the Prompt model
-class PromptVisibilityType(enum.Enum):
-    PUBLIC = "PUBLIC"
-    PRIVATE = "PRIVATE"
-
-
 class PromptStatusType(enum.Enum):
     ACTIVE = "ACTIVE"
     INACTIVE = "INACTIVE"
@@ -30,7 +25,6 @@ class Prompt(Base):
     id = Column(String, primary_key=True, nullable=False)
     text = Column(Text, nullable=False)
     type = Column(SQLAEnum(PromptType), nullable=False)
-    visibility = Column(SQLAEnum(PromptVisibilityType), nullable=False)
     version = Column(Integer, default=1, nullable=False)
     status = Column(
         SQLAEnum(PromptStatusType), default=PromptStatusType.ACTIVE, nullable=False
@@ -56,17 +50,6 @@ class Prompt(Base):
     )
 
 
-class PromptAccess(Base):
-    __tablename__ = "prompt_access"
-
-    prompt_id = Column(
-        String, ForeignKey("prompts.id", ondelete="CASCADE"), primary_key=True
-    )
-    user_id = Column(
-        String, ForeignKey("users.uid", ondelete="CASCADE"), primary_key=True
-    )
-
-
 class AgentPromptMapping(Base):
     __tablename__ = "agent_prompt_mappings"
 
@@ -83,6 +66,3 @@ class AgentPromptMapping(Base):
 
 
 Prompt.creator = relationship("User", back_populates="created_prompts")
-Prompt.accesses = relationship("PromptAccess", back_populates="prompt")
-PromptAccess.prompt = relationship("Prompt", back_populates="accesses")
-PromptAccess.user = relationship("User", back_populates="accessible_prompts")
