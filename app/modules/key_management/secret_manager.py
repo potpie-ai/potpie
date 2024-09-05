@@ -88,7 +88,7 @@ class SecretManager:
             .filter(UserPreferences.user_id == customer_id)
             .first()
         )
-        if not user_pref or user_pref.preferences.get("provider") != provider:
+        if not user_pref:
             raise HTTPException(
                 status_code=404, detail="Secret not found for this provider"
             )
