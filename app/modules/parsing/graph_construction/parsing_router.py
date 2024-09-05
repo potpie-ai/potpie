@@ -18,10 +18,9 @@ async def parse_directory(
 ):
     return await ParsingController.parse_directory(repo_details, db, user)
 
+
 @router.get("/parsing-status/{project_id}")
 async def get_parsing_status(
-    project_id: str,
-    db: Session = Depends(get_db),
-    user=Depends(AuthService.check_auth)
+    project_id: str, db: Session = Depends(get_db), user=Depends(AuthService.check_auth)
 ):
-   return await ParsingController.fetch_parsing_status(project_id, db, user)
+    return await ParsingController.fetch_parsing_status(project_id, db, user)

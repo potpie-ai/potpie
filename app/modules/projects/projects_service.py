@@ -1,16 +1,13 @@
 import logging
-import os
-import shutil
 from datetime import datetime
 
 from fastapi import HTTPException
-from sqlalchemy import String, and_, cast
+from sqlalchemy import String, cast
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_schema import ProjectStatusEnum
-from app.modules.utils.model_helper import ModelHelper
 
 logger = logging.getLogger(__name__)
 
@@ -107,8 +104,7 @@ class ProjectService:
         project = ProjectService.get_project_by_id(self.db, project_id)
         if project:
             return {
-                "project_name": project.project_name,
-                "directory": project.directory,
+                "project_name": project.repo_name,
                 "id": project.id,
                 "commit_id": project.commit_id,
                 "status": project.status,

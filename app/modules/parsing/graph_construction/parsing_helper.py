@@ -7,7 +7,7 @@ from typing import Any, Tuple
 import requests
 from fastapi import HTTPException
 from git import GitCommandError, Repo
-from github import Github
+from github import Github, GithubException
 from sqlalchemy.orm import Session
 
 from app.modules.github.github_service import GithubService
@@ -240,7 +240,9 @@ class ParseHelper:
         user_id,
         project_id=None,  # Change type to str
     ):
-        project = await self.project_manager.get_project_from_db(f"{repo.full_name}", user_id)
+        project = await self.project_manager.get_project_from_db(
+            f"{repo.full_name}", user_id
+        )
         if not project:
             await self.project_manager.register_project(
                 f"{repo.full_name}",
@@ -374,3 +376,68 @@ class ParseHelper:
         }
 
         return metadata
+
+    async def check_commit_status(self, project_id: str) -> bool:
+        """
+        Check if the current commit ID of the project matches the latest commit ID from the repository.
+
+        Args:
+            project_id (str): The ID of the project to check.
+
+        Returns:
+            bool: True if the commit IDs match, False otherwise.
+        """
+        # Get the project details
+        project = await self.project_manager.get_project_from_db_by_id(project_id)
+        if not project:
+            logging.error(f"Project with ID {project_id} not found")
+            return False
+
+        current_commit_id = project.get("commit_id")
+        repo_name = project.get("project_name")
+        if not repo_name:
+            logging.error(f"Repository name not found for project ID {project_id}")
+            return False
+
+        # Get the latest commit ID from GitHub
+        github_service = GithubService(self.db)
+        try:
+            # Try to get public repository first
+            github = Github()
+            repo = github.get_repo(repo_name)
+        except GithubException:
+            # If public repo fails, try private repo
+            try:
+                _, response, auth, _ = github_service.get_github_repo_details(repo_name)
+                if response.status_code != 200:
+                    raise HTTPException(
+                        status_code=400, detail="Failed to get installation ID"
+                    )
+
+                app_auth = auth.get_installation_auth(response.json()["id"])
+                github = Github(auth=app_auth)
+                repo = github.get_repo(repo_name)
+            except Exception as e:
+                logging.error(f"Error fetching repository details: {e}")
+                return False
+
+        if not repo:
+            logging.error(f"Repository {repo_name} not found")
+            return False
+
+        try:
+            latest_commit = repo.get_branch(repo.default_branch).commit
+            latest_commit_id = latest_commit.sha
+        except GithubException as e:
+            logging.error(f"Error fetching latest commit: {e}")
+            return False
+
+        # Compare the commit IDs
+        is_up_to_date = current_commit_id == latest_commit_id
+        logging.info(
+            f"Project {project_id} commit status: {'Up to date' if is_up_to_date else 'Outdated'}"
+        )
+        logging.info(f"Current commit ID: {current_commit_id}")
+        logging.info(f"Latest commit ID: {latest_commit_id}")
+
+        return is_up_to_date
