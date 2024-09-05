@@ -29,6 +29,7 @@ from app.modules.intelligence.agents.intelligent_tool_using_orchestrator import 
     IntelligentToolUsingOrchestrator,
 )
 from app.modules.intelligence.agents.qna_agent import QNAAgent
+from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.tools.duckduckgo_search_tool import DuckDuckGoTool
 from app.modules.intelligence.tools.google_trends_tool import GoogleTrendsTool
@@ -56,60 +57,44 @@ class ConversationService:
         db: Session,
         project_service: ProjectService,
         history_manager: ChatHistoryService,
-        orchestrator: IntelligentToolUsingOrchestrator,
-        debugging_agent: DebuggingAgent,
-        codebase_qna_agent: QNAAgent,
+        provider_service: ProviderService,
     ):
         self.db = db
         self.project_service = project_service
         self.history_manager = history_manager
-        self.agents = {
-            "chat_llm_orchestrator": orchestrator,
-            "debugging_agent": debugging_agent,
-            "codebase_qna_agent": codebase_qna_agent,
-        }
+        self.provider_service = provider_service
+        self.agents = {}
 
     @classmethod
-    def create(cls, db: Session):
+    def create(cls, db: Session, user_id: str):
         project_service = ProjectService(db)
         history_manager = ChatHistoryService(db)
-        openai_key = cls._get_openai_key()
-        orchestrator = cls._initialize_orchestrator(openai_key, db)
-        debugging_agent = cls._initialize_debugging_agent(openai_key, db)
-        qna_agent = cls._initialize_qna_agent(openai_key, db)
-        return cls(
-            db,
-            project_service,
-            history_manager,
-            orchestrator,
-            debugging_agent,
-            qna_agent,
-        )
+        provider_service =  ProviderService.create(db, user_id)
+        
+        instance = cls(db, project_service, history_manager, provider_service)
+        instance._initialize_agents(user_id)
+        return instance
+    async def _initialize_agents(self, user_id: str):
+        llm =  await self.provider_service.get_llm()
+        self.agents = {
+            "chat_llm_orchestrator":  await self._initialize_orchestrator(llm, self.db),
+            "debugging_agent": await self._initialize_debugging_agent(llm, self.db),
+            "codebase_qna_agent": await self._initialize_qna_agent(llm, self.db),
+        }
 
     @staticmethod
-    def _initialize_debugging_agent(openai_key: str, db: Session) -> DebuggingAgent:
-        return DebuggingAgent(openai_key, db)
-
-    @staticmethod
-    def _initialize_qna_agent(openai_key: str, db: Session) -> QNAAgent:
-        return QNAAgent(openai_key, db)
-
-    @staticmethod
-    def _get_openai_key() -> str:
-        key = os.getenv("OPENAI_API_KEY")
-        if not key:
-            raise ConversationServiceError(
-                "The OpenAI API key is not set in the environment variable 'OPENAI_API_KEY'."
-            )
-        return key
-
-    @staticmethod
-    def _initialize_orchestrator(
-        openai_key: str, db: Session
-    ) -> IntelligentToolUsingOrchestrator:
+    async def _initialize_orchestrator(llm, db: Session) -> IntelligentToolUsingOrchestrator:
         tools = [GoogleTrendsTool(), WikipediaTool(), DuckDuckGoTool()]
-        return IntelligentToolUsingOrchestrator(openai_key, tools, db)
+        return IntelligentToolUsingOrchestrator(llm, tools, db)
 
+    @staticmethod
+    async def _initialize_debugging_agent(llm, db: Session) -> DebuggingAgent:
+        return DebuggingAgent(llm, db)
+
+    @staticmethod
+    async def _initialize_qna_agent(llm, db: Session) -> QNAAgent:
+        return QNAAgent(llm, db)
+    
     async def create_conversation(
         self, conversation: CreateConversationRequest, user_id: str
     ) -> tuple[str, str]:
@@ -144,6 +129,7 @@ class ConversationService:
             raise ConversationServiceError(
                 "An unexpected error occurred while creating the conversation."
             ) from e
+
 
     def _create_conversation_record(
         self, conversation: CreateConversationRequest, title: str, user_id: str

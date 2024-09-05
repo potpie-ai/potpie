@@ -30,7 +30,7 @@ class ConversationAPI:
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
-        controller = ConversationController(db)
+        controller = ConversationController(db, user_id)
         return await controller.create_conversation(conversation, user_id)
 
     @staticmethod
@@ -74,7 +74,7 @@ class ConversationAPI:
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
-        controller = ConversationController(db)
+        controller = ConversationController(db, user_id)
         message_stream = controller.post_message(conversation_id, message, user_id)
         return StreamingResponse(message_stream, media_type="text/event-stream")
 

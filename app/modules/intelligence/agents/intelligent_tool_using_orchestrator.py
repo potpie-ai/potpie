@@ -20,10 +20,8 @@ logger = logging.getLogger(__name__)
 
 
 class IntelligentToolUsingOrchestrator:
-    def __init__(self, openai_key: str, tools: List, db: Session):
-        self.llm = ChatOpenAI(
-            api_key=openai_key, temperature=0.7, model_kwargs={"stream": True}
-        )
+    def __init__(self, llm, tools: List, db: Session):
+        self.llm = llm
         self.tools = {tool.name: tool for tool in tools}
         self.history_manager = ChatHistoryService(db)
         self.chain = self._create_chain()

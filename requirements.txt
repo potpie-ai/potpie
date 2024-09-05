@@ -21,6 +21,7 @@ aiohttp
 langchain
 langchain-openai
 langchain-community
+langchain-anthropic
 pytrends
 wikipedia-api
 langgraph

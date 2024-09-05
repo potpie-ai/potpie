@@ -21,8 +21,8 @@ from app.modules.conversations.message.message_schema import (
 
 
 class ConversationController:
-    def __init__(self, db: Session):
-        self.service = ConversationService.create(db)
+    def __init__(self, db: Session, user_id: str):
+        self.service = ConversationService.create(db, user_id)
 
     async def create_conversation(
         self, conversation: CreateConversationRequest, user_id: str
