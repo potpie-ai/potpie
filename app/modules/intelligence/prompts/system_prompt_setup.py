@@ -1,9 +1,6 @@
 from sqlalchemy.orm import Session
 
-from app.modules.intelligence.prompts.prompt_model import (
-    PromptStatusType,
-    PromptType,
-)
+from app.modules.intelligence.prompts.prompt_model import PromptStatusType, PromptType
 from app.modules.intelligence.prompts.prompt_schema import (
     AgentPromptMappingCreate,
     PromptCreate,
