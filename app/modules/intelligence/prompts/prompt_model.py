@@ -56,17 +56,6 @@ class Prompt(Base):
     )
 
 
-class PromptAccess(Base):
-    __tablename__ = "prompt_access"
-
-    prompt_id = Column(
-        String, ForeignKey("prompts.id", ondelete="CASCADE"), primary_key=True
-    )
-    user_id = Column(
-        String, ForeignKey("users.uid", ondelete="CASCADE"), primary_key=True
-    )
-
-
 class AgentPromptMapping(Base):
     __tablename__ = "agent_prompt_mappings"
 
@@ -83,6 +72,3 @@ class AgentPromptMapping(Base):
 
 
 Prompt.creator = relationship("User", back_populates="created_prompts")
-Prompt.accesses = relationship("PromptAccess", back_populates="prompt")
-PromptAccess.prompt = relationship("Prompt", back_populates="accesses")
-PromptAccess.user = relationship("User", back_populates="accessible_prompts")
