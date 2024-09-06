@@ -12,7 +12,7 @@ from pygments.lexers import guess_lexer_for_filename
 from pygments.token import Token
 from pygments.util import ClassNotFound
 from tqdm import tqdm
-from tree_sitter import Parser, Language
+from tree_sitter import Parser
 from tree_sitter_languages import get_language, get_parser  # noqa: E402
 
 # tree_sitter is throwing a FutureWarning
@@ -452,7 +452,7 @@ class RepoMap:
 
         for root, _, files in os.walk(repo_dir):
             # Ignore folders starting with '.'
-            if os.path.basename(root).startswith('.'):
+            if os.path.basename(root).startswith("."):
                 continue
 
             for file in files:
@@ -487,23 +487,27 @@ class RepoMap:
                         if tag.type == "class":
                             current_class = tag.name
                             current_function = None
-                            node_type = 'class'
+                            node_type = "class"
                         elif tag.type == "function":
                             current_function = tag.name
-                            node_type = 'function'
+                            node_type = "function"
                         else:
-                            node_type = 'other'
-                        
-                        node_name = (
-                             f"{rel_path}:{tag.name}"
-                        )
-                        
+                            node_type = "other"
+
+                        node_name = f"{rel_path}:{tag.name}"
+
                         # Extract code for the current tag using AST
                         if language:
-                            node = self.find_node_by_range(root_node, tag.line, node_type)
+                            node = self.find_node_by_range(
+                                root_node, tag.line, node_type
+                            )
                             if node:
-                                code_context = file_content[node.start_byte:node.end_byte]
-                                node_end_line = node.end_point[0] + 1  # Adding 1 to match 1-based line numbering
+                                code_context = file_content[
+                                    node.start_byte : node.end_byte
+                                ]
+                                node_end_line = (
+                                    node.end_point[0] + 1
+                                )  # Adding 1 to match 1-based line numbering
                             else:
                                 code_context = ""
                                 node_end_line = tag.end_line
@@ -512,12 +516,12 @@ class RepoMap:
                             code_context = ""
                             node_end_line = tag.end_line
                             continue
-                        
+
                         defines[tag.name].append(
                             (
                                 node_name,
                                 tag.line,
-                                node_end_line,  
+                                node_end_line,
                                 node_type,
                                 rel_path,
                                 current_class,
@@ -527,9 +531,9 @@ class RepoMap:
                             node_name,
                             file=rel_path,
                             line=tag.line,
-                            end_line=node_end_line,  
+                            end_line=node_end_line,
                             type=tag.type,
-                            text=code_context,  
+                            text=code_context,
                         )
                     elif tag.kind == "ref":
                         source = (
@@ -557,14 +561,23 @@ class RepoMap:
                     rel_path,
                     file=rel_path,
                     type="file",
-                    text=file_content, 
+                    text=file_content,
                 )
 
         for ident, refs in references.items():
             if ident in defines:
                 if len(defines[ident]) == 1:
-                    target, def_line, end_def_line, def_type, def_file, def_class = defines[ident][0]
-                    for source, ref_line, end_ref_line, ref_type, ref_file, ref_class in refs:
+                    target, def_line, end_def_line, def_type, def_file, def_class = (
+                        defines[ident][0]
+                    )
+                    for (
+                        source,
+                        ref_line,
+                        end_ref_line,
+                        ref_type,
+                        ref_file,
+                        ref_class,
+                    ) in refs:
                         G.add_edge(
                             source,
                             target,
@@ -576,20 +589,41 @@ class RepoMap:
                             end_def_line=end_def_line,
                         )
                 else:
-                    for source, ref_line, end_ref_line, ref_type, ref_file, ref_class in refs:
+                    for (
+                        source,
+                        ref_line,
+                        end_ref_line,
+                        ref_type,
+                        ref_file,
+                        ref_class,
+                    ) in refs:
                         best_match = None
                         best_match_score = -1
-                        for target, def_line, end_def_line, def_type, def_file, def_class in defines[ident]:
+                        for (
+                            target,
+                            def_line,
+                            end_def_line,
+                            def_type,
+                            def_file,
+                            def_class,
+                        ) in defines[ident]:
                             if source != target:
                                 match_score = 0
                                 if ref_file == def_file:
                                     match_score += 2
-                                elif os.path.dirname(ref_file) == os.path.dirname(def_file):
+                                elif os.path.dirname(ref_file) == os.path.dirname(
+                                    def_file
+                                ):
                                     match_score += 1
                                 if ref_class == def_class:
                                     match_score += 1
                                 if match_score > best_match_score:
-                                    best_match = (target, def_line, end_def_line, def_type)
+                                    best_match = (
+                                        target,
+                                        def_line,
+                                        end_def_line,
+                                        def_type,
+                                    )
                                     best_match_score = match_score
 
                         if best_match:
@@ -623,19 +657,33 @@ class RepoMap:
         # Map file extensions to tree-sitter languages
         extension = os.path.splitext(file_path)[1].lower()
         language_map = {
-            '.py': get_language('python'),
-            '.js': get_language('javascript'),
-            '.ts': get_language('typescript'),
-            # Add more mappings as needed
+            ".py": get_language("python"),
+            ".js": get_language("javascript"),
+            ".ts": get_language("typescript"),
+            ".c": get_language("c"),
+            ".cs": get_language("c_sharp"),
+            ".cpp": get_language("cpp"),
+            ".el": get_language("elisp"),
+            ".ex": get_language("elixir"),
+            ".exs": get_language("elixir"),
+            ".elm": get_language("elm"),
+            ".go": get_language("go"),
+            ".java": get_language("java"),
+            ".ml": get_language("ocaml"),
+            ".mli": get_language("ocaml"),
+            ".php": get_language("php"),
+            ".ql": get_language("ql"),
+            ".rb": get_language("ruby"),
+            ".rs": get_language("rust"),
         }
         return language_map.get(extension)
 
     def find_node_by_range(self, root_node, start_line, node_type):
         def traverse(node):
             if node.start_point[0] <= start_line and node.end_point[0] >= start_line:
-                if node_type == 'function' and node.type == 'function_definition':
+                if node_type == "function" and node.type == "function_definition":
                     return node
-                elif node_type == 'class' and node.type == 'class_definition':
+                elif node_type == "class" and node.type == "class_definition":
                     return node
                 for child in node.children:
                     result = traverse(child)

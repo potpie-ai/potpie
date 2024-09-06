@@ -19,11 +19,11 @@ from app.modules.key_management.secret_manager import router as secret_manager_r
 from app.modules.parsing.graph_construction.parsing_router import (
     router as parsing_router,
 )
+from app.modules.parsing.knowledge_graph.query_router import router as query_router
 from app.modules.projects.projects_router import router as projects_router
 from app.modules.search.search_router import router as search_router
 from app.modules.users.user_router import router as user_router
 from app.modules.utils.firebase_setup import FirebaseSetup
-from app.modules.parsing.knowledge_graph.query_router import router as query_router
 
 # Configure logging
 logging.basicConfig(

@@ -37,7 +37,7 @@ class ParseHelper:
                 fp = os.path.join(dirpath, f)
                 total_size += os.path.getsize(fp)
         return total_size
-    
+
     @staticmethod
     async def clone_or_copy_repository(
         repo_details: RepoDetails, db: Session, user_id: str
@@ -185,7 +185,7 @@ class ParseHelper:
 
         try:
             for root, _, files in os.walk(repo_dir):
-                if os.path.basename(root).startswith('.'):
+                if os.path.basename(root).startswith("."):
                     continue
 
                 for file in files:
@@ -252,11 +252,13 @@ class ParseHelper:
         user_id,
         project_id=None,  # Change type to str
     ):
-        full_name = repo.working_tree_dir.split('/')[-1] if isinstance(repo_details, Repo) else repo.full_name
-        project = await self.project_manager.get_project_from_db(
-            full_name, user_id
+        full_name = (
+            repo.working_tree_dir.split("/")[-1]
+            if isinstance(repo_details, Repo)
+            else repo.full_name
         )
-        if project: 
+        project = await self.project_manager.get_project_from_db(full_name, user_id)
+        if project:
             project_id = project.id
         else:
             await self.project_manager.register_project(
@@ -265,7 +267,6 @@ class ParseHelper:
                 user_id,
                 project_id,
             )
-        
 
         if isinstance(repo_details, Repo):
             extracted_dir = repo_details.working_tree_dir
@@ -412,9 +413,9 @@ class ParseHelper:
         repo_name = project.get("project_name")
 
         if len(repo_name.split("/")) >= 2:
-            # Local repo , always parse local repos 
+            # Local repo , always parse local repos
             return False
-        
+
         if not repo_name:
             logging.error(f"Repository name not found for project ID {project_id}")
             return False

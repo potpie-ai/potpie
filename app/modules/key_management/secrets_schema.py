@@ -13,7 +13,7 @@ class BaseSecretRequest(BaseModel):
         pattern = r"^sk-[a-zA-Z0-9]{48}$"
         proj_pattern = r"^sk-proj-[a-zA-Z0-9]{48}$"
         return bool(re.match(pattern, api_key)) or bool(re.match(proj_pattern, api_key))
-    
+
     @field_validator("api_key")
     @classmethod
     def api_key_format(cls, v: str):
@@ -27,7 +27,7 @@ class BaseSecretRequest(BaseModel):
     @field_validator("provider")
     @classmethod
     def validate_provider_and_api_key(cls, provider: str, values):
-        api_key = values.data.get('api_key')
+        api_key = values.data.get("api_key")
         if provider == "openai":
             if not cls.validate_openai_api_key_format(api_key):
                 raise ValueError("Invalid OpenAI API key format")

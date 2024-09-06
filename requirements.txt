@@ -47,6 +47,6 @@ embedchain
 embedchain[weaviate]
 mongoengine
 resend
-transformers 
-torch 
+transformers
+torch
 sentence-transformers

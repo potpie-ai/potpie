@@ -1,4 +1,3 @@
-import asyncio
 import hashlib
 import logging
 
@@ -67,22 +66,18 @@ class CodeGraphService:
                         "start_line": node[1].get("line", -1),
                         "end_line": node[1].get("end_line", -1),
                         "repoId": project_id,
-                        "node_id": CodeGraphService.generate_node_id(
-                            node[0], user_id
-                        ),
+                        "node_id": CodeGraphService.generate_node_id(node[0], user_id),
                         "entityId": user_id,
                         "type": node_type if node_type else "Unknown",
                         "text": node[1].get("text", ""),
-                        "labels": ["NODE", label]
+                        "labels": ["NODE", label],
                     }
                     # Remove any null values from node_data
                     node_data = {k: v for k, v in node_data.items() if v is not None}
                     nodes_to_create.append(node_data)
-                
+
                 for node in nodes_to_create:
-                    await search_service.create_search_index(
-                        project_id, node
-                    )
+                    await search_service.create_search_index(project_id, node)
 
                 session.run(
                     """
@@ -90,7 +85,7 @@ class CodeGraphService:
                     CALL apoc.create.node(node.labels, node) YIELD node AS n
                     RETURN count(*) AS created_count
                     """,
-                    nodes=nodes_to_create
+                    nodes=nodes_to_create,
                 )
 
             await search_service.commit_indices()
@@ -121,7 +116,7 @@ class CodeGraphService:
                     CALL apoc.create.relationship(source, edge.type, {repoId: edge.repoId}, target) YIELD rel
                     RETURN count(rel) AS created_count
                     """,
-                    edges=edges_to_create
+                    edges=edges_to_create,
                 )
 
             end_time = time.time()  # End timing
@@ -136,9 +131,9 @@ class CodeGraphService:
                 MATCH (n {repoId: $project_id})
                 DETACH DELETE n
                 """,
-                project_id=project_id
+                project_id=project_id,
             )
-        
+
         # Clean up search index
         search_service = SearchService(self.db)
         await search_service.delete_project_index(project_id)

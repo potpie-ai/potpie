@@ -1,6 +1,6 @@
 from typing import Dict, List
 
-from sqlalchemy import or_, delete
+from sqlalchemy import delete, or_
 from sqlalchemy.orm import Session
 
 from app.modules.search.search_models import SearchIndex

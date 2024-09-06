@@ -1,7 +1,6 @@
 import logging
 import os
 import shutil
-import time
 import traceback
 from asyncio import create_task
 from contextlib import contextmanager
@@ -90,14 +89,20 @@ class ParsingService:
             )
 
         finally:
-            if extracted_dir and os.path.exists(extracted_dir) and extracted_dir.startswith(os.getenv("PROJECT_PATH")):
+            if (
+                extracted_dir
+                and os.path.exists(extracted_dir)
+                and extracted_dir.startswith(os.getenv("PROJECT_PATH"))
+            ):
                 shutil.rmtree(extracted_dir, ignore_errors=True)
 
-    async def analyze_directory(self, extracted_dir: str, project_id: int, user_id: str, db):
+    async def analyze_directory(
+        self, extracted_dir: str, project_id: int, user_id: str, db
+    ):
         logging.info(f"Analyzing directory: {extracted_dir}")
         repo_lang = self.parse_helper.detect_repo_language(extracted_dir)
 
-        if repo_lang in ["javascript", "typescript"]:
+        if repo_lang in ["python", "javascript", "typescript"]:
             graph_manager = Neo4jManager(project_id, user_id)
 
             try:
