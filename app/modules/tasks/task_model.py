@@ -4,7 +4,7 @@ from datetime import datetime
 from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, String
 
 from app.core.database import Base
-
+from sqlalchemy.orm import relationship
 
 class TaskType(enum.Enum):
     CODEBASE_PROCESSING = "CODE_INFERENCE"
@@ -23,3 +23,5 @@ class Task(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     project_id = Column(String, ForeignKey("projects.id"), nullable=False)
     result = Column(String, nullable=True)
+
+    projects = relationship("Project", back_populates="task")

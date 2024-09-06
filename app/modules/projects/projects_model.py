@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import BYTEA
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
+from app.modules.tasks.task_model import Task #noqa
 
 
 class Project(Base):
@@ -43,5 +44,6 @@ class Project(Base):
 
 
 # Project relationships
-Project.user = relationship("User", back_populates="projects")
-Project.search_indices = relationship("SearchIndex", back_populates="project")
+    user = relationship("User", back_populates="projects")
+    search_indices = relationship("SearchIndex", back_populates="project")
+    task = relationship("Task", back_populates="projects")
