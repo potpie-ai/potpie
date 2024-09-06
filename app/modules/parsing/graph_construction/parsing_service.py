@@ -91,7 +91,8 @@ class ParsingService:
 
         finally:
             if extracted_dir:
-                shutil.rmtree(extracted_dir, ignore_errors=True)
+                pass
+                #shutil.rmtree(extracted_dir, ignore_errors=True)
 
     async def analyze_directory(self, extracted_dir: str, project_id: int, user_id: str, db):
         logging.info(f"Analyzing directory: {extracted_dir}")

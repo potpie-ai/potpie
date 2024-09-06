@@ -24,9 +24,3 @@ class Task(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     project_id = Column(String, ForeignKey("projects.id"), nullable=False)
     result = Column(String, nullable=True)
-
-    # Use string-based reference for relationship
-    # project = relationship("Project", back_populates="tasks")
-
-
-Task.project = relationship("Project", back_populates="tasks")

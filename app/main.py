@@ -23,6 +23,7 @@ from app.modules.projects.projects_router import router as projects_router
 from app.modules.search.search_router import router as search_router
 from app.modules.users.user_router import router as user_router
 from app.modules.utils.firebase_setup import FirebaseSetup
+from app.modules.parsing.knowledge_graph.query_router import router as query_router
 
 # Configure logging
 logging.basicConfig(
@@ -92,6 +93,7 @@ class MainApp:
         self.app.include_router(search_router, prefix="/api/v1", tags=["Search"])
         self.app.include_router(github_router, prefix="/api/v1", tags=["Github"])
         self.app.include_router(agent_router, prefix="/api/v1", tags=["Agents"])
+        self.app.include_router(query_router, prefix="/api/v1", tags=["query"])
 
     def add_health_check(self):
         @self.app.get("/health", tags=["Health"])

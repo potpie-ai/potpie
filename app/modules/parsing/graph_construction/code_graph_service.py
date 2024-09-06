@@ -60,10 +60,10 @@ class CodeGraphService:
                 nodes_to_create = []
                 for node in batch_nodes:
                     node_type = node[1].get("type")
-                    label = node_type
+                    label = node_type if node_type else "Unknown"
                     node_data = {
                         "name": node[0],
-                        "file": node[1].get("file"),
+                        "file": node[1].get("file", ""),
                         "start_line": node[1].get("line", -1),
                         "end_line": node[1].get("end_line", -1),
                         "repoId": project_id,
@@ -71,23 +71,24 @@ class CodeGraphService:
                             node[0], user_id
                         ),
                         "entityId": user_id,
-                        "type": node_type,
-                        "text": node[1].get("text", " "),
+                        "type": node_type if node_type else "Unknown",
+                        "text": node[1].get("text", ""),
                         "labels": ["NODE", label]
                     }
+                    # Remove any null values from node_data
+                    node_data = {k: v for k, v in node_data.items() if v is not None}
                     nodes_to_create.append(node_data)
-                    for node in nodes_to_create:
-                        await search_service.create_search_index(
-                            project_id, node["attributes"]
+                
+                for node in nodes_to_create:
+                    await search_service.create_search_index(
+                        project_id, node
                     )
 
                 session.run(
                     """
-                    CALL apoc.cypher.doIt(
-                        'UNWIND $nodes AS node CALL apoc.create.node(node.labels, node) YIELD node AS n RETURN count(*)',
-                        {nodes: $nodes}
-                    ) YIELD value
-                    RETURN value.count AS created_count
+                    UNWIND $nodes AS node
+                    CALL apoc.create.node(node.labels, node) YIELD node AS n
+                    RETURN count(*) AS created_count
                     """,
                     nodes=nodes_to_create
                 )
@@ -102,13 +103,14 @@ class CodeGraphService:
                 batch_edges = list(nx_graph.edges(data=True))[i : i + batch_size]
                 edges_to_create = []
                 for source, target, data in batch_edges:
-                    
                     edge_data = {
                         "source_id": CodeGraphService.generate_node_id(source, user_id),
                         "target_id": CodeGraphService.generate_node_id(target, user_id),
                         "type": data.get("type", "REFERENCES"),
                         "repoId": project_id,
                     }
+                    # Remove any null values from edge_data
+                    edge_data = {k: v for k, v in edge_data.items() if v is not None}
                     edges_to_create.append(edge_data)
 
                 session.run(

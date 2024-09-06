@@ -451,6 +451,10 @@ class RepoMap:
         file_count = 0
 
         for root, _, files in os.walk(repo_dir):
+            # Ignore folders starting with '.'
+            if os.path.basename(root).startswith('.'):
+                continue
+
             for file in files:
                 file_count += 1
                 logging.info(f"Processing file number: {file_count}")

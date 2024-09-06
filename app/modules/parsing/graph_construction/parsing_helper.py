@@ -30,6 +30,15 @@ class ParseHelper:
         self.db = db_session
 
     @staticmethod
+    def get_directory_size(path):
+        total_size = 0
+        for dirpath, dirnames, filenames in os.walk(path):
+            for f in filenames:
+                fp = os.path.join(dirpath, f)
+                total_size += os.path.getsize(fp)
+        return total_size
+    
+    @staticmethod
     async def clone_or_copy_repository(
         repo_details: RepoDetails, db: Session, user_id: str
     ) -> Tuple[Any, str, Any]:
@@ -49,11 +58,14 @@ class ParseHelper:
 
             # First, attempt to get public repository details
             try:
-                response, owner = github_service.get_public_github_repo(
-                    repo_details.repo_name
+                # response, owner = github_service.get_public_github_repo(
+                #     repo_details.repo_name
+                # )
+                # github = Github()
+                # repo = github.get_repo(repo_details.repo_name)
+                raise HTTPException(
+                    status_code=400, detail="Failed to fetch public repository"
                 )
-                github = Github()
-                repo = github.get_repo(repo_details.repo_name)
             except Exception as public_repo_error:
                 logging.error(
                     f"Failed to fetch public repository: {str(public_repo_error)}"
@@ -153,6 +165,7 @@ class ParseHelper:
 
     @staticmethod
     def detect_repo_language(repo_dir):
+        return "python"
         lang_count = {
             "c_sharp": 0,
             "c": 0,
@@ -240,16 +253,20 @@ class ParseHelper:
         user_id,
         project_id=None,  # Change type to str
     ):
+        full_name = repo.working_tree_dir.split('/')[-1] if isinstance(repo_details, Repo) else repo.full_name
         project = await self.project_manager.get_project_from_db(
-            f"{repo.full_name}", user_id
+            full_name, user_id
         )
-        if not project:
+        if project: 
+            project_id = project.id
+        else:
             await self.project_manager.register_project(
-                f"{repo.full_name}",
+                f"{full_name}",
                 branch,
                 user_id,
                 project_id,
             )
+        
 
         if isinstance(repo_details, Repo):
             extracted_dir = repo_details.working_tree_dir
@@ -383,7 +400,7 @@ class ParseHelper:
 
         Args:
             project_id (str): The ID of the project to check.
-
+            is_local (bool): Whether the project is local or remote.
         Returns:
             bool: True if the commit IDs match, False otherwise.
         """
@@ -395,6 +412,11 @@ class ParseHelper:
 
         current_commit_id = project.get("commit_id")
         repo_name = project.get("project_name")
+
+        if len(repo_name.split("/")) != 2:
+            # Local repo , always parse local repos 
+            return False
+        
         if not repo_name:
             logging.error(f"Repository name not found for project ID {project_id}")
             return False

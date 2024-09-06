@@ -20,9 +20,9 @@ class ParsingController:
     async def parse_directory(repo_details: ParsingRequest, db: Session, user: dict):
         user_id = user["user_id"]
         user_email = user["email"]
-
         project_manager = ProjectService(db)
         parse_helper = ParseHelper(db)
+        repo_name = repo_details.repo_name if repo_details.repo_name else repo_details.repo_path.split("/")[-1]
         project = await project_manager.get_project_from_db(
             repo_details.repo_name, user_id
         )
@@ -76,7 +76,7 @@ class ParsingController:
             project_id, user["user_id"]
         )
         if project:
-            is_latest = await parse_helper.check_commit_status(project_id)
+            is_latest = await parse_helper.check_commit_status(project_id, False)
             if not is_latest:
                 return {"status": "needs update"}
             return {"status": project["status"]}

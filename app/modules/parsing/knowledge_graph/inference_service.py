@@ -1,19 +1,27 @@
 import asyncio
-from typing import Dict, List
+from typing import Dict, List, Optional
+import numpy as np
 from pydantic import BaseModel, Field
 from neo4j import GraphDatabase
 from app.core.config_provider import config_provider
 from langchain.output_parsers import PydanticOutputParser
 from langchain.prompts import ChatPromptTemplate
 from langchain_openai.chat_models import ChatOpenAI
+from sentence_transformers import SentenceTransformer
+import logging
+
+logger = logging.getLogger(__name__)
 
 class DocstringRequest(BaseModel):
     node_id: str
     text: str
 
-class DocstringResponse(BaseModel):
+class DocstringNode(BaseModel):
     node_id: str
-    docstring: str = Field(..., max_length=1000)
+    docstring: str 
+
+class DocstringResponse(BaseModel):
+    docstrings: List[DocstringNode]
 
 class InferenceService:
     def __init__(self):
@@ -22,7 +30,8 @@ class InferenceService:
             neo4j_config["uri"],
             auth=(neo4j_config["username"], neo4j_config["password"])
         )
-        self.llm = ChatOpenAI(model_name="gpt-4-0613", temperature=0)
+        self.llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.3)
+        self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 
     def close(self):
         self.driver.close()
@@ -59,18 +68,25 @@ class InferenceService:
 
         return batches
 
-    async def generate_docstrings(self, repo_id: str) -> Dict[str, str]:
+    async def generate_docstrings(self, repo_id: str) -> Dict[str, DocstringResponse]:
         nodes = self.fetch_graph(repo_id)
         batches = self.batch_nodes(nodes)
         all_docstrings = {}
 
         semaphore = asyncio.Semaphore(10)  # Limit to 10 concurrent tasks
 
-        async def process_batch(batch):
+        async def process_batch(batch, retry=1):
             async with semaphore:
-                prompt = self.create_prompt(batch)
-                response = await self.generate_response(prompt)
-                return self.parse_response(response)
+                response =  await self.generate_response(batch)
+                if isinstance(response, DocstringResponse):
+                    return response
+                else:
+                    retry=retry-1
+                    if retry > 0:
+                        await process_batch(batch, retry=retry)
+                    else:
+                        raise Exception("Failed to generate docstrings for batch")
+
 
         tasks = [process_batch(batch) for batch in batches]
         results = await asyncio.gather(*tasks)
@@ -80,67 +96,122 @@ class InferenceService:
 
         return all_docstrings
 
-    def create_prompt(self, batch: List[DocstringRequest]) -> str:
-        prompt = """
+
+    async def generate_response(self, batch: List[DocstringRequest]) -> str:
+        base_prompt = """
         Generate a detailed technical docstring for each of the following code snippets. 
         The docstring should encapsulate the technical and functional purpose of the code. 
-        Provide the output in the following format:
-
-        node_id1:
-        ```
-        docstring1
-        ```
-
-        node_id2:
-        ```
-        docstring2
-        ```
+        Include details about inputs, outputs, function calls, logical flow, and any other relevant information.
 
         Here are the code snippets:
+        {code_snippets}
 
+        {format_instructions}
         """
+
+        # Prepare the code snippets
+        code_snippets = ""
         for request in batch:
-            prompt += f"{request.node_id}:\n```\n{request.text}\n```\n\n"
+            code_snippets += f"node_id: {request.node_id} \n```\n{request.text}\n```\n\n "
 
-        return prompt
-
-    async def generate_response(self, prompt: str) -> str:
         output_parser = PydanticOutputParser(pydantic_object=DocstringResponse)
-        chat_prompt = ChatPromptTemplate.from_template(template=prompt)
+        
+        chat_prompt = ChatPromptTemplate.from_template(
+            template=base_prompt,
+            partial_variables={
+                "format_instructions": output_parser.get_format_instructions()
+            }
+        )
+
+    
+        import time
+
+        start_time = time.time()
+        print("Starting the inference process...")
+        total_word_count = len(base_prompt.split()) + sum(len(request.text.split()) for request in batch)
+        print(f"Request contains {total_word_count} words.")
+
         chain = chat_prompt | self.llm | output_parser
-        result = await chain.ainvoke({"content": prompt})
+        result = await chain.ainvoke({"code_snippets": code_snippets})
+        end_time = time.time()
+
+        print(f"Start Time: {start_time}, End Time: {end_time}, Total Time Taken: {end_time - start_time} seconds")
         return str(result)
 
-    def parse_response(self, response: str) -> Dict[str, str]:
-        docstrings = {}
-        current_node_id = None
-        current_docstring = []
 
-        for line in response.split('\n'):
-            if line.endswith(':'):
-                if current_node_id and current_docstring:
-                    docstrings[current_node_id] = '\n'.join(current_docstring).strip()
-                current_node_id = line[:-1]
-                current_docstring = []
-            elif line.strip() == '```':
-                continue
-            else:
-                current_docstring.append(line)
+    def generate_embedding(self, text: str) -> List[float]:
+        embedding = self.embedding_model.encode(text)
+        return embedding.tolist()
 
-        if current_node_id and current_docstring:
-            docstrings[current_node_id] = '\n'.join(current_docstring).strip()
-
-        return docstrings
-
-    async def update_neo4j_with_docstrings(self, repo_id: str, docstrings: Dict[str, str]):
-        async with self.driver.session() as session:
-            for node_id, docstring in docstrings.items():
-                await session.run(
-                    "MATCH (n:NODE {repoId: $repo_id, node_id: $node_id}) "
-                    "SET n.docstring = $docstring",
-                    repo_id=repo_id, node_id=node_id, docstring=docstring
+    async def update_neo4j_with_docstrings(self, repo_id: str, docstrings: DocstringResponse):
+        with self.driver.session() as session:
+            batch_size = 300
+            docstring_list = [{"node_id": n.node_id, "docstring": n.docstring, "embedding": self.generate_embedding(n.docstring)} for n in docstrings["docstrings"]]
+            
+            for i in range(0, len(docstring_list), batch_size):
+                batch = docstring_list[i:i+batch_size]
+                session.run(
+                    """
+                    UNWIND $batch AS item
+                    MATCH (n:NODE {repoId: $repo_id, node_id: item.node_id})
+                    SET n.docstring = item.docstring,
+                        n.embedding = item.embedding
+                    """,
+                    batch=batch, repo_id=repo_id
                 )
+
+    def create_vector_index(self):
+        with self.driver.session() as session:
+            session.run(
+                """
+                CREATE VECTOR INDEX docstring_embedding IF NOT EXISTS
+                FOR (n:NODE)
+                ON (n.embedding)
+                OPTIONS {indexConfig: {
+                    `vector.dimensions`: 384,
+                    `vector.similarity_function`: 'cosine'
+                }}
+                """
+            )
 
     async def run_inference(self, repo_id: str):
         docstrings = await self.generate_docstrings(repo_id)
         await self.update_neo4j_with_docstrings(repo_id, docstrings)
+        self.create_vector_index()
+
+    async def query_vector_index(self, query: str, node_ids: Optional[List[str]] = None, top_k: int = 5) -> List[Dict]:
+        embedding = self.generate_embedding(query)
+        
+        with self.driver.session() as session:
+            if node_ids:
+                # Fetch neighboring nodes and perform context-aware search
+                result = session.run(
+                    """
+                    MATCH (n:NODE)
+                    WHERE n.node_id IN $node_ids
+                    CALL {
+                        WITH n
+                        MATCH (n)-[*1..4]-(neighbor:NODE)
+                        RETURN COLLECT(DISTINCT neighbor) AS neighbors
+                    }
+                    WITH COLLECT(DISTINCT n) + REDUCE(acc = [], neighbors IN COLLECT(neighbors) | acc + neighbors) AS context_nodes
+                    UNWIND context_nodes AS context_node
+                    WITH context_node, gds.similarity.cosine(context_node.embedding, $embedding) AS similarity
+                    ORDER BY similarity DESC
+                    LIMIT $top_k
+                    RETURN context_node.node_id AS node_id, context_node.docstring AS docstring, similarity
+                    """,
+                    node_ids=node_ids, embedding=embedding, top_k=top_k
+                )
+            else:
+                # Perform simple vector search
+                result = session.run(
+                    """
+                    CALL db.index.vector.queryNodes('docstring_embedding', $top_k, $embedding)
+                    YIELD node, score
+                    RETURN node.node_id AS node_id, node.docstring AS docstring, score AS similarity
+                    """,
+                    embedding=embedding, top_k=top_k
+                )
+            
+            return [dict(record) for record in result]
