@@ -5,8 +5,9 @@ from .provider_schema import ProviderInfo, SetProviderRequest
 from .provider_service import ProviderService
 
 class ProviderController:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, user_id: str):
         self.service = ProviderService.create(db)
+        self.user_id = user_id 
 
     async def list_available_llms(self) -> List[ProviderInfo]:
         try:

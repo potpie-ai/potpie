@@ -15,7 +15,8 @@ class ProviderAPI:
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
-        controller = ProviderController(db)
+        user_id = user["user_id"]
+        controller = ProviderController(db, user_id)
         return await controller.list_available_llms()
     @staticmethod
     @router.post("/set-global-ai-provider/")

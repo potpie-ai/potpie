@@ -7,14 +7,14 @@ from langchain_openai.chat_models import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 
 class ProviderService:
-    def __init__(self, db, user_id):
+    def __init__(self, db, user_id: str):
         self.db = db
-        self.user_id = user_id
         self.llm = None
+        self.user_id = user_id
 
     @classmethod
-    def create(cls, db, user_id):
-        return cls(db, user_id)
+    def create(cls, db):
+        return cls(db)
 
     async def list_available_llms(self) -> List[ProviderInfo]:
         return [
@@ -41,8 +41,9 @@ class ProviderService:
 
         return {"message": f"AI provider set to {provider}"}
 
-    async def get_llm(self):
+    def get_llm(self):
         # Get user preferences from the database
+        
         user_pref = (
             self.db.query(UserPreferences)
             .filter(UserPreferences.user_id == self.user_id)
