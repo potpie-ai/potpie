@@ -75,17 +75,13 @@ class InferenceService:
 
         semaphore = asyncio.Semaphore(10)  # Limit to 10 concurrent tasks
 
-        async def process_batch(batch, retry=1):
+        async def process_batch(batch):
             async with semaphore:
                 response =  await self.generate_response(batch)
                 if isinstance(response, DocstringResponse):
                     return response
                 else:
-                    retry=retry-1
-                    if retry > 0:
-                        await process_batch(batch, retry=retry)
-                    else:
-                        raise Exception("Failed to generate docstrings for batch")
+                    return await self.generate_docstrings(repo_id)
 
 
         tasks = [process_batch(batch) for batch in batches]
@@ -136,14 +132,14 @@ class InferenceService:
         end_time = time.time()
 
         print(f"Start Time: {start_time}, End Time: {end_time}, Total Time Taken: {end_time - start_time} seconds")
-        return str(result)
+        return result
 
 
     def generate_embedding(self, text: str) -> List[float]:
         embedding = self.embedding_model.encode(text)
         return embedding.tolist()
 
-    async def update_neo4j_with_docstrings(self, repo_id: str, docstrings: DocstringResponse):
+    async def update_neo4j_with_docstrings(self, repo_id: str, docstrings:DocstringResponse):
         with self.driver.session() as session:
             batch_size = 300
             docstring_list = [{"node_id": n.node_id, "docstring": n.docstring, "embedding": self.generate_embedding(n.docstring)} for n in docstrings["docstrings"]]
