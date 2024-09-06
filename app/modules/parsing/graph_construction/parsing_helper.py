@@ -58,14 +58,11 @@ class ParseHelper:
 
             # First, attempt to get public repository details
             try:
-                # response, owner = github_service.get_public_github_repo(
-                #     repo_details.repo_name
-                # )
-                # github = Github()
-                # repo = github.get_repo(repo_details.repo_name)
-                raise HTTPException(
-                    status_code=400, detail="Failed to fetch public repository"
+                response, owner = github_service.get_public_github_repo(
+                    repo_details.repo_name
                 )
+                github = Github()
+                repo = github.get_repo(repo_details.repo_name)
             except Exception as public_repo_error:
                 logging.error(
                     f"Failed to fetch public repository: {str(public_repo_error)}"
@@ -165,7 +162,6 @@ class ParseHelper:
 
     @staticmethod
     def detect_repo_language(repo_dir):
-        return "python"
         lang_count = {
             "c_sharp": 0,
             "c": 0,
@@ -189,6 +185,9 @@ class ParseHelper:
 
         try:
             for root, _, files in os.walk(repo_dir):
+                if os.path.basename(root).startswith('.'):
+                    continue
+
                 for file in files:
                     file_path = os.path.join(root, file)
                     ext = os.path.splitext(file)[1].lower()
@@ -261,7 +260,7 @@ class ParseHelper:
             project_id = project.id
         else:
             await self.project_manager.register_project(
-                f"{full_name}",
+                full_name,
                 branch,
                 user_id,
                 project_id,
@@ -400,7 +399,6 @@ class ParseHelper:
 
         Args:
             project_id (str): The ID of the project to check.
-            is_local (bool): Whether the project is local or remote.
         Returns:
             bool: True if the commit IDs match, False otherwise.
         """
@@ -413,7 +411,7 @@ class ParseHelper:
         current_commit_id = project.get("commit_id")
         repo_name = project.get("project_name")
 
-        if len(repo_name.split("/")) != 2:
+        if len(repo_name.split("/")) >= 2:
             # Local repo , always parse local repos 
             return False
         

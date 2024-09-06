@@ -517,7 +517,7 @@ class RepoMap:
                             (
                                 node_name,
                                 tag.line,
-                                node_end_line,  # Use node's end line instead of tag's
+                                node_end_line,  
                                 node_type,
                                 rel_path,
                                 current_class,
@@ -527,9 +527,9 @@ class RepoMap:
                             node_name,
                             file=rel_path,
                             line=tag.line,
-                            end_line=node_end_line,  # Use node's end line instead of tag's
+                            end_line=node_end_line,  
                             type=tag.type,
-                            text=code_context,  # Add the extracted code
+                            text=code_context,  
                         )
                     elif tag.kind == "ref":
                         source = (
@@ -557,10 +557,9 @@ class RepoMap:
                     rel_path,
                     file=rel_path,
                     type="file",
-                    text=file_content,  # Add the full file content
+                    text=file_content, 
                 )
 
-        # Create edges (unchanged)
         for ident, refs in references.items():
             if ident in defines:
                 if len(defines[ident]) == 1:

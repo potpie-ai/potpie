@@ -164,14 +164,3 @@ class SimpleIO:
 class SimpleTokenCounter:
     def token_count(self, text):
         return len(text.split())
-
-@staticmethod
-def get_node_label(node_type):
-    if node_type == "file":
-        return "File"
-    elif node_type == "class":
-        return "Class"
-    elif node_type == "function":
-        return "Function"
-    else:
-        return "Folder"  # Default to Folder for any other type
