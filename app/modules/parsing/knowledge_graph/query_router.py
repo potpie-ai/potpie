@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
-from app.modules.parsing.knowledge_graph.inference_models import QueryRequest, QueryResponse
+from app.modules.parsing.knowledge_graph.inference_schema import QueryRequest, QueryResponse
 
 router = APIRouter()
 

@@ -9,7 +9,7 @@ from langchain.prompts import ChatPromptTemplate
 from langchain_openai.chat_models import ChatOpenAI
 from sentence_transformers import SentenceTransformer
 import logging
-from app.modules.parsing.knowledge_graph.inference_models import DocstringRequest, DocstringResponse
+from app.modules.parsing.knowledge_graph.inference_schema import DocstringRequest, DocstringResponse
 
 
 logger = logging.getLogger(__name__)
