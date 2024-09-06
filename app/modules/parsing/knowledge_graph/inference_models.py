@@ -22,8 +22,11 @@ class QueryRequest(BaseModel):
     query: str
     node_ids: Optional[List[str]] = None
 
-
 class QueryResponse(BaseModel):
     node_id: str
     docstring: str
+    type: str
+    file: str
+    start_line: int
+    end_line: int
     similarity: float
