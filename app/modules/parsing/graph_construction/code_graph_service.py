@@ -31,7 +31,7 @@ class CodeGraphService:
     def close(self):
         self.driver.close()
 
-    def create_and_store_graph(self, repo_dir, project_id, user_id):
+    async def create_and_store_graph(self, repo_dir, project_id, user_id):
         # Create the graph using RepoMap
         self.repo_map = RepoMap(
             root=repo_dir,
@@ -76,10 +76,10 @@ class CodeGraphService:
                         "labels": ["NODE", label]
                     }
                     nodes_to_create.append(node_data)
-                    # # Create search index for each node
-                    # asyncio.run(
-                    #     search_service.create_search_index(project_id, node_data)
-                    # )
+                    for node in nodes_to_create:
+                        await search_service.create_search_index(
+                            project_id, node["attributes"]
+                    )
 
                 session.run(
                     """
@@ -92,8 +92,7 @@ class CodeGraphService:
                     nodes=nodes_to_create
                 )
 
-            # # Commit the search indices
-            # asyncio.run(search_service.commit_indices())
+            await search_service.commit_indices()
 
             relationship_count = nx_graph.number_of_edges()
             logging.info(f"Creating {relationship_count} relationships")
