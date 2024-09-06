@@ -175,29 +175,58 @@ class InferenceService:
         await self.update_neo4j_with_docstrings(repo_id, docstrings)
         self.create_vector_index()
 
-    async def query_vector_index(self, query: str, node_ids: Optional[List[str]] = None, top_k: int = 5) -> List[Dict]:
+    async def query_vector_index(self, project_id: str, query: str, node_ids: Optional[List[str]] = None, top_k: int = 5) -> List[Dict]:
         embedding = self.generate_embedding(query)
         
         with self.driver.session() as session:
             if node_ids:
-                # Fetch neighboring nodes and perform context-aware search
-                result = session.run(
+                # Part 1: Fetch neighboring nodes
+                result_neighbors = session.run(
                     """
                     MATCH (n:NODE)
-                    WHERE n.node_id IN $node_ids
+                    WHERE n.repoId = $project_id AND n.node_id IN $node_ids
                     CALL {
                         WITH n
                         MATCH (n)-[*1..4]-(neighbor:NODE)
                         RETURN COLLECT(DISTINCT neighbor) AS neighbors
                     }
-                    WITH COLLECT(DISTINCT n) + REDUCE(acc = [], neighbors IN COLLECT(neighbors) | acc + neighbors) AS context_nodes
-                    UNWIND context_nodes AS context_node
-                    WITH context_node, gds.similarity.cosine(context_node.embedding, $embedding) AS similarity
+                    RETURN COLLECT(DISTINCT n) + REDUCE(acc = [], neighbors IN COLLECT(neighbors) | acc + neighbors) AS context_nodes
+                    """,
+                    project_id=project_id, node_ids=node_ids
+                )
+                context_nodes = result_neighbors.single()['context_nodes']
+                
+                # Extract relevant properties from context nodes
+                context_node_data = [
+                    {
+                        "node_id": node["node_id"],
+                        "embedding": node["embedding"],
+                        "docstring": node.get("docstring", ""),
+                        "type": node.get("type", "Unknown"),
+                        "file": node.get("file", ""),
+                        "start_line": node.get("start_line", -1),
+                        "end_line": node.get("end_line", -1)
+                    }
+                    for node in context_nodes
+                ]
+                
+                # Part 2: Perform similarity search on context nodes
+                result = session.run(
+                    """
+                    UNWIND $context_node_data AS context_node
+                    WITH context_node,
+                         vector.similarity.cosine(context_node.embedding, $embedding) AS similarity
                     ORDER BY similarity DESC
                     LIMIT $top_k
-                    RETURN context_node.node_id AS node_id, context_node.docstring AS docstring, similarity
+                    RETURN context_node.node_id AS node_id, 
+                           context_node.docstring AS docstring, 
+                           context_node.type AS type,
+                           context_node.file AS file,
+                           context_node.start_line AS start_line,
+                           context_node.end_line AS end_line,
+                           similarity
                     """,
-                    node_ids=node_ids, embedding=embedding, top_k=top_k
+                    context_node_data=context_node_data, embedding=embedding, top_k=top_k
                 )
             else:
                 # Perform simple vector search
@@ -205,9 +234,18 @@ class InferenceService:
                     """
                     CALL db.index.vector.queryNodes('docstring_embedding', $top_k, $embedding)
                     YIELD node, score
-                    RETURN node.node_id AS node_id, node.docstring AS docstring, score AS similarity
+                    WHERE node.repoId = $project_id
+                    RETURN node.node_id AS node_id, 
+                           node.docstring AS docstring, 
+                           node.type AS type,
+                           node.file AS file,
+                           node.start_line AS start_line,
+                           node.end_line AS end_line,
+                           score AS similarity
                     """,
-                    embedding=embedding, top_k=top_k
+                    project_id=project_id, embedding=embedding, top_k=top_k
                 )
             
+            # Ensure all fields are included in the final output
             return [dict(record) for record in result]
+            
