@@ -6,7 +6,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import Base, SessionLocal, engine
-from app.core.mongo_manager import MongoManager
 from app.modules.auth.auth_router import auth_router
 from app.modules.conversations.conversations_router import (
     router as conversations_router,
@@ -43,16 +42,7 @@ class MainApp:
         else:
             FirebaseSetup.firebase_init()
         self.include_routers()
-        self.verify_mongodb_connection()
 
-    def verify_mongodb_connection(self):
-        try:
-            mongo_manager = MongoManager.get_instance()
-            mongo_manager.verify_connection()
-            logging.info("MongoDB connection verified successfully")
-        except Exception as e:
-            logging.error(f"Failed to verify MongoDB connection: {str(e)}")
-            raise
 
     def setup_cors(self):
         origins = ["*"]
@@ -111,9 +101,6 @@ class MainApp:
             raise
         finally:
             db.close()
-
-    def shutdown_event(self):
-        MongoManager.close_connection()
 
     def run(self):
         self.add_health_check()

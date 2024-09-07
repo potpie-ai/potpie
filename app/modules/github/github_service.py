@@ -9,6 +9,7 @@ from github.Auth import AppAuth
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
+from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.users.user_service import UserService
@@ -220,3 +221,81 @@ class GithubService:
             )
 
         return response.json(), owner
+
+
+    @staticmethod
+    def get_file_content(repo_name: str, file_path: str, start_line: int, end_line: int):
+        try:
+            github_client, _, _, _ = GithubService.get_github_repo_details(repo_name)
+            repo = github_client.get_repo(repo_name)
+            file_content = repo.get_contents(file_path).decoded_content.decode('utf-8')
+            
+            lines = file_content.split('\n')
+            selected_lines = lines[start_line - 1:end_line]
+            
+            return '\n'.join(selected_lines)
+        except Exception as e:
+            logger.error(f"Error fetching file content for {repo_name}/{file_path}: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=404,
+                detail=f"File not found or error fetching content: {str(e)}",
+            )
+
+    @staticmethod
+    def fetch_code_for_node(repo_name: str, node_id: str):
+        try:
+            # Parse the node_id to extract file path and line numbers
+            file_path, line_info = node_id.split(':')
+            start_line, end_line = map(int, line_info.split('-'))
+
+            # Use the existing method to get file content
+            code_content = GithubService.get_file_content(repo_name, file_path, start_line, end_line)
+            
+            return {
+                "repo_name": repo_name,
+                "file_path": file_path,
+                "start_line": start_line,
+                "end_line": end_line,
+                "code_content": code_content
+            }
+        except Exception as e:
+            logger.error(f"Error fetching code for node {node_id} in repo {repo_name}: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=404,
+                detail=f"Failed to fetch code for node: {str(e)}",
+            )
+
+    @staticmethod
+    def fetch_code_for_node_name(repo_name: str, node_name: str, db: Session):
+        try:
+            # Use CodeGraphService to find the node by name
+            code_graph_service = CodeGraphService(db)
+            node = code_graph_service.get_node_by_name(repo_name, node_name)
+
+            if not node:
+                raise HTTPException(status_code=404, detail=f"Node '{node_name}' not found in repo '{repo_name}'")
+
+            # Extract file path and line numbers from the node
+            file_path = node['file_path']
+            start_line = node['start_line']
+            end_line = node['end_line']
+
+            # Use the existing method to get file content
+            code_content = GithubService.get_file_content(repo_name, file_path, start_line, end_line)
+            
+            return {
+                "repo_name": repo_name,
+                "node_name": node_name,
+                "file_path": file_path,
+                "start_line": start_line,
+                "end_line": end_line,
+                "code_content": code_content
+            }
+        except HTTPException as he:
+            raise he
+        except Exception as e:
+            logger.error(f"Error fetching code for node '{node_name}' in repo '{repo_name}': {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to fetch code for node: {str(e)}",
+            )
