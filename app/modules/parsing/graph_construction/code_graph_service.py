@@ -1,4 +1,3 @@
-import asyncio
 import hashlib
 import logging
 
@@ -31,7 +30,7 @@ class CodeGraphService:
     def close(self):
         self.driver.close()
 
-    def create_and_store_graph(self, repo_dir, project_id, user_id):
+    async def create_and_store_graph(self, repo_dir, project_id, user_id):
         # Create the graph using RepoMap
         self.repo_map = RepoMap(
             root=repo_dir,
@@ -59,30 +58,37 @@ class CodeGraphService:
                 batch_nodes = list(nx_graph.nodes(data=True))[i : i + batch_size]
                 nodes_to_create = []
                 for node in batch_nodes:
+                    node_type = node[1].get("type")
+                    label = node_type if node_type else "Unknown"
                     node_data = {
                         "name": node[0],
                         "file": node[1].get("file", ""),
                         "start_line": node[1].get("line", -1),
+                        "end_line": node[1].get("end_line", -1),
                         "repoId": project_id,
-                        "node_id": CodeGraphService.generate_node_id(
-                            node[1].get("file", ""), user_id
-                        ),
+                        "node_id": CodeGraphService.generate_node_id(node[0], user_id),
                         "entityId": user_id,
+                        "type": node_type if node_type else "Unknown",
+                        "text": node[1].get("text", ""),
+                        "labels": ["NODE", label],
                     }
+                    # Remove any null values from node_data
+                    node_data = {k: v for k, v in node_data.items() if v is not None}
                     nodes_to_create.append(node_data)
-                    # Create search index for each node
-                    asyncio.run(
-                        search_service.create_search_index(project_id, node_data)
-                    )
+
+                for node in nodes_to_create:
+                    await search_service.create_search_index(project_id, node)
 
                 session.run(
-                    "UNWIND $nodes AS node "
-                    "CREATE (d:Definition {name: node.name, file: node.file, start_line: node.start_line, repoId: node.repoId, node_id: node.node_id, entityId: node.entityId})",
+                    """
+                    UNWIND $nodes AS node
+                    CALL apoc.create.node(node.labels, node) YIELD node AS n
+                    RETURN count(*) AS created_count
+                    """,
                     nodes=nodes_to_create,
                 )
 
-            # Commit the search indices
-            asyncio.run(search_service.commit_indices())
+            await search_service.commit_indices()
 
             relationship_count = nx_graph.number_of_edges()
             logging.info(f"Creating {relationship_count} relationships")
@@ -90,22 +96,47 @@ class CodeGraphService:
             # Create relationships in batches
             for i in range(0, relationship_count, batch_size):
                 batch_edges = list(nx_graph.edges(data=True))[i : i + batch_size]
+                edges_to_create = []
+                for source, target, data in batch_edges:
+                    edge_data = {
+                        "source_id": CodeGraphService.generate_node_id(source, user_id),
+                        "target_id": CodeGraphService.generate_node_id(target, user_id),
+                        "type": data.get("type", "REFERENCES"),
+                        "repoId": project_id,
+                    }
+                    # Remove any null values from edge_data
+                    edge_data = {k: v for k, v in edge_data.items() if v is not None}
+                    edges_to_create.append(edge_data)
+
                 session.run(
                     """
                     UNWIND $edges AS edge
-                    MATCH (s:Definition {name: edge.source}), (t:Definition {name: edge.target})
-                    CREATE (s)-[:REFERENCES {type: edge.type}]->(t)
+                    MATCH (source:NODE {node_id: edge.source_id, repoId: edge.repoId})
+                    MATCH (target:NODE {node_id: edge.target_id, repoId: edge.repoId})
+                    CALL apoc.create.relationship(source, edge.type, {repoId: edge.repoId}, target) YIELD rel
+                    RETURN count(rel) AS created_count
                     """,
-                    edges=[
-                        {"source": edge[0], "target": edge[1], "type": edge[2]["type"]}
-                        for edge in batch_edges
-                    ],
+                    edges=edges_to_create,
                 )
 
             end_time = time.time()  # End timing
             logging.info(
                 f"Time taken to create graph and search index: {end_time - start_time:.2f} seconds"
             )  # Log time taken
+
+    async def cleanup_graph(self, project_id: str):
+        with self.driver.session() as session:
+            session.run(
+                """
+                MATCH (n {repoId: $project_id})
+                DETACH DELETE n
+                """,
+                project_id=project_id,
+            )
+
+        # Clean up search index
+        search_service = SearchService(self.db)
+        await search_service.delete_project_index(project_id)
 
     def query_graph(self, query):
         with self.driver.session() as session:
