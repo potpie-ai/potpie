@@ -2,6 +2,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from typing import AsyncGenerator, List
+import json
 
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -316,11 +317,11 @@ class ConversationService:
             )
 
         try:
-            async for chunk in agent.run(
+            async for response in agent.run(
                 query, conversation.project_ids[0], user_id, conversation.id
             ):
-                if chunk:
-                    yield chunk
+                yield json.dumps(response)
+            
             logger.info(
                 f"Generated and streamed AI response for conversation {conversation.id} for user {user_id} using agent {conversation.agent_ids[0]}"
             )

@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from functools import lru_cache
-from typing import AsyncGenerator, Dict, List
+from typing import AsyncGenerator, Dict, List, Optional
 
 from langchain.schema import HumanMessage, SystemMessage
 from langchain_core.prompts import (
@@ -19,6 +19,7 @@ from app.modules.intelligence.memory.chat_history_service import ChatHistoryServ
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.tools.code_tools import CodeTools
+from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +27,13 @@ logger = logging.getLogger(__name__)
 class DebuggingAgent:
     def __init__(self, openai_key: str, db: Session):
         self.llm = ChatOpenAI(
-            api_key=openai_key, temperature=0.7, model_kwargs={"stream": True}
+            api_key=openai_key, temperature=0.7, model="gpt-4o-mini", model_kwargs={"stream": True}
         )
         self.history_manager = ChatHistoryService(db)
         self.tools = CodeTools.get_tools()
         self.prompt_service = PromptService(db)
         self.chain = None
+        self.inference_service = InferenceService()
 
     @lru_cache(maxsize=2)
     async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
@@ -58,11 +60,11 @@ class DebuggingAgent:
         )
         return prompt_template | self.llm
 
-    async def _run_tools(self, query: str, project_id: str) -> List[SystemMessage]:
+    async def _run_tools(self, query: str, project_id: str, node_ids: List[str] = []) -> List[SystemMessage]:
         tool_results = []
         for tool in self.tools:
             try:
-                tool_input = {"query": query, "project_id": project_id}
+                tool_input = {"query": query, "project_id": project_id, "node_ids": node_ids}
                 logger.debug(f"Running tool {tool.name} with input: {tool_input}")
 
                 tool_result = (
@@ -80,6 +82,9 @@ class DebuggingAgent:
 
         return tool_results
 
+    async def query_vector_index(self, project_id: str, query: str, node_ids: Optional[List[str]] = None, top_k: int = 5) -> List[Dict]:
+        return await self.inference_service.query_vector_index(project_id, query, node_ids, top_k)
+
     async def run(
         self,
         query: str,
@@ -88,22 +93,24 @@ class DebuggingAgent:
         conversation_id: str,
         logs: str = "",
         stacktrace: str = "",
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[Dict, None]:
         try:
             if not self.chain:
                 self.chain = await self._create_chain()
 
             history = self.history_manager.get_session_history(user_id, conversation_id)
             validated_history = [
-                (
-                    HumanMessage(content=str(msg))
-                    if isinstance(msg, (str, int, float))
-                    else msg
-                )
+                (HumanMessage(content=str(msg)) if isinstance(msg, (str, int, float)) else msg)
                 for msg in history
             ]
 
             tool_results = await self._run_tools(query, project_id)
+            
+            # Extract unique filenames for citations
+            citations = list(set(result.content.split('file=', 1)[1].split(',')[0].strip().strip('"').strip("'") for result in tool_results if 'file=' in result.content))
+            
+            # Yield the citations first
+            yield {"citations": citations, "message": ""}
 
             full_query = f"Query: {query}\nProject ID: {project_id}\nLogs: {logs}\nStacktrace: {stacktrace}"
             inputs = {
@@ -121,7 +128,7 @@ class DebuggingAgent:
                 self.history_manager.add_message_chunk(
                     conversation_id, content, MessageType.AI_GENERATED
                 )
-                yield content
+                yield {"citations": citations, "message": full_response}
 
             logger.debug(f"Full LLM response: {full_response}")
 
@@ -131,4 +138,4 @@ class DebuggingAgent:
 
         except Exception as e:
             logger.error(f"Error during DebuggingAgent run: {str(e)}", exc_info=True)
-            yield f"An error occurred: {str(e)}"
+            yield {"citations": [], "message": f"An error occurred: {str(e)}"}
