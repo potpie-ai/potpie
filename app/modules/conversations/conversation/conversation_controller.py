@@ -71,7 +71,6 @@ class ConversationController:
     async def post_message(
         self, conversation_id: str, message: MessageRequest, user_id: str
     ) -> AsyncGenerator[str, None]:
-        print(2, "post_message", message)
         try:
             async for chunk in self.service.store_message(
                 conversation_id, message, MessageType.HUMAN, user_id

@@ -74,7 +74,6 @@ class ConversationAPI:
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
-        print(1, user_id)
         controller = ConversationController(db, user_id)
         message_stream = controller.post_message(conversation_id, message, user_id)
         return StreamingResponse(message_stream, media_type="text/event-stream")

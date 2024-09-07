@@ -25,9 +25,6 @@ from app.modules.conversations.message.message_schema import (
     MessageResponse,
 )
 from app.modules.intelligence.agents.debugging_agent import DebuggingAgent
-from app.modules.intelligence.agents.intelligent_tool_using_orchestrator import (
-    IntelligentToolUsingOrchestrator,
-)
 from app.modules.intelligence.agents.qna_agent import QNAAgent
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import ProviderService
@@ -57,7 +54,6 @@ class ConversationService:
         db: Session,
         project_service: ProjectService,
         history_manager: ChatHistoryService,
-        orchestrator: IntelligentToolUsingOrchestrator,
         debugging_agent: DebuggingAgent,
         codebase_qna_agent: QNAAgent,
         provider_service: ProviderService,
@@ -69,7 +65,6 @@ class ConversationService:
         self.history_manager = history_manager
         self.provider_service = provider_service
         self.agents = {
-            "chat_llm_orchestrator": orchestrator,
             "debugging_agent": debugging_agent,
             "codebase_qna_agent": codebase_qna_agent,
         }
@@ -80,15 +75,13 @@ class ConversationService:
         project_service = ProjectService(db)
         history_manager = ChatHistoryService(db)
         provider_service = ProviderService(db, user_id)
-        instance = cls(db, project_service, history_manager, None, None, None, provider_service, user_id)
-        orchestrator = instance._initialize_orchestrator(db)
+        instance = cls(db, project_service, history_manager, None, None, provider_service, user_id)
         debugging_agent = instance._initialize_debugging_agent(db)
         qna_agent = instance._initialize_qna_agent(db)
         return cls(
             db,
             project_service,
             history_manager,
-            orchestrator,
             debugging_agent,
             qna_agent,
             provider_service,
@@ -113,14 +106,6 @@ class ConversationService:
     #             "The OpenAI API key is not set in the environment variable 'OPENAI_API_KEY'."
     #         )
     #     return key
-
-   
-    def _initialize_orchestrator(self,
-        db: Session
-    ) -> IntelligentToolUsingOrchestrator:
-        llm = self.provider_service.get_llm()
-        tools = [GoogleTrendsTool(), WikipediaTool(), DuckDuckGoTool()]
-        return IntelligentToolUsingOrchestrator(llm, tools, db)
 
     async def create_conversation(
         self, conversation: CreateConversationRequest, user_id: str
@@ -208,19 +193,15 @@ class ConversationService:
         message_type: MessageType,
         user_id: str,
     ) -> AsyncGenerator[str, None]:
-        print(3, "store_message", message)
         try:
             self.history_manager.add_message_chunk(
                 conversation_id, message.content, message_type, user_id
             )
-            print(4, "msg buffer added" )
             self.history_manager.flush_message_buffer(
                 conversation_id, message_type, user_id
             )
-            print(5, "msg buffer flushed" )
             logger.info(f"Stored message in conversation {conversation_id}")
             if message_type == MessageType.HUMAN:
-                print(6, message_type)
                 async for chunk in self._generate_and_stream_ai_response(
                     message.content, conversation_id, user_id
                 ):
@@ -319,7 +300,6 @@ class ConversationService:
     async def _generate_and_stream_ai_response(
         self, query: str, conversation_id: str, user_id: str
     ) -> AsyncGenerator[str, None]:
-        print(7, "generate_and_stream_ai_response", query)
         conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
         if not conversation:
             raise ConversationNotFoundError(
@@ -332,7 +312,6 @@ class ConversationService:
             )
 
         try:
-            print(8, "trying to run agent")
             async for chunk in agent.run(
                 query, conversation.project_ids[0], user_id, conversation.id
             ):
