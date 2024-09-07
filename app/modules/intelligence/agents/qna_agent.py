@@ -57,26 +57,27 @@ class QNAAgent:
         return prompt_template | self.llm
 
     async def _run_tools(self, query: str, project_id: str) -> List[SystemMessage]:
-        tool_results = []
-        for tool in self.tools:
-            try:
-                tool_input = {"query": query, "project_id": project_id}
-                logger.debug(f"Running tool {tool.name} with input: {tool_input}")
+        # tool_results = []
+        # for tool in self.tools:
+        #     try:
+        #         tool_input = {"query": query, "project_id": project_id}
+        #         logger.debug(f"Running tool {tool.name} with input: {tool_input}")
 
-                tool_result = (
-                    await tool.arun(tool_input)
-                    if hasattr(tool, "arun")
-                    else await asyncio.to_thread(tool.run, tool_input)
-                )
+        #         tool_result = (
+        #             await tool.arun(tool_input)
+        #             if hasattr(tool, "arun")
+        #             else await asyncio.to_thread(tool.run, tool_input)
+        #         )
 
-                if tool_result:
-                    tool_results.append(
-                        SystemMessage(content=f"Tool {tool.name} result: {tool_result}")
-                    )
-            except Exception as e:
-                logger.error(f"Error running tool {tool.name}: {str(e)}", exc_info=True)
+        #         if tool_result:
+        #             tool_results.append(
+        #                 SystemMessage(content=f"Tool {tool.name} result: {tool_result}")
+        #             )
+        #     except Exception as e:
+        #         logger.error(f"Error running tool {tool.name}: {str(e)}", exc_info=True)
 
-        return tool_results
+        # return tool_results
+        return [SystemMessage(content=f"Tool test result for query: {query}, project_id: {project_id}")]
 
     async def run(
         self,
@@ -86,10 +87,12 @@ class QNAAgent:
         conversation_id: str,
     ) -> AsyncGenerator[str, None]:
         try:
+            print(10)
             if not self.chain:
                 self.chain = await self._create_chain()
 
             history = self.history_manager.get_session_history(user_id, conversation_id)
+            print(11, history)
             validated_history = [
                 (
                     HumanMessage(content=str(msg))
@@ -99,8 +102,9 @@ class QNAAgent:
                 for msg in history
             ]
 
-            tool_results = await self._run_tools(query, project_id)
-
+            # tool_results = await self._run_tools(query, project_id)
+            tool_results = [SystemMessage(content=f"Tool result: Hardcoded tool output for {query}")]
+            print(12, tool_results)
             inputs = {
                 "history": validated_history,
                 "tool_results": tool_results,
@@ -113,6 +117,7 @@ class QNAAgent:
             async for chunk in self.chain.astream(inputs):
                 content = chunk.content if hasattr(chunk, "content") else str(chunk)
                 full_response += content
+                print(13, content)
                 self.history_manager.add_message_chunk(
                     conversation_id, content, MessageType.AI_GENERATED
                 )

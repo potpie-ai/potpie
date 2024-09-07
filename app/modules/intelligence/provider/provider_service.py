@@ -13,8 +13,8 @@ class ProviderService:
         self.user_id = user_id
 
     @classmethod
-    def create(cls, db):
-        return cls(db)
+    def create(cls, db, user_id: str):
+        return cls(db, user_id)
 
     async def list_available_llms(self) -> List[ProviderInfo]:
         return [
@@ -56,13 +56,13 @@ class ProviderService:
         if preferred_provider == "openai":
             secret = SecretManager.get_secret("openai", self.user_id)
             openai_key = secret.get("api_key", os.getenv("OPENAI_API_KEY"))  # Fallback to env variable if no key
-            self.llm = ChatOpenAI(api_key=openai_key, temperature=0.7, model_kwargs={"stream": True})
+            self.llm = ChatOpenAI(model_name="gpt-4o",api_key=openai_key, temperature=0.7, model_kwargs={"stream": True})
         
         elif preferred_provider == "anthropic":
             secret = SecretManager.get_secret("anthropic", self.user_id)
             anthropic_key = secret.get("api_key", os.getenv("ANTHROPIC_API_KEY"))  # Fallback to env variable if no key
             self.llm = ChatAnthropic(
-                model="claude-3-sonnet-20240229",
+                model="claude-3-5-sonnet-20240620",
                 temperature=0,
                 max_tokens=1024,
                 api_key=anthropic_key,
@@ -72,3 +72,34 @@ class ProviderService:
             raise ValueError("Invalid LLM provider selected.")
         
         return self.llm
+
+    def get_mini_llm(self):
+            # Get user preferences from the database
+            user_pref = (
+                self.db.query(UserPreferences)
+                .filter(UserPreferences.user_id == self.user_id)
+                .first()
+            )
+            
+            # Determine preferred provider (default to 'openai')
+            preferred_provider = user_pref.preferences.get("llm_provider", "openai") if user_pref else "openai"
+            
+            if preferred_provider == "openai":
+                secret = SecretManager.get_secret("openai", self.user_id)
+                openai_key = secret.get("api_key", os.getenv("OPENAI_API_KEY"))  # Fallback to env variable if no key
+                self.llm = ChatOpenAI(model_name="gpt-4o-mini", api_key=openai_key, temperature=0.7)
+            
+            elif preferred_provider == "anthropic":
+                secret = SecretManager.get_secret("anthropic", self.user_id)
+                anthropic_key = secret.get("api_key", os.getenv("ANTHROPIC_API_KEY"))  # Fallback to env variable if no key
+                self.llm = ChatAnthropic(
+                    model="claude-3-haiku-20240307",
+                    temperature=0,
+                    max_tokens=1024,
+                    api_key=anthropic_key,
+                )
+
+            else:
+                raise ValueError("Invalid LLM provider selected.")
+            
+            return self.llm

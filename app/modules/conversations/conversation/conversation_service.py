@@ -95,12 +95,12 @@ class ConversationService:
             user_id 
         )
 
-    @staticmethod
+    
     def _initialize_debugging_agent(self, db: Session) -> DebuggingAgent:
         llm = self.provider_service.get_llm()
         return DebuggingAgent(llm, db)
 
-    @staticmethod
+    
     def _initialize_qna_agent(self, db: Session) -> QNAAgent:
         llm = self.provider_service.get_llm()
         return QNAAgent(llm, db)
@@ -208,15 +208,19 @@ class ConversationService:
         message_type: MessageType,
         user_id: str,
     ) -> AsyncGenerator[str, None]:
+        print(3, "store_message", message)
         try:
             self.history_manager.add_message_chunk(
                 conversation_id, message.content, message_type, user_id
             )
+            print(4, "msg buffer added" )
             self.history_manager.flush_message_buffer(
                 conversation_id, message_type, user_id
             )
+            print(5, "msg buffer flushed" )
             logger.info(f"Stored message in conversation {conversation_id}")
             if message_type == MessageType.HUMAN:
+                print(6, message_type)
                 async for chunk in self._generate_and_stream_ai_response(
                     message.content, conversation_id, user_id
                 ):
@@ -315,6 +319,7 @@ class ConversationService:
     async def _generate_and_stream_ai_response(
         self, query: str, conversation_id: str, user_id: str
     ) -> AsyncGenerator[str, None]:
+        print(7, "generate_and_stream_ai_response", query)
         conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
         if not conversation:
             raise ConversationNotFoundError(
@@ -327,6 +332,7 @@ class ConversationService:
             )
 
         try:
+            print(8, "trying to run agent")
             async for chunk in agent.run(
                 query, conversation.project_ids[0], user_id, conversation.id
             ):

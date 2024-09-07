@@ -25,5 +25,6 @@ class ProviderAPI:
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
-        controller = ProviderController(db)
+        user_id = user["user_id"]
+        controller = ProviderController(db, user_id)
         return await controller.set_global_ai_provider(user["user_id"], provider_request)
