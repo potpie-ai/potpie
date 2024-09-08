@@ -2,9 +2,10 @@ import enum
 from datetime import datetime
 
 from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, String
+from sqlalchemy.orm import relationship
 
 from app.core.database import Base
-from sqlalchemy.orm import relationship
+
 
 class TaskType(enum.Enum):
     CODEBASE_PROCESSING = "CODE_INFERENCE"

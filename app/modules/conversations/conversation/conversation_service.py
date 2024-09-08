@@ -1,5 +1,4 @@
 import logging
-import os
 from datetime import datetime, timezone
 from typing import AsyncGenerator, List
 
@@ -28,9 +27,6 @@ from app.modules.intelligence.agents.debugging_agent import DebuggingAgent
 from app.modules.intelligence.agents.qna_agent import QNAAgent
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import ProviderService
-from app.modules.intelligence.tools.duckduckgo_search_tool import DuckDuckGoTool
-from app.modules.intelligence.tools.google_trends_tool import GoogleTrendsTool
-from app.modules.intelligence.tools.wikipedia_tool import WikipediaTool
 from app.modules.projects.projects_service import ProjectService
 
 logger = logging.getLogger(__name__)
@@ -57,7 +53,7 @@ class ConversationService:
         debugging_agent: DebuggingAgent,
         codebase_qna_agent: QNAAgent,
         provider_service: ProviderService,
-        user_id: str
+        user_id: str,
     ):
         self.db = db
         self.user_id = user_id
@@ -75,7 +71,9 @@ class ConversationService:
         project_service = ProjectService(db)
         history_manager = ChatHistoryService(db)
         provider_service = ProviderService(db, user_id)
-        instance = cls(db, project_service, history_manager, None, None, provider_service, user_id)
+        instance = cls(
+            db, project_service, history_manager, None, None, provider_service, user_id
+        )
         debugging_agent = instance._initialize_debugging_agent(db)
         qna_agent = instance._initialize_qna_agent(db)
         return cls(
@@ -85,27 +83,16 @@ class ConversationService:
             debugging_agent,
             qna_agent,
             provider_service,
-            user_id 
+            user_id,
         )
 
-    
     def _initialize_debugging_agent(self, db: Session) -> DebuggingAgent:
         llm = self.provider_service.get_llm()
         return DebuggingAgent(llm, db)
 
-    
     def _initialize_qna_agent(self, db: Session) -> QNAAgent:
         llm = self.provider_service.get_llm()
         return QNAAgent(llm, db)
-
-    # @staticmethod
-    # def _get_openai_key() -> str:
-    #     key = os.getenv("OPENAI_API_KEY")
-    #     if not key:
-    #         raise ConversationServiceError(
-    #             "The OpenAI API key is not set in the environment variable 'OPENAI_API_KEY'."
-    #         )
-    #     return key
 
     async def create_conversation(
         self, conversation: CreateConversationRequest, user_id: str

@@ -1,12 +1,16 @@
 from typing import List
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
+
 from .provider_controller import ProviderController
 from .provider_schema import ProviderInfo, SetProviderRequest
 
 router = APIRouter()
+
 
 class ProviderAPI:
     @staticmethod
@@ -18,6 +22,7 @@ class ProviderAPI:
         user_id = user["user_id"]
         controller = ProviderController(db, user_id)
         return await controller.list_available_llms()
+
     @staticmethod
     @router.post("/set-global-ai-provider/")
     async def set_global_ai_provider(
@@ -27,4 +32,6 @@ class ProviderAPI:
     ):
         user_id = user["user_id"]
         controller = ProviderController(db, user_id)
-        return await controller.set_global_ai_provider(user["user_id"], provider_request)
+        return await controller.set_global_ai_provider(
+            user["user_id"], provider_request
+        )
