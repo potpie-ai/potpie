@@ -44,7 +44,6 @@ sentence-transformers
 scikit-learn
 requests
 embedchain
-embedchain[weaviate]
 mongoengine
 resend
 transformers
