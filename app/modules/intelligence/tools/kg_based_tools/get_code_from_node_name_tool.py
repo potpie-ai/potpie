@@ -1,6 +1,6 @@
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from neo4j import GraphDatabase
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.github.github_service import GithubService
 
@@ -13,10 +13,10 @@ class GetCodeFromNodeNameTool(BaseTool):
     description = "Retrieves code for a specific node in a repository given its node name"
     args_schema = GetCodeFromNodeNameInput
 
-    def __init__(self, db: Session):
+    def __init__(self, graph_db: GraphDatabase):
         super().__init__()
-        self.db = db
-        self.code_graph_service = CodeGraphService(db)
+        self.graph_db = graph_db
+        self.code_graph_service = CodeGraphService(graph_db)
 
     def _run(self, repo_name: str, node_name: str) -> dict:
         query = (

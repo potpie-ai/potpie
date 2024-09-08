@@ -5,6 +5,7 @@ from typing import AsyncGenerator, List
 
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
+from neo4j import GraphDatabase
 from uuid6 import uuid7
 
 from app.modules.conversations.conversation.conversation_model import (
@@ -24,15 +25,10 @@ from app.modules.conversations.message.message_schema import (
     MessageRequest,
     MessageResponse,
 )
-from app.modules.intelligence.agents.debugging_agent import DebuggingAgent
-from app.modules.intelligence.agents.intelligent_tool_using_orchestrator import (
-    IntelligentToolUsingOrchestrator,
-)
-from app.modules.intelligence.agents.qna_agent import QNAAgent
+from app.modules.intelligence.agents.langchain_agents.debugging_agent import DebuggingAgent
+from app.modules.intelligence.agents.langchain_agents.qna_agent import QNAAgent
+from app.modules.intelligence.agents.langchain_agents.code_query_agent import CodeRetrievalAgent
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
-from app.modules.intelligence.tools.duckduckgo_search_tool import DuckDuckGoTool
-from app.modules.intelligence.tools.google_trends_tool import GoogleTrendsTool
-from app.modules.intelligence.tools.wikipedia_tool import WikipediaTool
 from app.modules.projects.projects_service import ProjectService
 
 logger = logging.getLogger(__name__)
@@ -53,46 +49,49 @@ class MessageNotFoundError(ConversationServiceError):
 class ConversationService:
     def __init__(
         self,
-        db: Session,
+        sql_db: Session,
+        graph_db: GraphDatabase,
         project_service: ProjectService,
         history_manager: ChatHistoryService,
-        orchestrator: IntelligentToolUsingOrchestrator,
         debugging_agent: DebuggingAgent,
         codebase_qna_agent: QNAAgent,
+        code_retrieval_agent: CodeRetrievalAgent,
     ):
-        self.db = db
+        self.sql_db = sql_db
+        self.graph_db = graph_db
         self.project_service = project_service
         self.history_manager = history_manager
         self.agents = {
-            "chat_llm_orchestrator": orchestrator,
             "debugging_agent": debugging_agent,
             "codebase_qna_agent": codebase_qna_agent,
+            "code_retrieval_agent": code_retrieval_agent,
         }
 
     @classmethod
-    def create(cls, db: Session):
-        project_service = ProjectService(db)
-        history_manager = ChatHistoryService(db)
+    def create(cls, sql_db: Session, graph_db: GraphDatabase):
+        project_service = ProjectService(sql_db)
+        history_manager = ChatHistoryService(sql_db)
         openai_key = cls._get_openai_key()
-        orchestrator = cls._initialize_orchestrator(openai_key, db)
-        debugging_agent = cls._initialize_debugging_agent(openai_key, db)
-        qna_agent = cls._initialize_qna_agent(openai_key, db)
+        debugging_agent = cls._initialize_debugging_agent(openai_key, sql_db)
+        qna_agent = cls._initialize_qna_agent(openai_key, sql_db)
+        code_retrieval_agent = cls._initialize_code_retrieval_agent(openai_key, sql_db, graph_db)
         return cls(
-            db,
+            sql_db,
+            graph_db,
             project_service,
             history_manager,
-            orchestrator,
             debugging_agent,
             qna_agent,
+            code_retrieval_agent,
         )
 
     @staticmethod
-    def _initialize_debugging_agent(openai_key: str, db: Session) -> DebuggingAgent:
-        return DebuggingAgent(openai_key, db)
+    def _initialize_debugging_agent(openai_key: str, sql_db: Session) -> DebuggingAgent:
+        return DebuggingAgent(openai_key, sql_db)
 
     @staticmethod
-    def _initialize_qna_agent(openai_key: str, db: Session) -> QNAAgent:
-        return QNAAgent(openai_key, db)
+    def _initialize_qna_agent(openai_key: str, sql_db: Session) -> QNAAgent:
+        return QNAAgent(openai_key, sql_db)
 
     @staticmethod
     def _get_openai_key() -> str:
@@ -104,11 +103,8 @@ class ConversationService:
         return key
 
     @staticmethod
-    def _initialize_orchestrator(
-        openai_key: str, db: Session
-    ) -> IntelligentToolUsingOrchestrator:
-        tools = [GoogleTrendsTool(), WikipediaTool(), DuckDuckGoTool()]
-        return IntelligentToolUsingOrchestrator(openai_key, tools, db)
+    def _initialize_code_retrieval_agent(openai_key: str, sql_db: Session, graph_db: GraphDatabase) -> CodeRetrievalAgent:
+        return CodeRetrievalAgent(openai_key, sql_db, graph_db)
 
     async def create_conversation(
         self, conversation: CreateConversationRequest, user_id: str
@@ -134,13 +130,13 @@ class ConversationService:
             return conversation_id, "Conversation created successfully."
         except IntegrityError as e:
             logger.error(f"IntegrityError in create_conversation: {e}", exc_info=True)
-            self.db.rollback()
+            self.sql_db.rollback()
             raise ConversationServiceError(
                 "Failed to create conversation due to a database integrity error."
             ) from e
         except Exception as e:
             logger.error(f"Unexpected error in create_conversation: {e}", exc_info=True)
-            self.db.rollback()
+            self.sql_db.rollback()
             raise ConversationServiceError(
                 "An unexpected error occurred while creating the conversation."
             ) from e
@@ -159,8 +155,8 @@ class ConversationService:
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
-        self.db.add(new_conversation)
-        self.db.commit()
+        self.sql_db.add(new_conversation)
+        self.sql_db.commit()
         logger.info(
             f"Created new conversation with ID: {conversation_id}, title: {title}, user_id: {user_id}, agent_id: {conversation.agent_ids[0]}"
         )
@@ -248,7 +244,7 @@ class ConversationService:
 
     async def _get_last_human_message(self, conversation_id: str):
         message = (
-            self.db.query(Message)
+            self.sql_db.query(Message)
             .filter_by(conversation_id=conversation_id, type=MessageType.HUMAN)
             .order_by(Message.created_at.desc())
             .first()
@@ -261,13 +257,13 @@ class ConversationService:
         self, conversation_id: str, timestamp: datetime
     ):
         try:
-            self.db.query(Message).filter(
+            self.sql_db.query(Message).filter(
                 Message.conversation_id == conversation_id,
                 Message.created_at > timestamp,
             ).update(
                 {Message.status: MessageStatus.ARCHIVED}, synchronize_session="fetch"
             )
-            self.db.commit()
+            self.sql_db.commit()
             logger.info(
                 f"Archived subsequent messages in conversation {conversation_id}"
             )
@@ -276,34 +272,15 @@ class ConversationService:
                 f"Failed to archive messages in conversation {conversation_id}: {e}",
                 exc_info=True,
             )
-            self.db.rollback()
+            self.sql_db.rollback()
             raise ConversationServiceError(
                 "Failed to archive subsequent messages."
             ) from e
 
-    async def _generate_ai_response(
-        self, query: str, conversation_id: str, user_id: str
-    ) -> str:
-        full_content = ""
-        try:
-            async for chunk in self.orchestrator.run(query, user_id, conversation_id):
-                if chunk:
-                    full_content += chunk
-            logger.info(
-                f"Generated AI response for conversation {conversation_id} for user {user_id}"
-            )
-            return full_content.strip()
-        except Exception as e:
-            logger.error(
-                f"Failed to generate AI response for conversation {conversation_id}: {e}",
-                exc_info=True,
-            )
-            raise ConversationServiceError("Failed to generate AI response.") from e
-
     async def _generate_and_stream_ai_response(
         self, query: str, conversation_id: str, user_id: str
     ) -> AsyncGenerator[str, None]:
-        conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
+        conversation = self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
         if not conversation:
             raise ConversationNotFoundError(
                 f"Conversation with id {conversation_id} not found"
@@ -336,17 +313,17 @@ class ConversationService:
     async def delete_conversation(self, conversation_id: str, user_id: str) -> dict:
         try:
             # Start a new transaction
-            with self.db.begin():
+            with self.sql_db.begin():
                 # Delete related messages first
                 deleted_messages = (
-                    self.db.query(Message)
+                    self.sql_db.query(Message)
                     .filter(Message.conversation_id == conversation_id)
                     .delete()
                 )
 
                 # Delete the conversation
                 deleted_conversation = (
-                    self.db.query(Conversation)
+                    self.sql_db.query(Conversation)
                     .filter(Conversation.id == conversation_id)
                     .delete()
                 )
@@ -381,7 +358,7 @@ class ConversationService:
         except Exception as e:
             logger.error(f"Unexpected error in delete_conversation: {e}", exc_info=True)
             # Ensure rollback in case of any other exception
-            self.db.rollback()
+            self.sql_db.rollback()
             raise ConversationServiceError(
                 f"Failed to delete conversation {conversation_id} due to an unexpected error"
             ) from e
@@ -391,14 +368,14 @@ class ConversationService:
     ) -> ConversationInfoResponse:
         try:
             conversation = (
-                self.db.query(Conversation).filter_by(id=conversation_id).first()
+                self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
             )
             if not conversation:
                 raise ConversationNotFoundError(
                     f"Conversation with id {conversation_id} not found"
                 )
             total_messages = (
-                self.db.query(Message)
+                self.sql_db.query(Message)
                 .filter_by(conversation_id=conversation_id, status=MessageStatus.ACTIVE)
                 .count()
             )
@@ -426,7 +403,7 @@ class ConversationService:
     ) -> List[MessageResponse]:
         try:
             conversation = (
-                self.db.query(Conversation).filter_by(id=conversation_id).first()
+                self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
             )
             if not conversation:
                 raise ConversationNotFoundError(
@@ -434,7 +411,7 @@ class ConversationService:
                 )
 
             messages = (
-                self.db.query(Message)
+                self.sql_db.query(Message)
                 .filter_by(conversation_id=conversation_id)
                 .filter_by(status=MessageStatus.ACTIVE)  # Only fetch active messages
                 .order_by(Message.created_at)
@@ -475,7 +452,7 @@ class ConversationService:
     ) -> dict:
         try:
             conversation = (
-                self.db.query(Conversation)
+                self.sql_db.query(Conversation)
                 .filter_by(id=conversation_id, user_id=user_id)
                 .first()
             )
@@ -486,7 +463,7 @@ class ConversationService:
 
             conversation.title = new_title
             conversation.updated_at = datetime.now(timezone.utc)
-            self.db.commit()
+            self.sql_db.commit()
 
             logger.info(
                 f"Renamed conversation {conversation_id} to '{new_title}' by user {user_id}"
@@ -498,14 +475,14 @@ class ConversationService:
 
         except SQLAlchemyError as e:
             logger.error(f"Database error in rename_conversation: {e}", exc_info=True)
-            self.db.rollback()
+            self.sql_db.rollback()
             raise ConversationServiceError(
                 "Failed to rename conversation due to a database error"
             ) from e
 
         except Exception as e:
             logger.error(f"Unexpected error in rename_conversation: {e}", exc_info=True)
-            self.db.rollback()
+            self.sql_db.rollback()
             raise ConversationServiceError(
                 "Failed to rename conversation due to an unexpected error"
             ) from e

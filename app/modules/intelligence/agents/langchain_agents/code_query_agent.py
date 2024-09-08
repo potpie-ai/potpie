@@ -12,25 +12,35 @@ from langchain_core.prompts import (
 from langchain_core.runnables import RunnableSequence
 from langchain_openai import ChatOpenAI
 from sqlalchemy.orm import Session
+from neo4j import GraphDatabase
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_name_tool import GetCodeFromNodeNameTool
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import GetCodeFromNodeIdTool
+from app.modules.projects.projects_model import Project
 
 logger = logging.getLogger(__name__)
 
 class CodeRetrievalAgent:
-    def __init__(self, openai_key: str, db: Session):
+    def __init__(self, openai_key: str, sql_db: Session, graph_db: GraphDatabase):
         self.llm = ChatOpenAI(
             api_key=openai_key, temperature=0.7, model_kwargs={"stream": True}
         )
-        self.history_manager = ChatHistoryService(db)
+        self.sql_db = sql_db
+        self.graph_db = graph_db
+        self.history_manager = ChatHistoryService(sql_db)
         self.tools = [
-            GetCodeFromNodeNameTool(db),
-            GetCodeFromNodeIdTool(db)
+            GetCodeFromNodeNameTool(graph_db),
+            GetCodeFromNodeIdTool(graph_db)
         ]
         self.chain = None
+
+    def get_repo_name(self, project_id: str) -> str:
+        project = self.sql_db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            raise ValueError(f"Project with ID {project_id} not found")
+        return project.repo_name
 
     async def _create_chain(self) -> RunnableSequence:
         system_prompt = """
@@ -103,13 +113,15 @@ class CodeRetrievalAgent:
     async def run(
         self,
         query: str,
-        repo_name: str,
+        project_id: str,
         user_id: str,
         conversation_id: str,
     ) -> AsyncGenerator[str, None]:
         try:
             if not self.chain:
                 self.chain = await self._create_chain()
+
+            repo_name = self.get_repo_name(project_id)
 
             history = self.history_manager.get_session_history(user_id, conversation_id)
             validated_history = [
