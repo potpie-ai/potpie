@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends
-from typing import List, Optional
-from pydantic import BaseModel
+from typing import List
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService

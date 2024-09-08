@@ -1,7 +1,5 @@
 import asyncio
 from typing import Dict, List, Optional
-import numpy as np
-from pydantic import BaseModel, Field
 from neo4j import GraphDatabase
 from app.core.config_provider import config_provider
 from langchain.output_parsers import PydanticOutputParser
