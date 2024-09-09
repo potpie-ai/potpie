@@ -26,7 +26,7 @@ from app.modules.conversations.message.message_schema import (
 )
 from app.modules.intelligence.agents.langchain_agents.debugging_agent import DebuggingAgent
 from app.modules.intelligence.agents.langchain_agents.qna_agent import QNAAgent
-from app.modules.intelligence.agents.langchain_agents.code_query_agent import CodeRetrievalAgent
+from app.modules.intelligence.agents.langchain_agents.code_retrieval_agent import CodeRetrievalAgent
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.projects.projects_service import ProjectService
 
