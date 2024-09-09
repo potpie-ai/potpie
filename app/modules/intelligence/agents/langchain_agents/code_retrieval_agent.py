@@ -1,14 +1,8 @@
 import asyncio
 import logging
 from typing import AsyncGenerator, List, Dict, Any
-
 from langchain.schema import HumanMessage, SystemMessage
-from langchain_core.prompts import (
-    ChatPromptTemplate,
-    HumanMessagePromptTemplate,
-    MessagesPlaceholder,
-    SystemMessagePromptTemplate,
-)
+from langchain_core.prompts import ChatPromptTemplate, HumanMessagePromptTemplate, MessagesPlaceholder, SystemMessagePromptTemplate
 from langchain_core.runnables import RunnableSequence
 from langchain_openai import ChatOpenAI
 from sqlalchemy.orm import Session
@@ -22,45 +16,34 @@ logger = logging.getLogger(__name__)
 
 class CodeRetrievalAgent:
     def __init__(self, openai_key: str, sql_db: Session):
-        self.llm = ChatOpenAI(
-            api_key=openai_key, temperature=0.7, model_kwargs={"stream": True}
-        )
+        self.llm = ChatOpenAI(api_key=openai_key, temperature=0.7, model_kwargs={"stream": True})
         self.sql_db = sql_db
         self.history_manager = ChatHistoryService(sql_db)
         self.tools = [
-            GetCodeFromNodeNameTool(sql_db),
             GetCodeFromNodeIdTool(sql_db)
         ]
         self.chain = None
 
     async def _create_chain(self) -> RunnableSequence:
         system_prompt = """
-        You are an AI assistant specialized in retrieving and analyzing code from a knowledge graph. 
-        Your task is to assist users in finding and understanding specific code snippets based on node names or IDs.
-        Use the provided tools to fetch the relevant code and provide insightful explanations.
+        You are an AI assistant specialized in retrieving code from a knowledge graph. 
+        Your task is to assist users in finding specific code snippets based on node names or IDs.
+        Use the provided tools to fetch the relevant code.
 
         Guidelines:
         1. Always use the appropriate tool to retrieve the code based on the user's query.
-        2. If the code is successfully retrieved, analyze it and provide a brief explanation of its purpose and functionality.
-        3. If the code cannot be found, inform the user and suggest possible reasons or alternative approaches.
-        4. Be concise but informative in your responses.
-        5. If asked about relationships or context, use your understanding of the code structure to provide relevant information.
+        2. If the code cannot be found, inform the user.
 
-        Remember, your primary goal is to help users understand the codebase through efficient retrieval and clear explanations.
+        Remember, your primary goal is to return the code snippet.
         """
 
         human_prompt = """
         User Query: {input}
 
-        Please retrieve the relevant code and provide an analysis based on the query. 
+        Please retrieve the relevant code based on the query. 
         If you need to use any tools to fetch the code, do so before responding.
 
-        Your response should include:
-        1. The retrieved code snippet (if available)
-        2. A brief explanation of the code's purpose and functionality
-        3. Any relevant context or relationships within the codebase
-        4. Suggestions or next steps if the user needs more information
-
+        Your response should include only the retrieved code snippet 
         Response:
         """
 
@@ -92,24 +75,23 @@ class CodeRetrievalAgent:
         
         return {"node_name": query.strip()}
 
-    async def _run_tools(self, query: str, repo_name: str) -> List[SystemMessage]:
+    async def _run_tools(self, query: str, repo_id: str) -> List[SystemMessage]:
         tool_results = []
         node_info = self._extract_node_info(query)
         
         for tool in self.tools:
             try:
-                tool_input = {"repo_name": repo_name, **node_info}
+                tool_input = {"repo_id": repo_id, **node_info}
                 
-                if all(arg in ["repo_name", "node_name", "node_id"] for arg in tool_input):
-                    logger.debug(f"Running tool {tool.name} with input: {tool_input}")
+                logger.debug(f"Running tool {tool.name} with input: {tool_input}")
 
-                    tool_result = await tool.arun(**tool_input)
+                tool_result = await tool.arun(**tool_input)
 
-                    if tool_result:
-                        tool_results.append(
-                            SystemMessage(content=f"Tool {tool.name} result: {tool_result}")
-                        )
-                        break  # Stop after first successful tool execution
+                if tool_result:
+                    tool_results.append(
+                        SystemMessage(content=f"Tool {tool.name} result: {tool_result}")
+                    )
+                    break  # Stop after first successful tool execution
             except Exception as e:
                 logger.error(f"Error running tool {tool.name}: {str(e)}", exc_info=True)
 
