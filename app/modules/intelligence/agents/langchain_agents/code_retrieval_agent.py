@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import AsyncGenerator, List
+from typing import AsyncGenerator, List, Dict, Any
 
 from langchain.schema import HumanMessage, SystemMessage
 from langchain_core.prompts import (
@@ -12,13 +12,11 @@ from langchain_core.prompts import (
 from langchain_core.runnables import RunnableSequence
 from langchain_openai import ChatOpenAI
 from sqlalchemy.orm import Session
-from neo4j import GraphDatabase
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_name_tool import GetCodeFromNodeNameTool
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import GetCodeFromNodeIdTool
-from app.modules.projects.projects_model import Project
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +32,6 @@ class CodeRetrievalAgent:
             GetCodeFromNodeIdTool(sql_db)
         ]
         self.chain = None
-
-    def get_repo_name(self, project_id: str) -> str:
-        project = self.sql_db.query(Project).filter(Project.id == project_id).first()
-        if not project:
-            raise ValueError(f"Project with ID {project_id} not found")
-        return project.repo_name
 
     async def _create_chain(self) -> RunnableSequence:
         system_prompt = """
@@ -82,28 +74,42 @@ class CodeRetrievalAgent:
         )
         return prompt_template | self.llm
 
+    def _extract_node_info(self, query: str) -> Dict[str, str]:
+        query_lower = query.lower()
+        
+        node_id_keywords = ["node id", "nodeid", "id of node", "id of the node"]
+        node_name_keywords = ["node name", "nodename", "name of node", "name of the node"]
+        
+        for keyword in node_id_keywords:
+            if keyword in query_lower:
+                _, value = query_lower.split(keyword, 1)
+                return {"node_id": value.strip()}
+        
+        for keyword in node_name_keywords:
+            if keyword in query_lower:
+                _, value = query_lower.split(keyword, 1)
+                return {"node_name": value.strip()}
+        
+        return {"node_name": query.strip()}
+
     async def _run_tools(self, query: str, repo_name: str) -> List[SystemMessage]:
         tool_results = []
+        node_info = self._extract_node_info(query)
+        
         for tool in self.tools:
             try:
-                tool_input = {"repo_name": repo_name}
-                if "node_name" in tool.args_schema.__fields__:
-                    tool_input["node_name"] = query
-                elif "node_id" in tool.args_schema.__fields__:
-                    tool_input["node_id"] = query
+                tool_input = {"repo_name": repo_name, **node_info}
+                
+                if all(arg in ["repo_name", "node_name", "node_id"] for arg in tool_input):
+                    logger.debug(f"Running tool {tool.name} with input: {tool_input}")
 
-                logger.debug(f"Running tool {tool.name} with input: {tool_input}")
+                    tool_result = await tool.arun(**tool_input)
 
-                tool_result = (
-                    await tool.arun(**tool_input)
-                    if hasattr(tool, "arun")
-                    else await asyncio.to_thread(tool.run, **tool_input)
-                )
-
-                if tool_result:
-                    tool_results.append(
-                        SystemMessage(content=f"Tool {tool.name} result: {tool_result}")
-                    )
+                    if tool_result:
+                        tool_results.append(
+                            SystemMessage(content=f"Tool {tool.name} result: {tool_result}")
+                        )
+                        break  # Stop after first successful tool execution
             except Exception as e:
                 logger.error(f"Error running tool {tool.name}: {str(e)}", exc_info=True)
 
@@ -120,8 +126,6 @@ class CodeRetrievalAgent:
             if not self.chain:
                 self.chain = await self._create_chain()
 
-            repo_name = self.get_repo_name(project_id)
-
             history = self.history_manager.get_session_history(user_id, conversation_id)
             validated_history = [
                 (
@@ -132,9 +136,9 @@ class CodeRetrievalAgent:
                 for msg in history
             ]
 
-            tool_results = await self._run_tools(query, repo_name)
+            tool_results = await self._run_tools(query, project_id)
 
-            full_query = f"Query: {query}\nRepository: {repo_name}"
+            full_query = f"Query: {query}\nProject ID: {project_id}"
             inputs = {
                 "history": validated_history,
                 "tool_results": tool_results,
