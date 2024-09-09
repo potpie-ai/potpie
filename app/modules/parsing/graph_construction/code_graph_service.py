@@ -142,8 +142,70 @@ class CodeGraphService:
         with self.driver.session() as session:
             result = session.run(query)
             return [record.data() for record in result]
+        
+    def get_neighbour_nodes(self, node_id): 
+        num_hops = 10     # Function to get code from the Neo4j database based on a keyword query
+        with self.driver.session() as session:
+            result = session.run(
+                """
+                MATCH (p {node_id: $node_id})
+                CALL apoc.neighbors.byhop(p, ">", $num_hops)
+                YIELD nodes
+                UNWIND nodes AS all_nodes
+                RETURN all_nodes.node_id AS node_id, all_nodes.name AS function_name, labels(all_nodes) AS labels
+                """,
+                node_id=node_id,
+                num_hops=num_hops,
+            )
+            data = result.data()
+            # Construct list of objects containing node_id and function_name
+            nodes_info = [
+                {
+                    "node_id": record["node_id"],
+                    "function_name": record["function_name"],
+                    "labels": record["labels"],
+                }
+                for record in data
+            ]
+            return nodes_info
+    
+    def get_docstrings(self, project_id, node_ids):
 
+        with self.driver.session() as session:
+            query = """
+            MATCH (n:NODE)
+            WHERE n.repoId = $project_id AND n.node_id IN $node_ids
+            RETURN n.node_id AS node_id, n.docstring AS docstring
+            """
+            result = session.run(query, project_id=project_id, node_ids=node_ids)
+            
+            docstrings = {}
+            for record in result:
+                docstrings[record["node_id"]] = record["docstring"]
 
+        formatted_docstrings = "\n\n".join([f"Node {node_id}:\n{docstring}" for node_id, docstring in docstrings.items()])
+        return formatted_docstrings
+    
+    def get_code_from_node_id(self, node_id):
+        with self.driver.session() as session:
+            result = session.run(
+                """
+                MATCH (n {node_id: $node_id})
+                RETURN n.text AS code
+                """,
+                node_id=node_id,
+            )
+            data = result.data()
+            return data[0]["code"] if data else None
+        
+    def get_code_flow(self, node_id):
+        neighbour_nodes = self.get_neighbour_nodes(node_id)
+        code_flow = []
+        for neighbour in neighbour_nodes:
+            code = self.get_code_from_node_id(neighbour["node_id"])
+            code_flow.append(code)
+        return code_flow
+    
 class SimpleIO:
     def read_text(self, fname):
         with open(fname, "r") as f:

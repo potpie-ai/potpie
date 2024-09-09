@@ -20,6 +20,7 @@ from app.modules.intelligence.prompts.prompt_schema import PromptResponse, Promp
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.tools.code_tools import CodeTools
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
+from app.modules.conversations.message.message_schema import ContextNode
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,10 @@ logger = logging.getLogger(__name__)
 class QNAAgent:
     def __init__(self, openai_key: str, db: Session):
         self.llm = ChatOpenAI(
-            api_key=openai_key, temperature=0.7, model="gpt-4o-mini", model_kwargs={"stream": True}
+            api_key=openai_key,
+            temperature=0.7,
+            model="gpt-4o-mini",
+            model_kwargs={"stream": True},
         )
         self.history_manager = ChatHistoryService(db)
         self.tools = CodeTools.get_tools()
@@ -60,11 +64,17 @@ class QNAAgent:
         )
         return prompt_template | self.llm
 
-    async def _run_tools(self, query: str, project_id: str, node_ids: List[str]) -> List[SystemMessage]:
+    async def _run_tools(
+        self, query: str, project_id: str, node_ids: Optional[List[ContextNode]] = None
+    ) -> List[SystemMessage]:
         tool_results = []
         for tool in self.tools:
             try:
-                tool_input = {"query": query, "project_id": project_id, "node_ids": node_ids}
+                tool_input = {
+                    "query": query,
+                    "project_id": project_id,
+                    "node_ids": [node.node_id for node in node_ids] if node_ids else [],
+                }
                 logger.debug(f"Running tool {tool.name} with input: {tool_input}")
 
                 tool_result = (
@@ -82,15 +92,13 @@ class QNAAgent:
 
         return tool_results
 
-    async def query_vector_index(self, project_id: str, query: str, node_ids: Optional[List[str]] = None, top_k: int = 5) -> List[Dict]:
-        return await self.inference_service.query_vector_index(project_id, query, node_ids, top_k)
-
     async def run(
         self,
         query: str,
         project_id: str,
         user_id: str,
         conversation_id: str,
+        node_ids: Optional[List[ContextNode]] = None,
     ) -> AsyncGenerator[Dict, None]:
         try:
             if not self.chain:
@@ -98,15 +106,29 @@ class QNAAgent:
 
             history = self.history_manager.get_session_history(user_id, conversation_id)
             validated_history = [
-                (HumanMessage(content=str(msg)) if isinstance(msg, (str, int, float)) else msg)
+                (
+                    HumanMessage(content=str(msg))
+                    if isinstance(msg, (str, int, float))
+                    else msg
+                )
                 for msg in history
             ]
 
-            tool_results = await self._run_tools(query, project_id, [])
-            
+            tool_results = await self._run_tools(query, project_id, node_ids)
+
             # Extract unique filenames for citations
-            citations = list(set(result.content.split('file=', 1)[1].split(',')[0].strip().strip('"').strip("'") for result in tool_results if 'file=' in result.content))
-            
+            citations = list(
+                set(
+                    result.content.split("file=", 1)[1]
+                    .split(",")[0]
+                    .strip()
+                    .strip('"')
+                    .strip("'")
+                    for result in tool_results
+                    if "file=" in result.content
+                )
+            )
+
             # Yield the citations first
             yield {"citations": citations, "message": ""}
 

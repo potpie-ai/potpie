@@ -1,13 +1,17 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 from pydantic import BaseModel
 
 from app.modules.conversations.message.message_model import MessageStatus, MessageType
 
+class ContextNode(BaseModel):
+    node_id: str
+    name: str
 
 class MessageRequest(BaseModel):
     content: str
+    node_ids: Optional[List[ContextNode]] = None
 
 
 class MessageResponse(BaseModel):

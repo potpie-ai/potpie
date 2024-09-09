@@ -1,8 +1,8 @@
+import json
 import logging
 import os
 from datetime import datetime, timezone
-from typing import AsyncGenerator, List
-import json
+from typing import AsyncGenerator, List, Optional
 
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -24,12 +24,14 @@ from app.modules.conversations.message.message_model import (
 from app.modules.conversations.message.message_schema import (
     MessageRequest,
     MessageResponse,
+    ContextNode,
 )
 from app.modules.intelligence.agents.debugging_agent import DebuggingAgent
 from app.modules.intelligence.agents.intelligent_tool_using_orchestrator import (
     IntelligentToolUsingOrchestrator,
 )
 from app.modules.intelligence.agents.qna_agent import QNAAgent
+from app.modules.intelligence.agents.test_agent import TestAgent
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.tools.duckduckgo_search_tool import DuckDuckGoTool
 from app.modules.intelligence.tools.google_trends_tool import GoogleTrendsTool
@@ -60,6 +62,7 @@ class ConversationService:
         orchestrator: IntelligentToolUsingOrchestrator,
         debugging_agent: DebuggingAgent,
         codebase_qna_agent: QNAAgent,
+        test_agent: TestAgent,
     ):
         self.db = db
         self.project_service = project_service
@@ -68,6 +71,7 @@ class ConversationService:
             "chat_llm_orchestrator": orchestrator,
             "debugging_agent": debugging_agent,
             "codebase_qna_agent": codebase_qna_agent,
+            "test_agent": test_agent,
         }
 
     @classmethod
@@ -78,6 +82,7 @@ class ConversationService:
         orchestrator = cls._initialize_orchestrator(openai_key, db)
         debugging_agent = cls._initialize_debugging_agent(openai_key, db)
         qna_agent = cls._initialize_qna_agent(openai_key, db)
+        test_agent = cls._initialize_test_agent(openai_key, db)
         return cls(
             db,
             project_service,
@@ -85,6 +90,7 @@ class ConversationService:
             orchestrator,
             debugging_agent,
             qna_agent,
+            test_agent,
         )
 
     @staticmethod
@@ -94,6 +100,10 @@ class ConversationService:
     @staticmethod
     def _initialize_qna_agent(openai_key: str, db: Session) -> QNAAgent:
         return QNAAgent(openai_key, db)
+
+    @staticmethod
+    def _initialize_test_agent(openai_key: str, db: Session) -> TestAgent:
+        return TestAgent(openai_key, db)
 
     @staticmethod
     def _get_openai_key() -> str:
@@ -207,7 +217,7 @@ class ConversationService:
             logger.info(f"Stored message in conversation {conversation_id}")
             if message_type == MessageType.HUMAN:
                 async for chunk in self._generate_and_stream_ai_response(
-                    message.content, conversation_id, user_id
+                    message.content, conversation_id, user_id, message.node_ids
                 ):
                     yield chunk
         except Exception as e:
@@ -302,7 +312,7 @@ class ConversationService:
             raise ConversationServiceError("Failed to generate AI response.") from e
 
     async def _generate_and_stream_ai_response(
-        self, query: str, conversation_id: str, user_id: str
+        self, query: str, conversation_id: str, user_id: str, node_ids: Optional[List[ContextNode]] = None
     ) -> AsyncGenerator[str, None]:
         conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
         if not conversation:
@@ -318,10 +328,10 @@ class ConversationService:
 
         try:
             async for response in agent.run(
-                query, conversation.project_ids[0], user_id, conversation.id
+                query, conversation.project_ids[0], user_id, conversation.id, node_ids
             ):
                 yield json.dumps(response)
-            
+
             logger.info(
                 f"Generated and streamed AI response for conversation {conversation.id} for user {user_id} using agent {conversation.agent_ids[0]}"
             )
