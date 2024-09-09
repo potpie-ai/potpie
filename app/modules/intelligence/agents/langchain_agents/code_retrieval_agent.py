@@ -1,14 +1,13 @@
-import asyncio
 import logging
-from typing import AsyncGenerator, Dict, Any
-
+import re
+from typing import AsyncGenerator, List, Tuple, Dict, Any
 from langchain.agents import AgentExecutor
 from langchain.agents.openai_functions_agent.base import create_openai_functions_agent
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.schema import HumanMessage, SystemMessage
+from langchain.schema import HumanMessage, SystemMessage, AIMessage
+from langchain.tools import StructuredTool
 from langchain_openai import ChatOpenAI
 from sqlalchemy.orm import Session
-from langchain.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_model import MessageType
@@ -35,41 +34,49 @@ class CodeRetrievalAgent:
             StructuredTool.from_function(
                 func=self._run_get_code_from_node_id,
                 name="GetCodeFromNodeId",
-                description="Use this tool when you have a specific node ID (a string of letters and numbers) to retrieve code. Input: repo_id and node_id.",
+                description="Use this tool when you have a specific node ID to retrieve code.",
                 args_schema=NodeIdInput
             ),
             StructuredTool.from_function(
                 func=self._run_get_code_from_node_name,
                 name="GetCodeFromNodeName",
-                description="Use this tool when you have a node name (usually a word or phrase) to retrieve code. Only use if no node ID is provided. Input: repo_id and node_name.",
+                description="Use this tool when you have a node name to retrieve code, or as a fallback if GetCodeFromNodeId fails.",
                 args_schema=NodeNameInput
             )
         ]
         self.agent_executor = None
 
-    def _run_get_code_from_node_id(self, repo_id: str, node_id: str) -> str:
+    def _run_get_code_from_node_id(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         tool = GetCodeFromNodeIdTool(self.sql_db)
         return tool.run(repo_id=repo_id, node_id=node_id)
 
-    def _run_get_code_from_node_name(self, repo_id: str, node_name: str) -> str:
+    def _run_get_code_from_node_name(self, repo_id: str, node_name: str) -> Dict[str, Any]:
         tool = GetCodeFromNodeNameTool(self.sql_db)
         return tool.run(repo_id=repo_id, node_name=node_name)
+
+    def _extract_node_id(self, query: str) -> Tuple[str, str]:
+        node_id_pattern = r'\b[a-f0-9]{32}\b'
+        match = re.search(node_id_pattern, query)
+        if match:
+            node_id = match.group(0)
+            remaining_query = query.replace(node_id, '').strip()
+            return node_id, remaining_query
+        return '', query
 
     async def _create_agent_executor(self) -> AgentExecutor:
         system_prompt = """You are an AI assistant specialized in retrieving code from a knowledge graph.
 Your task is to assist users in finding specific code snippets based on node IDs or names.
-- If a node ID is provided (usually a string of letters and numbers), always use the GetCodeFromNodeId tool.
-- Only use the GetCodeFromNodeName tool if no node ID is given and you have a node name (usually a word or phrase).
-Use the provided tools to retrieve the code. Return ONLY the code snippet, without any additional explanations or comments."""
+- If GetCodeFromNodeId fails, use GetCodeFromNodeName as a fallback.
+- When using GetCodeFromNodeName, if it initally fails, consider using the full query as the node name.
+Return ONLY the code snippet, without any additional explanations or comments or any other text."""
 
         human_prompt = """Please find the code for this query: {input}"""
 
         prompt = ChatPromptTemplate.from_messages([
             SystemMessage(content=system_prompt),
             MessagesPlaceholder(variable_name="chat_history"),
-            MessagesPlaceholder(variable_name="tool_results"),
-            HumanMessage(content=human_prompt),
             MessagesPlaceholder(variable_name="agent_scratchpad"),
+            HumanMessage(content=human_prompt),
         ])
 
         agent = create_openai_functions_agent(llm=self.llm, tools=self.tools, prompt=prompt)
@@ -101,20 +108,27 @@ Use the provided tools to retrieve the code. Return ONLY the code snippet, witho
                 for msg in history
             ]
 
-            tool_results = []
+            node_id, remaining_query = self._extract_node_id(query)
+
+            if node_id:
+                result = self._run_get_code_from_node_id(project_id, node_id)
+                if not isinstance(result, dict) or "error" not in result:
+                    if isinstance(result, dict) and "code_content" in result:
+                        yield result["code_content"]
+                    elif isinstance(result, str):
+                        yield result
+                    return
 
             inputs = {
                 "input": f"Query: {query}\nRepository ID: {project_id}",
                 "chat_history": validated_history,
-                "tool_results": tool_results,
-                "agent_scratchpad": [],
             }
 
             logger.debug(f"Inputs to agent: {inputs}")
 
             async for chunk in self.agent_executor.astream(inputs):
                 content = chunk.get('output', '')
-                if content.strip():  # Only yield non-empty content
+                if content.strip():
                     self.history_manager.add_message_chunk(
                         conversation_id, content, MessageType.AI_GENERATED
                     )
