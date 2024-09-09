@@ -1,8 +1,9 @@
 from langchain.tools import BaseTool
-from pydantic import BaseModel, Field
-from neo4j import GraphDatabase
+from pydantic import BaseModel, Field, PrivateAttr
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.github.github_service import GithubService
+from app.core.config_provider import config_provider
+from sqlalchemy.orm import Session
 
 class GetCodeFromNodeNameInput(BaseModel):
     repo_name: str = Field(..., description="The name of the repository")
@@ -12,18 +13,25 @@ class GetCodeFromNodeNameTool(BaseTool):
     name = "get_code_from_node_name"
     description = "Retrieves code for a specific node in a repository given its node name"
     args_schema = GetCodeFromNodeNameInput
+    
+    _code_graph_service: CodeGraphService = PrivateAttr()
 
-    def __init__(self, graph_db: GraphDatabase):
+    def __init__(self, sql_db: Session):
         super().__init__()
-        self.graph_db = graph_db
-        self.code_graph_service = CodeGraphService(graph_db)
+        neo4j_config = config_provider.get_neo4j_config()
+        self._code_graph_service = CodeGraphService(
+                    neo4j_config["uri"],
+                    neo4j_config["username"],
+                    neo4j_config["password"],
+                    sql_db,
+        )
 
     def _run(self, repo_name: str, node_name: str) -> dict:
         query = (
             f"MATCH (n:NODE {{name: '{node_name}', repoId: '{repo_name}'}}) "
             "RETURN n.file AS file, n.start_line AS start_line, n.end_line AS end_line"
         )
-        result = self.code_graph_service.query_graph(query)
+        result = self._code_graph_service.query_graph(query)
 
         if not result:
             return {"error": f"Node '{node_name}' not found in repo '{repo_name}'"}

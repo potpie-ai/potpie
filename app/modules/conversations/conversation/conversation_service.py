@@ -5,7 +5,6 @@ from typing import AsyncGenerator, List
 
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
-from neo4j import GraphDatabase
 from uuid6 import uuid7
 
 from app.modules.conversations.conversation.conversation_model import (
@@ -50,7 +49,6 @@ class ConversationService:
     def __init__(
         self,
         sql_db: Session,
-        graph_db: GraphDatabase,
         project_service: ProjectService,
         history_manager: ChatHistoryService,
         debugging_agent: DebuggingAgent,
@@ -58,7 +56,6 @@ class ConversationService:
         code_retrieval_agent: CodeRetrievalAgent,
     ):
         self.sql_db = sql_db
-        self.graph_db = graph_db
         self.project_service = project_service
         self.history_manager = history_manager
         self.agents = {
@@ -68,16 +65,15 @@ class ConversationService:
         }
 
     @classmethod
-    def create(cls, sql_db: Session, graph_db: GraphDatabase):
+    def create(cls, sql_db: Session):
         project_service = ProjectService(sql_db)
         history_manager = ChatHistoryService(sql_db)
         openai_key = cls._get_openai_key()
         debugging_agent = cls._initialize_debugging_agent(openai_key, sql_db)
         qna_agent = cls._initialize_qna_agent(openai_key, sql_db)
-        code_retrieval_agent = cls._initialize_code_retrieval_agent(openai_key, sql_db, graph_db)
+        code_retrieval_agent = cls._initialize_code_retrieval_agent(openai_key, sql_db)
         return cls(
             sql_db,
-            graph_db,
             project_service,
             history_manager,
             debugging_agent,
@@ -103,8 +99,8 @@ class ConversationService:
         return key
 
     @staticmethod
-    def _initialize_code_retrieval_agent(openai_key: str, sql_db: Session, graph_db: GraphDatabase) -> CodeRetrievalAgent:
-        return CodeRetrievalAgent(openai_key, sql_db, graph_db)
+    def _initialize_code_retrieval_agent(openai_key: str, sql_db: Session) -> CodeRetrievalAgent:
+        return CodeRetrievalAgent(openai_key, sql_db)
 
     async def create_conversation(
         self, conversation: CreateConversationRequest, user_id: str

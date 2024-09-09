@@ -23,16 +23,15 @@ from app.modules.projects.projects_model import Project
 logger = logging.getLogger(__name__)
 
 class CodeRetrievalAgent:
-    def __init__(self, openai_key: str, sql_db: Session, graph_db: GraphDatabase):
+    def __init__(self, openai_key: str, sql_db: Session):
         self.llm = ChatOpenAI(
             api_key=openai_key, temperature=0.7, model_kwargs={"stream": True}
         )
         self.sql_db = sql_db
-        self.graph_db = graph_db
         self.history_manager = ChatHistoryService(sql_db)
         self.tools = [
-            GetCodeFromNodeNameTool(graph_db),
-            GetCodeFromNodeIdTool(graph_db)
+            GetCodeFromNodeNameTool(sql_db),
+            GetCodeFromNodeIdTool(sql_db)
         ]
         self.chain = None
 
