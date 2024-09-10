@@ -47,7 +47,6 @@ class ProviderService:
 
     def get_llm(self):
         # Get user preferences from the database
-
         user_pref = (
             self.db.query(UserPreferences)
             .filter(UserPreferences.user_id == self.user_id)
@@ -62,33 +61,48 @@ class ProviderService:
         )
 
         if preferred_provider == "openai":
-            secret = SecretManager.get_secret("openai", self.user_id)
-            openai_key = secret.get(
-                "api_key", os.getenv("OPENAI_API_KEY")
-            )  # Fallback to env variable if no key
+            try:
+                # Try fetching the secret key from SecretManager
+                secret = SecretManager.get_secret("openai", self.user_id)
+                openai_key = secret.get("api_key")
+            except Exception as e:
+                # Log the exception if needed
+                if "404" in str(e):
+                    # If the secret is not found, fallback to environment variable
+                    openai_key = os.getenv("OPENAI_API_KEY")
+                else:
+                    raise e  # Re-raise if it's a different error
+
             self.llm = ChatOpenAI(
                 model_name="gpt-4o",
-                api_key=openai_key,
+                api_key=openai_key,  # Use the key properly
                 temperature=0.7,
                 model_kwargs={"stream": True},
             )
 
         elif preferred_provider == "anthropic":
-            secret = SecretManager.get_secret("anthropic", self.user_id)
-            anthropic_key = secret.get(
-                "api_key", os.getenv("ANTHROPIC_API_KEY")
-            )  # Fallback to env variable if no key
+            try:
+                # Try fetching the secret key from SecretManager
+                secret = SecretManager.get_secret("anthropic", self.user_id)
+                anthropic_key = secret.get("api_key")
+            except Exception as e:
+                # Log the exception if needed
+                if "404" in str(e):
+                    # If the secret is not found, fallback to environment variable
+                    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+                else:
+                    raise e  # Re-raise if it's a different error
+
             self.llm = ChatAnthropic(
                 model="claude-3-5-sonnet-20240620",
                 temperature=0,
-                api_key=anthropic_key,
+                api_key=anthropic_key,  # Use the key properly
             )
 
         else:
             raise ValueError("Invalid LLM provider selected.")
 
         return self.llm
-
     def get_mini_llm(self):
         # Get user preferences from the database
         user_pref = (
@@ -105,23 +119,35 @@ class ProviderService:
         )
 
         if preferred_provider == "openai":
-            secret = SecretManager.get_secret("openai", self.user_id)
-            openai_key = secret.get(
-                "api_key", os.getenv("OPENAI_API_KEY")
-            )  # Fallback to env variable if no key
+            try:
+                # Try fetching the secret key from SecretManager
+                secret = SecretManager.get_secret("openai", self.user_id)
+                openai_key = secret.get("api_key")
+            except Exception as e:
+                if "404" in str(e):
+                    # If the secret is not found, fallback to environment variable
+                    openai_key = os.getenv("OPENAI_API_KEY")
+                else:
+                    raise e  # Re-raise if it's a different error
+
             self.llm = ChatOpenAI(
                 model_name="gpt-4o-mini", api_key=openai_key, temperature=0.7
             )
 
         elif preferred_provider == "anthropic":
-            secret = SecretManager.get_secret("anthropic", self.user_id)
-            anthropic_key = secret.get(
-                "api_key", os.getenv("ANTHROPIC_API_KEY")
-            )  # Fallback to env variable if no key
+            try:
+                # Try fetching the secret key from SecretManager
+                secret = SecretManager.get_secret("anthropic", self.user_id)
+                anthropic_key = secret.get("api_key")
+            except Exception as e:
+                if "404" in str(e):
+                    # If the secret is not found, fallback to environment variable
+                    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+                else:
+                    raise e  # Re-raise if it's a different error
+
             self.llm = ChatAnthropic(
-                model="claude-3-haiku-20240307",
-                temperature=0,
-                api_key=anthropic_key,
+                model="claude-3-haiku-20240307", temperature=0, api_key=anthropic_key
             )
 
         else:
