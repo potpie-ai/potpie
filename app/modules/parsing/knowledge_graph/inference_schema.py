@@ -22,6 +22,7 @@ class QueryRequest(BaseModel):
     query: str
     node_ids: Optional[List[str]] = None
 
+
 class QueryResponse(BaseModel):
     node_id: str
     docstring: str

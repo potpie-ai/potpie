@@ -13,6 +13,10 @@ COPY requirements.txt .
 # Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install NLTK and download required data
+RUN pip install --no-cache-dir nltk
+RUN python -c "import nltk; nltk.download('punkt');"
+
 # Copy the rest of the application code into the container
 COPY . .
 

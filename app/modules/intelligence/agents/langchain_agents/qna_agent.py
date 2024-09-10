@@ -11,7 +11,6 @@ from langchain_core.prompts import (
     SystemMessagePromptTemplate,
 )
 from langchain_core.runnables import RunnableSequence
-from langchain_openai import ChatOpenAI
 from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
@@ -24,10 +23,8 @@ logger = logging.getLogger(__name__)
 
 
 class QNAAgent:
-    def __init__(self, openai_key: str, db: Session):
-        self.llm = ChatOpenAI(
-            api_key=openai_key, temperature=0.7, model_kwargs={"stream": True}
-        )
+    def __init__(self, llm, db: Session):
+        self.llm = llm
         self.history_manager = ChatHistoryService(db)
         self.tools = CodeTools.get_tools()
         self.prompt_service = PromptService(db)
@@ -102,7 +99,6 @@ class QNAAgent:
             ]
 
             tool_results = await self._run_tools(query, project_id)
-
             inputs = {
                 "history": validated_history,
                 "tool_results": tool_results,

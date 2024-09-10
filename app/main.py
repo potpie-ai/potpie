@@ -14,6 +14,7 @@ from app.modules.github.github_router import router as github_router
 from app.modules.intelligence.agents.agents_router import router as agent_router
 from app.modules.intelligence.prompts.prompt_router import router as prompt_router
 from app.modules.intelligence.prompts.system_prompt_setup import SystemPromptSetup
+from app.modules.intelligence.provider.provider_router import router as provider_router
 from app.modules.key_management.secret_manager import router as secret_manager_router
 from app.modules.parsing.graph_construction.parsing_router import (
     router as parsing_router,
@@ -84,6 +85,8 @@ class MainApp:
         self.app.include_router(search_router, prefix="/api/v1", tags=["Search"])
         self.app.include_router(github_router, prefix="/api/v1", tags=["Github"])
         self.app.include_router(agent_router, prefix="/api/v1", tags=["Agents"])
+
+        self.app.include_router(provider_router, prefix="/api/v1", tags=["Providers"])
         self.app.include_router(query_router, prefix="/api/v1", tags=["query"])
 
     def add_health_check(self):

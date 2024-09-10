@@ -1,5 +1,4 @@
 import logging
-import os
 from datetime import datetime, timezone
 from typing import AsyncGenerator, List
 
@@ -26,8 +25,8 @@ from app.modules.conversations.message.message_schema import (
 )
 from app.modules.intelligence.agents.langchain_agents.debugging_agent import DebuggingAgent
 from app.modules.intelligence.agents.langchain_agents.qna_agent import QNAAgent
-from app.modules.intelligence.agents.langchain_agents.code_retrieval_agent import CodeRetrievalAgent
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
+from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
 
 logger = logging.getLogger(__name__)
@@ -53,11 +52,14 @@ class ConversationService:
         history_manager: ChatHistoryService,
         debugging_agent: DebuggingAgent,
         codebase_qna_agent: QNAAgent,
-        code_retrieval_agent: CodeRetrievalAgent,
+        provider_service: ProviderService,
+        user_id: str,
     ):
-        self.sql_db = sql_db
+        self.db = db
+        self.user_id = user_id
         self.project_service = project_service
         self.history_manager = history_manager
+        self.provider_service = provider_service
         self.agents = {
             "debugging_agent": debugging_agent,
             "codebase_qna_agent": codebase_qna_agent,
@@ -65,42 +67,33 @@ class ConversationService:
         }
 
     @classmethod
-    def create(cls, sql_db: Session):
-        project_service = ProjectService(sql_db)
-        history_manager = ChatHistoryService(sql_db)
-        openai_key = cls._get_openai_key()
-        debugging_agent = cls._initialize_debugging_agent(openai_key, sql_db)
-        qna_agent = cls._initialize_qna_agent(openai_key, sql_db)
-        code_retrieval_agent = cls._initialize_code_retrieval_agent(openai_key, sql_db)
+    def create(cls, db: Session, user_id: str):
+        user_id = user_id
+        project_service = ProjectService(db)
+        history_manager = ChatHistoryService(db)
+        provider_service = ProviderService(db, user_id)
+        instance = cls(
+            db, project_service, history_manager, None, None, provider_service, user_id
+        )
+        debugging_agent = instance._initialize_debugging_agent(db)
+        qna_agent = instance._initialize_qna_agent(db)
         return cls(
             sql_db,
             project_service,
             history_manager,
             debugging_agent,
             qna_agent,
-            code_retrieval_agent,
+            provider_service,
+            user_id,
         )
 
-    @staticmethod
-    def _initialize_debugging_agent(openai_key: str, sql_db: Session) -> DebuggingAgent:
-        return DebuggingAgent(openai_key, sql_db)
+    def _initialize_debugging_agent(self, db: Session) -> DebuggingAgent:
+        llm = self.provider_service.get_llm()
+        return DebuggingAgent(llm, db)
 
-    @staticmethod
-    def _initialize_qna_agent(openai_key: str, sql_db: Session) -> QNAAgent:
-        return QNAAgent(openai_key, sql_db)
-
-    @staticmethod
-    def _get_openai_key() -> str:
-        key = os.getenv("OPENAI_API_KEY")
-        if not key:
-            raise ConversationServiceError(
-                "The OpenAI API key is not set in the environment variable 'OPENAI_API_KEY'."
-            )
-        return key
-
-    @staticmethod
-    def _initialize_code_retrieval_agent(openai_key: str, sql_db: Session) -> CodeRetrievalAgent:
-        return CodeRetrievalAgent(openai_key, sql_db)
+    def _initialize_qna_agent(self, db: Session) -> QNAAgent:
+        llm = self.provider_service.get_llm()
+        return QNAAgent(llm, db)
 
     async def create_conversation(
         self, conversation: CreateConversationRequest, user_id: str
@@ -281,7 +274,6 @@ class ConversationService:
             raise ConversationNotFoundError(
                 f"Conversation with id {conversation_id} not found"
             )
-
         agent = self.agents.get(conversation.agent_ids[0])
         if not agent:
             raise ConversationServiceError(
