@@ -23,6 +23,7 @@ from app.modules.conversations.message.message_schema import (
     MessageRequest,
     MessageResponse,
 )
+from app.modules.intelligence.agents.langchain_agents import code_retrieval_agent
 from app.modules.intelligence.agents.langchain_agents.debugging_agent import DebuggingAgent
 from app.modules.intelligence.agents.langchain_agents.qna_agent import QNAAgent
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
@@ -55,7 +56,7 @@ class ConversationService:
         provider_service: ProviderService,
         user_id: str,
     ):
-        self.db = db
+        self.db = sql_db
         self.user_id = user_id
         self.project_service = project_service
         self.history_manager = history_manager
@@ -67,16 +68,16 @@ class ConversationService:
         }
 
     @classmethod
-    def create(cls, db: Session, user_id: str):
+    def create(cls, sql_db: Session, user_id: str):
         user_id = user_id
-        project_service = ProjectService(db)
-        history_manager = ChatHistoryService(db)
-        provider_service = ProviderService(db, user_id)
+        project_service = ProjectService(sql_db)
+        history_manager = ChatHistoryService(sql_db)
+        provider_service = ProviderService(sql_db, user_id)
         instance = cls(
-            db, project_service, history_manager, None, None, provider_service, user_id
+            sql_db, project_service, history_manager, None, None, provider_service, user_id
         )
-        debugging_agent = instance._initialize_debugging_agent(db)
-        qna_agent = instance._initialize_qna_agent(db)
+        debugging_agent = instance._initialize_debugging_agent(sql_db)
+        qna_agent = instance._initialize_qna_agent(sql_db)
         return cls(
             sql_db,
             project_service,

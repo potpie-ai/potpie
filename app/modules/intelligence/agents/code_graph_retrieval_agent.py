@@ -1,5 +1,4 @@
 from typing import Dict, Any, AsyncGenerator
-from langchain.schema import HumanMessage
 from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType

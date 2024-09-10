@@ -29,9 +29,6 @@ from app.modules.utils.firebase_setup import FirebaseSetup
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
-import nltk
-nltk.download()
-
 class MainApp:
     def __init__(self):
         load_dotenv(override=True)

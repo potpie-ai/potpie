@@ -1,10 +1,10 @@
 import logging
 import re
-from typing import AsyncGenerator, List, Tuple, Dict, Any
+from typing import AsyncGenerator, Tuple, Dict, Any
 from langchain.agents import AgentExecutor
 from langchain.agents.openai_functions_agent.base import create_openai_functions_agent
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.schema import HumanMessage, SystemMessage, AIMessage
+from langchain.schema import HumanMessage, SystemMessage
 from langchain.tools import StructuredTool
 from langchain_openai import ChatOpenAI
 from sqlalchemy.orm import Session
