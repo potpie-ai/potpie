@@ -49,3 +49,4 @@ resend
 transformers
 torch
 sentence-transformers
+nltk
