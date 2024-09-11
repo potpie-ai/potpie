@@ -44,43 +44,60 @@ class GetCodeGraphFromNodeIdTool:
             maxLevel: 2
         })
         YIELD nodes, relationships
-        RETURN nodes, relationships
+        WITH nodes, relationships
+        UNWIND nodes as node
+        OPTIONAL MATCH (node)-[r]->(related)
+        WHERE related IN nodes
+        WITH node, collect({
+            target: related.node_id,
+            type: type(r),
+            properties: properties(r)
+        }) as outgoing_edges
+        RETURN collect({
+            id: node.node_id,
+            label: node.name,
+            metadata: {
+                type: head(labels(node)),
+                file_path: node.file_path,
+                start_line: node.start_line,
+                end_line: node.end_line
+            },
+            edges: outgoing_edges
+        }) as nodes
         """
         with self.neo4j_driver.session() as session:
             result = session.run(query, node_id=node_id, repo_id=repo_id)
             record = result.single()
             if not record:
                 return None
-            return {"nodes": record["nodes"], "relationships": record["relationships"]}
+            return {"nodes": record["nodes"]}
 
     def _process_graph_data(self, graph_data: Dict[str, Any], project: Project) -> Dict[str, Any]:
-        nodes = []
+        nodes = {}
         for node in graph_data["nodes"]:
-            node_data = {
-                "id": node["node_id"],
-                "name": node.get("name", "Unknown"),
-                "type": list(node.labels)[0] if node.labels else "Unknown",
-                "file_path": self._get_relative_file_path(node.get("file_path", "Unknown")),
-                "start_line": node.get("start_line", -1),
-                "end_line": node.get("end_line", -1),
-                "properties": {k: v for k, v in node.items() if k not in ["node_id", "name", "file_path", "start_line", "end_line"]}
+            node_id = node["id"]
+            nodes[node_id] = {
+                "label": node["label"],
+                "metadata": {
+                    "type": node["metadata"]["type"],
+                    "file_path": self._get_relative_file_path(node["metadata"]["file_path"]),
+                    "start_line": node["metadata"]["start_line"],
+                    "end_line": node["metadata"]["end_line"]
+                },
+                "edges": node["edges"]
             }
-            nodes.append(node_data)
-
-        edges = [
-            {
-                "source": rel.start_node["node_id"],
-                "target": rel.end_node["node_id"],
-                "type": type(rel).__name__,
-            }
-            for rel in graph_data["relationships"]
-        ]
 
         return {
-            "nodes": nodes,
-            "edges": edges,
-            "repo_name": project.repo_name,
-            "branch_name": project.branch_name
+            "graph": {
+                "directed": True,
+                "type": "Code Graph",
+                "label": f"Code Graph for {project.repo_name}",
+                "metadata": {
+                    "repo_name": project.repo_name,
+                    "branch_name": project.branch_name
+                },
+                "nodes": nodes
+            }
         }
 
     @staticmethod
@@ -151,44 +168,48 @@ class GetCodeGraphFromNodeNameTool:
             maxLevel: 2
         })
         YIELD nodes, relationships
-        RETURN 
-            [n IN nodes | {
-                id: n.node_id,
-                label: n.name,
-                metadata: {
-                    type: head(labels(n)),
-                    file_path: n.file_path,
-                    start_line: n.start_line,
-                    end_line: n.end_line
-                }
-            }] AS nodes,
-            [r IN relationships | {
-                source: startNode(r).node_id,
-                target: endNode(r).node_id,
-                relation: type(r),
-                directed: true
-            }] AS edges
+        WITH nodes, relationships
+        UNWIND nodes as node
+        OPTIONAL MATCH (node)-[r]->(related)
+        WHERE related IN nodes
+        WITH node, collect({
+            target: related.node_id,
+            type: type(r),
+            properties: properties(r)
+        }) as outgoing_edges
+        RETURN collect({
+            id: node.node_id,
+            label: node.name,
+            metadata: {
+                type: head(labels(node)),
+                file_path: node.file_path,
+                start_line: node.start_line,
+                end_line: node.end_line
+            },
+            edges: outgoing_edges
+        }) as nodes
         """
         with self.neo4j_driver.session() as session:
             result = session.run(query, node_name=node_name, repo_id=repo_id)
             record = result.single()
             if not record:
                 return None
-            return {"nodes": record["nodes"], "edges": record["edges"]}
+            return {"nodes": record["nodes"]}
 
     def _process_graph_data(self, graph_data: Dict[str, Any], project: Project) -> Dict[str, Any]:
-        nodes = {
-            node["id"]: {
+        nodes = {}
+        for node in graph_data["nodes"]:
+            node_id = node["id"]
+            nodes[node_id] = {
                 "label": node["label"],
                 "metadata": {
                     "type": node["metadata"]["type"],
                     "file_path": self._get_relative_file_path(node["metadata"]["file_path"]),
                     "start_line": node["metadata"]["start_line"],
                     "end_line": node["metadata"]["end_line"]
-                }
+                },
+                "edges": node["edges"]
             }
-            for node in graph_data["nodes"]
-        }
 
         return {
             "graph": {
@@ -199,8 +220,7 @@ class GetCodeGraphFromNodeNameTool:
                     "repo_name": project.repo_name,
                     "branch_name": project.branch_name
                 },
-                "nodes": nodes,
-                "edges": graph_data["edges"]
+                "nodes": nodes
             }
         }
 
