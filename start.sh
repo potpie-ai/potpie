@@ -19,6 +19,10 @@ until docker exec potpie_postgres pg_isready -U postgres; do
   sleep 2
 done
 
+# Start Celery worker
+echo "Starting Celery worker..."
+celery -A app.modules.parsing.graph_construction.parsing_controller.celery_app worker --loglevel=info &
+
 # Run momentum application with migrations
 echo "Starting momentum application..."
 alembic upgrade head && gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app

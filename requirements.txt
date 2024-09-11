@@ -52,3 +52,5 @@ torch
 sentence-transformers
 nltk
 langchain_anthropic
+celery
+redis
