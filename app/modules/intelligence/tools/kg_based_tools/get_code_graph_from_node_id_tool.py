@@ -39,24 +39,22 @@ class GetCodeGraphFromNodeIdTool:
     def _get_graph_data(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         query = """
         MATCH (start:NODE {node_id: $node_id, repoId: $repo_id})
-        CALL apoc.path.subgraphAll(start, {
-            relationshipFilter: "CALLS|IMPLEMENTS|INHERITS|CONTAINS|REFERENCES>",
+        CALL apoc.path.spanningTree(start, {
+            relationshipFilter: "CONTAINS|CALLS|FUNCTION_DEFINITION|IMPORTS|INSTANTIATES|CLASS_DEFINITION>",
             maxLevel: 10
         })
-        YIELD nodes, relationships
-        UNWIND nodes as node
+        YIELD path
+        WITH nodes(path) AS nodePath, relationships(path) AS rels
+        UNWIND nodePath AS node
         OPTIONAL MATCH (node)-[r]->(child:NODE)
-        WHERE child IN nodes AND type(r) <> 'IS_LEAF'
+        WHERE child IN nodePath AND type(r) <> 'IS_LEAF'
         WITH node, collect({
             id: child.node_id,
             name: child.name,
             type: head(labels(child)),
             file_path: child.file_path,
             start_line: child.start_line,
-            end_line: child.end_line,
-            function_calls: child.function_calls,
-            signature: child.signature,
-            relationship: type(r)
+            end_line: child.end_line
         }) as children
         RETURN {
             id: node.node_id,
@@ -65,14 +63,12 @@ class GetCodeGraphFromNodeIdTool:
             file_path: node.file_path,
             start_line: node.start_line,
             end_line: node.end_line,
-            function_calls: node.function_calls,
-            signature: node.signature,
             children: children
-        } as nodes
+        } as node_data
         """
         with self.neo4j_driver.session() as session:
             result = session.run(query, node_id=node_id, repo_id=repo_id)
-            nodes = result.values()
+            nodes = [record["node_data"] for record in result]
             if not nodes:
                 return None
             return self._build_tree(nodes, node_id)
@@ -82,11 +78,29 @@ class GetCodeGraphFromNodeIdTool:
         root = node_map.get(root_id)
         if not root:
             return None
-        
-        for node in nodes:
-            node['children'] = [child for child in node['children'] if child['id'] in node_map]
 
-        return root
+        visited = set()
+
+        def build_node_tree(current_node):
+            if current_node['id'] in visited:
+                return None
+            visited.add(current_node['id'])
+
+            current_node['children'] = [
+                child for child in current_node['children'] if child['id'] in node_map
+            ]
+
+            for child in current_node['children']:
+                child_node = node_map[child['id']]
+                built_child = build_node_tree(child_node)
+                if built_child:
+                    child['children'] = built_child['children']
+                else:
+                    current_node['children'].remove(child)
+
+            return current_node
+
+        return build_node_tree(root)
 
     def _process_graph_data(self, graph_data: Dict[str, Any], project: Project) -> Dict[str, Any]:
         def process_node(node):
