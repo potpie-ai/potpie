@@ -2,7 +2,6 @@ import base64
 import logging
 import os
 
-
 import requests
 from fastapi import HTTPException
 from github import Github
@@ -222,14 +221,19 @@ class GithubService:
 
         return response.json(), owner
 
-
     @staticmethod
-    def get_file_content(repo_name: str, file_path: str, start_line: int, end_line: int):
+    def get_file_content(
+        repo_name: str, file_path: str, start_line: int, end_line: int
+    ):
         try:
-            github_client, response, auth, owner = GithubService.get_github_repo_details(repo_name)
+            github_client, response, auth, owner = (
+                GithubService.get_github_repo_details(repo_name)
+            )
             if response.status_code != 200:
                 print(response.json())
-                raise HTTPException(status_code=400, detail="Failed to get installation ID")
+                raise HTTPException(
+                    status_code=400, detail="Failed to get installation ID"
+                )
 
             app_auth = auth.get_installation_auth(response.json()["id"])
             github = Github(auth=app_auth)
@@ -237,19 +241,24 @@ class GithubService:
             file_contents = repo.get_contents(file_path)
 
             if isinstance(file_contents, list):
-                raise HTTPException(status_code=400, detail="Provided path is a directory, not a file")
+                raise HTTPException(
+                    status_code=400, detail="Provided path is a directory, not a file"
+                )
 
-            decoded_content = file_contents.decoded_content.decode('utf-8')
-            lines = decoded_content.split('\n')
+            decoded_content = file_contents.decoded_content.decode("utf-8")
+            lines = decoded_content.split("\n")
 
             # Ensure start_line and end_line are within bounds
             start_line = max(1, min(start_line, len(lines)))
             end_line = max(start_line, min(end_line, len(lines)))
-            selected_lines = lines[start_line - 1:end_line]
+            selected_lines = lines[start_line - 1 : end_line]
 
-            return '\n'.join(selected_lines)
+            return "\n".join(selected_lines)
         except Exception as e:
-            logger.error(f"Error fetching file content for {repo_name}/{file_path}: {str(e)}", exc_info=True)
+            logger.error(
+                f"Error fetching file content for {repo_name}/{file_path}: {str(e)}",
+                exc_info=True,
+            )
             raise HTTPException(
                 status_code=404,
                 detail=f"File not found or error fetching content: {str(e)}",

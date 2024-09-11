@@ -61,9 +61,7 @@ class ConversationAPI:
     ):
         user_id = user["user_id"]
         controller = ConversationController(db, user_id)
-        return await controller.get_conversation_messages(
-            conversation_id, start, limit
-        )
+        return await controller.get_conversation_messages(conversation_id, start, limit)
 
     @staticmethod
     @router.post("/conversations/{conversation_id}/message/")
@@ -126,6 +124,4 @@ class ConversationAPI:
     ):
         user_id = user["user_id"]
         controller = ConversationController(db, user_id)
-        return await controller.rename_conversation(
-            conversation_id, request.title
-        )
+        return await controller.rename_conversation(conversation_id, request.title)

@@ -23,10 +23,13 @@ from app.modules.conversations.message.message_schema import (
     MessageRequest,
     MessageResponse,
 )
-from app.modules.intelligence.agents.langchain_agents.codebase_agents.code_retrieval_agent import CodeRetrievalAgent
-from app.modules.intelligence.agents.langchain_agents.debugging_agent import DebuggingAgent
+from app.modules.intelligence.agents.langchain_agents.codebase_agents.code_retrieval_agent import (
+    CodeRetrievalAgent,
+)
+from app.modules.intelligence.agents.langchain_agents.debugging_agent import (
+    DebuggingAgent,
+)
 from app.modules.intelligence.agents.langchain_agents.qna_agent import QNAAgent
-
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
@@ -76,7 +79,13 @@ class ConversationService:
         history_manager = ChatHistoryService(sql_db)
         provider_service = ProviderService(sql_db, user_id)
         instance = cls(
-            sql_db, project_service, history_manager, None, None, provider_service, user_id
+            sql_db,
+            project_service,
+            history_manager,
+            None,
+            None,
+            provider_service,
+            user_id,
         )
         debugging_agent = instance._initialize_debugging_agent(sql_db)
         qna_agent = instance._initialize_qna_agent(sql_db)
@@ -98,7 +107,7 @@ class ConversationService:
     def _initialize_qna_agent(self, db: Session) -> QNAAgent:
         llm = self.provider_service.get_llm()
         return QNAAgent(llm, db)
-    
+
     def _initialize_code_retrieval_agent(self, db: Session) -> CodeRetrievalAgent:
         llm = self.provider_service.get_llm()
         return CodeRetrievalAgent(llm, db)
@@ -277,7 +286,9 @@ class ConversationService:
     async def _generate_and_stream_ai_response(
         self, query: str, conversation_id: str, user_id: str
     ) -> AsyncGenerator[str, None]:
-        conversation = self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
+        conversation = (
+            self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
+        )
         if not conversation:
             raise ConversationNotFoundError(
                 f"Conversation with id {conversation_id} not found"

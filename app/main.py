@@ -29,6 +29,8 @@ from app.modules.utils.firebase_setup import FirebaseSetup
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
+
+
 class MainApp:
     def __init__(self):
         load_dotenv(override=True)
@@ -41,7 +43,6 @@ class MainApp:
         else:
             FirebaseSetup.firebase_init()
         self.include_routers()
-
 
     def setup_cors(self):
         origins = ["*"]
