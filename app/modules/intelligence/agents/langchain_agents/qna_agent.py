@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from functools import lru_cache
 from typing import AsyncGenerator, Dict, List
@@ -15,10 +16,13 @@ from langchain_openai import ChatOpenAI
 from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
+from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.tools.kg_based_tools.code_tools import CodeTools
+
+from app.modules.intelligence.agents.crewai_agents.rag_agent import kickoff_rag_crew
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +36,7 @@ class QNAAgent:
         self.tools = CodeTools.get_tools()
         self.prompt_service = PromptService(db)
         self.chain = None
+        self.db = db
 
     @lru_cache(maxsize=2)
     async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
@@ -58,27 +63,6 @@ class QNAAgent:
         )
         return prompt_template | self.llm
 
-    async def _run_tools(self, query: str, project_id: str) -> List[SystemMessage]:
-        tool_results = []
-        for tool in self.tools:
-            try:
-                tool_input = {"query": query, "project_id": project_id}
-                logger.debug(f"Running tool {tool.name} with input: {tool_input}")
-
-                tool_result = (
-                    await tool.arun(tool_input)
-                    if hasattr(tool, "arun")
-                    else await asyncio.to_thread(tool.run, tool_input)
-                )
-
-                if tool_result:
-                    tool_results.append(
-                        SystemMessage(content=f"Tool {tool.name} result: {tool_result}")
-                    )
-            except Exception as e:
-                logger.error(f"Error running tool {tool.name}: {str(e)}", exc_info=True)
-
-        return tool_results
 
     async def run(
         self,
@@ -86,6 +70,7 @@ class QNAAgent:
         project_id: str,
         user_id: str,
         conversation_id: str,
+        node_ids: List[NodeContext]
     ) -> AsyncGenerator[str, None]:
         try:
             if not self.chain:
@@ -101,7 +86,16 @@ class QNAAgent:
                 for msg in history
             ]
 
-            tool_results = await self._run_tools(query, project_id)
+            # Use RAG Agent to get context
+            rag_result = await kickoff_rag_crew(
+                query,
+                project_id,
+                [msg.content for msg in validated_history if isinstance(msg, HumanMessage)],
+                node_ids,
+                self.db
+            )
+
+            tool_results = [SystemMessage(content=f"RAG Agent result: {[node.model_dump() for node in rag_result.pydantic.response]}")]
 
             inputs = {
                 "history": validated_history,
@@ -118,7 +112,7 @@ class QNAAgent:
                 self.history_manager.add_message_chunk(
                     conversation_id, content, MessageType.AI_GENERATED
                 )
-                yield content
+                yield json.dumps({"citations": rag_result.pydantic.citations, "message":content})
 
             logger.debug(f"Full LLM response: {full_response}")
 

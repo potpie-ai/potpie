@@ -23,7 +23,9 @@ from app.modules.conversations.message.message_model import (
 from app.modules.conversations.message.message_schema import (
     MessageRequest,
     MessageResponse,
+    NodeContext,
 )
+from app.modules.intelligence.agents.langchain_agents.unit_test_agent import UnitTestAgent
 from app.modules.intelligence.agents.langchain_agents.debugging_agent import DebuggingAgent
 from app.modules.intelligence.agents.langchain_agents.qna_agent import QNAAgent
 from app.modules.intelligence.agents.langchain_agents.code_retrieval_agent import CodeRetrievalAgent
@@ -54,6 +56,7 @@ class ConversationService:
         debugging_agent: DebuggingAgent,
         codebase_qna_agent: QNAAgent,
         code_retrieval_agent: CodeRetrievalAgent,
+        unit_test_agent: UnitTestAgent,
     ):
         self.sql_db = sql_db
         self.project_service = project_service
@@ -62,6 +65,7 @@ class ConversationService:
             "debugging_agent": debugging_agent,
             "codebase_qna_agent": codebase_qna_agent,
             "code_retrieval_agent": code_retrieval_agent,
+            "unit_test_agent": unit_test_agent
         }
 
     @classmethod
@@ -72,6 +76,7 @@ class ConversationService:
         debugging_agent = cls._initialize_debugging_agent(openai_key, sql_db)
         qna_agent = cls._initialize_qna_agent(openai_key, sql_db)
         code_retrieval_agent = cls._initialize_code_retrieval_agent(openai_key, sql_db)
+        unit_test_agent = cls._initialize_unit_test_agent(sql_db)
         return cls(
             sql_db,
             project_service,
@@ -79,6 +84,7 @@ class ConversationService:
             debugging_agent,
             qna_agent,
             code_retrieval_agent,
+            unit_test_agent
         )
 
     @staticmethod
@@ -101,7 +107,11 @@ class ConversationService:
     @staticmethod
     def _initialize_code_retrieval_agent(openai_key: str, sql_db: Session) -> CodeRetrievalAgent:
         return CodeRetrievalAgent(openai_key, sql_db)
-
+    
+    @staticmethod
+    def _initialize_unit_test_agent(sql_db: Session) -> CodeRetrievalAgent:
+        return UnitTestAgent(sql_db)
+    
     async def create_conversation(
         self, conversation: CreateConversationRequest, user_id: str
     ) -> tuple[str, str]:
@@ -198,7 +208,7 @@ class ConversationService:
             logger.info(f"Stored message in conversation {conversation_id}")
             if message_type == MessageType.HUMAN:
                 async for chunk in self._generate_and_stream_ai_response(
-                    message.content, conversation_id, user_id
+                    message.content, conversation_id, user_id, message.node_ids
                 ):
                     yield chunk
         except Exception as e:
@@ -223,7 +233,7 @@ class ConversationService:
             )
 
             async for chunk in self._generate_and_stream_ai_response(
-                last_human_message.content, conversation_id, user_id
+                last_human_message.content, conversation_id, user_id, []
             ):
                 yield chunk
         except MessageNotFoundError as e:
@@ -274,7 +284,7 @@ class ConversationService:
             ) from e
 
     async def _generate_and_stream_ai_response(
-        self, query: str, conversation_id: str, user_id: str
+        self, query: str, conversation_id: str, user_id: str, node_ids: List[NodeContext]
     ) -> AsyncGenerator[str, None]:
         conversation = self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
         if not conversation:
@@ -290,7 +300,7 @@ class ConversationService:
 
         try:
             async for chunk in agent.run(
-                query, conversation.project_ids[0], user_id, conversation.id
+                query, conversation.project_ids[0], user_id, conversation.id, node_ids
             ):
                 if chunk:
                     yield chunk

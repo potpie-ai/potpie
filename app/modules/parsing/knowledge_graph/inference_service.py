@@ -87,7 +87,7 @@ class InferenceService:
         Generate a detailed technical docstring for each of the following code snippets. 
         The docstring should encapsulate the technical and functional purpose of the code. 
         Include details about inputs, outputs, function calls, logical flow, and any other relevant information.
-
+        If the code snippet serves a special purpose like defining an API or a Kafka consumer or Producer, make note of that in the docstring with details like API path, topic name etc. 
         Here are the code snippets:
         {code_snippets}
 

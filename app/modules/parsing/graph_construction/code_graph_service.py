@@ -62,7 +62,7 @@ class CodeGraphService:
                     label = node_type if node_type else "Unknown"
                     node_data = {
                         "name": node[0],
-                        "file": node[1].get("file", ""),
+                        "file_path": node[1].get("file", ""),
                         "start_line": node[1].get("line", -1),
                         "end_line": node[1].get("end_line", -1),
                         "repoId": project_id,
