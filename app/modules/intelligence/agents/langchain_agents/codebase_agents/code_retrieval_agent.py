@@ -3,7 +3,6 @@ import re
 from typing import Any, AsyncGenerator, Dict, Tuple
 
 from langchain.agents import AgentExecutor
-from langchain.agents.openai_functions_agent.base import create_openai_functions_agent
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.schema import HumanMessage, SystemMessage
 from langchain.tools import StructuredTool
@@ -92,12 +91,13 @@ Return ONLY the code snippet, without any additional explanations or comments or
             ]
         )
 
-        agent = create_openai_functions_agent(
-            llm=self.llm, tools=self.tools, prompt=prompt
-        )
+        agent = self.llm  # Use the provided LLM directly
 
         return AgentExecutor.from_agent_and_tools(
-            agent=agent, tools=self.tools, verbose=True
+            agent=agent,
+            tools=self.tools,
+            prompt=prompt,  # Use the prompt here
+            verbose=True,
         )
 
     async def run(

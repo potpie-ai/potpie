@@ -1,11 +1,9 @@
 import logging
 from typing import Any, AsyncGenerator, Dict
 
-from langchain.agents import AgentExecutor, create_openai_functions_agent
-from langchain.agents.openai_functions_agent.base import create_openai_functions_agent
+from langchain.agents import AgentExecutor
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.schema import HumanMessage, SystemMessage
-from langchain.tools import StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -69,26 +67,12 @@ Return the graph data as a JSON string.Return only code and nothing else."""
             ]
         )
 
-        tools = [
-            StructuredTool.from_function(
-                func=self._run_get_code_graph_from_node_id,
-                name="GetCodeGraphFromNodeId",
-                description="Get a code graph for a specific node ID",
-                args_schema=NodeIdInput,
-            ),
-            StructuredTool.from_function(
-                func=self._run_get_code_graph_from_node_name,
-                name="GetCodeGraphFromNodeName",
-                description="Get a code graph for a specific node name",
-                args_schema=NodeNameInput,
-            ),
-        ]
-
-        agent = create_openai_functions_agent(llm=self.llm, tools=tools, prompt=prompt)
+        agent = self.llm  # Use the provided LLM directly
 
         return AgentExecutor.from_agent_and_tools(
             agent=agent,
-            tools=tools,
+            tools=self.tools,
+            prompt=prompt,  # Use the prompt here
             verbose=True,
             handle_parsing_errors=True,
         )

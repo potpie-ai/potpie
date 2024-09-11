@@ -1,4 +1,5 @@
-from typing import Any, Dict
+import logging
+from typing import Any, Dict, List, Optional
 
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
@@ -8,16 +9,25 @@ from app.modules.projects.projects_model import Project
 
 
 class GetCodeGraphFromNodeIdTool:
+    """Tool for retrieving a code graph for a specific node in a repository given its node ID."""
+
     name = "get_code_graph_from_node_id"
     description = (
         "Retrieves a code graph for a specific node in a repository given its node ID"
     )
 
     def __init__(self, sql_db: Session):
+        """
+        Initialize the tool with a SQL database session.
+
+        Args:
+            sql_db (Session): SQLAlchemy database session.
+        """
         self.sql_db = sql_db
         self.neo4j_driver = self._create_neo4j_driver()
 
     def _create_neo4j_driver(self) -> GraphDatabase.driver:
+        """Create and return a Neo4j driver instance."""
         neo4j_config = config_provider.get_neo4j_config()
         return GraphDatabase.driver(
             neo4j_config["uri"],
@@ -25,6 +35,16 @@ class GetCodeGraphFromNodeIdTool:
         )
 
     def run(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+        """
+        Run the tool to retrieve the code graph.
+
+        Args:
+            repo_id (str): Repository ID.
+            node_id (str): ID of the node to retrieve the graph for.
+
+        Returns:
+            Dict[str, Any]: Code graph data or error message.
+        """
         try:
             project = self._get_project(repo_id)
             if not project:
@@ -38,30 +58,33 @@ class GetCodeGraphFromNodeIdTool:
 
             return self._process_graph_data(graph_data, project)
         except Exception as e:
+            logging.exception(f"An unexpected error occurred: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
-    def _get_project(self, repo_id: str) -> Project:
+    def _get_project(self, repo_id: str) -> Optional[Project]:
+        """Retrieve project from the database."""
         return self.sql_db.query(Project).filter(Project.id == repo_id).first()
 
-    def _get_graph_data(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+    def _get_graph_data(self, repo_id: str, node_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve graph data from Neo4j."""
         query = """
         MATCH (start:NODE {node_id: $node_id, repoId: $repo_id})
-        CALL apoc.path.spanningTree(start, {
+        CALL apoc.path.subgraphAll(start, {
             relationshipFilter: "CONTAINS|CALLS|FUNCTION_DEFINITION|IMPORTS|INSTANTIATES|CLASS_DEFINITION>",
             maxLevel: 10
         })
-        YIELD path
-        WITH nodes(path) AS nodePath, relationships(path) AS rels
-        UNWIND nodePath AS node
+        YIELD nodes, relationships
+        UNWIND nodes AS node
         OPTIONAL MATCH (node)-[r]->(child:NODE)
-        WHERE child IN nodePath AND type(r) <> 'IS_LEAF'
+        WHERE child IN nodes AND type(r) <> 'IS_LEAF'
         WITH node, collect({
             id: child.node_id,
             name: child.name,
             type: head(labels(child)),
             file_path: child.file_path,
             start_line: child.start_line,
-            end_line: child.end_line
+            end_line: child.end_line,
+            relationship: type(r)
         }) as children
         RETURN {
             id: node.node_id,
@@ -80,7 +103,10 @@ class GetCodeGraphFromNodeIdTool:
                 return None
             return self._build_tree(nodes, node_id)
 
-    def _build_tree(self, nodes, root_id):
+    def _build_tree(
+        self, nodes: List[Dict[str, Any]], root_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Build a tree structure from the graph data."""
         node_map = {node["id"]: node for node in nodes}
         root = node_map.get(root_id)
         if not root:
@@ -88,7 +114,7 @@ class GetCodeGraphFromNodeIdTool:
 
         visited = set()
 
-        def build_node_tree(current_node):
+        def build_node_tree(current_node: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             if current_node["id"] in visited:
                 return None
             visited.add(current_node["id"])
@@ -112,7 +138,9 @@ class GetCodeGraphFromNodeIdTool:
     def _process_graph_data(
         self, graph_data: Dict[str, Any], project: Project
     ) -> Dict[str, Any]:
-        def process_node(node):
+        """Process the graph data and prepare the final output."""
+
+        def process_node(node: Dict[str, Any]) -> Dict[str, Any]:
             processed_node = {
                 "id": node["id"],
                 "name": node["name"],
@@ -120,8 +148,6 @@ class GetCodeGraphFromNodeIdTool:
                 "file_path": self._get_relative_file_path(node["file_path"]),
                 "start_line": node["start_line"],
                 "end_line": node["end_line"],
-                "function_calls": node.get("function_calls", []),
-                "signature": node.get("signature", ""),
                 "children": [],
             }
             for child in node.get("children", []):
@@ -143,6 +169,7 @@ class GetCodeGraphFromNodeIdTool:
 
     @staticmethod
     def _get_relative_file_path(file_path: str) -> str:
+        """Convert absolute file path to relative path."""
         if not file_path or file_path == "Unknown":
             return "Unknown"
         parts = file_path.split("/")
@@ -153,8 +180,10 @@ class GetCodeGraphFromNodeIdTool:
             return file_path
 
     def __del__(self):
+        """Ensure Neo4j driver is closed when the object is destroyed."""
         if hasattr(self, "neo4j_driver"):
             self.neo4j_driver.close()
 
     async def arun(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+        """Asynchronous version of the run method."""
         return self.run(repo_id, node_id)
