@@ -11,10 +11,10 @@ from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
-from app.modules.intelligence.tools.kg_based_tools.get_code_graph_from_node_id_tool import (
+from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id_tool import (
     GetCodeGraphFromNodeIdTool,
 )
-from app.modules.intelligence.tools.kg_based_tools.get_code_graph_from_node_name_tool import (
+from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_name_tool import (
     GetCodeGraphFromNodeNameTool,
 )
 
