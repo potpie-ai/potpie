@@ -23,7 +23,7 @@ from app.modules.conversations.message.message_schema import (
     MessageRequest,
     MessageResponse,
 )
-from app.modules.intelligence.agents.langchain_agents import code_retrieval_agent
+from app.modules.intelligence.agents.langchain_agents.codebase_agents import code_retrieval_agent
 from app.modules.intelligence.agents.langchain_agents.debugging_agent import DebuggingAgent
 from app.modules.intelligence.agents.langchain_agents.qna_agent import QNAAgent
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
