@@ -23,7 +23,9 @@ from app.modules.conversations.message.message_schema import (
     MessageRequest,
     MessageResponse,
 )
-from app.modules.intelligence.agents.langchain_agents.codebase_agents.code_graph_retrieval_agent import CodeGraphRetrievalAgent
+from app.modules.intelligence.agents.langchain_agents.codebase_agents.code_graph_retrieval_agent import (
+    CodeGraphRetrievalAgent,
+)
 from app.modules.intelligence.agents.langchain_agents.codebase_agents.code_retrieval_agent import (
     CodeRetrievalAgent,
 )
@@ -94,7 +96,9 @@ class ConversationService:
         debugging_agent = instance._initialize_debugging_agent(sql_db)
         qna_agent = instance._initialize_qna_agent(sql_db)
         code_retrieval_agent = instance._initialize_code_retrieval_agent(sql_db)
-        code_graph_retrieval_agent = instance._initialize_code_graph_retrieval_agent(sql_db)
+        code_graph_retrieval_agent = instance._initialize_code_graph_retrieval_agent(
+            sql_db
+        )
         return cls(
             sql_db,
             project_service,
@@ -119,7 +123,9 @@ class ConversationService:
         llm = self.provider_service.get_llm()
         return CodeRetrievalAgent(llm, db)
 
-    def _initialize_code_graph_retrieval_agent(self, db: Session) -> CodeGraphRetrievalAgent:
+    def _initialize_code_graph_retrieval_agent(
+        self, db: Session
+    ) -> CodeGraphRetrievalAgent:
         llm = self.provider_service.get_llm()
         return CodeGraphRetrievalAgent(llm, db)
 

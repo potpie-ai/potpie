@@ -1,17 +1,22 @@
 import logging
 from typing import Any, AsyncGenerator, Dict, Tuple
 
-from sqlalchemy.orm import Session
-from neo4j import GraphDatabase
 from langchain.schema import HumanMessage, SystemMessage
+from neo4j import GraphDatabase
+from sqlalchemy.orm import Session
 
+from app.core.config_provider import config_provider
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
-from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import GetCodeFromNodeIdTool
-from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_name_tool import GetCodeFromNodeNameTool
-from app.core.config_provider import config_provider
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
+    GetCodeFromNodeIdTool,
+)
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_name_tool import (
+    GetCodeFromNodeNameTool,
+)
 
 logger = logging.getLogger(__name__)
+
 
 class CodeGraphRetrievalAgent:
     def __init__(self, llm, db: Session):
@@ -36,14 +41,20 @@ class CodeGraphRetrievalAgent:
         conversation_id: str,
     ) -> AsyncGenerator[str, None]:
         try:
-            logger.debug(f"CodeGraphRetrievalAgent.run called with query: {query}, project_id: {project_id}")
+            logger.debug(
+                f"CodeGraphRetrievalAgent.run called with query: {query}, project_id: {project_id}"
+            )
 
             query_type, extracted_value = await self._interpret_query(query)
 
             if query_type == "node_id":
-                result = self.get_code_from_node_id_tool.run(project_id, extracted_value)
+                result = self.get_code_from_node_id_tool.run(
+                    project_id, extracted_value
+                )
             elif query_type == "node_name":
-                result = self.get_code_from_node_name_tool.run(project_id, extracted_value)
+                result = self.get_code_from_node_name_tool.run(
+                    project_id, extracted_value
+                )
             else:
                 yield "Unable to interpret the query. Please provide a more specific query with a node ID or name."
                 return
@@ -70,35 +81,41 @@ class CodeGraphRetrievalAgent:
             )
 
         except Exception as e:
-            logger.error(f"Error during CodeGraphRetrievalAgent run: {str(e)}", exc_info=True)
+            logger.error(
+                f"Error during CodeGraphRetrievalAgent run: {str(e)}", exc_info=True
+            )
             yield f"An error occurred: {str(e)}"
 
     async def _interpret_query(self, query: str) -> Tuple[str, str]:
-        system_message = SystemMessage(content="""
+        system_message = SystemMessage(
+            content="""
         You are an AI assistant that interprets queries about code nodes. Your task is to determine if a query is asking for a node by ID or by name, and extract the relevant information.
-        """)
-        human_message = HumanMessage(content=f"""
+        """
+        )
+        human_message = HumanMessage(
+            content=f"""
         Given the following query, determine if it's asking for a node by ID or by name.
         If it's asking for a node by ID, extract the ID. If it's asking for a node by name, extract the name.
-        
+
         Query: {query}
-        
+
         Respond in the following format:
         Type: [node_id/node_name]
         Value: [extracted ID or name]
-        
+
         If you can't determine the type or extract a value, respond with:
         Type: unknown
         Value: none
-        """)
+        """
+        )
 
         messages = [system_message, human_message]
         response = await self.llm.agenerate([messages])
         content = response.generations[0][0].text
 
-        lines = content.strip().split('\n')
-        query_type = lines[0].split(': ')[1]
-        value = lines[1].split(': ')[1]
+        lines = content.strip().split("\n")
+        query_type = lines[0].split(": ")[1]
+        value = lines[1].split(": ")[1]
 
         return query_type, value if value != "none" else None
 
@@ -113,7 +130,7 @@ class CodeGraphRetrievalAgent:
             record = result.single()
             return {
                 "node": dict(record["node"]),
-                "connections": [dict(conn) for conn in record["connections"]]
+                "connections": [dict(conn) for conn in record["connections"]],
             }
 
     def _format_graph_data(self, graph_data: Dict[str, Any]) -> str:
@@ -121,7 +138,7 @@ class CodeGraphRetrievalAgent:
         connections = graph_data["connections"]
 
         output = "Graph Data:\n\n"
-        output += f"Central Node:\n"
+        output += "Central Node:\n"
         output += f"- ID: {node['node_id']}\n"
         output += f"- Name: {node['name']}\n"
         output += f"- Type: {node['type']}\n"
