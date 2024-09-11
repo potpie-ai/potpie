@@ -47,6 +47,10 @@ class InferenceService:
         current_tokens = 0
 
         for node in nodes:
+            # Skip nodes with None or empty text
+            if not node.get("text"):
+                continue
+
             node_tokens = len(node["text"].split())
             if node_tokens > max_tokens:
                 continue  # Skip nodes that exceed the max_tokens limit
