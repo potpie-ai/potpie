@@ -26,8 +26,8 @@ class NodeNameInput(BaseModel):
     node_name: str = Field(..., description="The name of the node to retrieve code from")
 
 class CodeRetrievalAgent:
-    def __init__(self, openai_key: str, sql_db: Session):
-        self.llm = ChatOpenAI(api_key=openai_key, temperature=0.7, model_kwargs={"stream": True})
+    def __init__(self, llm, sql_db: Session):
+        self.llm = llm
         self.sql_db = sql_db
         self.history_manager = ChatHistoryService(sql_db)
         self.tools = [
