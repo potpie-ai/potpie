@@ -84,7 +84,7 @@ class MainApp:
         self.app.include_router(agent_router, prefix="/api/v1", tags=["Agents"])
 
         self.app.include_router(provider_router, prefix="/api/v1", tags=["Providers"])
-        self.app.include_router(query_router, prefix="/api/v1", tags=["query"])
+        self.app.include_router(query_router, prefix="/api/v1", tags=["Query"])
 
     def add_health_check(self):
         @self.app.get("/health", tags=["Health"])
