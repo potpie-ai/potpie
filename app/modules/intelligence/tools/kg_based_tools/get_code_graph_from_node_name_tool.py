@@ -123,6 +123,7 @@ class GetCodeGraphFromNodeNameTool:
         )
 
     def run(self, repo_id: str, node_name: str) -> Dict[str, Any]:
+        print(f"Running get code graph from node name tool for repo_id: {repo_id}")
         try:
             project = self._get_project(repo_id)
             if not project:
@@ -137,7 +138,9 @@ class GetCodeGraphFromNodeNameTool:
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
     def _get_project(self, repo_id: str) -> Project:
-        return self.sql_db.query(Project).filter(Project.id == repo_id).first()
+        project = self.sql_db.query(Project).filter(Project.id == repo_id).first()
+        print(f"Getting project for repo_id {repo_id}: {project}")
+        return project
 
     def _get_graph_data(self, repo_id: str, node_name: str) -> Dict[str, Any]:
         query = """

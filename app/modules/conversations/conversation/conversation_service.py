@@ -179,8 +179,21 @@ class ConversationService:
             )
             logger.info(f"Stored message in conversation {conversation_id}")
             if message_type == MessageType.HUMAN:
-                async for chunk in self._generate_and_stream_ai_response(
-                    message.content, conversation_id, user_id
+                conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
+                if not conversation:
+                    raise ConversationNotFoundError(f"Conversation with id {conversation_id} not found")
+                
+                repo_id = conversation.project_ids[0] if conversation.project_ids else None
+                if not repo_id:
+                    raise ConversationServiceError("No project associated with this conversation")
+
+                agent = self.agents.get(conversation.agent_ids[0])
+                if not agent:
+                    raise ConversationServiceError(f"Invalid agent_id: {conversation.agent_ids[0]}")
+
+                logger.info(f"Running agent for repo_id: {repo_id}")
+                async for chunk in agent.run(
+                    message.content, repo_id, user_id, conversation.id
                 ):
                     yield chunk
         except Exception as e:
@@ -272,6 +285,7 @@ class ConversationService:
             )
 
         try:
+            print(f"Running agent {conversation.project_ids[0]} with query: {query}")
             async for chunk in agent.run(
                 query, conversation.project_ids[0], user_id, conversation.id
             ):
