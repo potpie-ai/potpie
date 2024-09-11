@@ -10,3 +10,6 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
 )
+
+# Autodiscover tasks from the specified modules
+celery_app.autodiscover_tasks(['app.modules.parsing.graph_construction'])

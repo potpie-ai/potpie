@@ -19,9 +19,9 @@ until docker exec potpie_postgres pg_isready -U postgres; do
   sleep 2
 done
 
-# Start Celery worker
+# Start Celery worker with the new setup
 echo "Starting Celery worker..."
-celery -A app.modules.parsing.graph_construction.parsing_controller.celery_app worker --loglevel=info &
+celery -A app.core.celery_config.celery_app worker --loglevel=info &
 
 # Run momentum application with migrations
 echo "Starting momentum application..."
