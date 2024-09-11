@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, List
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 from app.core.config_provider import config_provider
@@ -41,62 +41,80 @@ class GetCodeGraphFromNodeIdTool:
         MATCH (start:NODE {node_id: $node_id, repoId: $repo_id})
         CALL apoc.path.subgraphAll(start, {
             relationshipFilter: "CALLS|IMPLEMENTS|INHERITS|CONTAINS|REFERENCES>",
-            maxLevel: 2
+            maxLevel: 10
         })
         YIELD nodes, relationships
-        WITH nodes, relationships
         UNWIND nodes as node
-        OPTIONAL MATCH (node)-[r]->(related)
-        WHERE related IN nodes
+        OPTIONAL MATCH (node)-[r]->(child:NODE)
+        WHERE child IN nodes AND type(r) <> 'IS_LEAF'
         WITH node, collect({
-            target: related.node_id,
-            type: type(r),
-            properties: properties(r)
-        }) as outgoing_edges
-        RETURN collect({
+            id: child.node_id,
+            name: child.name,
+            type: head(labels(child)),
+            file_path: child.file_path,
+            start_line: child.start_line,
+            end_line: child.end_line,
+            function_calls: child.function_calls,
+            signature: child.signature,
+            relationship: type(r)
+        }) as children
+        RETURN {
             id: node.node_id,
-            label: node.name,
-            metadata: {
-                type: head(labels(node)),
-                file_path: node.file_path,
-                start_line: node.start_line,
-                end_line: node.end_line
-            },
-            edges: outgoing_edges
-        }) as nodes
+            name: node.name,
+            type: head(labels(node)),
+            file_path: node.file_path,
+            start_line: node.start_line,
+            end_line: node.end_line,
+            function_calls: node.function_calls,
+            signature: node.signature,
+            children: children
+        } as nodes
         """
         with self.neo4j_driver.session() as session:
             result = session.run(query, node_id=node_id, repo_id=repo_id)
-            record = result.single()
-            if not record:
+            nodes = result.values()
+            if not nodes:
                 return None
-            return {"nodes": record["nodes"]}
+            return self._build_tree(nodes, node_id)
+
+    def _build_tree(self, nodes, root_id):
+        node_map = {node['id']: node for node in nodes}
+        root = node_map.get(root_id)
+        if not root:
+            return None
+        
+        for node in nodes:
+            node['children'] = [child for child in node['children'] if child['id'] in node_map]
+
+        return root
 
     def _process_graph_data(self, graph_data: Dict[str, Any], project: Project) -> Dict[str, Any]:
-        nodes = {}
-        for node in graph_data["nodes"]:
-            node_id = node["id"]
-            nodes[node_id] = {
-                "label": node["label"],
-                "metadata": {
-                    "type": node["metadata"]["type"],
-                    "file_path": self._get_relative_file_path(node["metadata"]["file_path"]),
-                    "start_line": node["metadata"]["start_line"],
-                    "end_line": node["metadata"]["end_line"]
-                },
-                "edges": node["edges"]
+        def process_node(node):
+            processed_node = {
+                "id": node["id"],
+                "name": node["name"],
+                "type": node["type"],
+                "file_path": self._get_relative_file_path(node["file_path"]),
+                "start_line": node["start_line"],
+                "end_line": node["end_line"],
+                "function_calls": node.get("function_calls", []),
+                "signature": node.get("signature", ""),
+                "children": []
             }
+            for child in node.get("children", []):
+                processed_child = process_node(child)
+                processed_child["relationship"] = child["relationship"]
+                processed_node["children"].append(processed_child)
+            return processed_node
+
+        root_node = process_node(graph_data)
 
         return {
             "graph": {
-                "directed": True,
-                "type": "Code Graph",
-                "label": f"Code Graph for {project.repo_name}",
-                "metadata": {
-                    "repo_name": project.repo_name,
-                    "branch_name": project.branch_name
-                },
-                "nodes": nodes
+                "name": f"Code Graph for {project.repo_name}",
+                "repo_name": project.repo_name,
+                "branch_name": project.branch_name,
+                "root_node": root_node
             }
         }
 
@@ -118,7 +136,7 @@ class GetCodeGraphFromNodeIdTool:
     async def arun(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         return self.run(repo_id, node_id)
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 from app.core.config_provider import config_provider
@@ -140,7 +158,6 @@ class GetCodeGraphFromNodeNameTool:
         )
 
     def run(self, repo_id: str, node_name: str) -> Dict[str, Any]:
-        print(f"Running get code graph from node name tool for repo_id: {repo_id}")
         try:
             project = self._get_project(repo_id)
             if not project:
@@ -155,9 +172,7 @@ class GetCodeGraphFromNodeNameTool:
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
     def _get_project(self, repo_id: str) -> Project:
-        project = self.sql_db.query(Project).filter(Project.id == repo_id).first()
-        print(f"Getting project for repo_id {repo_id}: {project}")
-        return project
+        return self.sql_db.query(Project).filter(Project.id == repo_id).first()
 
     def _get_graph_data(self, repo_id: str, node_name: str) -> Dict[str, Any]:
         query = """
@@ -165,62 +180,80 @@ class GetCodeGraphFromNodeNameTool:
         WHERE toLower(start.name) = toLower($node_name)
         CALL apoc.path.subgraphAll(start, {
             relationshipFilter: "CALLS|IMPLEMENTS|INHERITS|CONTAINS|REFERENCES>",
-            maxLevel: 2
+            maxLevel: 10
         })
         YIELD nodes, relationships
-        WITH nodes, relationships
         UNWIND nodes as node
-        OPTIONAL MATCH (node)-[r]->(related)
-        WHERE related IN nodes
+        OPTIONAL MATCH (node)-[r]->(child:NODE)
+        WHERE child IN nodes AND type(r) <> 'IS_LEAF'
         WITH node, collect({
-            target: related.node_id,
-            type: type(r),
-            properties: properties(r)
-        }) as outgoing_edges
-        RETURN collect({
+            id: child.node_id,
+            name: child.name,
+            type: head(labels(child)),
+            file_path: child.file_path,
+            start_line: child.start_line,
+            end_line: child.end_line,
+            function_calls: child.function_calls,
+            signature: child.signature,
+            relationship: type(r)
+        }) as children
+        RETURN {
             id: node.node_id,
-            label: node.name,
-            metadata: {
-                type: head(labels(node)),
-                file_path: node.file_path,
-                start_line: node.start_line,
-                end_line: node.end_line
-            },
-            edges: outgoing_edges
-        }) as nodes
+            name: node.name,
+            type: head(labels(node)),
+            file_path: node.file_path,
+            start_line: node.start_line,
+            end_line: node.end_line,
+            function_calls: node.function_calls,
+            signature: node.signature,
+            children: children
+        } as nodes
         """
         with self.neo4j_driver.session() as session:
             result = session.run(query, node_name=node_name, repo_id=repo_id)
-            record = result.single()
-            if not record:
+            nodes = result.values()
+            if not nodes:
                 return None
-            return {"nodes": record["nodes"]}
+            return self._build_tree(nodes, node_name)
+
+    def _build_tree(self, nodes, root_name):
+        node_map = {node['id']: node for node in nodes}
+        root = next((node for node in nodes if node['name'].lower() == root_name.lower()), None)
+        if not root:
+            return None
+        
+        for node in nodes:
+            node['children'] = [child for child in node['children'] if child['id'] in node_map]
+
+        return root
 
     def _process_graph_data(self, graph_data: Dict[str, Any], project: Project) -> Dict[str, Any]:
-        nodes = {}
-        for node in graph_data["nodes"]:
-            node_id = node["id"]
-            nodes[node_id] = {
-                "label": node["label"],
-                "metadata": {
-                    "type": node["metadata"]["type"],
-                    "file_path": self._get_relative_file_path(node["metadata"]["file_path"]),
-                    "start_line": node["metadata"]["start_line"],
-                    "end_line": node["metadata"]["end_line"]
-                },
-                "edges": node["edges"]
+        def process_node(node):
+            processed_node = {
+                "id": node["id"],
+                "name": node["name"],
+                "type": node["type"],
+                "file_path": self._get_relative_file_path(node["file_path"]),
+                "start_line": node["start_line"],
+                "end_line": node["end_line"],
+                "function_calls": node.get("function_calls", []),
+                "signature": node.get("signature", ""),
+                "children": []
             }
+            for child in node.get("children", []):
+                processed_child = process_node(child)
+                processed_child["relationship"] = child["relationship"]
+                processed_node["children"].append(processed_child)
+            return processed_node
+
+        root_node = process_node(graph_data)
 
         return {
             "graph": {
-                "directed": True,
-                "type": "Code Graph",
-                "label": f"Code Graph for {project.repo_name}",
-                "metadata": {
-                    "repo_name": project.repo_name,
-                    "branch_name": project.branch_name
-                },
-                "nodes": nodes
+                "name": f"Code Graph for {project.repo_name}",
+                "repo_name": project.repo_name,
+                "branch_name": project.branch_name,
+                "root_node": root_node
             }
         }
 
