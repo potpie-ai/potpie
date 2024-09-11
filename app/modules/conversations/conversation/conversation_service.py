@@ -179,17 +179,27 @@ class ConversationService:
             )
             logger.info(f"Stored message in conversation {conversation_id}")
             if message_type == MessageType.HUMAN:
-                conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
+                conversation = (
+                    self.db.query(Conversation).filter_by(id=conversation_id).first()
+                )
                 if not conversation:
-                    raise ConversationNotFoundError(f"Conversation with id {conversation_id} not found")
-                
-                repo_id = conversation.project_ids[0] if conversation.project_ids else None
+                    raise ConversationNotFoundError(
+                        f"Conversation with id {conversation_id} not found"
+                    )
+
+                repo_id = (
+                    conversation.project_ids[0] if conversation.project_ids else None
+                )
                 if not repo_id:
-                    raise ConversationServiceError("No project associated with this conversation")
+                    raise ConversationServiceError(
+                        "No project associated with this conversation"
+                    )
 
                 agent = self.agents.get(conversation.agent_ids[0])
                 if not agent:
-                    raise ConversationServiceError(f"Invalid agent_id: {conversation.agent_ids[0]}")
+                    raise ConversationServiceError(
+                        f"Invalid agent_id: {conversation.agent_ids[0]}"
+                    )
 
                 logger.info(f"Running agent for repo_id: {repo_id}")
                 async for chunk in agent.run(
@@ -271,9 +281,7 @@ class ConversationService:
     async def _generate_and_stream_ai_response(
         self, query: str, conversation_id: str, user_id: str
     ) -> AsyncGenerator[str, None]:
-        conversation = (
-            self.db.query(Conversation).filter_by(id=conversation_id).first()
-        )
+        conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
         if not conversation:
             raise ConversationNotFoundError(
                 f"Conversation with id {conversation_id} not found"

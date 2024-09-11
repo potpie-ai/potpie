@@ -1,12 +1,17 @@
-from typing import Any, Dict, List
+from typing import Any, Dict
+
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
+
 from app.core.config_provider import config_provider
 from app.modules.projects.projects_model import Project
 
+
 class GetCodeGraphFromNodeIdTool:
     name = "get_code_graph_from_node_id"
-    description = "Retrieves a code graph for a specific node in a repository given its node ID"
+    description = (
+        "Retrieves a code graph for a specific node in a repository given its node ID"
+    )
 
     def __init__(self, sql_db: Session):
         self.sql_db = sql_db
@@ -27,7 +32,9 @@ class GetCodeGraphFromNodeIdTool:
 
             graph_data = self._get_graph_data(repo_id, node_id)
             if not graph_data:
-                return {"error": f"No graph data found for node ID '{node_id}' in repo '{repo_id}'"}
+                return {
+                    "error": f"No graph data found for node ID '{node_id}' in repo '{repo_id}'"
+                }
 
             return self._process_graph_data(graph_data, project)
         except Exception as e:
@@ -74,7 +81,7 @@ class GetCodeGraphFromNodeIdTool:
             return self._build_tree(nodes, node_id)
 
     def _build_tree(self, nodes, root_id):
-        node_map = {node['id']: node for node in nodes}
+        node_map = {node["id"]: node for node in nodes}
         root = node_map.get(root_id)
         if not root:
             return None
@@ -82,27 +89,29 @@ class GetCodeGraphFromNodeIdTool:
         visited = set()
 
         def build_node_tree(current_node):
-            if current_node['id'] in visited:
+            if current_node["id"] in visited:
                 return None
-            visited.add(current_node['id'])
+            visited.add(current_node["id"])
 
-            current_node['children'] = [
-                child for child in current_node['children'] if child['id'] in node_map
+            current_node["children"] = [
+                child for child in current_node["children"] if child["id"] in node_map
             ]
 
-            for child in current_node['children']:
-                child_node = node_map[child['id']]
+            for child in current_node["children"]:
+                child_node = node_map[child["id"]]
                 built_child = build_node_tree(child_node)
                 if built_child:
-                    child['children'] = built_child['children']
+                    child["children"] = built_child["children"]
                 else:
-                    current_node['children'].remove(child)
+                    current_node["children"].remove(child)
 
             return current_node
 
         return build_node_tree(root)
 
-    def _process_graph_data(self, graph_data: Dict[str, Any], project: Project) -> Dict[str, Any]:
+    def _process_graph_data(
+        self, graph_data: Dict[str, Any], project: Project
+    ) -> Dict[str, Any]:
         def process_node(node):
             processed_node = {
                 "id": node["id"],
@@ -111,7 +120,7 @@ class GetCodeGraphFromNodeIdTool:
                 "file_path": self._get_relative_file_path(node["file_path"]),
                 "start_line": node["start_line"],
                 "end_line": node["end_line"],
-                "children": []
+                "children": [],
             }
             for child in node.get("children", []):
                 processed_child = process_node(child)
@@ -125,7 +134,7 @@ class GetCodeGraphFromNodeIdTool:
                 "name": f"Code Graph for {project.repo_name}",
                 "repo_name": project.repo_name,
                 "branch_name": project.branch_name,
-                "root_node": root_node
+                "root_node": root_node,
             }
         }
 
@@ -147,15 +156,20 @@ class GetCodeGraphFromNodeIdTool:
     async def arun(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         return self.run(repo_id, node_id)
 
-from typing import Any, Dict, List
+
+from typing import Any, Dict
+
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
-from app.core.config_provider import config_provider
+
 from app.modules.projects.projects_model import Project
+
 
 class GetCodeGraphFromNodeNameTool:
     name = "get_code_graph_from_node_name"
-    description = "Retrieves a code graph for a specific node in a repository given its node name"
+    description = (
+        "Retrieves a code graph for a specific node in a repository given its node name"
+    )
 
     def __init__(self, sql_db: Session):
         self.sql_db = sql_db
@@ -176,7 +190,9 @@ class GetCodeGraphFromNodeNameTool:
 
             graph_data = self._get_graph_data(repo_id, node_name)
             if not graph_data:
-                return {"error": f"No graph data found for node name '{node_name}' in repo '{repo_id}'"}
+                return {
+                    "error": f"No graph data found for node name '{node_name}' in repo '{repo_id}'"
+                }
 
             return self._process_graph_data(graph_data, project)
         except Exception as e:
@@ -221,10 +237,10 @@ class GetCodeGraphFromNodeNameTool:
             nodes = [record["node_data"] for record in result]
             if not nodes:
                 return None
-            return self._build_tree(nodes, nodes[0]['id'])  # Use the first node as root
+            return self._build_tree(nodes, nodes[0]["id"])  # Use the first node as root
 
     def _build_tree(self, nodes, root_id):
-        node_map = {node['id']: node for node in nodes}
+        node_map = {node["id"]: node for node in nodes}
         root = node_map.get(root_id)
         if not root:
             return None
@@ -232,27 +248,29 @@ class GetCodeGraphFromNodeNameTool:
         visited = set()
 
         def build_node_tree(current_node):
-            if current_node['id'] in visited:
+            if current_node["id"] in visited:
                 return None
-            visited.add(current_node['id'])
+            visited.add(current_node["id"])
 
-            current_node['children'] = [
-                child for child in current_node['children'] if child['id'] in node_map
+            current_node["children"] = [
+                child for child in current_node["children"] if child["id"] in node_map
             ]
 
-            for child in current_node['children']:
-                child_node = node_map[child['id']]
+            for child in current_node["children"]:
+                child_node = node_map[child["id"]]
                 built_child = build_node_tree(child_node)
                 if built_child:
-                    child['children'] = built_child['children']
+                    child["children"] = built_child["children"]
                 else:
-                    current_node['children'].remove(child)
+                    current_node["children"].remove(child)
 
             return current_node
 
         return build_node_tree(root)
 
-    def _process_graph_data(self, graph_data: Dict[str, Any], project: Project) -> Dict[str, Any]:
+    def _process_graph_data(
+        self, graph_data: Dict[str, Any], project: Project
+    ) -> Dict[str, Any]:
         def process_node(node):
             processed_node = {
                 "id": node["id"],
@@ -261,7 +279,7 @@ class GetCodeGraphFromNodeNameTool:
                 "file_path": self._get_relative_file_path(node["file_path"]),
                 "start_line": node["start_line"],
                 "end_line": node["end_line"],
-                "children": []
+                "children": [],
             }
             for child in node.get("children", []):
                 processed_child = process_node(child)
@@ -275,7 +293,7 @@ class GetCodeGraphFromNodeNameTool:
                 "name": f"Code Graph for {project.repo_name}",
                 "repo_name": project.repo_name,
                 "branch_name": project.branch_name,
-                "root_node": root_node
+                "root_node": root_node,
             }
         }
 

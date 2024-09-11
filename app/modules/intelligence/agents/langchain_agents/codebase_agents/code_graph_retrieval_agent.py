@@ -1,29 +1,37 @@
-import json
 import logging
-import re
-from typing import Any, AsyncGenerator, Dict, List, Tuple
+from typing import Any, AsyncGenerator, Dict
 
 from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.agents.openai_functions_agent.base import create_openai_functions_agent
-from langchain.chat_models.base import BaseChatModel
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.schema import HumanMessage, SystemMessage
-from langchain.tools import StructuredTool, Tool
+from langchain.tools import StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
-from app.modules.intelligence.tools.kg_based_tools.get_code_graph_from_node_id_tool import GetCodeGraphFromNodeIdTool
-from app.modules.intelligence.tools.kg_based_tools.get_code_graph_from_node_name_tool import GetCodeGraphFromNodeNameTool
+from app.modules.intelligence.tools.kg_based_tools.get_code_graph_from_node_id_tool import (
+    GetCodeGraphFromNodeIdTool,
+)
+from app.modules.intelligence.tools.kg_based_tools.get_code_graph_from_node_name_tool import (
+    GetCodeGraphFromNodeNameTool,
+)
 
 logger = logging.getLogger(__name__)
 
+
 class NodeIdInput(BaseModel):
-    node_id: str = Field(..., description="The ID of the node to retrieve the graph for")
+    node_id: str = Field(
+        ..., description="The ID of the node to retrieve the graph for"
+    )
+
 
 class NodeNameInput(BaseModel):
-    node_name: str = Field(..., description="The name of the node to retrieve the graph for")
+    node_name: str = Field(
+        ..., description="The name of the node to retrieve the graph for"
+    )
+
 
 class CodeGraphRetrievalAgent:
     def __init__(self, llm, sql_db: Session):
@@ -38,7 +46,9 @@ class CodeGraphRetrievalAgent:
         return tool.run(repo_id=self.repo_id, node_id=node_id)
 
     def _run_get_code_graph_from_node_name(self, node_name: str) -> Dict[str, Any]:
-        print(f"Running get_code_graph_from_node_name with repo_id: {self.repo_id}, node_name: {node_name}")
+        print(
+            f"Running get_code_graph_from_node_name with repo_id: {self.repo_id}, node_name: {node_name}"
+        )
         tool = GetCodeGraphFromNodeNameTool(self.sql_db)
         return tool.run(repo_id=self.repo_id, node_name=node_name)
 
@@ -64,13 +74,13 @@ Return the graph data as a JSON string.Return only code and nothing else."""
                 func=self._run_get_code_graph_from_node_id,
                 name="GetCodeGraphFromNodeId",
                 description="Get a code graph for a specific node ID",
-                args_schema=NodeIdInput
+                args_schema=NodeIdInput,
             ),
             StructuredTool.from_function(
                 func=self._run_get_code_graph_from_node_name,
                 name="GetCodeGraphFromNodeName",
                 description="Get a code graph for a specific node name",
-                args_schema=NodeNameInput
+                args_schema=NodeNameInput,
             ),
         ]
 
@@ -98,7 +108,11 @@ Return the graph data as a JSON string.Return only code and nothing else."""
 
             history = self.history_manager.get_session_history(user_id, conversation_id)
             validated_history = [
-                (HumanMessage(content=str(msg)) if isinstance(msg, (str, int, float)) else msg)
+                (
+                    HumanMessage(content=str(msg))
+                    if isinstance(msg, (str, int, float))
+                    else msg
+                )
                 for msg in history
             ]
 

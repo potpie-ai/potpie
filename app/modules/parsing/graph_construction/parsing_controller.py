@@ -6,10 +6,13 @@ from app.core.config_provider import config_provider
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
-from app.modules.parsing.graph_construction.parsing_validator import validate_parsing_input
+from app.modules.parsing.graph_construction.parsing_tasks import process_parsing
+from app.modules.parsing.graph_construction.parsing_validator import (
+    validate_parsing_input,
+)
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
-from app.modules.parsing.graph_construction.parsing_tasks import process_parsing
+
 
 class ParsingController:
     @staticmethod
@@ -24,11 +27,18 @@ class ParsingController:
 
         if not project:
             new_project_id = str(uuid7())
+            # Prepare the response
             response = {
                 "project_id": new_project_id,
                 "status": ProjectStatusEnum.SUBMITTED.value,
             }
-            process_parsing.delay(repo_details.model_dump(), user_id, user_email, new_project_id)
+
+            # Enqueue the parsing task to be processed asynchronously
+            process_parsing.apply_async(
+                args=[repo_details.model_dump(), user_id, user_email, new_project_id],
+            )
+
+            # Return the response immediately
             return response
 
         project_id = project.id
@@ -47,9 +57,16 @@ class ParsingController:
             )
             await code_graph_service.cleanup_graph(project_id)
             code_graph_service.close()
-            process_parsing.delay(repo_details.dict(), user_id, user_email, project_id)
+
+            # Enqueue the parsing task to be processed asynchronously
+            process_parsing.apply_async(
+                args=[repo_details.model_dump(), user_id, user_email, project_id],
+            )
+
+            # Update the response status
             response["status"] = ProjectStatusEnum.SUBMITTED.value
 
+        # Return the response immediately
         return response
 
     @staticmethod
