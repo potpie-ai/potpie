@@ -23,9 +23,10 @@ from app.modules.conversations.message.message_schema import (
     MessageRequest,
     MessageResponse,
 )
-from app.modules.intelligence.agents.langchain_agents.codebase_agents import code_retrieval_agent
+from app.modules.intelligence.agents.langchain_agents.codebase_agents.code_retrieval_agent import CodeRetrievalAgent
 from app.modules.intelligence.agents.langchain_agents.debugging_agent import DebuggingAgent
 from app.modules.intelligence.agents.langchain_agents.qna_agent import QNAAgent
+
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
@@ -51,9 +52,10 @@ class ConversationService:
         sql_db: Session,
         project_service: ProjectService,
         history_manager: ChatHistoryService,
+        provider_service: ProviderService,
         debugging_agent: DebuggingAgent,
         codebase_qna_agent: QNAAgent,
-        provider_service: ProviderService,
+        code_retrieval_agent: CodeRetrievalAgent,
         user_id: str,
     ):
         self.db = sql_db
@@ -78,6 +80,7 @@ class ConversationService:
         )
         debugging_agent = instance._initialize_debugging_agent(sql_db)
         qna_agent = instance._initialize_qna_agent(sql_db)
+        code_retrieval_agent = instance._initialize_code_retrieval_agent(sql_db)
         return cls(
             sql_db,
             project_service,
@@ -95,6 +98,10 @@ class ConversationService:
     def _initialize_qna_agent(self, db: Session) -> QNAAgent:
         llm = self.provider_service.get_llm()
         return QNAAgent(llm, db)
+    
+    def _initialize_code_retrieval_agent(self, db: Session) -> CodeRetrievalAgent:
+        llm = self.provider_service.get_llm()
+        return CodeRetrievalAgent(llm, db)
 
     async def create_conversation(
         self, conversation: CreateConversationRequest, user_id: str
