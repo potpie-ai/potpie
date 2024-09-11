@@ -1,15 +1,12 @@
 from typing import Any, Dict
-
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
-
 from app.core.config_provider import config_provider
 from app.modules.projects.projects_model import Project
 
-
-class GetCodeFlowFromNodeIdTool:
-    name = "get_code_flow_from_node_id"
-    description = "Generates a code flow graph based on a given node ID, focusing on outbound relationships"
+class GetCodeGraphFromNodeIdTool:
+    name = "get_code_graph_from_node_id"
+    description = "Retrieves a code graph for a specific node in a repository given its node ID"
 
     def __init__(self, sql_db: Session):
         self.sql_db = sql_db
@@ -23,30 +20,23 @@ class GetCodeFlowFromNodeIdTool:
         )
 
     def run(self, repo_id: str, node_id: str) -> Dict[str, Any]:
-        print(
-            f"GetCodeFlowFromNodeIdTool.run called with repo_id: {repo_id}, node_id: {node_id}"
-        )
         try:
             project = self._get_project(repo_id)
             if not project:
                 return {"error": f"Project with ID '{repo_id}' not found in database"}
 
-            graph_data = self._get_code_flow(repo_id, node_id)
+            graph_data = self._get_graph_data(repo_id, node_id)
             if not graph_data:
-                return {
-                    "error": f"No outbound code flow found for node ID '{node_id}' in repo '{repo_id}'"
-                }
+                return {"error": f"No graph data found for node ID '{node_id}' in repo '{repo_id}'"}
 
-            code_flow = self._process_graph_data(graph_data, project)
-            return {"code_flow": code_flow}
+            return self._process_graph_data(graph_data, project)
         except Exception as e:
-            print(f"Error in GetCodeFlowFromNodeIdTool.run: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
     def _get_project(self, repo_id: str) -> Project:
         return self.sql_db.query(Project).filter(Project.id == repo_id).first()
 
-    def _get_code_flow(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+    def _get_graph_data(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         query = """
         MATCH (start:NODE {node_id: $node_id, repoId: $repo_id})
         CALL apoc.path.subgraphAll(start, {
@@ -63,24 +53,21 @@ class GetCodeFlowFromNodeIdTool:
                 return None
             return {"nodes": record["nodes"], "relationships": record["relationships"]}
 
-    def _process_graph_data(
-        self, graph_data: Dict[str, Any], project: Project
-    ) -> Dict[str, Any]:
+    def _process_graph_data(self, graph_data: Dict[str, Any], project: Project) -> Dict[str, Any]:
         nodes = []
         for node in graph_data["nodes"]:
             node_data = {
                 "id": node["node_id"],
                 "name": node.get("name", "Unknown"),
                 "type": list(node.labels)[0] if node.labels else "Unknown",
-                "file_path": self._get_relative_file_path(
-                    node.get("file_path", "Unknown")
-                ),
+                "file_path": self._get_relative_file_path(node.get("file_path", "Unknown")),
                 "start_line": node.get("start_line", -1),
                 "end_line": node.get("end_line", -1),
+                "properties": {k: v for k, v in node.items() if k not in ["node_id", "name", "file_path", "start_line", "end_line"]}
             }
             nodes.append(node_data)
 
-        relationships = [
+        edges = [
             {
                 "source": rel.start_node["node_id"],
                 "target": rel.end_node["node_id"],
@@ -89,7 +76,12 @@ class GetCodeFlowFromNodeIdTool:
             for rel in graph_data["relationships"]
         ]
 
-        return {"nodes": nodes, "relationships": relationships}
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "repo_name": project.repo_name,
+            "branch_name": project.branch_name
+        }
 
     @staticmethod
     def _get_relative_file_path(file_path: str) -> str:
@@ -100,7 +92,6 @@ class GetCodeFlowFromNodeIdTool:
             projects_index = parts.index("projects")
             return "/".join(parts[projects_index + 2 :])
         except ValueError:
-            print(f"'projects' not found in file path: {file_path}")
             return file_path
 
     def __del__(self):

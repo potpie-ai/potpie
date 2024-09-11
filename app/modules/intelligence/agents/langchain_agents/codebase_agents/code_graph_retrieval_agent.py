@@ -1,37 +1,88 @@
+import json
 import logging
-from typing import Any, AsyncGenerator, Dict, Tuple
+from typing import Any, AsyncGenerator, Dict, List
 
+from langchain.agents import AgentExecutor
+from langchain.agents.openai_functions_agent.base import create_openai_functions_agent
+from langchain.chat_models.base import BaseChatModel
+from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.schema import HumanMessage, SystemMessage
-from neo4j import GraphDatabase
+from langchain.tools import StructuredTool
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.core.config_provider import config_provider
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
-from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
-    GetCodeFromNodeIdTool,
-)
-from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_name_tool import (
-    GetCodeFromNodeNameTool,
-)
+from app.modules.intelligence.tools.kg_based_tools.get_code_graph_from_node_id_tool import GetCodeGraphFromNodeIdTool
+from app.modules.intelligence.tools.kg_based_tools.get_code_graph_from_node_name_tool import GetCodeGraphFromNodeNameTool
 
 logger = logging.getLogger(__name__)
 
+class NodeIdInput(BaseModel):
+    repo_id: str = Field(..., description="The ID of the repository")
+    node_id: str = Field(..., description="The ID of the node to retrieve the graph for")
+
+class NodeNameInput(BaseModel):
+    repo_id: str = Field(..., description="The ID of the repository")
+    node_name: str = Field(..., description="The name of the node to retrieve the graph for")
 
 class CodeGraphRetrievalAgent:
-    def __init__(self, llm, db: Session):
+    def __init__(self, llm: BaseChatModel, sql_db: Session):
         self.llm = llm
-        self.history_manager = ChatHistoryService(db)
-        self.get_code_from_node_id_tool = GetCodeFromNodeIdTool(db)
-        self.get_code_from_node_name_tool = GetCodeFromNodeNameTool(db)
-        self.neo4j_driver = self._create_neo4j_driver()
+        self.sql_db = sql_db
+        self.history_manager = ChatHistoryService(sql_db)
+        self.tools = [
+            StructuredTool.from_function(
+                func=self._run_get_code_graph_from_node_id,
+                name="GetCodeGraphFromNodeId",
+                description="Use this tool when you have a specific node ID to retrieve the code graph.",
+                args_schema=NodeIdInput,
+            ),
+            StructuredTool.from_function(
+                func=self._run_get_code_graph_from_node_name,
+                name="GetCodeGraphFromNodeName",
+                description="Use this tool when you have a node name to retrieve the code graph, or as a fallback if GetCodeGraphFromNodeId fails.",
+                args_schema=NodeNameInput,
+            ),
+        ]
+        self.agent_executor = None
 
-    def _create_neo4j_driver(self) -> GraphDatabase.driver:
-        neo4j_config = config_provider.get_neo4j_config()
-        return GraphDatabase.driver(
-            neo4j_config["uri"],
-            auth=(neo4j_config["username"], neo4j_config["password"]),
+    def _run_get_code_graph_from_node_id(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+        tool = GetCodeGraphFromNodeIdTool(self.sql_db)
+        result = tool.run(repo_id=repo_id, node_id=node_id)
+        if "error" in result:
+            raise ValueError(result["error"])
+        return result
+
+    def _run_get_code_graph_from_node_name(self, repo_id: str, node_name: str) -> Dict[str, Any]:
+        tool = GetCodeGraphFromNodeNameTool(self.sql_db)
+        result = tool.run(repo_id=repo_id, node_name=node_name)
+        if "error" in result:
+            raise ValueError(result["error"])
+        return result
+
+    async def _create_agent_executor(self) -> AgentExecutor:
+        system_prompt = """You are an AI assistant specialized in retrieving code graphs from a knowledge graph.
+Your task is to assist users in finding specific code graphs based on node IDs or names.
+- If GetCodeGraphFromNodeId fails, use GetCodeGraphFromNodeName as a fallback.
+- When using GetCodeGraphFromNodeName, if it initially fails, consider using the full query as the node name.
+- If both tools fail, inform the user that the requested information could not be found.
+Return ONLY the JSON representation of the code graph, without any additional explanations or comments."""
+
+        human_prompt = """Please find the code graph for this query: {input}"""
+
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                SystemMessage(content=system_prompt),
+                MessagesPlaceholder(variable_name="chat_history"),
+                MessagesPlaceholder(variable_name="agent_scratchpad"),
+                HumanMessage(content=human_prompt),
+            ]
         )
+
+        agent = create_openai_functions_agent(llm=self.llm, tools=self.tools, prompt=prompt)
+
+        return AgentExecutor.from_agent_and_tools(agent=agent, tools=self.tools, verbose=True, handle_parsing_errors=True)
 
     async def run(
         self,
@@ -41,117 +92,43 @@ class CodeGraphRetrievalAgent:
         conversation_id: str,
     ) -> AsyncGenerator[str, None]:
         try:
-            logger.debug(
-                f"CodeGraphRetrievalAgent.run called with query: {query}, project_id: {project_id}"
-            )
+            if not self.agent_executor:
+                self.agent_executor = await self._create_agent_executor()
 
-            query_type, extracted_value = await self._interpret_query(query)
+            history = self.history_manager.get_session_history(user_id, conversation_id)
+            validated_history = [
+                (HumanMessage(content=str(msg)) if isinstance(msg, (str, int, float)) else msg)
+                for msg in history
+            ]
 
-            if query_type == "node_id":
-                result = self.get_code_from_node_id_tool.run(
-                    project_id, extracted_value
-                )
-            elif query_type == "node_name":
-                result = self.get_code_from_node_name_tool.run(
-                    project_id, extracted_value
-                )
-            else:
-                yield "Unable to interpret the query. Please provide a more specific query with a node ID or name."
-                return
-
-            if "error" in result:
-                yield f"Error retrieving node data: {result['error']}"
-                return
-
-            graph_data = self._get_graph_data(project_id, result["node_id"])
-            output = self._format_graph_data(graph_data)
-
-            full_response = ""
-            for chunk in output.split():  # Simulating streaming for consistency
-                full_response += chunk + " "
-                self.history_manager.add_message_chunk(
-                    conversation_id, chunk + " ", MessageType.AI_GENERATED
-                )
-                yield chunk + " "
-
-            logger.debug(f"Full response: {full_response}")
-
-            self.history_manager.flush_message_buffer(
-                conversation_id, MessageType.AI_GENERATED
-            )
-
-        except Exception as e:
-            logger.error(
-                f"Error during CodeGraphRetrievalAgent run: {str(e)}", exc_info=True
-            )
-            yield f"An error occurred: {str(e)}"
-
-    async def _interpret_query(self, query: str) -> Tuple[str, str]:
-        system_message = SystemMessage(
-            content="""
-        You are an AI assistant that interprets queries about code nodes. Your task is to determine if a query is asking for a node by ID or by name, and extract the relevant information.
-        """
-        )
-        human_message = HumanMessage(
-            content=f"""
-        Given the following query, determine if it's asking for a node by ID or by name.
-        If it's asking for a node by ID, extract the ID. If it's asking for a node by name, extract the name.
-
-        Query: {query}
-
-        Respond in the following format:
-        Type: [node_id/node_name]
-        Value: [extracted ID or name]
-
-        If you can't determine the type or extract a value, respond with:
-        Type: unknown
-        Value: none
-        """
-        )
-
-        messages = [system_message, human_message]
-        response = await self.llm.agenerate([messages])
-        content = response.generations[0][0].text
-
-        lines = content.strip().split("\n")
-        query_type = lines[0].split(": ")[1]
-        value = lines[1].split(": ")[1]
-
-        return query_type, value if value != "none" else None
-
-    def _get_graph_data(self, repo_id: str, node_id: str) -> Dict[str, Any]:
-        query = """
-        MATCH (n:NODE {node_id: $node_id, repoId: $repo_id})
-        OPTIONAL MATCH (n)-[r]-(related)
-        RETURN n AS node, collect(DISTINCT {type: type(r), direction: CASE WHEN startNode(r) = n THEN 'outgoing' ELSE 'incoming' END, node: related}) AS connections
-        """
-        with self.neo4j_driver.session() as session:
-            result = session.run(query, node_id=node_id, repo_id=repo_id)
-            record = result.single()
-            return {
-                "node": dict(record["node"]),
-                "connections": [dict(conn) for conn in record["connections"]],
+            inputs = {
+                "input": f"Query: {query}\nRepository ID: {project_id}",
+                "chat_history": validated_history,
             }
 
-    def _format_graph_data(self, graph_data: Dict[str, Any]) -> str:
-        node = graph_data["node"]
-        connections = graph_data["connections"]
+            logger.debug(f"Inputs to agent: {inputs}")
 
-        output = "Graph Data:\n\n"
-        output += "Central Node:\n"
-        output += f"- ID: {node['node_id']}\n"
-        output += f"- Name: {node['name']}\n"
-        output += f"- Type: {node['type']}\n"
-        output += f"- File: {node['file_path']}\n"
-        output += f"- Lines: {node['start_line']} - {node['end_line']}\n\n"
+            result = await self.agent_executor.ainvoke(inputs)
 
-        output += "Connections:\n"
-        for conn in connections:
-            direction = "→" if conn["direction"] == "outgoing" else "←"
-            output += f"- {direction} [{conn['type']}] {conn['node']['name']} (ID: {conn['node']['node_id']})\n"
+            # Extract the agent's output
+            agent_output = result.get("output", "")
 
-        return output
+            # Ensure the result is a valid JSON string
+            try:
+                json_result = json.loads(agent_output)
+                output = json.dumps(json_result, indent=2)
+            except json.JSONDecodeError:
+                if "error" in agent_output:
+                    output = json.dumps({"error": agent_output})
+                else:
+                    output = json.dumps({"error": "Invalid JSON response from agent", "raw_output": agent_output})
 
-    def __del__(self):
-        if hasattr(self, "neo4j_driver"):
-            self.neo4j_driver.close()
+            self.history_manager.add_message_chunk(conversation_id, output, MessageType.AI_GENERATED)
+            yield output
+
+            self.history_manager.flush_message_buffer(conversation_id, MessageType.AI_GENERATED)
+
+        except Exception as e:
+            logger.error(f"Error during CodeGraphRetrievalAgent run: {str(e)}", exc_info=True)
+            error_output = json.dumps({"error": f"An error occurred: {str(e)}"})
+            yield error_output
