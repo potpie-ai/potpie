@@ -46,7 +46,7 @@ class CodeGraphRetrievalAgent:
         system_prompt = """You are an AI assistant specialized in retrieving code graphs from a knowledge graph.
 Your task is to assist users in finding specific code graphs based on node names or IDs.
 Use the GetCodeGraphFromNodeId tool when you have a specific node ID, and use the GetCodeGraphFromNodeName tool when you have a node name or as a fallback.
-Return the graph data as a JSON string."""
+Return the graph data as a JSON string.Return only code and nothing else."""
 
         human_prompt = """Please find the code graph for this query: {input}"""
 
@@ -106,9 +106,6 @@ Return the graph data as a JSON string."""
                 "input": query,
                 "chat_history": validated_history,
             }
-
-            print(f"Inputs to agent: {inputs}")
-            print(f"Using repo_id: {self.repo_id}")
 
             async for chunk in self.agent_executor.astream(inputs):
                 content = chunk.get("output", "")
