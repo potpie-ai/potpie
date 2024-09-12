@@ -54,3 +54,4 @@ nltk
 langchain_anthropic
 celery
 redis
+flower

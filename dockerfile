@@ -1,7 +1,7 @@
 # Use an official Python runtime as a parent image
 FROM python:3.10-slim
 
-# Install Git and PostgreSQL development libraries
+# Install system dependencies
 RUN apt-get update && apt-get install -y git procps
 
 # Set the working directory in the container
@@ -13,6 +13,9 @@ COPY requirements.txt .
 # Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Install Celery and Flower
+RUN pip install --no-cache-dir celery flower
+
 # Install NLTK and download required data
 RUN pip install --no-cache-dir nltk
 RUN python -c "import nltk; nltk.download('punkt');"
@@ -23,8 +26,18 @@ COPY . .
 # Expose the port that the app runs on
 EXPOSE 8001
 
+# Expose the port for Flower
+EXPOSE 5555
+
 # Define environment variable
 ENV PYTHONUNBUFFERED=1
 
-# Run Alembic migrations before starting the application
-CMD ["sh", "-c", "WORKERS=$(( $(nproc) )); echo 'Starting Gunicorn with' $WORKERS 'workers'; alembic upgrade head && gunicorn --workers $WORKERS --worker-class uvicorn.workers.UvicornWorker --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app"]
+# Define the command to run multiple services
+CMD ["sh", "-c", "\
+    WORKERS=$(( $(nproc) )); \
+    echo 'Starting Celery worker...'; \
+    celery -A app.core.celery_config.celery_app worker --loglevel=info -E & \
+    echo 'Starting Flower...'; \
+    flower -A app.core.celery_config.celery_app --port=5555 --broker=redis://redis:6379/0 & \
+    echo 'Starting momentum application...'; \
+    alembic upgrade head && gunicorn --workers $WORKERS --worker-class uvicorn.workers.UvicornWorker --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app"]
