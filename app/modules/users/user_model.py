@@ -1,12 +1,9 @@
 from sqlalchemy import TIMESTAMP, Boolean, Column, String, func
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, deferred
 
-from app.core.database import Base
-from app.modules.intelligence.prompts.prompt_model import Prompt  # noqa
-from app.modules.users.user_preferences_model import UserPreferences  # noqa
-from app.modules.projects.projects_model import Project  # noqa
-from app.modules.conversations.conversation.conversation_model import Conversation  # noqa
+from app.core.base_model import Base
+
 class User(Base):
     __tablename__ = "users"
 
@@ -20,7 +17,9 @@ class User(Base):
     provider_username = Column(String(255))
 
     # User relationships
-    projects = relationship("Project", back_populates="user")
-    conversations = relationship("Conversation", back_populates="user")
-    created_prompts = relationship("Prompt", back_populates="creator")
-    preferences = relationship("UserPreferences", back_populates="user", uselist=False)
+    projects = deferred(relationship("Project", back_populates="user"))
+    conversations = deferred(relationship("Conversation", back_populates="user"))
+    created_prompts = deferred(relationship("Prompt", back_populates="creator"))
+    preferences = deferred(relationship("UserPreferences", back_populates="user", uselist=False))
+
+# Remove late imports

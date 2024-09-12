@@ -5,7 +5,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.core.database import Base, SessionLocal, engine
+from app.core.base_model import Base
+from app.core.database import engine, SessionLocal
 from app.modules.auth.auth_router import auth_router
 from app.modules.conversations.conversations_router import (
     router as conversations_router,
@@ -24,6 +25,16 @@ from app.modules.projects.projects_router import router as projects_router
 from app.modules.search.search_router import router as search_router
 from app.modules.users.user_router import router as user_router
 from app.modules.utils.firebase_setup import FirebaseSetup
+
+# Import all models here
+from app.modules.users.user_model import User
+from app.modules.projects.projects_model import Project
+from app.modules.tasks.task_model import Task
+from app.modules.search.search_models import SearchIndex
+from app.modules.conversations.conversation.conversation_model import Conversation
+from app.modules.conversations.message.message_model import Message
+from app.modules.intelligence.prompts.prompt_model import Prompt, AgentPromptMapping
+from app.modules.users.user_preferences_model import UserPreferences
 
 # Configure logging
 logging.basicConfig(

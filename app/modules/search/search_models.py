@@ -1,8 +1,7 @@
 from sqlalchemy import Column, ForeignKey, Integer, String, Text
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, deferred
 
-from app.core.database import Base
-from app.modules.projects.projects_model import Project  # noqa
+from app.core.base_model import Base
 
 class SearchIndex(Base):
     __tablename__ = "search_indices"
@@ -14,4 +13,4 @@ class SearchIndex(Base):
     file_path = Column(String, index=True)
     content = Column(Text)
 
-    project = relationship("Project", back_populates="search_indices")
+    project = deferred(relationship("Project", back_populates="search_indices"))

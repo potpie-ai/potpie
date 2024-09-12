@@ -3,21 +3,18 @@ import enum
 from sqlalchemy import TIMESTAMP, CheckConstraint, Column
 from sqlalchemy import Enum as SQLAEnum
 from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint, func
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, deferred
 
-from app.core.database import Base
-from app.modules.users.user_model import User  # noqa
+from app.core.base_model import Base
 
 # Define enums for the Prompt model
 class PromptStatusType(enum.Enum):
     ACTIVE = "ACTIVE"
     INACTIVE = "INACTIVE"
 
-
 class PromptType(enum.Enum):
     SYSTEM = "SYSTEM"
     HUMAN = "HUMAN"
-
 
 class Prompt(Base):
     __tablename__ = "prompts"
@@ -50,8 +47,7 @@ class Prompt(Base):
     )
 
     # Define relationship to User
-    creator = relationship("User", back_populates="created_prompts")
-
+    creator = deferred(relationship("User", back_populates="created_prompts"))
 
 class AgentPromptMapping(Base):
     __tablename__ = "agent_prompt_mappings"
@@ -66,4 +62,3 @@ class AgentPromptMapping(Base):
     __table_args__ = (
         UniqueConstraint("agent_id", "prompt_stage", name="unique_agent_prompt_stage"),
     )
-

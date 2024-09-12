@@ -5,14 +5,12 @@ from sqlalchemy import Enum as SQLAEnum
 from sqlalchemy import ForeignKey, String, func
 from sqlalchemy.orm import relationship, deferred
 
-from app.core.database import Base
-from app.modules.users.user_model import User  # noqa
-from app.modules.conversations.message.message_model import Message  # noqa
+from app.core.base_model import Base
+
 class ConversationStatus(enum.Enum):
     ACTIVE = "active"
     ARCHIVED = "archived"
     DELETED = "deleted"
-
 
 class Conversation(Base):
     __tablename__ = "conversations"
@@ -39,7 +37,9 @@ class Conversation(Base):
     )
 
     # Relationships
-    user = relationship("User", back_populates="conversations")
-    messages = deferred(lambda: relationship(
+    user = deferred(relationship("User", back_populates="conversations"))
+    messages = deferred(relationship(
         "Message", back_populates="conversation", cascade="all, delete-orphan"
     ))
+
+# Remove late imports
