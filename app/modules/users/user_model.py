@@ -22,6 +22,3 @@ class User(Base):
     conversations = relationship("Conversation", back_populates="user")
     created_prompts = relationship("Prompt", back_populates="creator")
     preferences = relationship("UserPreferences", back_populates="user", uselist=False)
-
-
-# Remove late imports

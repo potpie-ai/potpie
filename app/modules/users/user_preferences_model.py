@@ -13,6 +13,3 @@ class UserPreferences(Base):
     user = relationship("User", back_populates="preferences")
 
     __table_args__ = (Index("idx_user_preferences_user_id", "user_id"),)
-
-    # Late import to avoid circular import
-    # from app.modules.users.user_model import User  # noqa

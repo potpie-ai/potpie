@@ -17,7 +17,6 @@ from app.modules.intelligence.prompts.prompt_router import router as prompt_rout
 from app.modules.intelligence.prompts.system_prompt_setup import SystemPromptSetup
 from app.modules.intelligence.provider.provider_router import router as provider_router
 from app.modules.key_management.secret_manager import router as secret_manager_router
-from app.modules.models import *  # noqa
 from app.modules.parsing.graph_construction.parsing_router import (
     router as parsing_router,
 )
