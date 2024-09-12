@@ -7,16 +7,14 @@ from uuid6 import uuid7
 
 from app.celery.tasks.parsing_tasks import process_parsing
 from app.core.config_provider import config_provider
-
-from app.modules.projects.projects_schema import ProjectStatusEnum
-from app.modules.projects.projects_service import ProjectService
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.parsing.graph_construction.parsing_validator import (
     validate_parsing_input,
 )
-
+from app.modules.projects.projects_schema import ProjectStatusEnum
+from app.modules.projects.projects_service import ProjectService
 
 logger = logging.getLogger(__name__)
 

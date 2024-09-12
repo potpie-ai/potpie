@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.base_model import Base
-from app.core.database import engine, SessionLocal
+from app.core.database import SessionLocal, engine
 from app.modules.auth.auth_router import auth_router
 from app.modules.conversations.conversations_router import (
     router as conversations_router,
@@ -17,6 +17,7 @@ from app.modules.intelligence.prompts.prompt_router import router as prompt_rout
 from app.modules.intelligence.prompts.system_prompt_setup import SystemPromptSetup
 from app.modules.intelligence.provider.provider_router import router as provider_router
 from app.modules.key_management.secret_manager import router as secret_manager_router
+from app.modules.models import *  # noqa
 from app.modules.parsing.graph_construction.parsing_router import (
     router as parsing_router,
 )
@@ -26,17 +27,6 @@ from app.modules.search.search_router import router as search_router
 from app.modules.users.user_router import router as user_router
 from app.modules.utils.firebase_setup import FirebaseSetup
 
-# Import all models here
-from app.modules.users.user_model import User
-from app.modules.projects.projects_model import Project
-from app.modules.tasks.task_model import Task
-from app.modules.search.search_models import SearchIndex
-from app.modules.conversations.conversation.conversation_model import Conversation
-from app.modules.conversations.message.message_model import Message
-from app.modules.intelligence.prompts.prompt_model import Prompt, AgentPromptMapping
-from app.modules.users.user_preferences_model import UserPreferences
-
-# Configure logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )

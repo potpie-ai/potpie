@@ -10,7 +10,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import BYTEA
-from sqlalchemy.orm import relationship, deferred
+from sqlalchemy.orm import relationship
 
 from app.core.base_model import Base
 
@@ -42,6 +42,6 @@ class Project(Base):
     )
 
     # Project relationships
-    user = deferred(relationship("User", back_populates="projects"))
-    search_indices = deferred(relationship("SearchIndex", back_populates="project"))
-    tasks = deferred(relationship("Task", back_populates="project"))
+    user = relationship("User", back_populates="projects")
+    search_indices = relationship("SearchIndex", back_populates="project")
+    tasks = relationship("Task", back_populates="project")

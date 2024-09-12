@@ -1,6 +1,7 @@
-import os
-from celery import Celery
 import logging
+import os
+
+from celery import Celery
 
 # Redis configuration
 redishost = os.getenv("REDISHOST", "localhost")
@@ -30,6 +31,7 @@ try:
 except Exception as e:
     logger.error(f"Failed to connect to Redis: {str(e)}")
 
+
 def configure_celery(queue_prefix: str):
     celery_app.conf.update(
         task_serializer="json",
@@ -38,11 +40,13 @@ def configure_celery(queue_prefix: str):
         timezone="UTC",
         enable_utc=True,
         task_routes={
-            "app.celery.tasks.parsing_tasks.process_parsing": {"queue": f"{queue_prefix}_process_repository"},
-        }
+            "app.celery.tasks.parsing_tasks.process_parsing": {
+                "queue": f"{queue_prefix}_process_repository"
+            },
+        },
     )
+
 
 configure_celery(queue_name)
 
 # Import tasks to ensure they are registered
-import app.celery.tasks.parsing_tasks

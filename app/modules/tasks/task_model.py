@@ -2,7 +2,7 @@ import enum
 from datetime import datetime
 
 from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, String
-from sqlalchemy.orm import relationship, deferred
+from sqlalchemy.orm import relationship
 
 from app.core.base_model import Base
 
@@ -25,4 +25,4 @@ class Task(Base):
     project_id = Column(String, ForeignKey("projects.id"), nullable=False)
     result = Column(String, nullable=True)
 
-    project = deferred(relationship("Project", back_populates="tasks"))
+    project = relationship("Project", back_populates="tasks")

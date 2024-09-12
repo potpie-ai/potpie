@@ -1,8 +1,9 @@
 from sqlalchemy import TIMESTAMP, Boolean, Column, String, func
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import relationship, deferred
+from sqlalchemy.orm import relationship
 
 from app.core.base_model import Base
+
 
 class User(Base):
     __tablename__ = "users"
@@ -17,9 +18,10 @@ class User(Base):
     provider_username = Column(String(255))
 
     # User relationships
-    projects = deferred(relationship("Project", back_populates="user"))
-    conversations = deferred(relationship("Conversation", back_populates="user"))
-    created_prompts = deferred(relationship("Prompt", back_populates="creator"))
-    preferences = deferred(relationship("UserPreferences", back_populates="user", uselist=False))
+    projects = relationship("Project", back_populates="user")
+    conversations = relationship("Conversation", back_populates="user")
+    created_prompts = relationship("Prompt", back_populates="creator")
+    preferences = relationship("UserPreferences", back_populates="user", uselist=False)
+
 
 # Remove late imports
