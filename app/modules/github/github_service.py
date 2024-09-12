@@ -226,9 +226,13 @@ class GithubService:
         repo_name: str, file_path: str, start_line: int, end_line: int
     ):
         try:
+            github = None
+            repo = None
+
             try:
                 # Try to fetch from public repo first
-                repo, owner = GithubService.get_public_github_repo(repo_name)
+                github = Github()
+                repo = github.get_repo(repo_name)
             except Exception:
                 # If public repo fetch fails, try with private repo mechanism
                 github_client, response, auth, owner = (
