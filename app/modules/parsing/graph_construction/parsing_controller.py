@@ -51,7 +51,7 @@ class ParsingController:
             project_id = project.id
             project_status = project.status
             response = {"project_id": project_id, "status": project_status}
-
+            # TODO: seems buggy, check and fix
             is_latest = await parse_helper.check_commit_status(project_id)
 
             if not is_latest or project_status != ProjectStatusEnum.READY.value:
