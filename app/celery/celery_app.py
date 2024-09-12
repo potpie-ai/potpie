@@ -2,6 +2,7 @@ import logging
 import os
 
 from celery import Celery
+from app.core.models import *  # This will import and initialize all models
 
 # Redis configuration
 redishost = os.getenv("REDISHOST", "localhost")
@@ -50,3 +51,4 @@ def configure_celery(queue_prefix: str):
 configure_celery(queue_name)
 
 # Import tasks to ensure they are registered
+import app.celery.tasks.parsing_tasks  # Ensure the task module is imported

@@ -1,16 +1,24 @@
 from app.celery.celery_app import celery_app, logger
+from app.celery.tasks.parsing_tasks import process_parsing  # Ensure the task is imported
 
+# Import the module containing the task
+import app.celery.tasks.parsing_tasks
 
 # Register tasks
 def register_tasks():
     logger.info("Registering tasks")
-    # Ensure the task is decorated with @celery_app.task in the module
-    # No need to manually register the task here
+    
+    # Register parsing tasks
+    celery_app.tasks.register(process_parsing)
+    # If there are more tasks in other modules, register them here
+    # For example:
+    # from app.celery.tasks import other_tasks
+    # celery_app.tasks.register(other_tasks.some_other_task)
     logger.info("Tasks registered successfully")
 
 
-# Call register_tasks() after all modules have been imported
-celery_app.on_after_configure.connect(lambda sender, **kwargs: register_tasks())
+# Call register_tasks() immediately
+register_tasks()
 
 logger.info("Celery worker initialization completed")
 
