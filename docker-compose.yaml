@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:latest
@@ -31,40 +29,11 @@ services:
     networks:
       - app-network
 
-  mongodb:
-    image: mongo:latest
-    container_name: potpie_mongodb
-    restart: always
-    environment:
-      - MONGO_INITDB_DATABASE=momentum
-    ports:
-      - "27017:27017"
-    networks:
-      - app-network
-
   redis:
     image: redis:latest
     container_name: potpie_redis_broker
     ports:
       - "6379:6379"
-    networks:
-      - app-network
-
-  weaviate:
-    image: cr.weaviate.io/semitechnologies/weaviate:1.25.7
-    container_name: potpie_weaviate
-    command: "--host 0.0.0.0 --port 8082 --scheme http"
-    ports:
-      - "8082:8082"
-      - "50051:50051"
-    restart: on-failure
-    environment:
-      QUERY_DEFAULTS_LIMIT: 25
-      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
-      PERSISTENCE_DATA_PATH: "/var/lib/weaviate"
-      DEFAULT_VECTORIZER_MODULE: "none"
-      ENABLE_MODULES: ""
-      CLUSTER_HOSTNAME: "node1"
     networks:
       - app-network
 

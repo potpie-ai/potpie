@@ -17,12 +17,12 @@ from app.modules.conversations.message.message_model import MessageType
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.tools.code_tools import CodeTools
+from app.modules.intelligence.tools.kg_based_tools.code_tools import CodeTools
 
 logger = logging.getLogger(__name__)
 
 
-class DebuggingAgent:
+class QNAAgent:
     def __init__(self, llm, db: Session):
         self.llm = llm
         self.history_manager = ChatHistoryService(db)
@@ -33,7 +33,7 @@ class DebuggingAgent:
     @lru_cache(maxsize=2)
     async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
         prompts = await self.prompt_service.get_prompts_by_agent_id_and_types(
-            "DEBUGGING_AGENT", [PromptType.SYSTEM, PromptType.HUMAN]
+            "QNA_AGENT", [PromptType.SYSTEM, PromptType.HUMAN]
         )
         return {prompt.type: prompt for prompt in prompts}
 
@@ -43,7 +43,7 @@ class DebuggingAgent:
         human_prompt = prompts.get(PromptType.HUMAN)
 
         if not system_prompt or not human_prompt:
-            raise ValueError("Required prompts not found for DEBUGGING_AGENT")
+            raise ValueError("Required prompts not found for QNA_AGENT")
 
         prompt_template = ChatPromptTemplate(
             messages=[
@@ -83,8 +83,6 @@ class DebuggingAgent:
         project_id: str,
         user_id: str,
         conversation_id: str,
-        logs: str = "",
-        stacktrace: str = "",
     ) -> AsyncGenerator[str, None]:
         try:
             if not self.chain:
@@ -101,12 +99,10 @@ class DebuggingAgent:
             ]
 
             tool_results = await self._run_tools(query, project_id)
-
-            full_query = f"Query: {query}\nProject ID: {project_id}\nLogs: {logs}\nStacktrace: {stacktrace}"
             inputs = {
                 "history": validated_history,
                 "tool_results": tool_results,
-                "input": full_query,
+                "input": query,
             }
 
             logger.debug(f"Inputs to LLM: {inputs}")
@@ -127,5 +123,5 @@ class DebuggingAgent:
             )
 
         except Exception as e:
-            logger.error(f"Error during DebuggingAgent run: {str(e)}", exc_info=True)
+            logger.error(f"Error during QNAAgent run: {str(e)}", exc_info=True)
             yield f"An error occurred: {str(e)}"

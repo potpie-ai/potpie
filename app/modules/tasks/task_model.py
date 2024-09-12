@@ -4,7 +4,7 @@ from datetime import datetime
 from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 
-from app.core.database import Base
+from app.core.base_model import Base
 
 
 class TaskType(enum.Enum):
@@ -25,4 +25,4 @@ class Task(Base):
     project_id = Column(String, ForeignKey("projects.id"), nullable=False)
     result = Column(String, nullable=True)
 
-    projects = relationship("Project", back_populates="task")
+    project = relationship("Project", back_populates="tasks")

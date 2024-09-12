@@ -23,4 +23,14 @@ class AgentsService:
                 name="Codebase Q&A Agent",
                 description="An agent specialized in answering questions about the codebase using the knowledge graph and code analysis tools.",
             ),
+            AgentInfo(
+                id="code_retrieval_agent",
+                name="Code Retrieval Agent",
+                description="An agent specialized in retrieving and analyzing code snippets from the knowledge graph based on node names or IDs.",
+            ),
+            AgentInfo(
+                id="code_graph_retrieval_agent",
+                name="Code Graph Retrieval Agent",
+                description="An agent specialized in retrieving and analyzing code snippets from the knowledge graph based on node names or IDs.",
+            ),
         ]

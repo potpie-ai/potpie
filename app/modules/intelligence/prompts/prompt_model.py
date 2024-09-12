@@ -5,7 +5,7 @@ from sqlalchemy import Enum as SQLAEnum
 from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import relationship
 
-from app.core.database import Base
+from app.core.base_model import Base
 
 
 # Define enums for the Prompt model
@@ -49,6 +49,9 @@ class Prompt(Base):
         CheckConstraint("created_at <= updated_at", name="check_timestamps"),
     )
 
+    # Define relationship to User
+    creator = relationship("User", back_populates="created_prompts")
+
 
 class AgentPromptMapping(Base):
     __tablename__ = "agent_prompt_mappings"
@@ -63,6 +66,3 @@ class AgentPromptMapping(Base):
     __table_args__ = (
         UniqueConstraint("agent_id", "prompt_stage", name="unique_agent_prompt_stage"),
     )
-
-
-Prompt.creator = relationship("User", back_populates="created_prompts")

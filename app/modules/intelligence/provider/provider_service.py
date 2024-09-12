@@ -103,6 +103,7 @@ class ProviderService:
             raise ValueError("Invalid LLM provider selected.")
 
         return self.llm
+
     def get_mini_llm(self):
         # Get user preferences from the database
         user_pref = (

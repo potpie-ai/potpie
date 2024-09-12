@@ -50,7 +50,7 @@ class ParsingService:
         user_email: str,
         project_id: int,
     ):
-        # TODO: Cleanup Tech Debt
+        # TODO: Cleanup Tech Debt around github calling
         project_manager = ProjectService(self.db)
         parse_helper = ParseHelper(self.db)
         extracted_dir = None
