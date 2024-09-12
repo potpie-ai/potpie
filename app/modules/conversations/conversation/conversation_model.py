@@ -3,11 +3,11 @@ import enum
 from sqlalchemy import ARRAY, TIMESTAMP, Column
 from sqlalchemy import Enum as SQLAEnum
 from sqlalchemy import ForeignKey, String, func
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, deferred
 
 from app.core.database import Base
-
-
+from app.modules.users.user_model import User  # noqa
+from app.modules.conversations.message.message_model import Message  # noqa
 class ConversationStatus(enum.Enum):
     ACTIVE = "active"
     ARCHIVED = "archived"
@@ -40,6 +40,6 @@ class Conversation(Base):
 
     # Relationships
     user = relationship("User", back_populates="conversations")
-    messages = relationship(
+    messages = deferred(lambda: relationship(
         "Message", back_populates="conversation", cascade="all, delete-orphan"
-    )
+    ))

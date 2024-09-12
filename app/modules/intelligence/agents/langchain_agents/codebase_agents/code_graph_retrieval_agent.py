@@ -38,6 +38,10 @@ class CodeGraphRetrievalAgent:
         self.history_manager = ChatHistoryService(sql_db)
         self.repo_id = None
         self.agent_executor = None
+        self.tools = [
+            GetCodeGraphFromNodeIdTool(self.sql_db),
+            GetCodeGraphFromNodeNameTool(self.sql_db)
+        ]
 
     def _run_get_code_graph_from_node_id(self, node_id: str) -> Dict[str, Any]:
         tool = GetCodeGraphFromNodeIdTool(self.sql_db)

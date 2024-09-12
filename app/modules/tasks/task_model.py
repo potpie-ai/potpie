@@ -5,6 +5,7 @@ from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
+from app.modules.projects.projects_model import Project  # noqa
 
 
 class TaskType(enum.Enum):

@@ -8,10 +8,8 @@ from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
 
 from app.core.database import Base
-from app.modules.conversations.conversation.conversation_model import (  # noqa
-    Conversation,
-)
-from app.modules.conversations.message.message_model import Message  # noqa
+from app.modules.conversations.conversation.conversation_model import Conversation # noqa
+from app.modules.conversations.message.message_model import Message # noqa
 from app.modules.intelligence.prompts.prompt_model import (  # noqa
     AgentPromptMapping,
     Prompt,

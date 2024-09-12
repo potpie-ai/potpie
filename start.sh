@@ -23,14 +23,17 @@ until docker exec potpie_postgres pg_isready -U postgres; do
   sleep 2
 done
 
-echo "Postgres is up - starting Celery worker"
+echo "Postgres is up - applying database migrations"
 
+# Apply database migrations
+alembic upgrade head
+
+echo "Starting momentum application..."
+gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app &
+
+echo "Starting Celery worker"
 # Start Celery worker with the new setup
 celery -A app.celery.celery_app worker --loglevel=debug -Q "${CELERY_QUEUE_NAME}_process_repository" -E --concurrency=1 --pool=solo &
 
 # Start Flower for monitoring (if needed)
 celery -A app.celery.celery_app flower &
-
-# Run momentum application with migrations
-echo "Starting momentum application..."
-alembic upgrade head && gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app &

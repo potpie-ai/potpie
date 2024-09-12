@@ -6,7 +6,7 @@ from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
-
+from app.modules.users.user_model import User  # noqa
 
 # Define enums for the Prompt model
 class PromptStatusType(enum.Enum):
@@ -37,7 +37,7 @@ class Prompt(Base):
         TIMESTAMP(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
-        nullable=False,
+        nullable=False
     )
 
     # Define constraints
@@ -48,6 +48,9 @@ class Prompt(Base):
         CheckConstraint("version > 0", name="check_version_positive"),
         CheckConstraint("created_at <= updated_at", name="check_timestamps"),
     )
+
+    # Define relationship to User
+    creator = relationship("User", back_populates="created_prompts")
 
 
 class AgentPromptMapping(Base):
@@ -64,5 +67,3 @@ class AgentPromptMapping(Base):
         UniqueConstraint("agent_id", "prompt_stage", name="unique_agent_prompt_stage"),
     )
 
-
-Prompt.creator = relationship("User", back_populates="created_prompts")

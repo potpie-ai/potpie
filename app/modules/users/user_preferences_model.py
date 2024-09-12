@@ -2,6 +2,7 @@ from sqlalchemy import JSON, Column, ForeignKey, Index, String
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
+from app.modules.users.user_model import User  # noqa
 
 
 class UserPreferences(Base):

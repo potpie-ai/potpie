@@ -3,10 +3,9 @@ import enum
 from sqlalchemy import TIMESTAMP, CheckConstraint, Column
 from sqlalchemy import Enum as SQLAEnum
 from sqlalchemy import ForeignKey, String, Text, func
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, deferred
 
 from app.core.database import Base
-
 
 class MessageStatus(str, enum.Enum):
     ACTIVE = "ACTIVE"
@@ -38,7 +37,7 @@ class Message(Base):
     )
     created_at = Column(TIMESTAMP(timezone=True), default=func.now(), nullable=False)
 
-    conversation = relationship("Conversation", back_populates="messages")
+    conversation = deferred(lambda: relationship("Conversation", back_populates="messages"))
 
     __table_args__ = (
         CheckConstraint(
@@ -47,3 +46,6 @@ class Message(Base):
             name="check_sender_id_for_type",
         ),
     )
+
+    # Late import to avoid circular import error
+    from app.modules.conversations.conversation.conversation_model import Conversation  # noqa

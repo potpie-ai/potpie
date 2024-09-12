@@ -2,7 +2,7 @@ from sqlalchemy import Column, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
-
+from app.modules.projects.projects_model import Project  # noqa
 
 class SearchIndex(Base):
     __tablename__ = "search_indices"
@@ -15,7 +15,3 @@ class SearchIndex(Base):
     content = Column(Text)
 
     project = relationship("Project", back_populates="search_indices")
-
-
-# Add this to the Project model in projects_model.py
-SearchIndex.project = relationship("Project", back_populates="search_indices")
