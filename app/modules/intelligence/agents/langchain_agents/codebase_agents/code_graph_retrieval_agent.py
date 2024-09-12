@@ -2,8 +2,14 @@ import logging
 from typing import Any, AsyncGenerator, Dict
 
 from langchain.agents import AgentExecutor
+from langchain.agents.tool_calling_agent.base import create_tool_calling_agent
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.schema import HumanMessage, SystemMessage
+from langchain.schema import SystemMessage, HumanMessage, AIMessage
+from langchain_core.runnables import RunnablePassthrough
+from langchain.agents.conversational_chat.base import ConversationalChatAgent
+from langchain.agents.openai_functions_agent.base import OpenAIFunctionsAgent
+from langchain.schema import HumanMessage, SystemMessage, AIMessage
+from langchain.tools import StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -16,20 +22,20 @@ from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_na
     GetCodeGraphFromNodeNameTool,
 )
 
-logger = logging.getLogger(__name__)
+from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
 
+logger = logging.getLogger(__name__)
 
 class NodeIdInput(BaseModel):
     node_id: str = Field(
         ..., description="The ID of the node to retrieve the graph for"
     )
 
-
 class NodeNameInput(BaseModel):
     node_name: str = Field(
         ..., description="The name of the node to retrieve the graph for"
     )
-
 
 class CodeGraphRetrievalAgent:
     def __init__(self, llm, sql_db: Session):
@@ -37,11 +43,21 @@ class CodeGraphRetrievalAgent:
         self.sql_db = sql_db
         self.history_manager = ChatHistoryService(sql_db)
         self.repo_id = None
-        self.agent_executor = None
         self.tools = [
-            GetCodeGraphFromNodeIdTool(self.sql_db),
-            GetCodeGraphFromNodeNameTool(self.sql_db),
+            StructuredTool.from_function(
+                func=self._run_get_code_graph_from_node_id,
+                name="GetCodeGraphFromNodeId",
+                description="Get a code graph for a specific node ID",
+                args_schema=NodeIdInput,
+            ),
+            StructuredTool.from_function(
+                func=self._run_get_code_graph_from_node_name,
+                name="GetCodeGraphFromNodeName",
+                description="Get a code graph for a specific node name",
+                args_schema=NodeNameInput,
+            ),
         ]
+        self.agent_executor = None
 
     def _run_get_code_graph_from_node_id(self, node_id: str) -> Dict[str, Any]:
         tool = GetCodeGraphFromNodeIdTool(self.sql_db)
@@ -58,28 +74,24 @@ class CodeGraphRetrievalAgent:
         system_prompt = """You are an AI assistant specialized in retrieving code graphs from a knowledge graph.
 Your task is to assist users in finding specific code graphs based on node names or IDs.
 Use the GetCodeGraphFromNodeId tool when you have a specific node ID, and use the GetCodeGraphFromNodeName tool when you have a node name or as a fallback.
-Return the graph data as a JSON string.Return only code and nothing else."""
-
-        human_prompt = """Please find the code graph for this query: {input}"""
+Return the graph data as a JSON string. Return only code and nothing else."""
 
         prompt = ChatPromptTemplate.from_messages(
             [
                 SystemMessage(content=system_prompt),
                 MessagesPlaceholder(variable_name="chat_history"),
-                HumanMessage(content=human_prompt),
+                HumanMessage(content="{input}"),
                 MessagesPlaceholder(variable_name="agent_scratchpad"),
             ]
         )
 
-        agent = self.llm  # Use the provided LLM directly
+        agent = create_tool_calling_agent(self.llm, self.tools, prompt)
 
-        return AgentExecutor.from_agent_and_tools(
-            agent=agent,
-            tools=self.tools,
-            prompt=prompt,  # Use the prompt here
-            verbose=True,
-            handle_parsing_errors=True,
-        )
+        agent_with_history = RunnablePassthrough.assign(
+            chat_history=lambda x: x.get("chat_history", [])
+        ) | agent
+
+        return AgentExecutor(agent=agent_with_history, tools=self.tools, verbose=True)
 
     async def run(
         self,
@@ -95,14 +107,17 @@ Return the graph data as a JSON string.Return only code and nothing else."""
                 self.agent_executor = await self._create_agent_executor()
 
             history = self.history_manager.get_session_history(user_id, conversation_id)
-            validated_history = [
-                (
-                    HumanMessage(content=str(msg))
-                    if isinstance(msg, (str, int, float))
-                    else msg
-                )
-                for msg in history
-            ]
+            validated_history = []
+            for msg in history:
+                if isinstance(msg, (str, int, float)):
+                    validated_history.append(HumanMessage(content=str(msg)))
+                elif isinstance(msg, dict):
+                    if msg.get('type') == 'human':
+                        validated_history.append(HumanMessage(content=msg.get('content', '')))
+                    elif msg.get('type') == 'ai':
+                        validated_history.append(AIMessage(content=msg.get('content', '')))
+                else:
+                    validated_history.append(msg)
 
             inputs = {
                 "input": query,
@@ -110,7 +125,11 @@ Return the graph data as a JSON string.Return only code and nothing else."""
             }
 
             async for chunk in self.agent_executor.astream(inputs):
-                content = chunk.get("output", "")
+                if isinstance(chunk, dict):
+                    content = chunk.get("output", "")
+                else:
+                    content = str(chunk)
+                
                 if content.strip():
                     self.history_manager.add_message_chunk(
                         conversation_id, content, MessageType.AI_GENERATED

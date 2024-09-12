@@ -7,9 +7,8 @@ from alembic.operations import ops
 from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
 
-from app.core.models import * #noqa
 from app.core.base_model import Base
-
+from app.core.models import *  # noqa
 
 target_metadata = Base.metadata
 # Load environment variables from .env

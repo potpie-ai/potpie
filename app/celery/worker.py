@@ -1,13 +1,14 @@
-from app.celery.celery_app import celery_app, logger
-from app.celery.tasks.parsing_tasks import process_parsing  # Ensure the task is imported
-
 # Import the module containing the task
-import app.celery.tasks.parsing_tasks
+from app.celery.celery_app import celery_app, logger
+from app.celery.tasks.parsing_tasks import (
+    process_parsing,  # Ensure the task is imported
+)
+
 
 # Register tasks
 def register_tasks():
     logger.info("Registering tasks")
-    
+
     # Register parsing tasks
     celery_app.tasks.register(process_parsing)
     # If there are more tasks in other modules, register them here

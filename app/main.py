@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.base_model import Base
 from app.core.database import SessionLocal, engine
+from app.core.models import *  # noqa #necessary for models to not give import errors
 from app.modules.auth.auth_router import auth_router
 from app.modules.conversations.conversations_router import (
     router as conversations_router,
@@ -25,8 +26,6 @@ from app.modules.projects.projects_router import router as projects_router
 from app.modules.search.search_router import router as search_router
 from app.modules.users.user_router import router as user_router
 from app.modules.utils.firebase_setup import FirebaseSetup
-
-from app.core.models import * #noqa #necessary for models to not give import errors
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
