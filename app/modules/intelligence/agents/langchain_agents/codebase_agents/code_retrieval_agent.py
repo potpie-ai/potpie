@@ -1,10 +1,11 @@
 import logging
-import re
-from typing import Any, AsyncGenerator, Dict, Tuple
+from typing import Any, AsyncGenerator, Dict
 
 from langchain.agents import AgentExecutor
+from langchain.agents.tool_calling_agent.base import create_tool_calling_agent
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.schema import HumanMessage, SystemMessage
+from langchain.schema import SystemMessage, HumanMessage, AIMessage
+from langchain_core.runnables import RunnablePassthrough
 from langchain.tools import StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -20,127 +21,112 @@ from app.modules.intelligence.tools.code_query_tools.get_code_from_node_name_too
 
 logger = logging.getLogger(__name__)
 
-
 class NodeIdInput(BaseModel):
-    repo_id: str = Field(..., description="The ID of the repository")
     node_id: str = Field(..., description="The ID of the node to retrieve code from")
 
-
 class NodeNameInput(BaseModel):
-    repo_id: str = Field(..., description="The ID of the repository")
-    node_name: str = Field(
-        ..., description="The name of the node to retrieve code from"
-    )
-
+    node_name: str = Field(..., description="The name of the node to retrieve code from")
 
 class CodeRetrievalAgent:
     def __init__(self, llm, sql_db: Session):
         self.llm = llm
         self.sql_db = sql_db
         self.history_manager = ChatHistoryService(sql_db)
+        self.repo_id = None
         self.tools = [
             StructuredTool.from_function(
                 func=self._run_get_code_from_node_id,
                 name="GetCodeFromNodeId",
-                description="Use this tool when you have a specific node ID to retrieve code.",
+                description="Get code for a specific node ID. Use this when you have an exact node ID.",
                 args_schema=NodeIdInput,
             ),
             StructuredTool.from_function(
                 func=self._run_get_code_from_node_name,
                 name="GetCodeFromNodeName",
-                description="Use this tool when you have a node name to retrieve code, or as a fallback if GetCodeFromNodeId fails.",
+                description="Get code for a specific node name. Use this when you have a node name or when GetCodeFromNodeId fails.",
                 args_schema=NodeNameInput,
             ),
         ]
         self.agent_executor = None
 
-    def _run_get_code_from_node_id(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+    def _run_get_code_from_node_id(self, node_id: str) -> Dict[str, Any]:
         tool = GetCodeFromNodeIdTool(self.sql_db)
-        return tool.run(repo_id=repo_id, node_id=node_id)
+        result = tool.run(repo_id=self.repo_id, node_id=node_id)
+        if "error" in result:
+            raise ValueError(result["error"])
+        return result
 
-    def _run_get_code_from_node_name(
-        self, repo_id: str, node_name: str
-    ) -> Dict[str, Any]:
+    def _run_get_code_from_node_name(self, node_name: str) -> Dict[str, Any]:
         tool = GetCodeFromNodeNameTool(self.sql_db)
-        return tool.run(repo_id=repo_id, node_name=node_name)
-
-    def _extract_node_id(self, query: str) -> Tuple[str, str]:
-        node_id_pattern = r"\b[a-f0-9]{32}\b"
-        match = re.search(node_id_pattern, query)
-        if match:
-            node_id = match.group(0)
-            remaining_query = query.replace(node_id, "").strip()
-            return node_id, remaining_query
-        return "", query
+        result = tool.run(repo_id=self.repo_id, node_name=node_name)
+        if "error" in result:
+            raise ValueError(result["error"])
+        return result
 
     async def _create_agent_executor(self) -> AgentExecutor:
         system_prompt = """You are an AI assistant specialized in retrieving code from a knowledge graph.
-Your task is to assist users in finding specific code snippets based on node IDs or names.
-- If GetCodeFromNodeId fails, use GetCodeFromNodeName as a fallback.
-- When using GetCodeFromNodeName, if it initally fails, consider using the full query as the node name.
-Return ONLY the code snippet, without any additional explanations or comments or any other text."""
-
-        human_prompt = """Please find the code for this query: {input}"""
+Your task is to assist users in finding specific code snippets based on node names or IDs.
+Use the GetCodeFromNodeId tool when you have a specific node ID.
+Use the GetCodeFromNodeName tool when you have a node name or if GetCodeFromNodeId fails.
+Only use one tool per request. If the first tool fails, try the other one.
+Return ONLY the code snippet from the 'code_content' field, without any additional explanations or comments."""
 
         prompt = ChatPromptTemplate.from_messages(
             [
                 SystemMessage(content=system_prompt),
                 MessagesPlaceholder(variable_name="chat_history"),
+                HumanMessage(content="{input}"),
                 MessagesPlaceholder(variable_name="agent_scratchpad"),
-                HumanMessage(content=human_prompt),
             ]
         )
 
-        agent = self.llm  # Use the provided LLM directly
+        agent = create_tool_calling_agent(self.llm, self.tools, prompt)
 
-        return AgentExecutor.from_agent_and_tools(
-            agent=agent,
-            tools=self.tools,
-            prompt=prompt,  # Use the prompt here
-            verbose=True,
-        )
+        agent_with_history = RunnablePassthrough.assign(
+            chat_history=lambda x: x.get("chat_history", [])
+        ) | agent
+
+        return AgentExecutor(agent=agent_with_history, tools=self.tools, verbose=True)
 
     async def run(
         self,
         query: str,
-        project_id: str,
+        repo_id: str,
         user_id: str,
         conversation_id: str,
     ) -> AsyncGenerator[str, None]:
         try:
+            logger.info(f"Running CodeRetrievalAgent for repo_id: {repo_id}")
+            self.repo_id = repo_id
             if not self.agent_executor:
                 self.agent_executor = await self._create_agent_executor()
 
             history = self.history_manager.get_session_history(user_id, conversation_id)
-            validated_history = [
-                (
-                    HumanMessage(content=str(msg))
-                    if isinstance(msg, (str, int, float))
-                    else msg
-                )
-                for msg in history
-            ]
-
-            node_id, remaining_query = self._extract_node_id(query)
-
-            if node_id:
-                result = self._run_get_code_from_node_id(project_id, node_id)
-                if not isinstance(result, dict) or "error" not in result:
-                    if isinstance(result, dict) and "code_content" in result:
-                        yield result["code_content"]
-                    elif isinstance(result, str):
-                        yield result
-                    return
+            validated_history = []
+            for msg in history:
+                if isinstance(msg, (str, int, float)):
+                    validated_history.append(HumanMessage(content=str(msg)))
+                elif isinstance(msg, dict):
+                    if msg.get('type') == 'human':
+                        validated_history.append(HumanMessage(content=msg.get('content', '')))
+                    elif msg.get('type') == 'ai':
+                        validated_history.append(AIMessage(content=msg.get('content', '')))
+                else:
+                    validated_history.append(msg)
 
             inputs = {
-                "input": f"Query: {query}\nRepository ID: {project_id}",
+                "input": query,
                 "chat_history": validated_history,
             }
 
-            logger.debug(f"Inputs to agent: {inputs}")
-
             async for chunk in self.agent_executor.astream(inputs):
-                content = chunk.get("output", "")
+                if isinstance(chunk, dict):
+                    content = chunk.get("output", "")
+                    if isinstance(content, dict) and "code_content" in content:
+                        content = content["code_content"]
+                else:
+                    content = str(chunk)
+                
                 if content.strip():
                     self.history_manager.add_message_chunk(
                         conversation_id, content, MessageType.AI_GENERATED
