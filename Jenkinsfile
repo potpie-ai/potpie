@@ -107,8 +107,8 @@ pipeline {
                     
                     try {
                         sh """
-                        kubectl set image deployment/momentum-core-deployment momentum-core=${DOCKER_REGISTRY}/momentum-core:${imageTag} -n app
-                        kubectl rollout status deployment/momentum-core-deployment -n app
+                        kubectl set image deployment/momentum-server-deployment momentum-server=${DOCKER_REGISTRY}/momentum-server:${imageTag} -n app
+                        kubectl rollout status deployment/momentum-server-deployment -n app
                         """
                         imageDeploySucceeded = true
                     } catch (Exception e) {
@@ -117,7 +117,7 @@ pipeline {
 
                     if (!imageDeploySucceeded) {
                         echo 'Ro lling back to previous revision...'
-                        sh 'kubectl rollout undo deployment/momentum-core-deployment -n app'
+                        sh 'kubectl rollout undo deployment/momentum-server-deployment -n app'
                     }
                 }
             }
