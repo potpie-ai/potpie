@@ -12,7 +12,7 @@ from app.modules.parsing.graph_construction.parsing_service import ParsingServic
 logger = logging.getLogger(__name__)
 
 
-class ParseTask(Task):
+class BaseTask(Task):
     _db = None
 
     @property
@@ -28,7 +28,7 @@ class ParseTask(Task):
 
 
 @celery_app.task(
-    bind=True, base=ParseTask, name="app.celery.tasks.parsing_tasks.process_parsing"
+    bind=True, base=BaseTask, name="app.celery.tasks.parsing_tasks.process_parsing"
 )
 def process_parsing(
     self, repo_details: Dict[str, Any], user_id: str, user_email: str, project_id: str
