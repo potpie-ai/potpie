@@ -450,10 +450,10 @@ class RepoMap:
         references = defaultdict(list)
         file_count = 0
 
-        for root, _, files in os.walk(repo_dir):
+        for root, dirs, files in os.walk(repo_dir):
             # Ignore folders starting with '.'
-            if os.path.basename(root).startswith("."):
-                continue
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+
 
             for file in files:
                 file_count += 1

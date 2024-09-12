@@ -184,10 +184,8 @@ class ParseHelper:
         total_chars = 0
 
         try:
-            for root, _, files in os.walk(repo_dir):
-                if os.path.basename(root).startswith("."):
-                    continue
-
+            for root, dirs, files in os.walk(repo_dir):
+                dirs[:] = [d for d in dirs if not d.startswith(".")]
                 for file in files:
                     file_path = os.path.join(root, file)
                     ext = os.path.splitext(file)[1].lower()
@@ -412,7 +410,7 @@ class ParseHelper:
         current_commit_id = project.get("commit_id")
         repo_name = project.get("project_name")
 
-        if len(repo_name.split("/")) >= 2:
+        if len(repo_name.split("/")) < 2:
             # Local repo , always parse local repos
             return False
 
