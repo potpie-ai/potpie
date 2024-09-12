@@ -4,9 +4,9 @@ from typing import Any, AsyncGenerator, Dict
 from langchain.agents import AgentExecutor
 from langchain.agents.tool_calling_agent.base import create_tool_calling_agent
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.schema import SystemMessage, HumanMessage, AIMessage
-from langchain_core.runnables import RunnablePassthrough
+from langchain.schema import AIMessage, HumanMessage, SystemMessage
 from langchain.tools import StructuredTool
+from langchain_core.runnables import RunnablePassthrough
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -21,11 +21,16 @@ from app.modules.intelligence.tools.code_query_tools.get_code_from_node_name_too
 
 logger = logging.getLogger(__name__)
 
+
 class NodeIdInput(BaseModel):
     node_id: str = Field(..., description="The ID of the node to retrieve code from")
 
+
 class NodeNameInput(BaseModel):
-    node_name: str = Field(..., description="The name of the node to retrieve code from")
+    node_name: str = Field(
+        ..., description="The name of the node to retrieve code from"
+    )
+
 
 class CodeRetrievalAgent:
     def __init__(self, llm, sql_db: Session):
@@ -82,9 +87,10 @@ Return ONLY the code snippet from the 'code_content' field, without any addition
 
         agent = create_tool_calling_agent(self.llm, self.tools, prompt)
 
-        agent_with_history = RunnablePassthrough.assign(
-            chat_history=lambda x: x.get("chat_history", [])
-        ) | agent
+        agent_with_history = (
+            RunnablePassthrough.assign(chat_history=lambda x: x.get("chat_history", []))
+            | agent
+        )
 
         return AgentExecutor(agent=agent_with_history, tools=self.tools, verbose=True)
 
@@ -107,10 +113,14 @@ Return ONLY the code snippet from the 'code_content' field, without any addition
                 if isinstance(msg, (str, int, float)):
                     validated_history.append(HumanMessage(content=str(msg)))
                 elif isinstance(msg, dict):
-                    if msg.get('type') == 'human':
-                        validated_history.append(HumanMessage(content=msg.get('content', '')))
-                    elif msg.get('type') == 'ai':
-                        validated_history.append(AIMessage(content=msg.get('content', '')))
+                    if msg.get("type") == "human":
+                        validated_history.append(
+                            HumanMessage(content=msg.get("content", ""))
+                        )
+                    elif msg.get("type") == "ai":
+                        validated_history.append(
+                            AIMessage(content=msg.get("content", ""))
+                        )
                 else:
                     validated_history.append(msg)
 
@@ -126,7 +136,7 @@ Return ONLY the code snippet from the 'code_content' field, without any addition
                         content = content["code_content"]
                 else:
                     content = str(chunk)
-                
+
                 if content.strip():
                     self.history_manager.add_message_chunk(
                         conversation_id, content, MessageType.AI_GENERATED
