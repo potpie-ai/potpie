@@ -226,18 +226,23 @@ class GithubService:
         repo_name: str, file_path: str, start_line: int, end_line: int
     ):
         try:
-            github_client, response, auth, owner = (
-                GithubService.get_github_repo_details(repo_name)
-            )
-            if response.status_code != 200:
-                print(response.json())
-                raise HTTPException(
-                    status_code=400, detail="Failed to get installation ID"
+            try:
+                # Try to fetch from public repo first
+                repo, owner = GithubService.get_public_github_repo(repo_name)
+            except Exception:
+                # If public repo fetch fails, try with private repo mechanism
+                github_client, response, auth, owner = (
+                    GithubService.get_github_repo_details(repo_name)
                 )
+                if response.status_code != 200:
+                    raise HTTPException(
+                        status_code=400, detail="Failed to get installation ID"
+                    )
 
-            app_auth = auth.get_installation_auth(response.json()["id"])
-            github = Github(auth=app_auth)
-            repo = github.get_repo(repo_name)
+                app_auth = auth.get_installation_auth(response.json()["id"])
+                github = Github(auth=app_auth)
+                repo = github.get_repo(repo_name)
+
             file_contents = repo.get_contents(file_path)
 
             if isinstance(file_contents, list):
