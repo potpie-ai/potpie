@@ -50,6 +50,8 @@ class RAGAgent:
  
         
     async def create_tasks(self, query: str, project_id: str, chat_history: List, node_ids: List[NodeContext], query_agent, rerank_agent):
+        if not node_ids: 
+            node_ids = []
         query_task = Task(
             description=f"Query the knowledge graph based on the input quer and chat history. Return the top k vector responses. Chat History: {chat_history}\n\nInput Query: {query}\n\nProject ID: {project_id}\n\n Node IDs: {[node.model_dump() for node in node_ids]}",
             expected_output="A list of vector similarity responses including the node_id, node name, docstring and similarity score",
@@ -86,7 +88,7 @@ class RAGAgent:
             process=Process.sequential,
             verbose=True
         )
-        nodes = [node.model_dump() for node in node_ids]
+        
         result = await crew.kickoff_async()
         return result
 

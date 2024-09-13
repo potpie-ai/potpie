@@ -25,7 +25,6 @@ from app.modules.conversations.message.message_schema import (
     NodeContext,
 )
 from app.modules.intelligence.agents.langchain_agents.unit_test_agent import UnitTestAgent
-from app.modules.intelligence.agents.langchain_agents.code_retrieval_agent import CodeRetrievalAgent
 from app.modules.intelligence.agents.langchain_agents.codebase_agents.code_graph_retrieval_agent import (
     CodeGraphRetrievalAgent,
 )

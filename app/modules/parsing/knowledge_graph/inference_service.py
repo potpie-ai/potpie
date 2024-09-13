@@ -224,8 +224,7 @@ class InferenceService:
                         "node_id": node["node_id"],
                         "embedding": node["embedding"],
                         "docstring": node.get("docstring", ""),
-                        "type": node.get("type", "Unknown"),
-                        "file": node.get("file", ""),
+                        "file_path": node.get("file_path", ""),
                         "start_line": node.get("start_line", -1),
                         "end_line": node.get("end_line", -1),
                     }
@@ -242,7 +241,6 @@ class InferenceService:
                     LIMIT $top_k
                     RETURN context_node.node_id AS node_id,
                            context_node.docstring AS docstring,
-                           context_node.type AS type,
                            context_node.file AS file,
                            context_node.start_line AS start_line,
                            context_node.end_line AS end_line,
@@ -261,8 +259,7 @@ class InferenceService:
                     WHERE node.repoId = $project_id
                     RETURN node.node_id AS node_id,
                            node.docstring AS docstring,
-                           node.type AS type,
-                           node.file AS file,
+                           node.file_path AS file_path,
                            node.start_line AS start_line,
                            node.end_line AS end_line,
                            score AS similarity

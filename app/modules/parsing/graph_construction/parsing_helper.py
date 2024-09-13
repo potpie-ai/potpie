@@ -132,7 +132,7 @@ class ParseHelper:
 
         try:
             for root, _, files in os.walk(repo_dir):
-                if os.path.basename(root).startswith("."):
+                if any(part.startswith('.') for part in root.split(os.sep)):
                     continue
 
                 for file in files:
@@ -365,7 +365,7 @@ class ParseHelper:
             )
             return False
 
-        if len(repo_name.split("/")) >= 2:
+        if len(repo_name.split("/")) < 2:
             # Local repo, always parse local repos
             return False
 

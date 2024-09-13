@@ -452,7 +452,7 @@ class RepoMap:
 
         for root, _, files in os.walk(repo_dir):
             # Ignore folders starting with '.'
-            if os.path.basename(root).startswith("."):
+            if any(part.startswith('.') for part in root.split(os.sep)):
                 continue
 
             for file in files:

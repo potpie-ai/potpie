@@ -5,6 +5,7 @@ from functools import lru_cache
 import os
 from typing import AsyncGenerator, Dict, List
 
+from fastapi import HTTPException
 from langchain.schema import HumanMessage, SystemMessage
 from langchain_core.prompts import (
     ChatPromptTemplate,
@@ -29,11 +30,9 @@ logger = logging.getLogger(__name__)
 
 
 class UnitTestAgent:
-    def __init__(self, db: Session):
+    def __init__(self, llm, db: Session):
         self.openai_key = os.getenv("OPENAI_API_KEY")
-        self.llm = ChatOpenAI(
-            api_key=self.openai_key, temperature=0.7, model_kwargs={"stream": True}
-        )
+        self.llm = llm
         self.history_manager = ChatHistoryService(db)
         self.tools = CodeTools.get_tools()
         self.prompt_service = PromptService(db)
@@ -77,6 +76,9 @@ class UnitTestAgent:
         try:
             if not self.chain:
                 self.chain = await self._create_chain()
+            
+            if not node_ids:
+                raise HTTPException(status_code=400, detail="No node IDs provided")
 
             history = self.history_manager.get_session_history(user_id, conversation_id)
             validated_history = [
@@ -114,7 +116,7 @@ class UnitTestAgent:
                 )
                 yield json.dumps({
                     "citations": test_response.pydantic.citations,
-                    "message": content
+                    "message": full_response
                 })
 
             logger.debug(f"Full LLM response: {full_response}")

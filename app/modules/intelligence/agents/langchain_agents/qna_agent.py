@@ -108,7 +108,7 @@ class QNAAgent:
                 self.history_manager.add_message_chunk(
                     conversation_id, content, MessageType.AI_GENERATED
                 )
-                yield json.dumps({"citations": rag_result.pydantic.citations, "message":content})
+                yield json.dumps({"citations": rag_result.pydantic.citations, "message":full_response})
 
             logger.debug(f"Full LLM response: {full_response}")
 
