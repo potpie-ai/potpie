@@ -5,7 +5,7 @@ from sqlalchemy import Enum as SQLAEnum
 from sqlalchemy import ForeignKey, String, Text, func
 from sqlalchemy.orm import relationship
 
-from app.core.database import Base
+from app.core.base_model import Base
 
 
 class MessageStatus(str, enum.Enum):

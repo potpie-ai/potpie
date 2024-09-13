@@ -17,6 +17,6 @@ cli/momentum_cli/.momentum
 .env.*
 # Except for .env.template
 !.env.template
-**/node_modules/
 *.log
 .cursorrules
+projects/

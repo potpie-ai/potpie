@@ -5,8 +5,9 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.core.database import Base, SessionLocal, engine
-from app.core.mongo_manager import MongoManager
+from app.core.base_model import Base
+from app.core.database import SessionLocal, engine
+from app.core.models import *  # noqa #necessary for models to not give import errors
 from app.modules.auth.auth_router import auth_router
 from app.modules.conversations.conversations_router import (
     router as conversations_router,
@@ -26,7 +27,6 @@ from app.modules.search.search_router import router as search_router
 from app.modules.users.user_router import router as user_router
 from app.modules.utils.firebase_setup import FirebaseSetup
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
@@ -44,16 +44,6 @@ class MainApp:
         else:
             FirebaseSetup.firebase_init()
         self.include_routers()
-        self.verify_mongodb_connection()
-
-    def verify_mongodb_connection(self):
-        try:
-            mongo_manager = MongoManager.get_instance()
-            mongo_manager.verify_connection()
-            logging.info("MongoDB connection verified successfully")
-        except Exception as e:
-            logging.error(f"Failed to verify MongoDB connection: {str(e)}")
-            raise
 
     def setup_cors(self):
         origins = ["*"]
@@ -96,7 +86,7 @@ class MainApp:
         self.app.include_router(agent_router, prefix="/api/v1", tags=["Agents"])
 
         self.app.include_router(provider_router, prefix="/api/v1", tags=["Providers"])
-        self.app.include_router(query_router, prefix="/api/v1", tags=["query"])
+        self.app.include_router(query_router, prefix="/api/v1", tags=["Query"])
 
     def add_health_check(self):
         @self.app.get("/health", tags=["Health"])
@@ -115,13 +105,9 @@ class MainApp:
         finally:
             db.close()
 
-    def shutdown_event(self):
-        MongoManager.close_connection()
-
     def run(self):
         self.add_health_check()
         self.app.add_event_handler("startup", self.startup_event)
-        self.app.add_event_handler("shutdown", self.shutdown_event)
         return self.app
 
 

@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
+from app.modules.github.github_service import GithubService
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.parsing.graph_construction.parsing_helper import (
     ParseHelper,
@@ -25,6 +26,8 @@ from app.modules.utils.email_helper import EmailHelper
 
 from .parsing_schema import ParsingRequest
 
+logger = logging.getLogger(__name__)
+
 
 class ParsingService:
     def __init__(self, db: Session):
@@ -33,6 +36,7 @@ class ParsingService:
         self.project_service = ProjectService(db)
         self.inference_service = InferenceService()
         self.search_service = SearchService(db)
+        self.github_service = GithubService(db)
 
     @contextmanager
     def change_dir(self, path):
@@ -50,16 +54,15 @@ class ParsingService:
         user_email: str,
         project_id: int,
     ):
-        # TODO: Cleanup Tech Debt
         project_manager = ProjectService(self.db)
-        parse_helper = ParseHelper(self.db)
         extracted_dir = None
 
         try:
-            repo, owner, auth = await parse_helper.clone_or_copy_repository(
-                repo_details, self.db, user_id
+            # Remove self.db from the arguments
+            repo, owner, auth = await self.parse_helper.clone_or_copy_repository(
+                repo_details, user_id
             )
-            extracted_dir, project_id = await parse_helper.setup_project_directory(
+            extracted_dir, project_id = await self.parse_helper.setup_project_directory(
                 repo, repo_details.branch_name, auth, repo, user_id, project_id
             )
 
@@ -73,7 +76,7 @@ class ParsingService:
             return {"message": message, "id": project_id}
 
         except ParsingServiceError as e:
-            message = str(f"{project_id} Failed during parsing: " + e.message)
+            message = str(f"{project_id} Failed during parsing: " + str(e))
             await project_manager.update_project_status(
                 project_id, ProjectStatusEnum.ERROR
             )
@@ -99,7 +102,7 @@ class ParsingService:
     async def analyze_directory(
         self, extracted_dir: str, project_id: int, user_id: str, db
     ):
-        logging.info(f"Analyzing directory: {extracted_dir}")
+        logger.info(f"Analyzing directory: {extracted_dir}")
         repo_lang = self.parse_helper.detect_repo_language(extracted_dir)
 
         if repo_lang in ["python", "javascript", "typescript"]:
@@ -127,8 +130,8 @@ class ParsingService:
                     project_id, ProjectStatusEnum.READY
                 )
             except Exception as e:
-                logging.error(e)
-                logging.error(traceback.format_exc())
+                logger.error(e)
+                logger.error(traceback.format_exc())
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.ERROR
                 )

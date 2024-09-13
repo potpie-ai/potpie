@@ -50,7 +50,9 @@ class ConversationController:
         self, conversation_id: str
     ) -> ConversationInfoResponse:
         try:
-            return await self.service.get_conversation_info(conversation_id, self.user_id)
+            return await self.service.get_conversation_info(
+                conversation_id, self.user_id
+            )
         except ConversationNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e))
         except ConversationServiceError as e:
@@ -102,9 +104,7 @@ class ConversationController:
         except ConversationServiceError as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    async def rename_conversation(
-        self, conversation_id: str, new_title: str
-    ) -> dict:
+    async def rename_conversation(self, conversation_id: str, new_title: str) -> dict:
         try:
             return await self.service.rename_conversation(
                 conversation_id, new_title, self.user_id

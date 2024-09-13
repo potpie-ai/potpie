@@ -1,7 +1,8 @@
-import base64
 import logging
 import os
+from typing import Any, Dict, Tuple
 
+import chardet
 import requests
 from fastapi import HTTPException
 from github import Github
@@ -9,7 +10,6 @@ from github.Auth import AppAuth
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
-from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.users.user_service import UserService
 
@@ -17,13 +17,11 @@ logger = logging.getLogger(__name__)
 
 
 class GithubService:
-    # Start Generation Here
     def __init__(self, db: Session):
-        self.project_manager = ProjectService(db)
         self.db = db
+        self.project_manager = ProjectService(db)
 
-    @staticmethod
-    def get_github_repo_details(repo_name: str):
+    def get_github_repo_details(self, repo_name: str) -> Tuple[Github, Dict, str]:
         private_key = (
             "-----BEGIN RSA PRIVATE KEY-----\n"
             + config_provider.get_github_key()
@@ -33,8 +31,8 @@ class GithubService:
         auth = AppAuth(app_id=app_id, private_key=private_key)
         jwt = auth.create_jwt()
         owner = repo_name.split("/")[0]
-        repo = repo_name.split("/")[1]
-        url = f"https://api.github.com/repos/{owner}/{repo}/installation"
+
+        url = f"https://api.github.com/repos/{owner}/{repo_name.split('/')[1]}/installation"
         headers = {
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {jwt}",
@@ -43,62 +41,114 @@ class GithubService:
         response = requests.get(url, headers=headers)
         if response.status_code != 200:
             raise HTTPException(status_code=400, detail="Failed to get installation ID")
+
         app_auth = auth.get_installation_auth(response.json()["id"])
         github = Github(auth=app_auth)
 
-        return github, response, auth, owner
+        return github, response.json(), owner
 
-    @staticmethod
-    def check_is_commit_added(repo_details, project_details, branch_name):
-        branch = repo_details.get_branch(branch_name)
-        latest_commit_sha = branch.commit.sha
-        if (
-            latest_commit_sha == project_details[3]
-            and project_details[4] == ProjectStatusEnum.READY
-        ):
-            return False
-        else:
-            return True
-
-    @staticmethod
-    def fetch_method_from_repo(node, db):
-        method_content = None
-        github = None
-        try:
-            project_id = node["project_id"]
-            project_manager = ProjectService(db)
-            repo_details = project_manager.get_repo_and_branch_name(
-                project_id=project_id
+    def get_public_github_repo(self, repo_name: str) -> Tuple[Dict[str, Any], str]:
+        owner, repo = repo_name.split("/")
+        url = f"https://api.github.com/repos/{owner}/{repo}"
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        response = requests.get(url, headers=headers)
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail="Failed to fetch public repository",
             )
-            repo_name = repo_details[0]
-            branch_name = repo_details[1]
 
-            file_path = node["id"].split(":")[0].lstrip("/")
-            start_line = node["start"]
-            end_line = node["end"]
+        return response.json(), owner
 
-            _, response, auth, _ = GithubService.get_github_repo_details(repo_name)
+    def get_file_content(
+        self, repo_name: str, file_path: str, start_line: int, end_line: int
+    ) -> str:
+        logger.info(f"Attempting to access file: {file_path} in repo: {repo_name}")
 
-            if response.status_code != 200:
+        # Clean up the file path
+        path_parts = file_path.split("/")
+        if len(path_parts) > 1 and "-" in path_parts[0]:
+            # Remove the first part if it contains a dash (likely a commit hash or branch name)
+            path_parts = path_parts[1:]
+        clean_file_path = "/".join(path_parts)
+
+        logger.info(f"Cleaned file path: {clean_file_path}")
+
+        try:
+            # Try public access first
+            github = self.get_public_github_instance()
+            repo = github.get_repo(repo_name)
+            try:
+                file_contents = repo.get_contents(clean_file_path)
+            except Exception as file_error:
+                logger.info(f"Failed to access file in public repo: {str(file_error)}")
+                raise  # Re-raise to be caught by the outer try-except
+        except Exception as public_error:
+            logger.info(f"Failed to access public repo: {str(public_error)}")
+            # If public access fails, try authenticated access
+            try:
+                github, repo = self.get_repo(repo_name)
+                try:
+                    file_contents = repo.get_contents(clean_file_path)
+                except Exception as file_error:
+                    logger.error(
+                        f"Failed to access file in private repo: {str(file_error)}"
+                    )
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"File not found or inaccessible: {clean_file_path}",
+                    )
+            except Exception as private_error:
+                logger.error(f"Failed to access private repo: {str(private_error)}")
                 raise HTTPException(
-                    status_code=400, detail="Failed to get installation ID"
+                    status_code=404,
+                    detail=f"Repository not found or inaccessible: {repo_name}",
                 )
 
-            app_auth = auth.get_installation_auth(response.json()["id"])
-            github = Github(auth=app_auth)
-            repo = github.get_repo(repo_name)
-            file_contents = repo.get_contents(
-                file_path.replace("\\", "/"), ref=branch_name
+        if isinstance(file_contents, list):
+            raise HTTPException(
+                status_code=400, detail="Provided path is a directory, not a file"
             )
-            decoded_content = base64.b64decode(file_contents.content).decode("utf-8")
-            lines = decoded_content.split("\n")
-            method_lines = lines[start_line - 1 : end_line]
-            method_content = "\n".join(method_lines)
 
+        try:
+            content_bytes = file_contents.decoded_content
+            encoding = self._detect_encoding(content_bytes)
+            decoded_content = content_bytes.decode(encoding)
+            lines = decoded_content.splitlines()
+
+            # Directly use start_line and end_line without adjustments
+            selected_lines = lines[start_line:end_line]
+            return "\n".join(selected_lines)
         except Exception as e:
-            logger.error(f"An error occurred: {e}", exc_info=True)
+            logger.error(
+                f"Error processing file content for {repo_name}/{clean_file_path}: {e}",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error processing file content: {str(e)}",
+            )
 
-        return method_content
+    def _get_repo(self, repo_name: str) -> Tuple[Github, Any]:
+        github, _, _ = self.get_github_repo_details(repo_name)
+        return github, github.get_repo(repo_name)
+
+    @staticmethod
+    def _detect_encoding(content_bytes: bytes) -> str:
+        detection = chardet.detect(content_bytes)
+        encoding = detection["encoding"]
+        confidence = detection["confidence"]
+
+        if not encoding or confidence < 0.5:
+            raise HTTPException(
+                status_code=400,
+                detail="Unable to determine file encoding or low confidence",
+            )
+
+        return encoding
 
     def get_repos_for_user(self, user_id: str):
         try:
@@ -115,85 +165,38 @@ class GithubService:
                     status_code=400, detail="GitHub username not found for this user"
                 )
 
-            private_key = (
-                "-----BEGIN RSA PRIVATE KEY-----\n"
-                + config_provider.get_github_key()
-                + "\n-----END RSA PRIVATE KEY-----\n"
-            )
-            app_id = os.environ["GITHUB_APP_ID"]
-
-            auth = AppAuth(app_id=app_id, private_key=private_key)
-            jwt = auth.create_jwt()
-            url = "https://api.github.com/app/installations"
-            headers = {
-                "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {jwt}",
-                "X-GitHub-Api-Version": "2022-11-28",
-            }
-
-            response = requests.get(url, headers=headers)
-
-            if response.status_code != 200:
-                logger.error(f"Failed to get installations. Response: {response.text}")
-                raise HTTPException(
-                    status_code=response.status_code,
-                    detail=f"Failed to get installations: {response.text}",
-                )
-
-            all_installations = response.json()
-
-            # Filter installations for the specific user
-            user_installations = [
-                installation
-                for installation in all_installations
-                if installation["account"]["login"].lower() == github_username.lower()
-            ]
+            # Use GitHub App authentication
+            github, _, _ = self.get_github_repo_details(github_username)
 
             repos = []
-            for installation in user_installations:
-                app_auth = auth.get_installation_auth(installation["id"])
-                github = Github(auth=app_auth)
-                repos_url = installation["repositories_url"]
-                repos_response = requests.get(
-                    repos_url, headers={"Authorization": f"Bearer {app_auth.token}"}
+            for repo in github.get_user(github_username).get_repos():
+                repos.append(
+                    {
+                        "id": repo.id,
+                        "name": repo.name,
+                        "full_name": repo.full_name,
+                        "private": repo.private,
+                        "url": repo.html_url,
+                        "owner": repo.owner.login,
+                    }
                 )
-                if repos_response.status_code == 200:
-                    repos.extend(repos_response.json().get("repositories", []))
-                else:
-                    logger.error(
-                        f"Failed to fetch repositories for installation ID {installation['id']}"
-                    )
 
-            repo_list = [
-                {
-                    "id": repo["id"],
-                    "name": repo["name"],
-                    "full_name": repo["full_name"],
-                    "private": repo["private"],
-                    "url": repo["html_url"],
-                    "owner": repo["owner"]["login"],
-                }
-                for repo in repos
-            ]
+            return {"repositories": repos}
 
-            return {"repositories": repo_list}
-
-        except HTTPException as he:
-            raise he
         except Exception as e:
             logger.error(f"Failed to fetch repositories: {str(e)}", exc_info=True)
             raise HTTPException(
                 status_code=500, detail=f"Failed to fetch repositories: {str(e)}"
             )
 
-    @staticmethod
-    def get_branch_list(repo_name: str):
+    def get_branch_list(self, repo_name: str):
         try:
-            github_client, _, _, _ = GithubService.get_github_repo_details(repo_name)
-            repo = github_client.get_repo(repo_name)
+            github, repo = self.get_repo(repo_name)
             branches = repo.get_branches()
             branch_list = [branch.name for branch in branches]
             return {"branches": branch_list}
+        except HTTPException as he:
+            raise he
         except Exception as e:
             logger.error(
                 f"Error fetching branches for repo {repo_name}: {str(e)}", exc_info=True
@@ -204,19 +207,25 @@ class GithubService:
             )
 
     @staticmethod
-    def get_public_github_repo(repo_name: str):
-        owner = repo_name.split("/")[0]
-        repo = repo_name.split("/")[1]
-        url = f"https://api.github.com/repos/{owner}/{repo}"
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
-        response = requests.get(url, headers=headers)
-        if response.status_code != 200:
-            raise HTTPException(
-                status_code=response.status_code,
-                detail="Failed to fetch public repository",
-            )
+    def get_public_github_instance():
+        return Github()
 
-        return response.json(), owner
+    def get_repo(self, repo_name: str) -> Tuple[Github, Any]:
+        try:
+            # Try public access first
+            github = self.get_public_github_instance()
+            repo = github.get_repo(repo_name)
+            return github, repo
+        except Exception as public_error:
+            logger.info(f"Failed to access public repo: {str(public_error)}")
+            # If public access fails, try authenticated access
+            try:
+                github, _, _ = self.get_github_repo_details(repo_name)
+                repo = github.get_repo(repo_name)
+                return github, repo
+            except Exception as private_error:
+                logger.error(f"Failed to access private repo: {str(private_error)}")
+                raise HTTPException(
+                    status_code=404,
+                    detail="Repository not found or inaccessible on GitHub",
+                )

@@ -45,7 +45,6 @@ sentence-transformers
 scikit-learn
 requests
 embedchain
-embedchain[weaviate]
 mongoengine
 resend
 transformers
@@ -53,3 +52,7 @@ torch
 sentence-transformers
 nltk
 langchain_anthropic
+celery
+redis
+flower
+chardet
