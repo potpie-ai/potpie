@@ -11,7 +11,7 @@ from app.modules.users.user_service import UserService
 client = TestClient(app)
 
 # Development database URL (use your actual development DB URL here)
-DATABASE_URL = "postgresql://postgres:mysecretpassword@host.docker.internal:5432/momentum"  # Replace with your actual dev DB URL
+DATABASE_URL = "postgresql://postgres:mysecretpassword@localhost:5432/momentum"  # Replace with your actual dev DB URL
 
 # Set up the database session fixture using your local database
 @pytest.fixture(scope="function")
