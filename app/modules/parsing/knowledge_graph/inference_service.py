@@ -181,10 +181,10 @@ class InferenceService:
         {entry_points}
 
         For each entry point, provide a brief, high-level description of what the flow accomplishes, such as "API to do XYZ" or "Kafka consumer for consuming topic ABC", but with more technical detail.
-        Include details about the API Path, Topic name, flow of the code, the entry point and the function calls between them.
+        ALWAYS INCLUDE TECHICAL details about the API Path if relevant e.g. "GET document API at /api/v1/document/\{id\}", Topic name e.g. "Kafka consumer with 5 replicas consuming from the 'input' topic", flow of the code, the entry point and the function calls between them.
         Respond with a list of "node_id":"updated docstring" pairs, where the updated docstring includes the original docstring followed by the flow summary.
 
-        {format_instructions}
+        {format_instructions} 
         """
 
         entry_points_text = "\n\n".join([
