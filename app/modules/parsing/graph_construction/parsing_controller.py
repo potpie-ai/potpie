@@ -56,13 +56,19 @@ class ParsingController:
 
             if not is_latest or project_status != ProjectStatusEnum.READY.value:
                 neo4j_config = config_provider.get_neo4j_config()
-                async with CodeGraphService(
-                    neo4j_config["uri"],
-                    neo4j_config["username"],
-                    neo4j_config["password"],
-                    db,
-                ) as code_graph_service:
+
+                try:
+                    code_graph_service = CodeGraphService(
+                        neo4j_config["uri"],
+                        neo4j_config["username"],
+                        neo4j_config["password"],
+                        db,
+                    )
+                    
                     await code_graph_service.cleanup_graph(project_id)
+                except Exception as e:
+                    logger.error(f"Error in cleanup_graph: {e}")
+                    raise HTTPException(status_code=500, detail="Internal server error")
 
                 logger.info(
                     f"Submitting parsing task for existing project {project_id}"
@@ -75,7 +81,7 @@ class ParsingController:
 
             return response
         except Exception as e:
-            logger.error(f"Error in parse_directory: {str(e)}")
+            logger.error(f"Error in parse_directory: {e}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @staticmethod

@@ -293,7 +293,7 @@ class ConversationService:
             )
 
         try:
-            print(f"Running agent {conversation.project_ids[0]} with query: {query}")
+            logger.info(f"Running agent {conversation.project_ids[0]} with query: {query}")
             async for chunk in agent.run(
                 query, conversation.project_ids[0], user_id, conversation.id
             ):

@@ -2,6 +2,7 @@ import base64
 import logging
 import os
 
+import chardet
 import requests
 from fastapi import HTTPException
 from github import Github
@@ -226,49 +227,62 @@ class GithubService:
         repo_name: str, file_path: str, start_line: int, end_line: int
     ):
         try:
-            github = None
-            repo = None
-
+            # Initialize Github client
             try:
-                # Try to fetch from public repo first
+                # Attempt to access as a public repository
                 github = Github()
                 repo = github.get_repo(repo_name)
             except Exception:
-                # If public repo fetch fails, try with private repo mechanism
-                github_client, response, auth, owner = (
-                    GithubService.get_github_repo_details(repo_name)
-                )
+                # Fallback to authenticated access for private repositories
+                github_client, response, auth, owner = GithubService.get_github_repo_details(repo_name)
                 if response.status_code != 200:
-                    raise HTTPException(
-                        status_code=400, detail="Failed to get installation ID"
-                    )
+                    raise HTTPException(status_code=400, detail="Failed to get installation ID")
 
                 app_auth = auth.get_installation_auth(response.json()["id"])
                 github = Github(auth=app_auth)
                 repo = github.get_repo(repo_name)
 
+            # Retrieve file contents
             file_contents = repo.get_contents(file_path)
 
             if isinstance(file_contents, list):
-                raise HTTPException(
-                    status_code=400, detail="Provided path is a directory, not a file"
-                )
+                raise HTTPException(status_code=400, detail="Provided path is a directory, not a file")
 
-            decoded_content = file_contents.decoded_content.decode("utf-8")
-            lines = decoded_content.split("\n")
+            # Get the raw bytes of the file
+            content_bytes = file_contents.decoded_content
 
-            # Ensure start_line and end_line are within bounds
-            start_line = max(1, min(start_line, len(lines)))
-            end_line = max(start_line, min(end_line, len(lines)))
+            # Use chardet to detect encoding
+            detection = chardet.detect(content_bytes)
+            encoding = detection['encoding']
+            confidence = detection['confidence']
+
+            if not encoding or confidence < 0.5:
+                raise HTTPException(status_code=400, detail="Unable to determine file encoding or low confidence")
+
+            # Decode the content using the detected encoding
+            try:
+                decoded_content = content_bytes.decode(encoding)
+            except (UnicodeDecodeError, LookupError):
+                raise HTTPException(status_code=400, detail="File content cannot be decoded as text")
+
+            # Split content into lines
+            lines = decoded_content.splitlines()
+
+            # Extract the requested lines
             selected_lines = lines[start_line - 1 : end_line]
 
+            # Return the selected lines as a single string
             return "\n".join(selected_lines)
+
+        except HTTPException as http_exc:
+            # Re-raise HTTP exceptions as is
+            raise http_exc
         except Exception as e:
             logger.error(
-                f"Error fetching file content for {repo_name}/{file_path}: {str(e)}",
+                f"Error fetching file content for {repo_name}/{file_path}: {e}",
                 exc_info=True,
             )
             raise HTTPException(
                 status_code=404,
-                detail=f"File not found or error fetching content: {str(e)}",
+                detail=f"File not found or error fetching content: {e}",
             )

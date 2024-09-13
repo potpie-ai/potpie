@@ -35,6 +35,16 @@ def process_parsing(
 ) -> None:
     logger.info(f"Task received: Starting parsing process for project {project_id}")
     try:
+        # Check if the project is already being processed
+        active_tasks = celery_app.control.inspect().active()
+        if active_tasks:
+            for worker, tasks in active_tasks.items():
+                for task in tasks:
+                    task_args = eval(task['argsrepr'])
+                    if task['name'] == 'app.celery.tasks.parsing_tasks.process_parsing' and task_args[3] == project_id:
+                        logger.info(f"Project {project_id} is already being processed by task {task['id']}. Skipping task.")
+                        return
+
         parsing_service = ParsingService(self.db)
         asyncio.run(
             parsing_service.parse_directory(

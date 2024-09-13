@@ -61,7 +61,7 @@ class CodeGraphRetrievalAgent:
         return tool.run(repo_id=self.repo_id, node_id=node_id)
 
     def _run_get_code_graph_from_node_name(self, node_name: str) -> Dict[str, Any]:
-        print(
+        logger.info(
             f"Running get_code_graph_from_node_name with repo_id: {self.repo_id}, node_name: {node_name}"
         )
         tool = GetCodeGraphFromNodeNameTool(self.sql_db)
