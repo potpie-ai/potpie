@@ -7,13 +7,14 @@ from typing import Any, Tuple
 import requests
 from fastapi import HTTPException
 from git import GitCommandError, Repo
-from github import Github, GithubException
 from sqlalchemy.orm import Session
 
 from app.modules.github.github_service import GithubService
 from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
+
+logger = logging.getLogger(__name__)
 
 
 class ParsingServiceError(Exception):
@@ -28,6 +29,7 @@ class ParseHelper:
     def __init__(self, db_session: Session):
         self.project_manager = ProjectService(db_session)
         self.db = db_session
+        self.github_service = GithubService(db_session)
 
     @staticmethod
     def get_directory_size(path):
@@ -38,9 +40,8 @@ class ParseHelper:
                 total_size += os.path.getsize(fp)
         return total_size
 
-    @staticmethod
     async def clone_or_copy_repository(
-        repo_details: RepoDetails, db: Session, user_id: str
+        self, repo_details: RepoDetails, user_id: str
     ) -> Tuple[Any, str, Any]:
         owner = None
         auth = None
@@ -54,48 +55,18 @@ class ParseHelper:
                 )
             repo = Repo(repo_details.repo_path)
         else:
-            github_service = GithubService(db)
-
-            # First, attempt to get public repository details
             try:
-                response, owner = github_service.get_public_github_repo(
-                    repo_details.repo_name
-                )
-                github = Github()
-                repo = github.get_repo(repo_details.repo_name)
-            except Exception as public_repo_error:
-                logging.error(
-                    f"Failed to fetch public repository: {str(public_repo_error)}"
-                )
-
-                # If public repo fetch fails, try private repo
-                try:
-                    github, response, auth, owner = (
-                        github_service.get_github_repo_details(repo_details.repo_name)
-                    )
-
-                    if response.status_code != 200:
-                        raise HTTPException(
-                            status_code=400, detail="Failed to get installation ID"
-                        )
-
-                    app_auth = auth.get_installation_auth(response.json()["id"])
-                    github = Github(auth=app_auth)
-                    repo = github.get_repo(repo_details.repo_name)
-                except Exception as private_repo_error:
-                    if isinstance(private_repo_error, HTTPException):
-                        raise private_repo_error
-                    else:
-                        logging.error(
-                            f"Failed to fetch private repository: {str(private_repo_error)}"
-                        )
-                        raise HTTPException(
-                            status_code=404, detail="Repository not found on GitHub"
-                        )
-
-            if repo is None:
+                github, repo = self.github_service.get_repo(repo_details.repo_name)
+                owner = repo.owner.login
+                if hasattr(github, "get_app_auth"):
+                    auth = github.get_app_auth()
+            except HTTPException as he:
+                raise he
+            except Exception as e:
+                logger.error(f"Failed to fetch repository: {str(e)}")
                 raise HTTPException(
-                    status_code=404, detail="Failed to fetch repository"
+                    status_code=404,
+                    detail="Repository not found or inaccessible on GitHub",
                 )
 
         return repo, owner, auth
@@ -104,59 +75,35 @@ class ParseHelper:
         self, repo, branch, target_dir, auth, repo_details, user_id
     ):
         try:
-            tarball_url = repo_details.get_archive_link("tarball", branch)
-            headers = {}
-            if auth is not None:
-                headers = {"Authorization": f"{auth.token}"}
-            response = requests.get(
-                tarball_url,
-                stream=True,
-                headers=headers,
-            )
+            tarball_url = repo.get_archive_link("tarball", branch)
+            headers = {"Authorization": f"Bearer {auth.token}"} if auth else {}
+            response = requests.get(tarball_url, stream=True, headers=headers)
             response.raise_for_status()
         except requests.exceptions.RequestException as e:
-            logging.error(f"Error fetching tarball: {e}")
+            logger.error(f"Error fetching tarball: {e}")
             return e
 
         tarball_path = os.path.join(
             target_dir, f"{repo.full_name.replace('/', '-')}-{branch}.tar.gz"
         )
+        final_dir = os.path.join(
+            target_dir, f"{repo.full_name.replace('/', '-')}-{branch}-{user_id}"
+        )
+
         try:
             with open(tarball_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
-        except IOError as e:
-            logging.error(f"Error writing tarball to file: {e}")
-            return e
 
-        final_dir = os.path.join(
-            target_dir, f"{repo.full_name.replace('/', '-')}-{branch}-{user_id}"
-        )
-        try:
             with tarfile.open(tarball_path, "r:gz") as tar:
-                for member in tar.getmembers():
-                    member_path = os.path.join(
-                        final_dir,
-                        os.path.relpath(member.name, start=member.name.split("/")[0]),
-                    )
-                    if member.isdir():
-                        os.makedirs(member_path, exist_ok=True)
-                    else:
-                        member_dir = os.path.dirname(member_path)
-                        if not os.path.exists(member_dir):
-                            os.makedirs(member_dir)
-                        with open(member_path, "wb") as f:
-                            if member.size > 0:
-                                f.write(tar.extractfile(member).read())
-        except (tarfile.TarError, IOError) as e:
-            logging.error(f"Error extracting tarball: {e}")
-            return e
+                tar.extractall(path=final_dir)
 
-        try:
-            os.remove(tarball_path)
-        except OSError as e:
-            logging.error(f"Error removing tarball: {e}")
+        except (IOError, tarfile.TarError) as e:
+            logger.error(f"Error handling tarball: {e}")
             return e
+        finally:
+            if os.path.exists(tarball_path):
+                os.remove(tarball_path)
 
         return final_dir
 
@@ -234,10 +181,10 @@ class ParseHelper:
                         FileNotFoundError,
                         PermissionError,
                     ) as e:
-                        logging.warning(f"Error reading file {file_path}: {e}")
+                        logger.warning(f"Error reading file {file_path}: {e}")
                         continue
         except (TypeError, FileNotFoundError, PermissionError) as e:
-            logging.error(f"Error accessing directory '{repo_dir}': {e}")
+            logger.error(f"Error accessing directory '{repo_dir}': {e}")
 
         # Determine the predominant language based on counts
         predominant_language = max(lang_count, key=lang_count.get)
@@ -275,7 +222,7 @@ class ParseHelper:
                 os.chdir(extracted_dir)  # Change to the cloned repo directory
                 repo_details.git.checkout(branch)
             except GitCommandError as e:
-                logging.error(f"Error checking out branch: {e}")
+                logger.error(f"Error checking out branch: {e}")
                 raise HTTPException(
                     status_code=400, detail=f"Failed to checkout branch {branch}"
                 )
@@ -403,62 +350,40 @@ class ParseHelper:
         Returns:
             bool: True if the commit IDs match, False otherwise.
         """
-        # Get the project details
         project = await self.project_manager.get_project_from_db_by_id(project_id)
         if not project:
-            logging.error(f"Project with ID {project_id} not found")
+            logger.error(f"Project with ID {project_id} not found")
             return False
 
         current_commit_id = project.get("commit_id")
         repo_name = project.get("project_name")
+        branch_name = project.get("branch_name")
+
+        if not repo_name or not branch_name:
+            logger.error(
+                f"Repository name or branch name not found for project ID {project_id}"
+            )
+            return False
 
         if len(repo_name.split("/")) >= 2:
-            # Local repo , always parse local repos
-            return False
-
-        if not repo_name:
-            logging.error(f"Repository name not found for project ID {project_id}")
-            return False
-
-        # Get the latest commit ID from GitHub
-        github_service = GithubService(self.db)
-        try:
-            # Try to get public repository first
-            github = Github()
-            repo = github.get_repo(repo_name)
-        except GithubException:
-            # If public repo fails, try private repo
-            try:
-                _, response, auth, _ = github_service.get_github_repo_details(repo_name)
-                if response.status_code != 200:
-                    raise HTTPException(
-                        status_code=400, detail="Failed to get installation ID"
-                    )
-
-                app_auth = auth.get_installation_auth(response.json()["id"])
-                github = Github(auth=app_auth)
-                repo = github.get_repo(repo_name)
-            except Exception as e:
-                logging.error(f"Error fetching repository details: {e}")
-                return False
-
-        if not repo:
-            logging.error(f"Repository {repo_name} not found")
+            # Local repo, always parse local repos
             return False
 
         try:
-            latest_commit = repo.get_branch(repo.default_branch).commit
-            latest_commit_id = latest_commit.sha
-        except GithubException as e:
-            logging.error(f"Error fetching latest commit: {e}")
+            github, repo = self.github_service._get_repo(repo_name)
+            branch = repo.get_branch(branch_name)
+            latest_commit_id = branch.commit.sha
+
+            is_up_to_date = current_commit_id == latest_commit_id
+            logger.info(
+                f"Project {project_id} commit status for branch {branch_name}: {'Up to date' if is_up_to_date else 'Outdated'}"
+            )
+            logger.info(f"Current commit ID: {current_commit_id}")
+            logger.info(f"Latest commit ID: {latest_commit_id}")
+
+            return is_up_to_date
+        except Exception as e:
+            logger.error(
+                f"Error fetching latest commit for {repo_name}/{branch_name}: {e}"
+            )
             return False
-
-        # Compare the commit IDs
-        is_up_to_date = current_commit_id == latest_commit_id
-        logging.info(
-            f"Project {project_id} commit status: {'Up to date' if is_up_to_date else 'Outdated'}"
-        )
-        logging.info(f"Current commit ID: {current_commit_id}")
-        logging.info(f"Latest commit ID: {latest_commit_id}")
-
-        return is_up_to_date

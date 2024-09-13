@@ -5,7 +5,9 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.core.database import Base, SessionLocal, engine
+from app.core.base_model import Base
+from app.core.database import SessionLocal, engine
+from app.core.models import *  # noqa #necessary for models to not give import errors
 from app.modules.auth.auth_router import auth_router
 from app.modules.conversations.conversations_router import (
     router as conversations_router,
@@ -14,6 +16,7 @@ from app.modules.github.github_router import router as github_router
 from app.modules.intelligence.agents.agents_router import router as agent_router
 from app.modules.intelligence.prompts.prompt_router import router as prompt_router
 from app.modules.intelligence.prompts.system_prompt_setup import SystemPromptSetup
+from app.modules.intelligence.provider.provider_router import router as provider_router
 from app.modules.key_management.secret_manager import router as secret_manager_router
 from app.modules.parsing.graph_construction.parsing_router import (
     router as parsing_router,
@@ -24,7 +27,6 @@ from app.modules.search.search_router import router as search_router
 from app.modules.users.user_router import router as user_router
 from app.modules.utils.firebase_setup import FirebaseSetup
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
@@ -42,7 +44,6 @@ class MainApp:
         else:
             FirebaseSetup.firebase_init()
         self.include_routers()
-
 
     def setup_cors(self):
         origins = ["*"]
@@ -83,7 +84,9 @@ class MainApp:
         self.app.include_router(search_router, prefix="/api/v1", tags=["Search"])
         self.app.include_router(github_router, prefix="/api/v1", tags=["Github"])
         self.app.include_router(agent_router, prefix="/api/v1", tags=["Agents"])
-        self.app.include_router(query_router, prefix="/api/v1", tags=["query"])
+
+        self.app.include_router(provider_router, prefix="/api/v1", tags=["Providers"])
+        self.app.include_router(query_router, prefix="/api/v1", tags=["Query"])
 
     def add_health_check(self):
         @self.app.get("/health", tags=["Health"])

@@ -1,7 +1,7 @@
 from sqlalchemy import JSON, Column, ForeignKey, Index, String
 from sqlalchemy.orm import relationship
 
-from app.core.database import Base
+from app.core.base_model import Base
 
 
 class UserPreferences(Base):

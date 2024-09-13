@@ -30,8 +30,8 @@ class ConversationAPI:
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
-        controller = ConversationController(db)
-        return await controller.create_conversation(conversation, user_id)
+        controller = ConversationController(db, user_id)
+        return await controller.create_conversation(conversation)
 
     @staticmethod
     @router.get(
@@ -44,8 +44,8 @@ class ConversationAPI:
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
-        controller = ConversationController(db)
-        return await controller.get_conversation_info(conversation_id, user_id)
+        controller = ConversationController(db, user_id)
+        return await controller.get_conversation_info(conversation_id)
 
     @staticmethod
     @router.get(
@@ -60,10 +60,8 @@ class ConversationAPI:
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
-        controller = ConversationController(db)
-        return await controller.get_conversation_messages(
-            conversation_id, start, limit, user_id
-        )
+        controller = ConversationController(db, user_id)
+        return await controller.get_conversation_messages(conversation_id, start, limit)
 
     @staticmethod
     @router.post("/conversations/{conversation_id}/message/")
@@ -74,8 +72,8 @@ class ConversationAPI:
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
-        controller = ConversationController(db)
-        message_stream = controller.post_message(conversation_id, message, user_id)
+        controller = ConversationController(db, user_id)
+        message_stream = controller.post_message(conversation_id, message)
         return StreamingResponse(message_stream, media_type="text/event-stream")
 
     @staticmethod
@@ -88,9 +86,9 @@ class ConversationAPI:
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
-        controller = ConversationController(db)
+        controller = ConversationController(db, user_id)
         return StreamingResponse(
-            controller.regenerate_last_message(conversation_id, user_id),
+            controller.regenerate_last_message(conversation_id),
             media_type="text/event-stream",
         )
 
@@ -102,8 +100,8 @@ class ConversationAPI:
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
-        controller = ConversationController(db)
-        return await controller.delete_conversation(conversation_id, user_id)
+        controller = ConversationController(db, user_id)
+        return await controller.delete_conversation(conversation_id)
 
     @staticmethod
     @router.post("/conversations/{conversation_id}/stop/", response_model=dict)
@@ -113,8 +111,8 @@ class ConversationAPI:
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
-        controller = ConversationController(db)
-        return await controller.stop_generation(conversation_id, user_id)
+        controller = ConversationController(db, user_id)
+        return await controller.stop_generation(conversation_id)
 
     @staticmethod
     @router.patch("/conversations/{conversation_id}/rename/", response_model=dict)
@@ -125,7 +123,5 @@ class ConversationAPI:
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
-        controller = ConversationController(db)
-        return await controller.rename_conversation(
-            conversation_id, request.title, user_id
-        )
+        controller = ConversationController(db, user_id)
+        return await controller.rename_conversation(conversation_id, request.title)

@@ -7,27 +7,16 @@ from alembic.operations import ops
 from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
 
-from app.core.database import Base
-from app.modules.conversations.conversation.conversation_model import (  # noqa
-    Conversation,
-)
-from app.modules.conversations.message.message_model import Message  # noqa
-from app.modules.intelligence.prompts.prompt_model import (  # noqa
-    AgentPromptMapping,
-    Prompt,
-)
-from app.modules.projects.projects_model import Project  # noqa
-from app.modules.search.search_models import SearchIndex  # noqa
-from app.modules.tasks.task_model import Task  # noqa
-from app.modules.users.user_model import User  # noqa
-from app.modules.users.user_preferences_model import UserPreferences  # noqa
+from app.core.base_model import Base
+from app.core.models import *  # noqa
 
+target_metadata = Base.metadata
 # Load environment variables from .env
 load_dotenv(override=True)
 
 # Interpret the config file for Python logging.
 fileConfig(context.config.config_file_name)
-
+target_metadata = Base.metadata
 # Construct the database URL from environment variables
 POSTGRES_SERVER = os.getenv("POSTGRES_SERVER", "localhost")
 
@@ -36,7 +25,6 @@ config = context.config
 config.set_main_option("sqlalchemy.url", POSTGRES_SERVER)
 
 # Add your models' metadata object for 'autogenerate' support
-target_metadata = Base.metadata
 
 
 def process_revision_directives(context, revision, directives):

@@ -19,5 +19,6 @@ def get_user_repos(user=Depends(AuthService.check_auth), db: Session = Depends(g
 def get_branch_list(
     repo_name: str = Query(..., description="Repository name"),
     user=Depends(AuthService.check_auth),
+    db: Session = Depends(get_db),
 ):
-    return GithubController.get_branch_list(repo_name=repo_name, user=user)
+    return GithubController(db).get_branch_list(repo_name=repo_name)

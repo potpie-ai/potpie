@@ -1,5 +1,4 @@
 import logging
-import os
 from datetime import datetime, timezone
 from typing import AsyncGenerator, List
 
@@ -26,10 +25,19 @@ from app.modules.conversations.message.message_schema import (
     NodeContext,
 )
 from app.modules.intelligence.agents.langchain_agents.unit_test_agent import UnitTestAgent
-from app.modules.intelligence.agents.langchain_agents.debugging_agent import DebuggingAgent
-from app.modules.intelligence.agents.langchain_agents.qna_agent import QNAAgent
 from app.modules.intelligence.agents.langchain_agents.code_retrieval_agent import CodeRetrievalAgent
+from app.modules.intelligence.agents.langchain_agents.codebase_agents.code_graph_retrieval_agent import (
+    CodeGraphRetrievalAgent,
+)
+from app.modules.intelligence.agents.langchain_agents.codebase_agents.code_retrieval_agent import (
+    CodeRetrievalAgent,
+)
+from app.modules.intelligence.agents.langchain_agents.debugging_agent import (
+    DebuggingAgent,
+)
+from app.modules.intelligence.agents.langchain_agents.qna_agent import QNAAgent
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
+from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
 
 logger = logging.getLogger(__name__)
@@ -50,68 +58,36 @@ class MessageNotFoundError(ConversationServiceError):
 class ConversationService:
     def __init__(
         self,
-        sql_db: Session,
+        db: Session,
+        user_id: str,
         project_service: ProjectService,
         history_manager: ChatHistoryService,
-        debugging_agent: DebuggingAgent,
-        codebase_qna_agent: QNAAgent,
-        code_retrieval_agent: CodeRetrievalAgent,
-        unit_test_agent: UnitTestAgent,
+        provider_service: ProviderService,
     ):
-        self.sql_db = sql_db
+        self.db = db
+        self.user_id = user_id
         self.project_service = project_service
         self.history_manager = history_manager
-        self.agents = {
-            "debugging_agent": debugging_agent,
-            "codebase_qna_agent": codebase_qna_agent,
-            "code_retrieval_agent": code_retrieval_agent,
-            "unit_test_agent": unit_test_agent
-        }
+        self.provider_service = provider_service
+        self.agents = self._initialize_agents()
 
     @classmethod
-    def create(cls, sql_db: Session):
-        project_service = ProjectService(sql_db)
-        history_manager = ChatHistoryService(sql_db)
-        openai_key = cls._get_openai_key()
-        debugging_agent = cls._initialize_debugging_agent(openai_key, sql_db)
-        qna_agent = cls._initialize_qna_agent(openai_key, sql_db)
-        code_retrieval_agent = cls._initialize_code_retrieval_agent(openai_key, sql_db)
-        unit_test_agent = cls._initialize_unit_test_agent(sql_db)
-        return cls(
-            sql_db,
-            project_service,
-            history_manager,
-            debugging_agent,
-            qna_agent,
-            code_retrieval_agent,
-            unit_test_agent
-        )
+    def create(cls, db: Session, user_id: str):
+        project_service = ProjectService(db)
+        history_manager = ChatHistoryService(db)
+        provider_service = ProviderService(db, user_id)
+        return cls(db, user_id, project_service, history_manager, provider_service)
 
-    @staticmethod
-    def _initialize_debugging_agent(openai_key: str, sql_db: Session) -> DebuggingAgent:
-        return DebuggingAgent(openai_key, sql_db)
+    def _initialize_agents(self):
+        llm = self.provider_service.get_llm()
+        return {
+            "debugging_agent": DebuggingAgent(llm, self.db),
+            "codebase_qna_agent": QNAAgent(llm, self.db),
+            "code_retrieval_agent": CodeRetrievalAgent(llm, self.db),
+            "code_graph_retrieval_agent": CodeGraphRetrievalAgent(llm, self.db),
+            "unit_test_agent": UnitTestAgent(llm, self.db),
+        }
 
-    @staticmethod
-    def _initialize_qna_agent(openai_key: str, sql_db: Session) -> QNAAgent:
-        return QNAAgent(openai_key, sql_db)
-
-    @staticmethod
-    def _get_openai_key() -> str:
-        key = os.getenv("OPENAI_API_KEY")
-        if not key:
-            raise ConversationServiceError(
-                "The OpenAI API key is not set in the environment variable 'OPENAI_API_KEY'."
-            )
-        return key
-
-    @staticmethod
-    def _initialize_code_retrieval_agent(openai_key: str, sql_db: Session) -> CodeRetrievalAgent:
-        return CodeRetrievalAgent(openai_key, sql_db)
-    
-    @staticmethod
-    def _initialize_unit_test_agent(sql_db: Session) -> CodeRetrievalAgent:
-        return UnitTestAgent(sql_db)
-    
     async def create_conversation(
         self, conversation: CreateConversationRequest, user_id: str
     ) -> tuple[str, str]:
@@ -207,8 +183,31 @@ class ConversationService:
             )
             logger.info(f"Stored message in conversation {conversation_id}")
             if message_type == MessageType.HUMAN:
-                async for chunk in self._generate_and_stream_ai_response(
-                    message.content, conversation_id, user_id, message.node_ids
+                conversation = (
+                    self.db.query(Conversation).filter_by(id=conversation_id).first()
+                )
+                if not conversation:
+                    raise ConversationNotFoundError(
+                        f"Conversation with id {conversation_id} not found"
+                    )
+
+                repo_id = (
+                    conversation.project_ids[0] if conversation.project_ids else None
+                )
+                if not repo_id:
+                    raise ConversationServiceError(
+                        "No project associated with this conversation"
+                    )
+
+                agent = self.agents.get(conversation.agent_ids[0])
+                if not agent:
+                    raise ConversationServiceError(
+                        f"Invalid agent_id: {conversation.agent_ids[0]}"
+                    )
+
+                logger.info(f"Running agent for repo_id: {repo_id}")
+                async for chunk in agent.run(
+                    message.content, repo_id, user_id, conversation.id, message.node_ids
                 ):
                     yield chunk
         except Exception as e:
@@ -291,7 +290,6 @@ class ConversationService:
             raise ConversationNotFoundError(
                 f"Conversation with id {conversation_id} not found"
             )
-
         agent = self.agents.get(conversation.agent_ids[0])
         if not agent:
             raise ConversationServiceError(
@@ -299,6 +297,9 @@ class ConversationService:
             )
 
         try:
+            logger.info(
+                f"Running agent {conversation.project_ids[0]} with query: {query}"
+            )
             async for chunk in agent.run(
                 query, conversation.project_ids[0], user_id, conversation.id, node_ids
             ):
@@ -327,7 +328,6 @@ class ConversationService:
                     .delete()
                 )
 
-                # Delete the conversation
                 deleted_conversation = (
                     self.sql_db.query(Conversation)
                     .filter(Conversation.id == conversation_id)
@@ -338,8 +338,6 @@ class ConversationService:
                     raise ConversationNotFoundError(
                         f"Conversation with id {conversation_id} not found"
                     )
-
-                # The transaction will be automatically committed if we reach this point
 
             logger.info(
                 f"Deleted conversation {conversation_id} and {deleted_messages} related messages"
@@ -356,7 +354,6 @@ class ConversationService:
 
         except SQLAlchemyError as e:
             logger.error(f"Database error in delete_conversation: {e}", exc_info=True)
-            # The transaction will be automatically rolled back
             raise ConversationServiceError(
                 f"Failed to delete conversation {conversation_id} due to a database error"
             ) from e
@@ -419,7 +416,7 @@ class ConversationService:
             messages = (
                 self.sql_db.query(Message)
                 .filter_by(conversation_id=conversation_id)
-                .filter_by(status=MessageStatus.ACTIVE)  # Only fetch active messages
+                .filter_by(status=MessageStatus.ACTIVE)
                 .order_by(Message.created_at)
                 .offset(start)
                 .limit(limit)
@@ -433,7 +430,7 @@ class ConversationService:
                     content=message.content,
                     sender_id=message.sender_id,
                     type=message.type,
-                    status=message.status,  # Include the status field
+                    status=message.status,
                     created_at=message.created_at,
                 )
                 for message in messages
@@ -448,8 +445,6 @@ class ConversationService:
             ) from e
 
     async def stop_generation(self, conversation_id: str, user_id: str) -> dict:
-        # Implement the logic to stop the generation process
-        # This might involve setting a flag in the orchestrator or cancelling an ongoing task
         logger.info(f"Attempting to stop generation for conversation {conversation_id}")
         return {"status": "success", "message": "Generation stop request received"}
 
