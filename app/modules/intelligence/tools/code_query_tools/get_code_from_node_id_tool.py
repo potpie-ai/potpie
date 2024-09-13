@@ -1,6 +1,5 @@
 from typing import Any, Dict
 
-from fastapi import HTTPException
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 

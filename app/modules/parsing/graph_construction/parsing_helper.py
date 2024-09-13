@@ -58,7 +58,7 @@ class ParseHelper:
             try:
                 github, repo = self.github_service.get_repo(repo_details.repo_name)
                 owner = repo.owner.login
-                if hasattr(github, 'get_app_auth'):
+                if hasattr(github, "get_app_auth"):
                     auth = github.get_app_auth()
             except HTTPException as he:
                 raise he
@@ -66,7 +66,7 @@ class ParseHelper:
                 logger.error(f"Failed to fetch repository: {str(e)}")
                 raise HTTPException(
                     status_code=404,
-                    detail="Repository not found or inaccessible on GitHub"
+                    detail="Repository not found or inaccessible on GitHub",
                 )
 
         return repo, owner, auth
