@@ -56,13 +56,13 @@ class ParsingController:
 
             if not is_latest or project_status != ProjectStatusEnum.READY.value:
                 neo4j_config = config_provider.get_neo4j_config()
-                async with CodeGraphService(
+                code_graph_service = CodeGraphService(
                     neo4j_config["uri"],
                     neo4j_config["username"],
                     neo4j_config["password"],
                     db,
-                ) as code_graph_service:
-                    await code_graph_service.cleanup_graph(project_id)
+                ) 
+                await code_graph_service.cleanup_graph(project_id)
 
                 logger.info(
                     f"Submitting parsing task for existing project {project_id}"
