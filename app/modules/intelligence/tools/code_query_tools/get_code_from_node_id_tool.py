@@ -1,5 +1,6 @@
 from typing import Any, Dict
 
+from fastapi import HTTPException
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 
@@ -63,7 +64,8 @@ class GetCodeFromNodeIdTool:
 
         relative_file_path = self._get_relative_file_path(file_path)
 
-        code_content = GithubService.get_file_content(
+        github_service = GithubService(self.sql_db)
+        code_content = github_service.get_file_content(
             project.repo_name,
             relative_file_path,
             start_line,
