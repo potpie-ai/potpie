@@ -1,5 +1,6 @@
 from typing import Any, Dict
 
+from fastapi import HTTPException
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 
@@ -66,12 +67,16 @@ class GetCodeFromNodeNameTool:
 
         relative_file_path = self._get_relative_file_path(file_path)
 
-        code_content = GithubService.get_file_content(
-            project.repo_name,
-            relative_file_path,
-            start_line,
-            end_line,
-        )
+        github_service = GithubService(self.sql_db)
+        try:
+            code_content = github_service.get_file_content(
+                project.repo_name,
+                relative_file_path,
+                start_line,
+                end_line,
+            )
+        except HTTPException as http_exc:
+            return {"error": f"Failed to retrieve code content: {http_exc.detail}"}
 
         return {
             "repo_name": project.repo_name,

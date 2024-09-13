@@ -55,3 +55,4 @@ langchain_anthropic
 celery
 redis
 flower
+chardet
