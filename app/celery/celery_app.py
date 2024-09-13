@@ -3,7 +3,7 @@ import os
 
 from celery import Celery
 
-from app.core.models import *  # This will import and initialize all models
+from app.core.models import *  # noqa #This will import and initialize all models
 
 # Redis configuration
 redishost = os.getenv("REDISHOST", "localhost")

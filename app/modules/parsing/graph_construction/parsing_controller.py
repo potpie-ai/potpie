@@ -64,7 +64,7 @@ class ParsingController:
                         neo4j_config["password"],
                         db,
                     )
-                    
+
                     await code_graph_service.cleanup_graph(project_id)
                 except Exception as e:
                     logger.error(f"Error in cleanup_graph: {e}")

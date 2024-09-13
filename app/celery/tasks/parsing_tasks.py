@@ -40,9 +40,14 @@ def process_parsing(
         if active_tasks:
             for worker, tasks in active_tasks.items():
                 for task in tasks:
-                    task_args = eval(task['argsrepr'])
-                    if task['name'] == 'app.celery.tasks.parsing_tasks.process_parsing' and task_args[3] == project_id:
-                        logger.info(f"Project {project_id} is already being processed by task {task['id']}. Skipping task.")
+                    task_args = eval(task["argsrepr"])
+                    if (
+                        task["name"] == "app.celery.tasks.parsing_tasks.process_parsing"
+                        and task_args[3] == project_id
+                    ):
+                        logger.info(
+                            f"Project {project_id} is already being processed by task {task['id']}. Skipping task."
+                        )
                         return
 
         parsing_service = ParsingService(self.db)
