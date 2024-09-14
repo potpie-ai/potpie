@@ -1,5 +1,6 @@
 import hashlib
 import logging
+from typing import Dict, Optional
 
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
@@ -59,7 +60,7 @@ class CodeGraphService:
                 nodes_to_create = []
                 for node in batch_nodes:
                     node_type = node[1].get("type")
-                    label = node_type if node_type else "Unknown"
+                    label = node_type.capitalize() if node_type else "UNKNOWN"
                     node_data = {
                         "name": node[0],
                         "file_path": node[1].get("file", ""),
@@ -122,7 +123,7 @@ class CodeGraphService:
             end_time = time.time()  # End timing
             logging.info(
                 f"Time taken to create graph and search index: {end_time - start_time:.2f} seconds"
-            )  # Log time taken
+            )  
 
     async def cleanup_graph(self, project_id: str):
         with self.driver.session() as session:
@@ -137,6 +138,19 @@ class CodeGraphService:
         # Clean up search index
         search_service = SearchService(self.db)
         await search_service.delete_project_index(project_id)
+    
+    async def get_node_by_id(self, node_id: str, project_id: str) -> Optional[Dict]:
+        with self.driver.session() as session:
+            result = session.run(
+                """
+                MATCH (n:NODE {node_id: $node_id, repoId: $project_id})
+                RETURN n
+                """,
+                node_id=node_id,
+                project_id=project_id,
+            )
+            record = result.single()
+            return dict(record["n"]) if record else None
 
     def query_graph(self, query):
         with self.driver.session() as session:
