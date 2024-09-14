@@ -23,6 +23,7 @@ class GithubService:
         self.project_manager = ProjectService(db)
 
     def get_github_repo_details(self, repo_name: str) -> Tuple[Github, Dict, str]:
+        logger.info(f"Function: get_github_repo_details, Repo: {repo_name}")
         private_key = (
             "-----BEGIN RSA PRIVATE KEY-----\n"
             + config_provider.get_github_key()
@@ -31,12 +32,8 @@ class GithubService:
         app_id = os.environ["GITHUB_APP_ID"]
         auth = AppAuth(app_id=app_id, private_key=private_key)
         jwt = auth.create_jwt()
-        repo_parts = repo_name.split("/")
-        if len(repo_parts) < 2:
-            raise HTTPException(status_code=400, detail="Invalid repository name format")
-        owner = repo_parts[0]
 
-        url = f"https://api.github.com/repos/{owner}/{repo_parts[1]}/installation"
+        url = f"https://api.github.com/repos/{repo_name}/installation"
         headers = {
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {jwt}",
@@ -49,14 +46,13 @@ class GithubService:
         app_auth = auth.get_installation_auth(response.json()["id"])
         github = Github(auth=app_auth)
 
+        owner = repo_name.split("/")[0]  # Extract owner from repo_name if needed
+
         return github, response.json(), owner
 
     def get_public_github_repo(self, repo_name: str) -> Tuple[Dict[str, Any], str]:
-        repo_parts = repo_name.split("/")
-        if len(repo_parts) < 2:
-            raise HTTPException(status_code=400, detail="Invalid repository name format")
-        owner, repo = repo_parts
-        url = f"https://api.github.com/repos/{owner}/{repo}"
+        logger.info(f"Function: get_public_github_repo, Repo: {repo_name}")
+        url = f"https://api.github.com/repos/{repo_name}"
         headers = {
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
@@ -68,11 +64,13 @@ class GithubService:
                 detail="Failed to fetch public repository",
             )
 
+        owner = repo_name.split("/")[0]
         return response.json(), owner
 
     def get_file_content(
         self, repo_name: str, file_path: str, start_line: int, end_line: int
     ) -> Dict[str, Any]:
+        logger.info(f"Function: get_file_content, Repo: {repo_name}")
         logger.info(f"Attempting to access file: {file_path} in repo: {repo_name}")
 
         # Clean up the file path
@@ -118,6 +116,7 @@ class GithubService:
             return {"content": "", "error": f"Unexpected error: {str(e)}"}
 
     def _get_repo(self, repo_name: str) -> Tuple[Github, Any]:
+        logger.info(f"Function: _get_repo, Repo: {repo_name}")
         github, _, _ = self.get_github_repo_details(repo_name)
         return github, github.get_repo(repo_name)
 
@@ -148,19 +147,27 @@ class GithubService:
             if not github_username:
                 return {"repositories": [], "error": "GitHub username not found for this user"}
 
-            # Use GitHub App authentication
-            github, _, _ = self.get_github_repo_details(github_username)
+            # Use GitHub API directly
+            url = f"https://api.github.com/users/{github_username}/repos"
+            headers = {
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            }
+            response = requests.get(url, headers=headers)
+            
+            if response.status_code != 200:
+                return {"repositories": [], "error": f"Failed to fetch repositories: HTTP {response.status_code}"}
 
             repos = []
-            for repo in github.get_user(github_username).get_repos():
+            for repo in response.json():
                 repos.append(
                     {
-                        "id": repo.id,
-                        "name": repo.name,
-                        "full_name": repo.full_name,
-                        "private": repo.private,
-                        "url": repo.html_url,
-                        "owner": repo.owner.login,
+                        "id": repo["id"],
+                        "name": repo["name"],
+                        "full_name": repo["full_name"],
+                        "private": repo["private"],
+                        "url": repo["html_url"],
+                        "owner": repo["owner"]["login"],
                     }
                 )
 
@@ -171,6 +178,7 @@ class GithubService:
             return {"repositories": [], "error": f"Failed to fetch repositories: {str(e)}"}
 
     def get_branch_list(self, repo_name: str):
+        logger.info(f"Function: get_branch_list, Repo: {repo_name}")
         try:
             github, repo = self.get_repo(repo_name)
             if github is None or repo is None:
@@ -190,6 +198,7 @@ class GithubService:
         return Github()
 
     def get_repo(self, repo_name: str) -> Tuple[Github, Any, str]:
+        logger.info(f"Function: get_repo, Repo: {repo_name}")
         try:
             # Try authenticated access first
             github, _, _ = self.get_github_repo_details(repo_name)
