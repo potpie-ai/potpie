@@ -10,6 +10,7 @@ from sentence_transformers import SentenceTransformer
 
 from app.core.config_provider import config_provider
 from app.modules.parsing.knowledge_graph.inference_schema import (
+    DocstringNode,
     DocstringRequest,
     DocstringResponse,
 )
@@ -38,6 +39,44 @@ class InferenceService:
                 repo_id=repo_id,
             )
             return [dict(record) for record in result]
+    
+    def get_entry_points(self, repo_id: str) -> List[str]:
+        with self.driver.session() as session:
+            result = session.run(
+                f"""
+                MATCH (f:FUNCTION)
+                WHERE f.repoId = '{repo_id}'
+                AND NOT ()-[:CALLS]->(f)
+                AND (f)-[:CALLS]->()
+                RETURN f.node_id as node_id
+                """,
+            )
+            data = result.data()
+            return[record["node_id"] for record in data]
+    
+    def get_neighbours(self, node_id: str):
+       
+        with self.driver.session() as session:
+            result = session.run(
+                """
+                MATCH (p {node_id: $node_id})
+                CALL apoc.neighbors.byhop(p, ">", 10)
+                YIELD nodes
+                UNWIND nodes AS all_nodes
+                RETURN all_nodes.node_id AS node_id, all_nodes.name AS function_name, labels(all_nodes) AS labels
+                """,
+                node_id=node_id,
+            )
+            data = result.data()
+            
+            nodes_info = [
+                
+                    record["node_id"]
+
+                
+                for record in data if record["labels"] == ["function"]
+            ]
+            return nodes_info
 
     def batch_nodes(
         self, nodes: List[Dict], max_tokens: int = 32000
@@ -70,8 +109,120 @@ class InferenceService:
 
         return batches
 
+    async def generate_docstrings_for_entry_points(self, all_docstrings: DocstringResponse, entry_points_neighbors: Dict[str, List[str]]) -> Dict[str, DocstringResponse]:
+        docstring_lookup = {d.node_id: d.docstring for d in all_docstrings["docstrings"]}
+        
+        entry_point_batches = self.batch_entry_points(entry_points_neighbors, docstring_lookup)
+        
+        semaphore = asyncio.Semaphore(10)  # Limit to 10 concurrent tasks
+
+        async def process_batch(batch):
+            async with semaphore:
+                response = await self.generate_entry_point_response(batch)
+                if isinstance(response, DocstringResponse):
+                    return response
+                else:
+                    return await self.generate_docstrings_for_entry_points(all_docstrings, entry_points_neighbors)
+
+        tasks = [process_batch(batch) for batch in entry_point_batches]
+        results = await asyncio.gather(*tasks)
+
+        updated_docstrings = DocstringResponse(docstrings=[])
+        for result in results:
+            updated_docstrings.docstrings.extend(result.docstrings)
+
+        # Update all_docstrings with the new entry point docstrings
+        for updated_docstring in updated_docstrings.docstrings:
+            existing_index = next((i for i, d in enumerate(all_docstrings["docstrings"]) if d.node_id == updated_docstring.node_id), None)
+            if existing_index is not None:
+                all_docstrings["docstrings"][existing_index] = updated_docstring
+            else:
+                all_docstrings["docstrings"].append(updated_docstring)
+
+        return all_docstrings
+
+    def batch_entry_points(self, entry_points_neighbors: Dict[str, List[str]], docstring_lookup: Dict[str, str], max_tokens: int = 32000) -> List[List[Dict[str, str]]]:
+        batches = []
+        current_batch = []
+        current_tokens = 0
+
+        for entry_point, neighbors in entry_points_neighbors.items():
+            entry_docstring = docstring_lookup.get(entry_point, "")
+            neighbor_docstrings = [f"{neighbor}: {docstring_lookup.get(neighbor, '')}" for neighbor in neighbors]
+            flow_description = "\n".join(neighbor_docstrings)
+            
+            entry_point_data = {
+                "node_id": entry_point,
+                "entry_docstring": entry_docstring,
+                "flow_description": flow_description
+            }
+            
+            entry_point_tokens = len(entry_docstring) + len(flow_description)
+            
+            if entry_point_tokens > max_tokens:
+                continue  # Skip entry points that exceed the max_tokens limit
+
+            if current_tokens + entry_point_tokens > max_tokens:
+                batches.append(current_batch)
+                current_batch = []
+                current_tokens = 0
+
+            current_batch.append(entry_point_data)
+            current_tokens += entry_point_tokens
+
+        if current_batch:
+            batches.append(current_batch)
+
+        return batches
+
+    async def generate_entry_point_response(self, batch: List[Dict[str, str]]) -> DocstringResponse:
+        prompt = """
+        Analyze the following entry points and their function flows to generate concise summaries of the overall intent and purpose for each:
+
+        {entry_points}
+
+        For each entry point, provide a brief, high-level description of what the flow accomplishes, such as "API to do XYZ" or "Kafka consumer for consuming topic ABC", but with more technical detail.
+        ALWAYS INCLUDE TECHICAL details about the API Path if relevant e.g. "GET document API at /api/v1/document/id", Topic name e.g. "Kafka consumer with 5 replicas consuming from the 'input' topic", flow of the code, the entry point and the function calls between them.
+        Respond with a list of "node_id":"updated docstring" pairs, where the updated docstring includes the original docstring followed by the flow summary.
+
+        {format_instructions} 
+        """
+
+        entry_points_text = "\n\n".join([
+            f"Entry point: {entry_point['node_id']}\n"
+            f"Flow:\n{entry_point['flow_description']}"
+            f"Entry docstring:\n{entry_point['entry_docstring']}"
+            for entry_point in batch
+        ])
+
+        #formatted_prompt = prompt.format(entry_points=entry_points_text)
+        formatted_prompt = prompt
+        return await self.generate_llm_response(formatted_prompt, {"entry_points": entry_points_text})
+
+    async def generate_llm_response(self, prompt: str, inputs: Dict) -> str:
+        output_parser = PydanticOutputParser(pydantic_object=DocstringResponse)
+
+        chat_prompt = ChatPromptTemplate.from_template(
+            template=prompt,
+            partial_variables={
+                "format_instructions": output_parser.get_format_instructions()
+            },
+        )
+        chain = chat_prompt | self.llm | output_parser
+        result = await chain.ainvoke(input = inputs)
+        return result
+
+
+
+
     async def generate_docstrings(self, repo_id: str) -> Dict[str, DocstringResponse]:
         nodes = self.fetch_graph(repo_id)
+        entry_points = self.get_entry_points(repo_id)
+        entry_points_neighbors = {}
+        for entry_point in entry_points:
+            neighbors = self.get_neighbours(entry_point)
+            entry_points_neighbors[entry_point] = neighbors
+            
         batches = self.batch_nodes(nodes)
         all_docstrings = {}
 
@@ -89,9 +240,12 @@ class InferenceService:
         results = await asyncio.gather(*tasks)
 
         for result in results:
-            all_docstrings.update(result)
 
-        return all_docstrings
+            all_docstrings.update(result)
+        
+        updated_docstrings = await self.generate_docstrings_for_entry_points(all_docstrings, entry_points_neighbors)
+
+        return updated_docstrings
 
     async def generate_response(self, batch: List[DocstringRequest]) -> str:
         base_prompt = """
@@ -217,21 +371,21 @@ class InferenceService:
                 )
                 context_nodes = result_neighbors.single()["context_nodes"]
 
-                # Extract relevant properties from context nodes
+                
                 context_node_data = [
                     {
                         "node_id": node["node_id"],
                         "embedding": node["embedding"],
                         "docstring": node.get("docstring", ""),
                         "type": node.get("type", "Unknown"),
-                        "file": node.get("file", ""),
+                        "file_path": node.get("file_path", ""),
                         "start_line": node.get("start_line", -1),
                         "end_line": node.get("end_line", -1),
                     }
                     for node in context_nodes
                 ]
 
-                # Part 2: Perform similarity search on context nodes
+                
                 result = session.run(
                     """
                     UNWIND $context_node_data AS context_node
@@ -242,7 +396,7 @@ class InferenceService:
                     RETURN context_node.node_id AS node_id,
                            context_node.docstring AS docstring,
                            context_node.type AS type,
-                           context_node.file AS file,
+                           context_node.file_path AS file_path,
                            context_node.start_line AS start_line,
                            context_node.end_line AS end_line,
                            similarity
@@ -252,7 +406,7 @@ class InferenceService:
                     top_k=top_k,
                 )
             else:
-                # Perform simple vector search
+            
                 result = session.run(
                     """
                     CALL db.index.vector.queryNodes('docstring_embedding', $top_k, $embedding)
@@ -261,7 +415,7 @@ class InferenceService:
                     RETURN node.node_id AS node_id,
                            node.docstring AS docstring,
                            node.type AS type,
-                           node.file AS file,
+                           node.file_path AS file_path,
                            node.start_line AS start_line,
                            node.end_line AS end_line,
                            score AS similarity
