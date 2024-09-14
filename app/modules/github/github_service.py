@@ -7,6 +7,7 @@ import requests
 from fastapi import HTTPException
 from github import Github
 from github.Auth import AppAuth
+from github.GithubException import GithubException, UnknownObjectException
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
@@ -71,7 +72,7 @@ class GithubService:
 
     def get_file_content(
         self, repo_name: str, file_path: str, start_line: int, end_line: int
-    ) -> str:
+    ) -> Dict[str, Any]:
         logger.info(f"Attempting to access file: {file_path} in repo: {repo_name}")
 
         # Clean up the file path
@@ -84,59 +85,37 @@ class GithubService:
         logger.info(f"Cleaned file path: {clean_file_path}")
 
         try:
-            # Try authenticated access first
-            github, repo = self.get_repo(repo_name)
+            github, repo, error = self.get_repo(repo_name)
+            if error:
+                return {"content": "", "error": error}
+
             try:
                 file_contents = repo.get_contents(clean_file_path)
-            except Exception as file_error:
-                logger.info(f"Failed to access file in private repo: {str(file_error)}")
-                raise  # Re-raise to be caught by the outer try-except
-        except Exception as private_error:
-            logger.info(f"Failed to access private repo: {str(private_error)}")
-            # If authenticated access fails, try public access
+            except UnknownObjectException:
+                return {"content": "", "error": f"File not found: {clean_file_path}"}
+            except GithubException as ge:
+                return {"content": "", "error": f"GitHub error: {str(ge)}"}
+
+            if isinstance(file_contents, list):
+                return {"content": "", "error": "Provided path is a directory, not a file"}
+
             try:
-                github = self.get_public_github_instance()
-                repo = github.get_repo(repo_name)
-                try:
-                    file_contents = repo.get_contents(clean_file_path)
-                except Exception as file_error:
-                    logger.error(
-                        f"Failed to access file in public repo: {str(file_error)}"
-                    )
-                    raise HTTPException(
-                        status_code=404,
-                        detail=f"File not found or inaccessible: {clean_file_path}",
-                    )
-            except Exception as public_error:
-                logger.error(f"Failed to access public repo: {str(public_error)}")
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Repository not found or inaccessible: {repo_name}",
+                content_bytes = file_contents.decoded_content
+                encoding = self._detect_encoding(content_bytes)
+                decoded_content = content_bytes.decode(encoding)
+                lines = decoded_content.splitlines()
+
+                selected_lines = lines[start_line:end_line]
+                return {"content": "\n".join(selected_lines)}
+            except Exception as e:
+                logger.error(
+                    f"Error processing file content for {repo_name}/{clean_file_path}: {e}",
+                    exc_info=True,
                 )
-
-        if isinstance(file_contents, list):
-            raise HTTPException(
-                status_code=400, detail="Provided path is a directory, not a file"
-            )
-
-        try:
-            content_bytes = file_contents.decoded_content
-            encoding = self._detect_encoding(content_bytes)
-            decoded_content = content_bytes.decode(encoding)
-            lines = decoded_content.splitlines()
-
-            # Directly use start_line and end_line without adjustments
-            selected_lines = lines[start_line:end_line]
-            return "\n".join(selected_lines)
+                return {"content": "", "error": f"Error processing file content: {str(e)}"}
         except Exception as e:
-            logger.error(
-                f"Error processing file content for {repo_name}/{clean_file_path}: {e}",
-                exc_info=True,
-            )
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error processing file content: {str(e)}",
-            )
+            logger.error(f"Unexpected error in get_file_content: {str(e)}", exc_info=True)
+            return {"content": "", "error": f"Unexpected error: {str(e)}"}
 
     def _get_repo(self, repo_name: str) -> Tuple[Github, Any]:
         github, _, _ = self.get_github_repo_details(repo_name)
@@ -156,20 +135,18 @@ class GithubService:
 
         return encoding
 
-    def get_repos_for_user(self, user_id: str):
+    def get_repos_for_user(self, user_id: str) -> Dict[str, Any]:
         try:
             user_service = UserService(self.db)
             user = user_service.get_user_by_uid(user_id)
 
             if user is None:
-                raise HTTPException(status_code=404, detail="User not found")
+                return {"repositories": [], "error": "User not found"}
 
             github_username = user.provider_username
 
             if not github_username:
-                raise HTTPException(
-                    status_code=400, detail="GitHub username not found for this user"
-                )
+                return {"repositories": [], "error": "GitHub username not found for this user"}
 
             # Use GitHub App authentication
             github, _, _ = self.get_github_repo_details(github_username)
@@ -191,47 +168,41 @@ class GithubService:
 
         except Exception as e:
             logger.error(f"Failed to fetch repositories: {str(e)}", exc_info=True)
-            raise HTTPException(
-                status_code=500, detail=f"Failed to fetch repositories: {str(e)}"
-            )
+            return {"repositories": [], "error": f"Failed to fetch repositories: {str(e)}"}
 
     def get_branch_list(self, repo_name: str):
         try:
             github, repo = self.get_repo(repo_name)
+            if github is None or repo is None:
+                return {"branches": [], "error": "Repository not found or inaccessible"}
+            
             branches = repo.get_branches()
             branch_list = [branch.name for branch in branches]
             return {"branches": branch_list}
-        except HTTPException as he:
-            raise he
         except Exception as e:
             logger.error(
                 f"Error fetching branches for repo {repo_name}: {str(e)}", exc_info=True
             )
-            raise HTTPException(
-                status_code=404,
-                detail=f"Repository not found or error fetching branches: {str(e)}",
-            )
+            return {"branches": [], "error": f"Error fetching branches: {str(e)}"}
 
     @staticmethod
     def get_public_github_instance():
         return Github()
 
-    def get_repo(self, repo_name: str) -> Tuple[Github, Any]:
+    def get_repo(self, repo_name: str) -> Tuple[Github, Any, str]:
         try:
             # Try authenticated access first
             github, _, _ = self.get_github_repo_details(repo_name)
             repo = github.get_repo(repo_name)
-            return github, repo
+            return github, repo, None
         except Exception as private_error:
             logger.info(f"Failed to access private repo: {str(private_error)}")
             # If authenticated access fails, try public access
             try:
                 github = self.get_public_github_instance()
                 repo = github.get_repo(repo_name)
-                return github, repo
+                return github, repo, None
             except Exception as public_error:
-                logger.error(f"Failed to access public repo: {str(public_error)}")
-                raise HTTPException(
-                    status_code=404,
-                    detail="Repository not found or inaccessible on GitHub",
-                )
+                error_msg = f"Repository not found or inaccessible: {str(public_error)}"
+                logger.error(error_msg)
+                return None, None, error_msg
