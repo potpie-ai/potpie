@@ -56,3 +56,4 @@ celery
 redis
 flower
 chardet
+locust
