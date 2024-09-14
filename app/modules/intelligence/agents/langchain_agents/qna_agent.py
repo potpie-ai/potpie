@@ -88,7 +88,8 @@ class QNAAgent:
                 project_id,
                 [msg.content for msg in validated_history if isinstance(msg, HumanMessage)],
                 node_ids,
-                self.db
+                self.db,
+                self.llm
             )
 
             tool_results = [SystemMessage(content=f"RAG Agent result: {[node.model_dump() for node in rag_result.pydantic.response]}")]

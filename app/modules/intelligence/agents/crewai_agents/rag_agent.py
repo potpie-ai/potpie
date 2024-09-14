@@ -17,12 +17,12 @@ class RAGResponse(BaseModel):
         response: List[NodeResponse]
 
 class RAGAgent:
-    def __init__(self, sql_db):
+    def __init__(self, sql_db, llm):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.sql_db = sql_db
         self.code_tools = CodeTools.get_tools()
         self.get_code_tool = get_tool(self.sql_db)
-
+        self.llm = llm
     async def create_agents(self):
         query_agent = Agent(
             role='Knowledge Graph Querier',
@@ -31,7 +31,7 @@ class RAGAgent:
             tools=[self.code_tools[0]],
             allow_delegation=False,
             verbose=True,
-            llm=ChatOpenAI(model="gpt-4o-mini")
+            llm=self.llm
         )
 
         rerank_agent = Agent(
@@ -41,7 +41,7 @@ class RAGAgent:
             tools=self.get_code_tool,
             allow_delegation=False,
             verbose=True,
-            llm=ChatOpenAI(model="gpt-4o-mini")
+            llm=self.llm
         )
 
 
@@ -92,7 +92,7 @@ class RAGAgent:
         result = await crew.kickoff_async()
         return result
 
-async def kickoff_rag_crew(query: str, project_id: str, chat_history: List, node_ids: List[NodeContext], sql_db) -> str:
-    rag_agent = RAGAgent( sql_db)
+async def kickoff_rag_crew(query: str, project_id: str, chat_history: List, node_ids: List[NodeContext], sql_db, llm) -> str:
+    rag_agent = RAGAgent( sql_db, llm)
     result = await rag_agent.run(query, project_id, chat_history, node_ids)
     return result

@@ -14,7 +14,6 @@ from langchain_core.prompts import (
     SystemMessagePromptTemplate,
 )
 from langchain_core.runnables import RunnableSequence
-from langchain_openai import ChatOpenAI
 from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
@@ -52,7 +51,7 @@ class UnitTestAgent:
         human_prompt = prompts.get(PromptType.HUMAN)
 
         if not system_prompt or not human_prompt:
-            raise ValueError("Required prompts not found for QNA_AGENT")
+            raise ValueError("Required prompts not found for UNIT_TEST_AGENT")
 
         prompt_template = ChatPromptTemplate(
             messages=[
@@ -90,12 +89,12 @@ class UnitTestAgent:
                 for msg in history
             ]
 
-            # Use RAG Agent to get context
             test_response = await kickoff_unit_test_crew(
                 query,
                 project_id,
                 node_ids,
-                self.db
+                self.db,
+                self.llm
             )
             tool_results = [SystemMessage(content=f"Generated Test plan and test suite:\n {test_response.pydantic.response}")]
 

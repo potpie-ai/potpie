@@ -25,6 +25,7 @@ from app.modules.conversations.message.message_schema import (
     NodeContext,
 )
 from app.modules.intelligence.agents.langchain_agents.unit_test_agent import UnitTestAgent
+from app.modules.intelligence.agents.langchain_agents.integration_test_agent import IntegrationTestAgent
 from app.modules.intelligence.agents.langchain_agents.codebase_agents.code_graph_retrieval_agent import (
     CodeGraphRetrievalAgent,
 )
@@ -63,7 +64,7 @@ class ConversationService:
         history_manager: ChatHistoryService,
         provider_service: ProviderService,
     ):
-        self.db = db
+        self.sql_db = db
         self.user_id = user_id
         self.project_service = project_service
         self.history_manager = history_manager
@@ -80,11 +81,12 @@ class ConversationService:
     def _initialize_agents(self):
         llm = self.provider_service.get_llm()
         return {
-            "debugging_agent": DebuggingAgent(llm, self.db),
-            "codebase_qna_agent": QNAAgent(llm, self.db),
-            "code_retrieval_agent": CodeRetrievalAgent(llm, self.db),
-            "code_graph_retrieval_agent": CodeGraphRetrievalAgent(llm, self.db),
-            "unit_test_agent": UnitTestAgent(llm, self.db),
+            "debugging_agent": DebuggingAgent(llm, self.sql_db),
+            "codebase_qna_agent": QNAAgent(llm, self.sql_db),
+            "code_retrieval_agent": CodeRetrievalAgent(llm, self.sql_db),
+            "code_graph_retrieval_agent": CodeGraphRetrievalAgent(llm, self.sql_db),
+            "unit_test_agent": UnitTestAgent(llm, self.sql_db),
+            "integration_test_agent": IntegrationTestAgent(llm, self.sql_db),
         }
 
     async def create_conversation(
@@ -183,7 +185,7 @@ class ConversationService:
             logger.info(f"Stored message in conversation {conversation_id}")
             if message_type == MessageType.HUMAN:
                 conversation = (
-                    self.db.query(Conversation).filter_by(id=conversation_id).first()
+                    self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
                 )
                 if not conversation:
                     raise ConversationNotFoundError(

@@ -52,18 +52,36 @@ class SystemPromptSetup:
                 "prompts": [
                     {
                         "text": "You are an AI assistant specializing in test planning and unit test code generation for given codebases. "
-                        "Use the provided context, tools, logs, and stacktraces to generate comprehensive test plans and exhaustive test suites. ",
+                        "Use the provided context and tools to generate comprehensive test plans and exhaustive test suites. ",
                         "type": PromptType.SYSTEM,
                         "stage": 1,
                     },
                     {
-                        "text": "Given the context, tool results, logs, and stacktraces provided, help geerate unit tests for: {input}"
+                        "text": "Given the context and tool results provided, help generate unit tests for: {input}"
                         "\nProvide complete test plan with happy paths and edge cases and generate COMPLETE test suite code.",
                         "type": PromptType.HUMAN,
                         "stage": 2,
                     },
                 ],
             },
+            {
+                "agent_id": "INTEGRATION_TEST_AGENT",
+                "prompts": [
+                    {
+                        "text": "You are an AI assistant specializing in test planning and integration test code generation for given codebases. "
+                        "Use the provided contextto generate comprehensive test plans and exhaustive test suites. ",
+                        "type": PromptType.SYSTEM,
+                        "stage": 1,
+                    },
+                    {
+                        "text": "Given the context, tool results provided, help geerate integration tests for: {input}"
+                        "\nProvide complete test plan with happy paths and edge cases and generate COMPLETE test suite code.",
+                        "type": PromptType.HUMAN,
+                        "stage": 2,
+                    },
+                ],
+            },
+
 
         ]
 
