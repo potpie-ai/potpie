@@ -17,8 +17,8 @@ class SearchService:
                 project_id=project_id,
                 node_id=node["node_id"],
                 name=node.get("name", ""),
-                file_path=node.get("file", ""),
-                content=f"{node.get('name', '')} {node.get('file', '')}",
+                file_path=node.get("file_path", ""),
+                content=f"{node.get('name', '')} {node.get('file_path', '')}",
             )
         )
 
