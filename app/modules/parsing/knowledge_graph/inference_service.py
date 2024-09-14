@@ -13,12 +13,13 @@ from app.modules.parsing.knowledge_graph.inference_schema import (
     DocstringRequest,
     DocstringResponse,
 )
-
+from app.modules.search.search_service import SearchService
+from sqlalchemy.orm import Session
 logger = logging.getLogger(__name__)
 
 
 class InferenceService:
-    def __init__(self):
+    def __init__(self, db: Session):
         neo4j_config = config_provider.get_neo4j_config()
         self.driver = GraphDatabase.driver(
             neo4j_config["uri"],
@@ -26,7 +27,7 @@ class InferenceService:
         )
         self.llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.3)
         self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-
+        self.search_service = SearchService(db)
     def close(self):
         self.driver.close()
 
@@ -34,7 +35,7 @@ class InferenceService:
         with self.driver.session() as session:
             result = session.run(
                 "MATCH (n:NODE {repoId: $repo_id}) "
-                "RETURN n.node_id AS node_id, n.type AS type, n.text AS text",
+                "RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path, n.start_line AS start_line, n.end_line AS end_line, n.name AS name",
                 repo_id=repo_id,
             )
             return [dict(record) for record in result]
@@ -239,6 +240,12 @@ class InferenceService:
 
     async def generate_docstrings(self, repo_id: str) -> Dict[str, DocstringResponse]:
         nodes = self.fetch_graph(repo_id)
+        for node in nodes:
+            if node.get("file_path") not in {None, ""} and node.get("name") not in {None, ""}:
+                await self.search_service.create_search_index(
+                    repo_id, node
+            )
+        await self.search_service.commit_indices()
         entry_points = self.get_entry_points(repo_id)
         entry_points_neighbors = {}
         for entry_point in entry_points:

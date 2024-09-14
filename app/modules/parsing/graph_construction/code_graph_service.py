@@ -77,9 +77,6 @@ class CodeGraphService:
                     node_data = {k: v for k, v in node_data.items() if v is not None}
                     nodes_to_create.append(node_data)
 
-                for node in nodes_to_create:
-                    await search_service.create_search_index(project_id, node)
-
                 session.run(
                     """
                     UNWIND $nodes AS node

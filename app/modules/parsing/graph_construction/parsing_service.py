@@ -34,7 +34,7 @@ class ParsingService:
         self.db = db
         self.parse_helper = ParseHelper(db)
         self.project_service = ProjectService(db)
-        self.inference_service = InferenceService()
+        self.inference_service = InferenceService(db)
         self.search_service = SearchService(db)
         self.github_service = GithubService(db)
 
@@ -116,12 +116,6 @@ class ParsingService:
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.PARSED
                 )
-                # Create search index
-                for node in n:
-                    await self.search_service.create_search_index(
-                        project_id, node["attributes"]
-                    )
-                await self.search_service.commit_indices()
 
                 # Generate docstrings using InferenceService
                 await self.inference_service.run_inference(project_id)
