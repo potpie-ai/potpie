@@ -21,9 +21,14 @@ EXPOSE 8001
 EXPOSE 5555
 # Define environment variable
 ENV PYTHONUNBUFFERED=1
+
 # Define the command to run multiple services
 CMD ["sh", "-c", "\
     set -e; \
+    # Source the .env file to load the environment variables
+    if [ -f .env ]; then \
+        export \$(cat .env | xargs); \
+    fi; \
     WORKERS=$(( $(nproc) )); \
     echo 'Running database migrations...'; \
     alembic upgrade head; \
@@ -31,9 +36,27 @@ CMD ["sh", "-c", "\
     celery -A app.celery.celery_app worker --loglevel=debug -Q \"potpiedev_process_repository\" -E --concurrency=1 --pool=solo & \
     CELERY_PID=$!; \
     echo 'Starting Flower...'; \
-    celery -A app.celery.celery_app flower --port=5555 --broker=redis://ip:6379/0 & \
+    celery -A app.celery.celery_app flower --port=5555 --broker=$BROKER_URL & \
     FLOWER_PID=$!; \
     echo 'Starting momentum application...'; \
     gunicorn --workers $WORKERS --worker-class uvicorn.workers.UvicornWorker --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app & \
     GUNICORN_PID=$!; \
     wait $CELERY_PID $FLOWER_PID $GUNICORN_PID"]
+
+
+# Define the command to run multiple services
+# CMD ["sh", "-c", "\
+#     set -e; \
+#     WORKERS=$(( $(nproc) )); \
+#     echo 'Running database migrations...'; \
+#     alembic upgrade head; \
+#     echo 'Starting Celery worker...'; \
+#     celery -A app.celery.celery_app worker --loglevel=debug -Q \"potpiedev_process_repository\" -E --concurrency=1 --pool=solo & \
+#     CELERY_PID=$!; \
+#     echo 'Starting Flower...'; \
+#     celery -A app.celery.celery_app flower --port=5555 --broker=redis://ip:6379/0 & \
+#     FLOWER_PID=$!; \
+#     echo 'Starting momentum application...'; \
+#     gunicorn --workers $WORKERS --worker-class uvicorn.workers.UvicornWorker --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app & \
+#     GUNICORN_PID=$!; \
+#     wait $CELERY_PID $FLOWER_PID $GUNICORN_PID"]
