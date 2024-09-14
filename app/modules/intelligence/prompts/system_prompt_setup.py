@@ -47,7 +47,7 @@ class SystemPromptSetup:
                     },
                 ],
             },
-                        {
+            {
                 "agent_id": "UNIT_TEST_AGENT",
                 "prompts": [
                     {
@@ -81,8 +81,6 @@ class SystemPromptSetup:
                     },
                 ],
             },
-
-
         ]
 
         for agent_data in system_prompts:

@@ -5,9 +5,11 @@ from pydantic import BaseModel
 
 from app.modules.conversations.message.message_model import MessageStatus, MessageType
 
+
 class NodeContext(BaseModel):
     node_id: str
     name: str
+
 
 class MessageRequest(BaseModel):
     content: str

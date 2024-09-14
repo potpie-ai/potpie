@@ -1,10 +1,15 @@
 import os
-from typing import List, Dict
-from crewai import Agent, Task, Crew, Process
+from typing import Dict, List
+
+from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
+
 from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.agents.crewai_agents.test_plan_agent import TestPlanAgent
-from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import get_tool
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
+    get_tool,
+)
+
 
 class UnitTestAgent:
     def __init__(self, sql_db, llm):
@@ -18,23 +23,36 @@ class UnitTestAgent:
         test_plan_agent = await self.test_plan_agent.create_agents()
 
         unit_test_agent = Agent(
-            role='Unit Test Writer',
-            goal='Write unit tests based on test plans',
+            role="Unit Test Writer",
+            goal="Write unit tests based on test plans",
             backstory="You are an expert in writing unit tests for code using latest features of the popular testing libraries for the given programming language.",
             allow_delegation=False,
             verbose=True,
-            llm=self.llm
+            llm=self.llm,
         )
 
         return test_plan_agent, unit_test_agent
 
     class TestAgentResponse(BaseModel):
-        response: str = Field(..., description="String response containing the test plan and the test suite")
-        citations: List[str] = Field(..., description="List of file names referenced in the response")
-        
-    async def create_tasks(self, node_ids: List[NodeContext], project_id: str, query: str, test_plan_agent, unit_test_agent):
+        response: str = Field(
+            ...,
+            description="String response containing the test plan and the test suite",
+        )
+        citations: List[str] = Field(
+            ..., description="List of file names referenced in the response"
+        )
 
-        fetch_docstring_task, test_plan_task = await self.test_plan_agent.create_tasks(node_ids, project_id, query, test_plan_agent)
+    async def create_tasks(
+        self,
+        node_ids: List[NodeContext],
+        project_id: str,
+        query: str,
+        test_plan_agent,
+        unit_test_agent,
+    ):
+        fetch_docstring_task, test_plan_task = await self.test_plan_agent.create_tasks(
+            node_ids, project_id, query, test_plan_agent
+        )
 
         unit_test_task = Task(
             description=f"""Write unit tests corresponding on the test plans. Closely refer the provided code for the functions to generate accurate unit test code.
@@ -48,29 +66,36 @@ A good unit test suite should aim to:
             expected_output=f"Outline the test plan and write unit tests for each node based on the test plan. Write complete code for the unit tests. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model :\n{self.TestAgentResponse.model_json_schema()}",
             agent=unit_test_agent,
             context=[fetch_docstring_task, test_plan_task],
-            output_pydantic= self.TestAgentResponse
+            output_pydantic=self.TestAgentResponse,
         )
 
         return fetch_docstring_task, test_plan_task, unit_test_task
 
-    async def run(self, project_id:str, node_ids: List[NodeContext], query: str) -> Dict[str, str]:
+    async def run(
+        self, project_id: str, node_ids: List[NodeContext], query: str
+    ) -> Dict[str, str]:
         os.environ["OPENAI_API_KEY"] = self.openai_api_key
 
         test_plan_agent, unit_test_agent = await self.create_agents()
-        docstring_task, test_plan_task, unit_test_task = await self.create_tasks(node_ids, project_id, query, test_plan_agent, unit_test_agent)
+        docstring_task, test_plan_task, unit_test_task = await self.create_tasks(
+            node_ids, project_id, query, test_plan_agent, unit_test_agent
+        )
 
         crew = Crew(
-            agents=[ test_plan_agent, unit_test_agent],
+            agents=[test_plan_agent, unit_test_agent],
             tasks=[docstring_task, test_plan_task, unit_test_task],
             process=Process.sequential,
-            verbose=True
+            verbose=True,
         )
 
         result = await crew.kickoff_async()
 
         return result
 
-async def kickoff_unit_test_crew(query: str, project_id: str, node_ids: List[NodeContext], sql_db, llm) -> Dict[str, str]:
+
+async def kickoff_unit_test_crew(
+    query: str, project_id: str, node_ids: List[NodeContext], sql_db, llm
+) -> Dict[str, str]:
     unit_test_agent = UnitTestAgent(sql_db, llm)
     result = await unit_test_agent.run(project_id, node_ids, query)
     return result

@@ -15,12 +15,11 @@ from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import NodeContext
+from app.modules.intelligence.agents.crewai_agents.rag_agent import kickoff_rag_crew
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.tools.kg_based_tools.code_tools import CodeTools
-
-from app.modules.intelligence.agents.crewai_agents.rag_agent import kickoff_rag_crew
 
 logger = logging.getLogger(__name__)
 
@@ -59,14 +58,13 @@ class QNAAgent:
         )
         return prompt_template | self.llm
 
-
     async def run(
         self,
         query: str,
         project_id: str,
         user_id: str,
         conversation_id: str,
-        node_ids: List[NodeContext]
+        node_ids: List[NodeContext],
     ) -> AsyncGenerator[str, None]:
         try:
             if not self.chain:
@@ -86,13 +84,21 @@ class QNAAgent:
             rag_result = await kickoff_rag_crew(
                 query,
                 project_id,
-                [msg.content for msg in validated_history if isinstance(msg, HumanMessage)],
+                [
+                    msg.content
+                    for msg in validated_history
+                    if isinstance(msg, HumanMessage)
+                ],
                 node_ids,
                 self.db,
-                self.llm
+                self.llm,
             )
 
-            tool_results = [SystemMessage(content=f"RAG Agent result: {[node.model_dump() for node in rag_result.pydantic.response]}")]
+            tool_results = [
+                SystemMessage(
+                    content=f"RAG Agent result: {[node.model_dump() for node in rag_result.pydantic.response]}"
+                )
+            ]
 
             inputs = {
                 "history": validated_history,
@@ -109,7 +115,12 @@ class QNAAgent:
                 self.history_manager.add_message_chunk(
                     conversation_id, content, MessageType.AI_GENERATED
                 )
-                yield json.dumps({"citations": rag_result.pydantic.citations, "message":full_response})
+                yield json.dumps(
+                    {
+                        "citations": rag_result.pydantic.citations,
+                        "message": full_response,
+                    }
+                )
 
             logger.debug(f"Full LLM response: {full_response}")
 

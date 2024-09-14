@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 from functools import lru_cache
@@ -86,13 +85,21 @@ class DebuggingAgent:
             rag_result = await kickoff_rag_crew(
                 query,
                 project_id,
-                [msg.content for msg in validated_history if isinstance(msg, HumanMessage)],
+                [
+                    msg.content
+                    for msg in validated_history
+                    if isinstance(msg, HumanMessage)
+                ],
                 node_ids,
                 self.db,
-                self.llm
+                self.llm,
             )
-            
-            tool_results = [SystemMessage(content=f"RAG Agent result: {[node.model_dump() for node in rag_result.pydantic.response]}")]
+
+            tool_results = [
+                SystemMessage(
+                    content=f"RAG Agent result: {[node.model_dump() for node in rag_result.pydantic.response]}"
+                )
+            ]
 
             full_query = f"Query: {query}\nProject ID: {project_id}\nLogs: {logs}\nStacktrace: {stacktrace}"
             inputs = {
@@ -110,7 +117,12 @@ class DebuggingAgent:
                 self.history_manager.add_message_chunk(
                     conversation_id, content, MessageType.AI_GENERATED
                 )
-                yield json.dumps({"citations": rag_result.pydantic.citations, "message":full_response})
+                yield json.dumps(
+                    {
+                        "citations": rag_result.pydantic.citations,
+                        "message": full_response,
+                    }
+                )
 
             logger.debug(f"Full LLM response: {full_response}")
 

@@ -16,17 +16,15 @@ class KnowledgeGraphInput(BaseModel):
 
 
 class CodeTools:
-
-
     @staticmethod
-    def ask_knowledge_graph(query: str, project_id: str ) -> str:
+    def ask_knowledge_graph(query: str, project_id: str) -> str:
         """
         Query the code knowledge graph using natural language questions.
         The knowledge graph contains information about every function, class, and file in the codebase.
         Ask it questions about the codebase.
         Inputs for the ask_knowledge_graph method:
         - query (str): A natural language question that the user wants to ask the knowledge graph. This should be a clear and concise question related to the codebase, such as "What functions are defined in the project?" or "How do I use the XYZ class?".
-        
+
         - project_id (str): The ID of the project being evaluated, this is a UUID.
         """
         data = {"project_id": project_id, "query": query}

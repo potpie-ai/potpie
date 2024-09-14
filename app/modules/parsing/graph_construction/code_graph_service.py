@@ -123,7 +123,7 @@ class CodeGraphService:
             end_time = time.time()  # End timing
             logging.info(
                 f"Time taken to create graph and search index: {end_time - start_time:.2f} seconds"
-            )  
+            )
 
     async def cleanup_graph(self, project_id: str):
         with self.driver.session() as session:
@@ -138,7 +138,7 @@ class CodeGraphService:
         # Clean up search index
         search_service = SearchService(self.db)
         await search_service.delete_project_index(project_id)
-    
+
     async def get_node_by_id(self, node_id: str, project_id: str) -> Optional[Dict]:
         with self.driver.session() as session:
             result = session.run(

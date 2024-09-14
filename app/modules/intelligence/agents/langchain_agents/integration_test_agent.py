@@ -1,8 +1,7 @@
-import asyncio
 import json
 import logging
-from functools import lru_cache
 import os
+from functools import lru_cache
 from typing import AsyncGenerator, Dict, List
 
 from fastapi import HTTPException
@@ -18,12 +17,13 @@ from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import NodeContext
+from app.modules.intelligence.agents.crewai_agents.integration_test_agent import (
+    kickoff_integration_test_crew,
+)
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.tools.kg_based_tools.code_tools import CodeTools
-
-from app.modules.intelligence.agents.crewai_agents.integration_test_agent import kickoff_integration_test_crew
 
 logger = logging.getLogger(__name__)
 
@@ -63,19 +63,18 @@ class IntegrationTestAgent:
         )
         return prompt_template | self.llm
 
-
     async def run(
         self,
         query: str,
         project_id: str,
         user_id: str,
         conversation_id: str,
-        node_ids: List[NodeContext]
+        node_ids: List[NodeContext],
     ) -> AsyncGenerator[str, None]:
         try:
             if not self.chain:
                 self.chain = await self._create_chain()
-            
+
             if not node_ids:
                 raise HTTPException(status_code=400, detail="No node IDs provided")
 
@@ -91,13 +90,13 @@ class IntegrationTestAgent:
 
             # Use RAG Agent to get context
             test_response = await kickoff_integration_test_crew(
-                query,
-                project_id,
-                node_ids,
-                self.db,
-                self.llm
+                query, project_id, node_ids, self.db, self.llm
             )
-            tool_results = [SystemMessage(content=f"Generated Test plan and test suite:\n {test_response.pydantic.response}")]
+            tool_results = [
+                SystemMessage(
+                    content=f"Generated Test plan and test suite:\n {test_response.pydantic.response}"
+                )
+            ]
 
             inputs = {
                 "history": validated_history,
@@ -114,10 +113,12 @@ class IntegrationTestAgent:
                 self.history_manager.add_message_chunk(
                     conversation_id, content, MessageType.AI_GENERATED
                 )
-                yield json.dumps({
-                    "citations": test_response.pydantic.citations,
-                    "message": full_response
-                })
+                yield json.dumps(
+                    {
+                        "citations": test_response.pydantic.citations,
+                        "message": full_response,
+                    }
+                )
 
             logger.debug(f"Full LLM response: {full_response}")
 

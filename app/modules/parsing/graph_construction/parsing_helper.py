@@ -132,7 +132,7 @@ class ParseHelper:
 
         try:
             for root, _, files in os.walk(repo_dir):
-                if any(part.startswith('.') for part in root.split(os.sep)):
+                if any(part.startswith(".") for part in root.split(os.sep)):
                     continue
 
                 for file in files:
