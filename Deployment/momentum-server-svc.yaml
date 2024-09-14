@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: momentum-server-service
+  namespace: mom-server  # Ensure this matches your deployment's namespace
+spec:
+  type: ClusterIP  # Change to LoadBalancer for external access
+  ports:
+  - port: 8001      # The port exposed by the service
+    targetPort: 8001 # The port your application is listening on
+  selector:
+    app: momentum-server
+

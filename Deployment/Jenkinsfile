@@ -1,0 +1,182 @@
+pipeline {
+    agent any
+
+    parameters {
+        string(name: 'REPLICAS', description: 'Number of replicas for the deployment')
+        string(name: 'IMAGE_TAG', description: 'Docker image tag (e.g., Git commit hash) to use for the deployment')
+    }
+
+    stages {
+        stage('Create Kubernetes Deployment YAML') {
+            steps {
+                script {
+                    // Define the path where the YAML file will be saved
+                    def deploymentYamlPath = 'app/momentum-server/momentum-server-deployment.yaml'
+
+                    // Create the deployment YAML content
+                    def deploymentYamlContent = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: momentum-server-deployment
+  namespace: mom-server
+  labels:
+    app: momentum-server
+spec:
+  replicas: ${params.REPLICAS}
+  selector:
+    matchLabels:
+      app: momentum-server
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  template:
+    metadata:
+      labels:
+        app: momentum-server
+    spec:
+      serviceAccountName: mcore-auth-role
+      terminationGracePeriodSeconds: 30  # Time to wait for graceful shutdown
+      initContainers:
+        - name: vault-init
+          image: asia-south1-docker.pkg.dev/staging-433102/momentum-server/momentum-server:${params.IMAGE_TAG}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+
+              echo "Updating packages and installing required tools..."
+              apt-get update && apt-get install -y curl jq
+
+              VAULT_ADDR="http://vault-internal.vault:8200"
+              SA_TOKEN=\$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+
+              echo "Authenticating with Vault..."
+              VAULT_RESPONSE=\$(curl -s -X POST -H "X-Vault-Request: true" -d "{\\"jwt\\": \\"\$SA_TOKEN\\", \\"role\\": \\"mcore-role\\"}" \\
+                \$VAULT_ADDR/v1/auth/kubernetes/login)
+
+              VAULT_TOKEN=\$(echo \$VAULT_RESPONSE | jq -r '.auth.client_token')
+              if [ -z "\$VAULT_TOKEN" ]; then
+                echo "Failed to get Vault token."
+                exit 1
+              fi
+
+              
+              echo "Fetching first secret from Vault..."
+
+              VAULT_SECRET=\$(curl -s -H "X-Vault-Token: \$VAULT_TOKEN" \$VAULT_ADDR/v1/secret3/data/mom-server)
+
+              SECRET_DATA=\$(echo \$VAULT_SECRET | jq -r '.data.data')
+              if [ -z "\$SECRET_DATA" ]; then
+                echo "Failed to fetch the first secret."
+                exit 1
+              fi
+
+              echo "Writing first secret to /app/.env..."
+              echo "\$SECRET_DATA" | jq -r 'to_entries[] | "\\(.key)=\\(.value)"' > /app/.env
+
+              echo "Fetching Base64 encoded SA JSON secret from Vault..."
+              SA_JSON_BASE64=\$(curl -s -H "X-Vault-Token: \$VAULT_TOKEN" "\$VAULT_ADDR/v1/secret2/data/firebase-sa" | jq -r '.data.data["sa-json"]')
+
+              if [ -z "\$SA_JSON_BASE64" ]; then
+                echo "Failed to fetch the Base64 encoded secret."
+                exit 1
+              fi
+
+              echo "This is the fetched Base64 encoded JSON:"
+              echo "\$SA_JSON_BASE64"
+
+              echo "Writing Base64 encoded JSON to /app/firebase_service_account.txt..."
+              echo "\$SA_JSON_BASE64" > /app/firebase_service_account.txt
+
+              if [ \$? -ne 0 ]; then
+                echo "Failed to write the Base64 encoded JSON to file."
+                exit 1
+              fi
+
+              echo "Base64 encoded JSON has been saved to /app/firebase_service_account.txt"
+
+              echo "Secrets saved to /app/.env and /app/firebase_service_account.txt"
+          volumeMounts:
+            - name: secret-volume
+              mountPath: /app  # Ensure this is mapped correctly
+      containers:
+        - name: momentum-server
+          image: asia-south1-docker.pkg.dev/staging-433102/momentum-server/momentum-server:${params.IMAGE_TAG}
+          ports:
+            - containerPort: 8001
+          env:
+          - name: PYTHONUNBUFFERED
+            value: "1"
+          volumeMounts:
+            - name: secret-volume
+              mountPath: /app/.env
+              subPath: .env
+            - name: secret-volume  # Reusing the same volume for different subPaths
+              mountPath: /app/firebase_service_account.txt
+              subPath: firebase_service_account.txt
+          resources:
+            requests:
+              memory: "4Gi"
+              cpu: "2"
+            limits:
+              memory: "4Gi"
+              cpu: "4"
+          readinessProbe:
+            tcpSocket:
+              port: 8001
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 2
+            failureThreshold: 2
+          livenessProbe:
+            tcpSocket:
+              port: 8001
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 2
+            failureThreshold: 2
+      volumes:
+        - name: secret-volume
+          emptyDir: {}
+"""
+                    // Write the YAML content to the specified file path
+                    writeFile file: deploymentYamlPath, text: deploymentYamlContent
+                }
+            }
+        }
+
+        stage('Apply Kubernetes Deployment') {
+            steps {
+                sh 'echo "generate yaml below"'
+                sh 'cat app/momentum-server/momentum-server-deployment.yaml'
+                sh 'echo "now deployng the file"'
+                sh 'kubectl apply -f app/momentum-server/momentum-server-deployment.yaml -n app'
+            }
+        }
+
+        stage('Check Replicas and Image Name') {
+            steps {
+                script {
+                    // Capture the number of replicas into an environment variable
+                    def replicas = sh(
+                        script: "kubectl get deployment momentum-server-deployment -n app -o jsonpath='{.spec.replicas}'", 
+                        returnStdout: true
+                    ).trim()
+
+                    // Capture the image name with tag into an environment variable
+                    def image = sh(
+                        script: "kubectl get deployment momentum-server-deployment -n app -o jsonpath='{.spec.template.spec.containers[*].image}'", 
+                        returnStdout: true
+                    ).trim()
+                    
+                    // Print the message with the number of replicas and the image name with tag
+                    echo "Replica modified to = ${replicas}"
+                    echo "Image using = ${image}"
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: momentum-server-deployment
+  namespace: mom-server
+  labels:
+    app: momentum-server
+spec:
+  replicas: 1  # Initial desired number of pod replicas
+  selector:
+    matchLabels:
+      app: momentum-server
+  template:
+    metadata:
+      labels:
+        app: momentum-server
+    spec:
+      containers:
+      - name: momentum-server-container
+        image: asia-south1-docker.pkg.dev/staging-433102/momentum-server/momentum-server:v9 # Replace with your actual Docker image
+        ports:
+        - containerPort: 8001
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        resources:
+          requests:
+            cpu: "2"  # Requests 0.25 CPU
+            memory: "4Gi"  # Requests 256 MiB of memory
+          limits:
+            cpu: "4"  # Limits to 0.5 CPU
+            memory: "4Gi"  # Limits to 512 MiB of memory
+        livenessProbe:
+          tcpSocket:
+            port: 8001
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 2
+          failureThreshold: 2
+        readinessProbe:
+          tcpSocket:
+            port: 8001
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 2
+          failureThreshold: 2
