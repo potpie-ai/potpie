@@ -22,6 +22,7 @@ from app.modules.conversations.message.message_model import (
 from app.modules.conversations.message.message_schema import (
     MessageRequest,
     MessageResponse,
+    NodeContext,
 )
 from app.modules.intelligence.agents.langchain_agents.codebase_agents.code_graph_retrieval_agent import (
     CodeGraphRetrievalAgent,
@@ -32,7 +33,13 @@ from app.modules.intelligence.agents.langchain_agents.codebase_agents.code_retri
 from app.modules.intelligence.agents.langchain_agents.debugging_agent import (
     DebuggingAgent,
 )
+from app.modules.intelligence.agents.langchain_agents.integration_test_agent import (
+    IntegrationTestAgent,
+)
 from app.modules.intelligence.agents.langchain_agents.qna_agent import QNAAgent
+from app.modules.intelligence.agents.langchain_agents.unit_test_agent import (
+    UnitTestAgent,
+)
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
@@ -61,7 +68,7 @@ class ConversationService:
         history_manager: ChatHistoryService,
         provider_service: ProviderService,
     ):
-        self.db = db
+        self.sql_db = db
         self.user_id = user_id
         self.project_service = project_service
         self.history_manager = history_manager
@@ -78,10 +85,12 @@ class ConversationService:
     def _initialize_agents(self):
         llm = self.provider_service.get_llm()
         return {
-            "debugging_agent": DebuggingAgent(llm, self.db),
-            "codebase_qna_agent": QNAAgent(llm, self.db),
-            "code_retrieval_agent": CodeRetrievalAgent(llm, self.db),
-            "code_graph_retrieval_agent": CodeGraphRetrievalAgent(llm, self.db),
+            "debugging_agent": DebuggingAgent(llm, self.sql_db),
+            "codebase_qna_agent": QNAAgent(llm, self.sql_db),
+            "code_retrieval_agent": CodeRetrievalAgent(llm, self.sql_db),
+            "code_graph_retrieval_agent": CodeGraphRetrievalAgent(llm, self.sql_db),
+            "unit_test_agent": UnitTestAgent(llm, self.sql_db),
+            "integration_test_agent": IntegrationTestAgent(llm, self.sql_db),
         }
 
     async def create_conversation(
@@ -108,13 +117,13 @@ class ConversationService:
             return conversation_id, "Conversation created successfully."
         except IntegrityError as e:
             logger.error(f"IntegrityError in create_conversation: {e}", exc_info=True)
-            self.db.rollback()
+            self.sql_db.rollback()
             raise ConversationServiceError(
                 "Failed to create conversation due to a database integrity error."
             ) from e
         except Exception as e:
             logger.error(f"Unexpected error in create_conversation: {e}", exc_info=True)
-            self.db.rollback()
+            self.sql_db.rollback()
             raise ConversationServiceError(
                 "An unexpected error occurred while creating the conversation."
             ) from e
@@ -133,8 +142,8 @@ class ConversationService:
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
-        self.db.add(new_conversation)
-        self.db.commit()
+        self.sql_db.add(new_conversation)
+        self.sql_db.commit()
         logger.info(
             f"Created new conversation with ID: {conversation_id}, title: {title}, user_id: {user_id}, agent_id: {conversation.agent_ids[0]}"
         )
@@ -180,7 +189,9 @@ class ConversationService:
             logger.info(f"Stored message in conversation {conversation_id}")
             if message_type == MessageType.HUMAN:
                 conversation = (
-                    self.db.query(Conversation).filter_by(id=conversation_id).first()
+                    self.sql_db.query(Conversation)
+                    .filter_by(id=conversation_id)
+                    .first()
                 )
                 if not conversation:
                     raise ConversationNotFoundError(
@@ -203,7 +214,7 @@ class ConversationService:
 
                 logger.info(f"Running agent for repo_id: {repo_id}")
                 async for chunk in agent.run(
-                    message.content, repo_id, user_id, conversation.id
+                    message.content, repo_id, user_id, conversation.id, message.node_ids
                 ):
                     yield chunk
         except Exception as e:
@@ -228,7 +239,7 @@ class ConversationService:
             )
 
             async for chunk in self._generate_and_stream_ai_response(
-                last_human_message.content, conversation_id, user_id
+                last_human_message.content, conversation_id, user_id, []
             ):
                 yield chunk
         except MessageNotFoundError as e:
@@ -245,7 +256,7 @@ class ConversationService:
 
     async def _get_last_human_message(self, conversation_id: str):
         message = (
-            self.db.query(Message)
+            self.sql_db.query(Message)
             .filter_by(conversation_id=conversation_id, type=MessageType.HUMAN)
             .order_by(Message.created_at.desc())
             .first()
@@ -258,13 +269,13 @@ class ConversationService:
         self, conversation_id: str, timestamp: datetime
     ):
         try:
-            self.db.query(Message).filter(
+            self.sql_db.query(Message).filter(
                 Message.conversation_id == conversation_id,
                 Message.created_at > timestamp,
             ).update(
                 {Message.status: MessageStatus.ARCHIVED}, synchronize_session="fetch"
             )
-            self.db.commit()
+            self.sql_db.commit()
             logger.info(
                 f"Archived subsequent messages in conversation {conversation_id}"
             )
@@ -273,15 +284,21 @@ class ConversationService:
                 f"Failed to archive messages in conversation {conversation_id}: {e}",
                 exc_info=True,
             )
-            self.db.rollback()
+            self.sql_db.rollback()
             raise ConversationServiceError(
                 "Failed to archive subsequent messages."
             ) from e
 
     async def _generate_and_stream_ai_response(
-        self, query: str, conversation_id: str, user_id: str
+        self,
+        query: str,
+        conversation_id: str,
+        user_id: str,
+        node_ids: List[NodeContext],
     ) -> AsyncGenerator[str, None]:
-        conversation = self.db.query(Conversation).filter_by(id=conversation_id).first()
+        conversation = (
+            self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
+        )
         if not conversation:
             raise ConversationNotFoundError(
                 f"Conversation with id {conversation_id} not found"
@@ -297,7 +314,7 @@ class ConversationService:
                 f"Running agent {conversation.project_ids[0]} with query: {query}"
             )
             async for chunk in agent.run(
-                query, conversation.project_ids[0], user_id, conversation.id
+                query, conversation.project_ids[0], user_id, conversation.id, node_ids
             ):
                 if chunk:
                     yield chunk
@@ -315,15 +332,17 @@ class ConversationService:
 
     async def delete_conversation(self, conversation_id: str, user_id: str) -> dict:
         try:
-            with self.db.begin():
+            # Start a new transaction
+            with self.sql_db.begin():
+                # Delete related messages first
                 deleted_messages = (
-                    self.db.query(Message)
+                    self.sql_db.query(Message)
                     .filter(Message.conversation_id == conversation_id)
                     .delete()
                 )
 
                 deleted_conversation = (
-                    self.db.query(Conversation)
+                    self.sql_db.query(Conversation)
                     .filter(Conversation.id == conversation_id)
                     .delete()
                 )
@@ -354,6 +373,8 @@ class ConversationService:
 
         except Exception as e:
             logger.error(f"Unexpected error in delete_conversation: {e}", exc_info=True)
+            # Ensure rollback in case of any other exception
+            self.sql_db.rollback()
             raise ConversationServiceError(
                 f"Failed to delete conversation {conversation_id} due to an unexpected error"
             ) from e
@@ -363,14 +384,14 @@ class ConversationService:
     ) -> ConversationInfoResponse:
         try:
             conversation = (
-                self.db.query(Conversation).filter_by(id=conversation_id).first()
+                self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
             )
             if not conversation:
                 raise ConversationNotFoundError(
                     f"Conversation with id {conversation_id} not found"
                 )
             total_messages = (
-                self.db.query(Message)
+                self.sql_db.query(Message)
                 .filter_by(conversation_id=conversation_id, status=MessageStatus.ACTIVE)
                 .count()
             )
@@ -398,7 +419,7 @@ class ConversationService:
     ) -> List[MessageResponse]:
         try:
             conversation = (
-                self.db.query(Conversation).filter_by(id=conversation_id).first()
+                self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
             )
             if not conversation:
                 raise ConversationNotFoundError(
@@ -406,7 +427,7 @@ class ConversationService:
                 )
 
             messages = (
-                self.db.query(Message)
+                self.sql_db.query(Message)
                 .filter_by(conversation_id=conversation_id)
                 .filter_by(status=MessageStatus.ACTIVE)
                 .order_by(Message.created_at)
@@ -445,7 +466,7 @@ class ConversationService:
     ) -> dict:
         try:
             conversation = (
-                self.db.query(Conversation)
+                self.sql_db.query(Conversation)
                 .filter_by(id=conversation_id, user_id=user_id)
                 .first()
             )
@@ -456,7 +477,7 @@ class ConversationService:
 
             conversation.title = new_title
             conversation.updated_at = datetime.now(timezone.utc)
-            self.db.commit()
+            self.sql_db.commit()
 
             logger.info(
                 f"Renamed conversation {conversation_id} to '{new_title}' by user {user_id}"
@@ -468,14 +489,14 @@ class ConversationService:
 
         except SQLAlchemyError as e:
             logger.error(f"Database error in rename_conversation: {e}", exc_info=True)
-            self.db.rollback()
+            self.sql_db.rollback()
             raise ConversationServiceError(
                 "Failed to rename conversation due to a database error"
             ) from e
 
         except Exception as e:
             logger.error(f"Unexpected error in rename_conversation: {e}", exc_info=True)
-            self.db.rollback()
+            self.sql_db.rollback()
             raise ConversationServiceError(
                 "Failed to rename conversation due to an unexpected error"
             ) from e

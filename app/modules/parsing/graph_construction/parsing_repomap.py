@@ -312,7 +312,7 @@ class RepoMap:
             ranked = nx.pagerank(G, weight="weight", **pers_args)
         except ZeroDivisionError:
             return []
- 
+
         # distribute the rank from each source node, across all of its out edges
         ranked_definitions = defaultdict(float)
         for src in G.nodes:
@@ -452,8 +452,8 @@ class RepoMap:
 
         for root, dirs, files in os.walk(repo_dir):
             # Ignore folders starting with '.'
-            dirs[:] = [d for d in dirs if not d.startswith(".")]
-
+            if any(part.startswith(".") for part in root.split(os.sep)):
+                continue
 
             for file in files:
                 file_count += 1

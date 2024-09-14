@@ -19,23 +19,12 @@ class SystemPromptSetup:
                 "agent_id": "QNA_AGENT",
                 "prompts": [
                     {
-                        "text": "You are an AI assistant analyzing a codebase. Use the provided context and tools to answer questions accurately. "
-                        "Always cite your sources using the format [CITATION:filename.ext:line_number:relevant information]. "
-                        "If line number is not applicable, use [CITATION:filename.ext::relevant information]. "
-                        "Ensure every piece of information from a file is cited.",
+                        "text": "You are an AI assistant analyzing a codebase. Use the provided context and tools to answer questions accurately. ",
                         "type": PromptType.SYSTEM,
                         "stage": 1,
                     },
                     {
-                        "text": "Given the context and tool results provided, answer the following question about the codebase: {input}"
-                        "\n\nEnsure to include at least one citation for each file you mention, even if you're describing its general purpose."
-                        "\n\nYour response should include both the answer and the citations."
-                        "\n\nAt the end of your response, include a JSON object with all citations used, in the format:"
-                        '\n```json\n{{"citations": [{{'
-                        '\n  "file": "filename.ext",'
-                        '\n  "line": "line_number_or_empty_string",'
-                        '\n  "content": "relevant information"'
-                        "\n}}, ...]}}\n```",
+                        "text": "Given the context and tool results provided, answer the following question about the codebase: {input}",
                         "type": PromptType.HUMAN,
                         "stage": 2,
                     },
@@ -46,24 +35,47 @@ class SystemPromptSetup:
                 "prompts": [
                     {
                         "text": "You are an AI assistant specializing in debugging and analyzing codebases. "
-                        "Use the provided context, tools, logs, and stacktraces to help debug issues accurately. "
-                        "Always cite your sources using the format [CITATION:filename.ext:line_number:relevant information]. "
-                        "If line number is not applicable, use [CITATION:filename.ext::relevant information]. "
-                        "Ensure every piece of information from a file is cited.",
+                        "Use the provided context, tools, logs, and stacktraces to help debug issues accurately. ",
                         "type": PromptType.SYSTEM,
                         "stage": 1,
                     },
                     {
                         "text": "Given the context, tool results, logs, and stacktraces provided, help debug the following issue: {input}"
-                        "\n\nProvide step-by-step analysis, suggest debug statements, and recommend fixes."
-                        "\n\nEnsure to include at least one citation for each file you mention, even if you're describing its general purpose."
-                        "\n\nYour response should include the analysis, suggestions, and citations."
-                        "\n\nAt the end of your response, include a JSON object with all citations used, in the format:"
-                        '\n```json\n{{"citations": [{{'
-                        '\n  "file": "filename.ext",'
-                        '\n  "line": "line_number_or_empty_string",'
-                        '\n  "content": "relevant information"'
-                        "\n}}, ...]}}\n```",
+                        "\nProvide step-by-step analysis, suggest debug statements, and recommend fixes.",
+                        "type": PromptType.HUMAN,
+                        "stage": 2,
+                    },
+                ],
+            },
+            {
+                "agent_id": "UNIT_TEST_AGENT",
+                "prompts": [
+                    {
+                        "text": "You are an AI assistant specializing in test planning and unit test code generation for given codebases. "
+                        "Use the provided context and tools to generate comprehensive test plans and exhaustive test suites. ",
+                        "type": PromptType.SYSTEM,
+                        "stage": 1,
+                    },
+                    {
+                        "text": "Given the context and tool results provided, help generate unit tests for: {input}"
+                        "\nProvide complete test plan with happy paths and edge cases and generate COMPLETE test suite code.",
+                        "type": PromptType.HUMAN,
+                        "stage": 2,
+                    },
+                ],
+            },
+            {
+                "agent_id": "INTEGRATION_TEST_AGENT",
+                "prompts": [
+                    {
+                        "text": "You are an AI assistant specializing in test planning and integration test code generation for given codebases. "
+                        "Use the provided contextto generate comprehensive test plans and exhaustive test suites. ",
+                        "type": PromptType.SYSTEM,
+                        "stage": 1,
+                    },
+                    {
+                        "text": "Given the context, tool results provided, help geerate integration tests for: {input}"
+                        "\nProvide complete test plan with happy paths and edge cases and generate COMPLETE test suite code.",
                         "type": PromptType.HUMAN,
                         "stage": 2,
                     },

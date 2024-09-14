@@ -33,4 +33,9 @@ class AgentsService:
                 name="Code Graph Retrieval Agent",
                 description="An agent specialized in retrieving and analyzing code snippets from the knowledge graph based on node names or IDs.",
             ),
+            AgentInfo(
+                id="unit_test_agent",
+                name="Unit Test Agent",
+                description="An agent specialized in generating unit tests for code snippets from the knowledge graph based on node names or IDs.",
+            ),
         ]
