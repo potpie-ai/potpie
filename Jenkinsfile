@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         // Access environment variables using Jenkins credentials
-        DOCKER_REGISTRY = credentials('momentum-server')
+        DOCKER_REGISTRY = credentials('momentum-server-docker-registry')
         GKE_CLUSTER = credentials('mom-core-gke-cluster')
         GKE_ZONE = credentials('gke-zone')
         GCP_PROJECT = credentials('gcp-project')
@@ -107,8 +107,8 @@ pipeline {
                     
                     try {
                         sh """
-                        kubectl set image deployment/momentum-server-deployment momentum-server=${DOCKER_REGISTRY}/momentum-server:${imageTag} -n app
-                        kubectl rollout status deployment/momentum-server-deployment -n app
+                        kubectl set image deployment/momentum-server-deployment momentum-server=${DOCKER_REGISTRY}/momentum-server:${imageTag} -n mom-server
+                        kubectl rollout status deployment/momentum-server-deployment -n mom-server
                         """
                         imageDeploySucceeded = true
                     } catch (Exception e) {
@@ -116,8 +116,8 @@ pipeline {
                     }
 
                     if (!imageDeploySucceeded) {
-                        echo 'Ro lling back to previous revision...'
-                        sh 'kubectl rollout undo deployment/momentum-server-deployment -n app'
+                        echo 'Rolling back to previous revision...'
+                        sh 'kubectl rollout undo deployment/momentum-server-deployment -n mom-server'
                     }
                 }
             }
@@ -132,7 +132,7 @@ pipeline {
                     echo "Pipeline finished"
                     // Check the deployment status
                     sh """
-                    echo "checking the deployment status" && kubectl get pods -n app
+                    echo "checking the deployment status" && kubectl get pods -n mom-server
                     """
 
                 }
