@@ -30,9 +30,12 @@ class GithubService:
         app_id = os.environ["GITHUB_APP_ID"]
         auth = AppAuth(app_id=app_id, private_key=private_key)
         jwt = auth.create_jwt()
-        owner = repo_name.split("/")[0]
+        repo_parts = repo_name.split("/")
+        if len(repo_parts) < 2:
+            raise HTTPException(status_code=400, detail="Invalid repository name format")
+        owner = repo_parts[0]
 
-        url = f"https://api.github.com/repos/{owner}/{repo_name.split('/')[1]}/installation"
+        url = f"https://api.github.com/repos/{owner}/{repo_parts[1]}/installation"
         headers = {
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {jwt}",
@@ -48,7 +51,10 @@ class GithubService:
         return github, response.json(), owner
 
     def get_public_github_repo(self, repo_name: str) -> Tuple[Dict[str, Any], str]:
-        owner, repo = repo_name.split("/")
+        repo_parts = repo_name.split("/")
+        if len(repo_parts) < 2:
+            raise HTTPException(status_code=400, detail="Invalid repository name format")
+        owner, repo = repo_parts
         url = f"https://api.github.com/repos/{owner}/{repo}"
         headers = {
             "Accept": "application/vnd.github+json",
@@ -78,31 +84,31 @@ class GithubService:
         logger.info(f"Cleaned file path: {clean_file_path}")
 
         try:
-            # Try public access first
-            github = self.get_public_github_instance()
-            repo = github.get_repo(repo_name)
+            # Try authenticated access first
+            github, repo = self.get_repo(repo_name)
             try:
                 file_contents = repo.get_contents(clean_file_path)
             except Exception as file_error:
-                logger.info(f"Failed to access file in public repo: {str(file_error)}")
+                logger.info(f"Failed to access file in private repo: {str(file_error)}")
                 raise  # Re-raise to be caught by the outer try-except
-        except Exception as public_error:
-            logger.info(f"Failed to access public repo: {str(public_error)}")
-            # If public access fails, try authenticated access
+        except Exception as private_error:
+            logger.info(f"Failed to access private repo: {str(private_error)}")
+            # If authenticated access fails, try public access
             try:
-                github, repo = self.get_repo(repo_name)
+                github = self.get_public_github_instance()
+                repo = github.get_repo(repo_name)
                 try:
                     file_contents = repo.get_contents(clean_file_path)
                 except Exception as file_error:
                     logger.error(
-                        f"Failed to access file in private repo: {str(file_error)}"
+                        f"Failed to access file in public repo: {str(file_error)}"
                     )
                     raise HTTPException(
                         status_code=404,
                         detail=f"File not found or inaccessible: {clean_file_path}",
                     )
-            except Exception as private_error:
-                logger.error(f"Failed to access private repo: {str(private_error)}")
+            except Exception as public_error:
+                logger.error(f"Failed to access public repo: {str(public_error)}")
                 raise HTTPException(
                     status_code=404,
                     detail=f"Repository not found or inaccessible: {repo_name}",
@@ -212,19 +218,19 @@ class GithubService:
 
     def get_repo(self, repo_name: str) -> Tuple[Github, Any]:
         try:
-            # Try public access first
-            github = self.get_public_github_instance()
+            # Try authenticated access first
+            github, _, _ = self.get_github_repo_details(repo_name)
             repo = github.get_repo(repo_name)
             return github, repo
-        except Exception as public_error:
-            logger.info(f"Failed to access public repo: {str(public_error)}")
-            # If public access fails, try authenticated access
+        except Exception as private_error:
+            logger.info(f"Failed to access private repo: {str(private_error)}")
+            # If authenticated access fails, try public access
             try:
-                github, _, _ = self.get_github_repo_details(repo_name)
+                github = self.get_public_github_instance()
                 repo = github.get_repo(repo_name)
                 return github, repo
-            except Exception as private_error:
-                logger.error(f"Failed to access private repo: {str(private_error)}")
+            except Exception as public_error:
+                logger.error(f"Failed to access public repo: {str(public_error)}")
                 raise HTTPException(
                     status_code=404,
                     detail="Repository not found or inaccessible on GitHub",
