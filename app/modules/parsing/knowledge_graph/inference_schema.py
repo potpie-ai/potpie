@@ -26,7 +26,6 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     node_id: str
     docstring: str
-    type: str
     file_path: str
     start_line: int
     end_line: int

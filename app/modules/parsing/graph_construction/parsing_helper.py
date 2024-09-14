@@ -131,8 +131,10 @@ class ParseHelper:
         total_chars = 0
 
         try:
-            for root, dirs, files in os.walk(repo_dir):
-                dirs[:] = [d for d in dirs if not d.startswith(".")]
+            for root, _, files in os.walk(repo_dir):
+                if any(part.startswith(".") for part in root.split(os.sep)):
+                    continue
+
                 for file in files:
                     file_path = os.path.join(root, file)
                     ext = os.path.splitext(file)[1].lower()

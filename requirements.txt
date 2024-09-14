@@ -50,6 +50,7 @@ resend
 transformers
 torch
 sentence-transformers
+crewai
 nltk
 langchain_anthropic
 celery

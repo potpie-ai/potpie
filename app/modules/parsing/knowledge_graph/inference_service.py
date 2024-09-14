@@ -10,7 +10,6 @@ from sentence_transformers import SentenceTransformer
 
 from app.core.config_provider import config_provider
 from app.modules.parsing.knowledge_graph.inference_schema import (
-    DocstringNode,
     DocstringRequest,
     DocstringResponse,
 )
@@ -39,7 +38,7 @@ class InferenceService:
                 repo_id=repo_id,
             )
             return [dict(record) for record in result]
-    
+
     def get_entry_points(self, repo_id: str) -> List[str]:
         with self.driver.session() as session:
             result = session.run(
@@ -52,10 +51,9 @@ class InferenceService:
                 """,
             )
             data = result.data()
-            return[record["node_id"] for record in data]
-    
+            return [record["node_id"] for record in data]
+
     def get_neighbours(self, node_id: str):
-       
         with self.driver.session() as session:
             result = session.run(
                 """
@@ -68,13 +66,9 @@ class InferenceService:
                 node_id=node_id,
             )
             data = result.data()
-            
-            nodes_info = [
-                
-                    record["node_id"]
 
-                
-                for record in data if record["labels"] == ["function"]
+            nodes_info = [
+                record["node_id"] for record in data if record["labels"] == ["function"]
             ]
             return nodes_info
 
@@ -109,11 +103,19 @@ class InferenceService:
 
         return batches
 
-    async def generate_docstrings_for_entry_points(self, all_docstrings: DocstringResponse, entry_points_neighbors: Dict[str, List[str]]) -> Dict[str, DocstringResponse]:
-        docstring_lookup = {d.node_id: d.docstring for d in all_docstrings["docstrings"]}
-        
-        entry_point_batches = self.batch_entry_points(entry_points_neighbors, docstring_lookup)
-        
+    async def generate_docstrings_for_entry_points(
+        self,
+        all_docstrings: DocstringResponse,
+        entry_points_neighbors: Dict[str, List[str]],
+    ) -> Dict[str, DocstringResponse]:
+        docstring_lookup = {
+            d.node_id: d.docstring for d in all_docstrings["docstrings"]
+        }
+
+        entry_point_batches = self.batch_entry_points(
+            entry_points_neighbors, docstring_lookup
+        )
+
         semaphore = asyncio.Semaphore(10)  # Limit to 10 concurrent tasks
 
         async def process_batch(batch):
@@ -122,7 +124,9 @@ class InferenceService:
                 if isinstance(response, DocstringResponse):
                     return response
                 else:
-                    return await self.generate_docstrings_for_entry_points(all_docstrings, entry_points_neighbors)
+                    return await self.generate_docstrings_for_entry_points(
+                        all_docstrings, entry_points_neighbors
+                    )
 
         tasks = [process_batch(batch) for batch in entry_point_batches]
         results = await asyncio.gather(*tasks)
@@ -133,7 +137,14 @@ class InferenceService:
 
         # Update all_docstrings with the new entry point docstrings
         for updated_docstring in updated_docstrings.docstrings:
-            existing_index = next((i for i, d in enumerate(all_docstrings["docstrings"]) if d.node_id == updated_docstring.node_id), None)
+            existing_index = next(
+                (
+                    i
+                    for i, d in enumerate(all_docstrings["docstrings"])
+                    if d.node_id == updated_docstring.node_id
+                ),
+                None,
+            )
             if existing_index is not None:
                 all_docstrings["docstrings"][existing_index] = updated_docstring
             else:
@@ -141,24 +152,32 @@ class InferenceService:
 
         return all_docstrings
 
-    def batch_entry_points(self, entry_points_neighbors: Dict[str, List[str]], docstring_lookup: Dict[str, str], max_tokens: int = 32000) -> List[List[Dict[str, str]]]:
+    def batch_entry_points(
+        self,
+        entry_points_neighbors: Dict[str, List[str]],
+        docstring_lookup: Dict[str, str],
+        max_tokens: int = 32000,
+    ) -> List[List[Dict[str, str]]]:
         batches = []
         current_batch = []
         current_tokens = 0
 
         for entry_point, neighbors in entry_points_neighbors.items():
             entry_docstring = docstring_lookup.get(entry_point, "")
-            neighbor_docstrings = [f"{neighbor}: {docstring_lookup.get(neighbor, '')}" for neighbor in neighbors]
+            neighbor_docstrings = [
+                f"{neighbor}: {docstring_lookup.get(neighbor, '')}"
+                for neighbor in neighbors
+            ]
             flow_description = "\n".join(neighbor_docstrings)
-            
+
             entry_point_data = {
                 "node_id": entry_point,
                 "entry_docstring": entry_docstring,
-                "flow_description": flow_description
+                "flow_description": flow_description,
             }
-            
+
             entry_point_tokens = len(entry_docstring) + len(flow_description)
-            
+
             if entry_point_tokens > max_tokens:
                 continue  # Skip entry points that exceed the max_tokens limit
 
@@ -175,7 +194,9 @@ class InferenceService:
 
         return batches
 
-    async def generate_entry_point_response(self, batch: List[Dict[str, str]]) -> DocstringResponse:
+    async def generate_entry_point_response(
+        self, batch: List[Dict[str, str]]
+    ) -> DocstringResponse:
         prompt = """
         Analyze the following entry points and their function flows to generate concise summaries of the overall intent and purpose for each:
 
@@ -185,19 +206,23 @@ class InferenceService:
         ALWAYS INCLUDE TECHICAL details about the API Path if relevant e.g. "GET document API at /api/v1/document/id", Topic name e.g. "Kafka consumer with 5 replicas consuming from the 'input' topic", flow of the code, the entry point and the function calls between them.
         Respond with a list of "node_id":"updated docstring" pairs, where the updated docstring includes the original docstring followed by the flow summary.
 
-        {format_instructions} 
+        {format_instructions}
         """
 
-        entry_points_text = "\n\n".join([
-            f"Entry point: {entry_point['node_id']}\n"
-            f"Flow:\n{entry_point['flow_description']}"
-            f"Entry docstring:\n{entry_point['entry_docstring']}"
-            for entry_point in batch
-        ])
+        entry_points_text = "\n\n".join(
+            [
+                f"Entry point: {entry_point['node_id']}\n"
+                f"Flow:\n{entry_point['flow_description']}"
+                f"Entry docstring:\n{entry_point['entry_docstring']}"
+                for entry_point in batch
+            ]
+        )
 
-        #formatted_prompt = prompt.format(entry_points=entry_points_text)
+        # formatted_prompt = prompt.format(entry_points=entry_points_text)
         formatted_prompt = prompt
-        return await self.generate_llm_response(formatted_prompt, {"entry_points": entry_points_text})
+        return await self.generate_llm_response(
+            formatted_prompt, {"entry_points": entry_points_text}
+        )
 
     async def generate_llm_response(self, prompt: str, inputs: Dict) -> str:
         output_parser = PydanticOutputParser(pydantic_object=DocstringResponse)
@@ -209,11 +234,8 @@ class InferenceService:
             },
         )
         chain = chat_prompt | self.llm | output_parser
-        result = await chain.ainvoke(input = inputs)
+        result = await chain.ainvoke(input=inputs)
         return result
-
-
-
 
     async def generate_docstrings(self, repo_id: str) -> Dict[str, DocstringResponse]:
         nodes = self.fetch_graph(repo_id)
@@ -222,7 +244,7 @@ class InferenceService:
         for entry_point in entry_points:
             neighbors = self.get_neighbours(entry_point)
             entry_points_neighbors[entry_point] = neighbors
-            
+
         batches = self.batch_nodes(nodes)
         all_docstrings = {}
 
@@ -240,10 +262,11 @@ class InferenceService:
         results = await asyncio.gather(*tasks)
 
         for result in results:
-
             all_docstrings.update(result)
-        
-        updated_docstrings = await self.generate_docstrings_for_entry_points(all_docstrings, entry_points_neighbors)
+
+        updated_docstrings = await self.generate_docstrings_for_entry_points(
+            all_docstrings, entry_points_neighbors
+        )
 
         return updated_docstrings
 
@@ -252,7 +275,7 @@ class InferenceService:
         Generate a detailed technical docstring for each of the following code snippets.
         The docstring should encapsulate the technical and functional purpose of the code.
         Include details about inputs, outputs, function calls, logical flow, and any other relevant information.
-
+        If the code snippet serves a special purpose like defining an API or a Kafka consumer or Producer, make note of that in the docstring with details like API path, topic name etc.
         Here are the code snippets:
         {code_snippets}
 
@@ -371,13 +394,11 @@ class InferenceService:
                 )
                 context_nodes = result_neighbors.single()["context_nodes"]
 
-                
                 context_node_data = [
                     {
                         "node_id": node["node_id"],
                         "embedding": node["embedding"],
                         "docstring": node.get("docstring", ""),
-                        "type": node.get("type", "Unknown"),
                         "file_path": node.get("file_path", ""),
                         "start_line": node.get("start_line", -1),
                         "end_line": node.get("end_line", -1),
@@ -385,7 +406,6 @@ class InferenceService:
                     for node in context_nodes
                 ]
 
-                
                 result = session.run(
                     """
                     UNWIND $context_node_data AS context_node
@@ -395,7 +415,6 @@ class InferenceService:
                     LIMIT $top_k
                     RETURN context_node.node_id AS node_id,
                            context_node.docstring AS docstring,
-                           context_node.type AS type,
                            context_node.file_path AS file_path,
                            context_node.start_line AS start_line,
                            context_node.end_line AS end_line,
@@ -406,7 +425,6 @@ class InferenceService:
                     top_k=top_k,
                 )
             else:
-            
                 result = session.run(
                     """
                     CALL db.index.vector.queryNodes('docstring_embedding', $top_k, $embedding)
@@ -414,7 +432,6 @@ class InferenceService:
                     WHERE node.repoId = $project_id
                     RETURN node.node_id AS node_id,
                            node.docstring AS docstring,
-                           node.type AS type,
                            node.file_path AS file_path,
                            node.start_line AS start_line,
                            node.end_line AS end_line,
