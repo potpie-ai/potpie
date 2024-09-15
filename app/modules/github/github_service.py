@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 from app.modules.projects.projects_service import ProjectService
+from app.modules.users.user_model import User
 from app.modules.users.user_service import UserService
 import random
 
@@ -136,9 +137,8 @@ class GithubService:
 
     def get_repos_for_user(self, user_id: str):
         try:
-            user_service = UserService(self.db)
-            user = user_service.get_user_by_uid(user_id)
-
+            user = self.db.query(User).filter(User.uid == user_id).first()
+            
             if user is None:
                 raise HTTPException(status_code=404, detail="User not found")
 
