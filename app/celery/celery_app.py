@@ -4,7 +4,10 @@ import os
 from celery import Celery
 
 from app.core.models import *  # noqa #This will import and initialize all models
+from dotenv import load_dotenv
 
+# Load environment variables from a .env file if present
+load_dotenv()
 # Redis configuration
 redishost = os.getenv("REDISHOST", "localhost")
 redisport = int(os.getenv("REDISPORT", 6379))
