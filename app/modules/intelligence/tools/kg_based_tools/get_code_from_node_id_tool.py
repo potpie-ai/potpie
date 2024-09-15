@@ -151,7 +151,7 @@ class GetCodeFromNodeIdTool:
         return self.run_multiple(repo_id, node_ids)
 
 
-def get_tool(sql_db: Session) -> List[StructuredTool]:
+def get_code_tools(sql_db: Session) -> List[StructuredTool]:
     """
     Get StructuredTool objects for the GetCodeFromNodeIdTool.
     """

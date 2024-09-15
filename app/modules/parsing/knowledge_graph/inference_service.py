@@ -227,13 +227,15 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
         self, batch: List[Dict[str, str]]
     ) -> DocstringResponse:
         prompt = """
-        Analyze the following entry points and their function flows to generate concise summaries of the overall intent and purpose for each:
+        For each of the following entry points and their function flows, perform the following tasks:
+
+        1. **Flow Summary**: Generate a concise summary of the overall intent and purpose of the entry point and its flow. The summary should be sufficiently verbose and technical to understand the code via similarity search but concise enough to not take up too much space. ALWAYS Include technical details such as ALL API paths, HTTP methods, topic names, database interactions, and key function calls.
+
+        2. **Classification**: Classify the entry point into one or more of the following broader level tags: **[API, WEBSOCKET, PRODUCER, CONSUMER, DATABASE, HTTP]**. Only use these tags and select the ones that are most relevant to the entry point.
 
         {entry_points}
 
-        For each entry point, provide a brief, high-level description of what the flow accomplishes, such as "API to do XYZ" or "Kafka consumer for consuming topic ABC", but with more technical detail.
-        ALWAYS INCLUDE TECHICAL details about the API Path if relevant e.g. "GET document API at /api/v1/document/id", Topic name e.g. "Kafka consumer with 5 replicas consuming from the 'input' topic", flow of the code, the entry point and the function calls between them.
-        Respond with a list of "node_id":"updated docstring" pairs, where the updated docstring includes the original docstring followed by the flow summary.
+        Respond with a list of "node_id":"updated docstring","tags" pairs, where the updated docstring includes the original docstring followed by the flow summary.
 
         {format_instructions}
         """
@@ -247,7 +249,6 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
             ]
         )
 
-        # formatted_prompt = prompt.format(entry_points=entry_points_text)
         formatted_prompt = prompt
         return await self.generate_llm_response(
             formatted_prompt, {"entry_points": entry_points_text}
@@ -308,14 +309,15 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
 
     async def generate_response(self, batch: List[DocstringRequest]) -> str:
         base_prompt = """
-        Generate a detailed technical docstring for each of the following code snippets.
-        The docstring should encapsulate the technical and functional purpose of the code.
-        Include details about inputs, outputs, function calls, logical flow, and any other relevant information.
-        If the code snippet serves a special purpose like defining an API or a Kafka consumer or Producer, make note of that in the docstring with details like API path, topic name etc.
+        For each of the following code snippets, perform the following tasks:
+
+        **Docstring Generation**: Generate a detailed technical docstring that encapsulates the technical and functional purpose of the code. The docstring should be sufficiently verbose and technical to understand the code via similarity search but concise enough to not take up too much space. ALWAYS Include details about inputs, outputs, function calls, logical flow, and any other relevant information. If the code snippet defines an API, WebSocket, Producer, Consumer, Database interaction, or HTTP communication, ALWAYSinclude relevant technical details like API paths, HTTP methods, topic names, database operations, etc.
+
         Here are the code snippets:
         {code_snippets}
 
         {format_instructions}
+        "tags" key is not relevant to this task, DO NOT include it.
         """
 
         # Prepare the code snippets
@@ -365,6 +367,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
                 {
                     "node_id": n.node_id,
                     "docstring": n.docstring,
+                    "tags": n.tags if n.tags else [],
                     "embedding": self.generate_embedding(n.docstring),
                 }
                 for n in docstrings["docstrings"]
@@ -377,7 +380,8 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
                     UNWIND $batch AS item
                     MATCH (n:NODE {repoId: $repo_id, node_id: item.node_id})
                     SET n.docstring = item.docstring,
-                        n.embedding = item.embedding
+                        n.embedding = item.embedding,
+                        n.tags = item.tags
                     """,
                     batch=batch,
                     repo_id=repo_id,

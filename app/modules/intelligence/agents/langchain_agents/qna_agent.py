@@ -28,7 +28,7 @@ class QNAAgent:
     def __init__(self, llm, db: Session):
         self.llm = llm
         self.history_manager = ChatHistoryService(db)
-        self.tools = CodeTools.get_tools()
+        self.tools = CodeTools.get_kg_tools()
         self.prompt_service = PromptService(db)
         self.chain = None
         self.db = db

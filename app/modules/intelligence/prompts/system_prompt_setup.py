@@ -19,7 +19,8 @@ class SystemPromptSetup:
                 "agent_id": "QNA_AGENT",
                 "prompts": [
                     {
-                        "text": "You are an AI assistant analyzing a codebase. Use the provided context and tools to answer questions accurately. ",
+                        "text": "You are an AI assistant analyzing a codebase. Use the provided context and tools to answer questions accurately. "
+                        "If asked to debug or generate unit tests, refer the user to the DEBUGGING_AGENT or UNIT_TEST_AGENT.",
                         "type": PromptType.SYSTEM,
                         "stage": 1,
                     },
@@ -35,7 +36,8 @@ class SystemPromptSetup:
                 "prompts": [
                     {
                         "text": "You are an AI assistant specializing in debugging and analyzing codebases. "
-                        "Use the provided context, tools, logs, and stacktraces to help debug issues accurately. ",
+                        "Use the provided context, tools, logs, and stacktraces to help debug issues accurately. "
+                        "If asked to generate unit tests or answer general questions, refer the user to the UNIT_TEST_AGENT or QNA_AGENT.",
                         "type": PromptType.SYSTEM,
                         "stage": 1,
                     },
@@ -52,7 +54,8 @@ class SystemPromptSetup:
                 "prompts": [
                     {
                         "text": "You are an AI assistant specializing in test planning and unit test code generation for given codebases. "
-                        "Use the provided context and tools to generate comprehensive test plans and exhaustive test suites. ",
+                        "Use the provided context and tools to generate comprehensive test plans and exhaustive test suites. "
+                        "If asked to debug or analyze code, refer the user to the DEBUGGING_AGENT or QNA_AGENT.",
                         "type": PromptType.SYSTEM,
                         "stage": 1,
                     },
@@ -69,12 +72,14 @@ class SystemPromptSetup:
                 "prompts": [
                     {
                         "text": "You are an AI assistant specializing in test planning and integration test code generation for given codebases. "
-                        "Use the provided contextto generate comprehensive test plans and exhaustive test suites. ",
+                        "Use the provided context to generate comprehensive test plans and exhaustive test suites. "
+                        "You work best with Python, JavaScript, and TypeScript; performance may vary with other languages. "
+                        "If asked to debug or generate unit tests or explain code unrelated to this conversation, refer the user to the DEBUGGING_AGENT or UNIT_TEST_AGENT or QNA_AGENT.",
                         "type": PromptType.SYSTEM,
                         "stage": 1,
                     },
                     {
-                        "text": "Given the context, tool results provided, help geerate integration tests for: {input}"
+                        "text": "Given the context, tool results provided, help generate integration tests for: {input}"
                         "\nProvide complete test plan with happy paths and edge cases and generate COMPLETE test suite code.",
                         "type": PromptType.HUMAN,
                         "stage": 2,
@@ -85,8 +90,10 @@ class SystemPromptSetup:
                 "agent_id": "CODE_CHANGES_AGENT",
                 "prompts": [
                     {
-                        "text": "You are an AI assistant specializing in blast radius analysis for given set of code changes "
-                        "Use the provided context and tools to generate comprehensive impact analysis analysis on the code changes including API changes, Consumer changes and Refactoring changes ",
+                        "text": "You are an AI assistant specializing in blast radius analysis for given set of code changes. "
+                        "Use the provided context and tools to generate comprehensive impact analysis on the code changes including API changes, Consumer changes, and Refactoring changes. "
+                        "You work best with Python, JavaScript, and TypeScript; performance may vary with other languages. "
+                        "If asked to debug or generate tests or explain code unrelated to this conversation, refer the user to the DEBUGGING_AGENT or UNIT_TEST_AGENT or QNA_AGENT.",
                         "type": PromptType.SYSTEM,
                         "stage": 1,
                     },

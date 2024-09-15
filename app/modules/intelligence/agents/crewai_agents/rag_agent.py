@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.tools.kg_based_tools.code_tools import CodeTools
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
-    get_tool,
+    get_code_tools,
 )
 
 
@@ -28,16 +28,18 @@ class RAGAgent:
     def __init__(self, sql_db, llm):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.sql_db = sql_db
-        self.code_tools = CodeTools.get_tools()
-        self.get_code_tool = get_tool(self.sql_db)
+        self.kg_tools = CodeTools.get_kg_tools()
+        self.code_tools = get_code_tools(self.sql_db)
         self.llm = llm
 
     async def create_agents(self):
         query_agent = Agent(
             role="Knowledge Graph Querier",
             goal="Query the knowledge graph based on the input query and retrieve the top k responses.",
-            backstory="You specialize in querying knowledge graphs to find the most relevant vectors for a given query. Based on the conversation history and current query, you rephrase the knowledge graph query to be more specific and relevant to the codebase.",
-            tools=[self.code_tools[0]],
+            backstory="""You specialize in querying knowledge graphs to find the most relevant context for a given query. 
+            Based on the conversation history and current query, you rephrase the knowledge graph query to be more specific and relevant to the codebase.
+            """,
+            tools=self.kg_tools,
             allow_delegation=False,
             verbose=True,
             llm=self.llm,
@@ -47,7 +49,7 @@ class RAGAgent:
             role="Re-ranker",
             goal="Re-rank the top k responses and fetch the code for relevant node IDs, but skip the ones already queried.",
             backstory="You excel at analyzing and re-ranking responses based on query relevance, and retrieving code using corresponding node IDs.",
-            tools=self.get_code_tool,
+            tools=self.code_tools,
             allow_delegation=False,
             verbose=True,
             llm=self.llm,
@@ -67,8 +69,11 @@ class RAGAgent:
         if not node_ids:
             node_ids = []
         query_task = Task(
-            description=f"Query the knowledge graph based on the input quer and chat history. Return the top k vector responses. Chat History: {chat_history}\n\nInput Query: {query}\n\nProject ID: {project_id}\n\n Node IDs: {[node.model_dump() for node in node_ids]}",
-            expected_output="A list of vector similarity responses including the node_id, node name, docstring and similarity score",
+            description=f"""Query the knowledge graph based on the input query and chat history and input node IDs. 
+              Chat History: {chat_history}\n\nInput Query: {query}\n\nProject ID: {project_id}\n\n Node IDs: {[node.model_dump() for node in node_ids]}
+              If the knowledge graph query is not useful, you can use the 'Get Nodes from Tags' tool to get ALL the relevant nodes from the graph for that type. USE THIS ONLY WHEN NECESSARY AS THIS IS EXTREMELY LARGE CONTEXT.
+              Refine the output from this to only include the most relevant nodes for the subsequent knowledge graph query.""",
+            expected_output="A list of responses responses including the node_id, node name, docstring and similarity score that were retrieved from the knowledge graph",
             agent=query_agent,
         )
 

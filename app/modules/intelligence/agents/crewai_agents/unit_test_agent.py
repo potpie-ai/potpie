@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.agents.crewai_agents.test_plan_agent import TestPlanAgent
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
-    get_tool,
+    get_code_tools,
 )
 
 
@@ -15,7 +15,7 @@ class UnitTestAgent:
     def __init__(self, sql_db, llm):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.sql_db = sql_db
-        self.get_code_tool = get_tool(self.sql_db)
+        self.get_code_tool = get_code_tools(self.sql_db)
         self.test_plan_agent = TestPlanAgent(sql_db, llm)
         self.llm = llm
 

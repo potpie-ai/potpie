@@ -75,7 +75,7 @@ class BlastRadiusAgent:
             {self.BlastRadiusAgentResponse.model_json_schema()}""",
             expected_output=f"Structured output outlining the impact of the code changes on the codebase and any other query by the user following the pydantic schema; {self.BlastRadiusAgentResponse.model_json_schema()}",
             agent=blast_radius_agent,
-            tools=[get_blast_radius_tool()[0],CodeTools.get_tools()[0]],
+            tools=[get_blast_radius_tool()[0],CodeTools.get_kg_tools()[0]],
             output_pydantic=self.BlastRadiusAgentResponse
         )
 

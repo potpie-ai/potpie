@@ -10,7 +10,7 @@ from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id
     GetCodeGraphFromNodeIdTool,
 )
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
-    get_tool,
+    get_code_tools,
 )
 
 
@@ -18,7 +18,7 @@ class IntegrationTestAgent:
     def __init__(self, sql_db, llm):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.sql_db = sql_db
-        self.get_code_tool = get_tool(self.sql_db)
+        self.get_code_tool = get_code_tools(self.sql_db)
         self.test_plan_agent = TestPlanAgent(sql_db, llm)
         self.llm = llm
 

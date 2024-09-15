@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
-    get_tool,
+    get_code_tools,
 )
 
 
@@ -14,7 +14,7 @@ class TestPlanAgent:
     def __init__(self, sql_db, llm):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.sql_db = sql_db
-        self.get_code_tool = get_tool(self.sql_db)
+        self.get_code_tool = get_code_tools(self.sql_db)
         self.llm = llm
 
     async def create_agents(self):
