@@ -114,7 +114,7 @@ class CodeChangesAgent:
                 yield json.dumps(
                     {
                         "citations": blast_radius_result.pydantic.citations,
-                        "message": full_response,
+                        "message": content,
                     }
                 )
 

@@ -116,7 +116,7 @@ class IntegrationTestAgent:
                 yield json.dumps(
                     {
                         "citations": test_response.pydantic.citations,
-                        "message": full_response,
+                        "message": content,
                     }
                 )
 

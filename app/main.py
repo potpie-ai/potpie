@@ -1,6 +1,7 @@
 import logging
 import os
 
+import sentry_sdk
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,6 +36,7 @@ logging.basicConfig(
 class MainApp:
     def __init__(self):
         load_dotenv(override=True)
+        self.setup_sentry()
         self.app = FastAPI()
         self.setup_cors()
         self.initialize_database()
@@ -44,6 +46,13 @@ class MainApp:
         else:
             FirebaseSetup.firebase_init()
         self.include_routers()
+
+    def setup_sentry(self):
+        sentry_sdk.init(
+            dsn=os.getenv("SENTRY_DSN"),
+            traces_sample_rate=1.0,
+            profiles_sample_rate=1.0,
+        )
 
     def setup_cors(self):
         origins = ["*"]
