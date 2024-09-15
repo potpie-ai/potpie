@@ -51,6 +51,9 @@ pipeline {
                 script {
                     // Use the Git commit hash as the image tag
                     def imageTag = env.GIT_COMMIT_HASH
+                    def dockerRegistry = env.DOCKER_REGISTRY
+                    echo "printing the saved docke registry from env:"
+                    echo "${dockerRegistry}"
                     sh "docker build -t ${DOCKER_REGISTRY}/momentum-server:${imageTag} ."
                 }
             }
