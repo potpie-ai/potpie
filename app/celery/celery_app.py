@@ -46,6 +46,10 @@ def configure_celery(queue_prefix: str):
                 "queue": f"{queue_prefix}_process_repository"
             },
         },
+        # Add these new configurations
+        task_acks_late=True,
+        worker_prefetch_multiplier=1,
+        task_reject_on_worker_lost=True,
     )
 
 
