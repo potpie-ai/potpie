@@ -17,8 +17,8 @@ pipeline {
                     // Determine environment based on branch
                     def branch = env.GIT_BRANCH
                     
-                    if (branch == "origin/production") {
-                        env.ENVIRONMENT = 'production'
+                    if (branch == "origin/temp") {
+                        env.ENVIRONMENT = 'temp'
                     } else if (branch == "origin/staging") {
                         env.ENVIRONMENT = 'staging'
                     } else if (branch == "origin/devops"){
