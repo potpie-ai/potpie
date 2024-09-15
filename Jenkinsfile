@@ -19,8 +19,8 @@ pipeline {
                     
                     if (branch == "origin/temp") {
                         env.ENVIRONMENT = 'temp'
-                    } else if (branch == "origin/staging") {
-                        env.ENVIRONMENT = 'staging'
+                    } else if (branch == "origin/main") {
+                        env.ENVIRONMENT = 'main'
                     } else if (branch == "origin/devops"){
                         env.ENVIORNMENT = 'devops'
                     } else {
