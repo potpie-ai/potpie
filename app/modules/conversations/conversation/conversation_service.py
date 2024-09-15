@@ -25,12 +25,6 @@ from app.modules.conversations.message.message_schema import (
     NodeContext,
 )
 from app.modules.intelligence.agents.langchain_agents.code_changes_agent import CodeChangesAgent
-from app.modules.intelligence.agents.langchain_agents.codebase_agents.code_graph_retrieval_agent import (
-    CodeGraphRetrievalAgent,
-)
-from app.modules.intelligence.agents.langchain_agents.codebase_agents.code_retrieval_agent import (
-    CodeRetrievalAgent,
-)
 from app.modules.intelligence.agents.langchain_agents.debugging_agent import (
     DebuggingAgent,
 )
@@ -88,8 +82,6 @@ class ConversationService:
         return {
             "debugging_agent": DebuggingAgent(llm, self.sql_db),
             "codebase_qna_agent": QNAAgent(llm, self.sql_db),
-            "code_retrieval_agent": CodeRetrievalAgent(llm, self.sql_db),
-            "code_graph_retrieval_agent": CodeGraphRetrievalAgent(llm, self.sql_db),
             "unit_test_agent": UnitTestAgent(llm, self.sql_db),
             "integration_test_agent": IntegrationTestAgent(llm, self.sql_db),
             "code_changes_agent": CodeChangesAgent(llm, self.sql_db),
