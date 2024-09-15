@@ -61,6 +61,8 @@ pipeline {
                 script {
                     // Use the Git commit hash as the image tag
                     def imageTag = env.GIT_COMMIT_HASH
+                    echo "printing the user here"
+                    sh "whoami && pwd"
                     sh "docker push ${DOCKER_REGISTRY}/momentum-server:${imageTag}"
                 }
             }
