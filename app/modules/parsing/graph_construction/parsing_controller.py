@@ -15,6 +15,7 @@ from app.modules.parsing.graph_construction.parsing_validator import (
 )
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
+from app.modules.utils.posthog_helper import PostHogClient
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +45,21 @@ class ParsingController:
                 }
 
                 logger.info(f"Submitting parsing task for new project {new_project_id}")
+
+                await project_manager.update_project_status(
+                    new_project_id, ProjectStatusEnum.SUBMITTED, user_id
+                )
                 process_parsing.delay(
                     repo_details.model_dump(), user_id, user_email, new_project_id
+                )
+                PostHogClient().send_event(
+                    user_id,
+                    "repo_parsed_event",
+                    {
+                        "repo_name": repo_details.repo_name,
+                        "branch": repo_details.branch_name,
+                        "project_id": new_project_id,
+                    },
                 )
 
                 return response
@@ -68,6 +82,7 @@ class ParsingController:
                     )
 
                     await code_graph_service.cleanup_graph(project_id)
+
                 except Exception as e:
                     logger.error(f"Error in cleanup_graph: {e}")
                     raise HTTPException(status_code=500, detail="Internal server error")
@@ -81,6 +96,15 @@ class ParsingController:
 
                 response["status"] = ProjectStatusEnum.SUBMITTED.value
 
+            PostHogClient().send_event(
+                user_id,
+                "parsed_repo_event",
+                {
+                    "repo_name": repo_details.repo_name,
+                    "branch": repo_details.branch_name,
+                    "project_id": project_id,
+                },
+            )
             return response
         except Exception as e:
             logger.error(f"Error in parse_directory: {e}")

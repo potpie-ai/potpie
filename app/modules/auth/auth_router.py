@@ -11,6 +11,7 @@ from app.modules.auth.auth_service import auth_handler
 from app.modules.users.user_schema import CreateUser
 from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
+from app.modules.utils.posthog_helper import PostHogClient
 
 from .auth_schema import LoginRequest
 
@@ -55,6 +56,16 @@ class AuthAPI:
                 provider_username=body["providerUsername"],
             )
             uid, message, error = user_service.create_user(user)
+            posthog_client = PostHogClient()
+            posthog_client.send_event(
+                uid,
+                "signup_event",
+                {
+                    "email": body["email"],
+                    "display_name": body["displayName"],
+                    "github_username": body["providerUsername"],
+                },
+            )
             if error:
                 return Response(content=message, status_code=400)
             return Response(content=json.dumps({"uid": uid}), status_code=201)

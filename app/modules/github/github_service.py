@@ -121,7 +121,7 @@ class GithubService:
 
             if start_line == end_line == 0:
                 return decoded_content
-            
+
             selected_lines = lines[start_line:end_line]
             return "\n".join(selected_lines)
         except Exception as e:

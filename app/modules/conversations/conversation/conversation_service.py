@@ -24,7 +24,9 @@ from app.modules.conversations.message.message_schema import (
     MessageResponse,
     NodeContext,
 )
-from app.modules.intelligence.agents.langchain_agents.code_changes_agent import CodeChangesAgent
+from app.modules.intelligence.agents.langchain_agents.code_changes_agent import (
+    CodeChangesAgent,
+)
 from app.modules.intelligence.agents.langchain_agents.codebase_agents.code_graph_retrieval_agent import (
     CodeGraphRetrievalAgent,
 )
@@ -44,6 +46,7 @@ from app.modules.intelligence.agents.langchain_agents.unit_test_agent import (
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
+from app.modules.utils.posthog_helper import PostHogClient
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +152,16 @@ class ConversationService:
         logger.info(
             f"Created new conversation with ID: {conversation_id}, title: {title}, user_id: {user_id}, agent_id: {conversation.agent_ids[0]}"
         )
+        provider_name = self.provider_service.get_llm_provider_name()
+        PostHogClient().send_event(
+            user_id,
+            "create Conversation Event",
+            {
+                "project_ids": conversation.project_ids,
+                "agent_ids": conversation.agent_ids,
+                "llm": provider_name
+            },
+        )
         return conversation_id
 
     async def _add_system_message(
@@ -189,6 +202,12 @@ class ConversationService:
                 conversation_id, message_type, user_id
             )
             logger.info(f"Stored message in conversation {conversation_id}")
+            provider_name = self.provider_service.get_llm_provider_name()
+
+            PostHogClient().send_event(
+                user_id, "message post event", {"conversation_id": conversation_id, "llm": provider_name}
+            )
+
             if message_type == MessageType.HUMAN:
                 conversation = (
                     self.sql_db.query(Conversation)
@@ -238,6 +257,12 @@ class ConversationService:
 
             await self._archive_subsequent_messages(
                 conversation_id, last_human_message.created_at
+            )
+
+            PostHogClient().send_event(
+                user_id,
+                "regenerate_conversation_event",
+                {"conversation_id": conversation_id},
             )
 
             async for chunk in self._generate_and_stream_ai_response(
@@ -347,6 +372,12 @@ class ConversationService:
                     self.sql_db.query(Conversation)
                     .filter(Conversation.id == conversation_id)
                     .delete()
+                )
+
+                PostHogClient().send_event(
+                    user_id,
+                    "delete_conversation_event",
+                    {"conversation_id": conversation_id},
                 )
 
                 if deleted_conversation == 0:
