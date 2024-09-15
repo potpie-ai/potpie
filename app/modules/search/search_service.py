@@ -50,18 +50,21 @@ class SearchService:
 
         # Format and sort the results
         formatted_results = []
+        ids = []
         for result in results:
             relevance = self._calculate_relevance(result, query_words)
-            formatted_results.append(
-                {
+            if result.node_id not in ids:
+                formatted_results.append(
+                    {
                     "node_id": result.node_id,
                     "name": result.name,
                     "file_path": result.file_path,
                     "content": result.content,
                     "match_type": self._determine_match_type(result, query_words),
                     "relevance": relevance,
-                }
+                }   
             )
+            ids.append(result.node_id)
 
         # Sort results by relevance
         formatted_results.sort(key=lambda x: x["relevance"], reverse=True)

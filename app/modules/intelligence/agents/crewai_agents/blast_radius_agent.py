@@ -30,10 +30,10 @@ class BlastRadiusAgent:
     class BlastRadiusAgentResponse(BaseModel):
         response: str = Field(
             ...,
-            description="String response describing the blast radius of the changes made in the code.",
+            description="String response describing the analysis of the changes made in the code.",
         )
         citations: List[str] = Field(
-            ..., description="List of file names extracted from contest and referenced in the response"
+            ..., description="List of file names extracted from context and referenced in the response"
         )
 
     async def create_tasks(
@@ -54,7 +54,7 @@ class BlastRadiusAgent:
 
             You also have access the the query knowledge graph tool. Use it to answer natural language questions about the codebase during the analysis.
 
-            Analyze the changes fetched and explain their blast radius. Consider the following:
+            Analyze the changes fetched and explain their impact on the codebase. Consider the following:
             1. Which functions or classes have been directly modified? 
             2. What are the potential side effects of these changes?
             3. Are there any dependencies that might be affected?
@@ -73,7 +73,7 @@ class BlastRadiusAgent:
             
             Ensure that your output ALWAYS follows the structure outlined in the following pydantic model:
             {self.BlastRadiusAgentResponse.model_json_schema()}""",
-            expected_output=f"Structured output outlining the impact of the code changes on the codebase and any other query by the user following the pydantic schema; {self.BlastRadiusAgentResponse.model_json_schema()}",
+            expected_output=f"Comprehensive impact analysisof the code changes on the codebase and answers to the users query about them. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model : {self.BlastRadiusAgentResponse.model_json_schema()}",
             agent=blast_radius_agent,
             tools=[get_blast_radius_tool()[0],CodeTools.get_tools()[0]],
             output_pydantic=self.BlastRadiusAgentResponse

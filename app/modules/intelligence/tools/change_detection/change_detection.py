@@ -16,6 +16,7 @@ from app.modules.intelligence.tools.code_query_tools.get_code_from_node_name_too
 from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 from app.modules.projects.projects_service import ProjectService
+from app.modules.search.search_service import SearchService
 
 parser = get_parser("python")
 
@@ -37,6 +38,7 @@ class ChangeDetectionResponse(BaseModel):
 class ChangeDetection:
     def __init__(self, sql_db):
         self.sql_db = sql_db
+        self.search_service = SearchService(self.sql_db)
 
     def _parse_diff_detail(self, patch_details):
         changed_files = {}
@@ -209,11 +211,18 @@ class ChangeDetection:
                         patches_dict, project_id
                     )
                     for identifier in identifiers:
-                        node_ids.append(
-                            GetCodeFromNodeNameTool(self.sql_db).get_node_data(
+                        node_id_query = " ".join(identifier.split(":"))
+                        relevance_search = await self.search_service.search_codebase(project_id, node_id_query)
+                        if relevance_search:
+                            node_id = relevance_search[0]["node_id"]
+                            if node_id:
+                                node_ids.append(node_id)
+                        else:
+                            node_ids.append(
+                                GetCodeFromNodeNameTool(self.sql_db).get_node_data(
                                 project_id, identifier
                             )["node_id"]
-                        )
+                            )
                         
                     # Fetch code for node ids and store in a dict
                     node_code_dict = {}
