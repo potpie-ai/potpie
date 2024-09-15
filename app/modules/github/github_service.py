@@ -137,12 +137,14 @@ class GithubService:
 
     def get_repos_for_user(self, user_id: str):
         try:
+            logger.info(f"Getting repositories for user: {user_id}")
             user = self.db.query(User).filter(User.uid == user_id).first()
-            
+            logger.info(f"User found: {user}")
             if user is None:
                 raise HTTPException(status_code=404, detail="User not found")
-
+            logger.info(f"User found: {user}")
             github_username = user.provider_username
+            logger.info(f"GitHub username: {github_username}")
 
             if not github_username:
                 raise HTTPException(
@@ -175,14 +177,14 @@ class GithubService:
                 )
 
             all_installations = response.json()
-
+            logger.info(f"All installations for user: {all_installations}")
             # Filter installations for the specific user
             user_installations = [
                 installation
                 for installation in all_installations
                 if installation["account"]["login"].lower() == github_username.lower()
             ]
-
+            logger.info(f"User installations: {user_installations}")
             repos = []
             for installation in user_installations:
                 app_auth = auth.get_installation_auth(installation["id"])
