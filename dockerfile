@@ -8,8 +8,6 @@ WORKDIR /app
 COPY requirements.txt .
 # Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
-# Install supervisor
-RUN apt-get update && apt-get install -y supervisor
 # Install Celery and Flower
 RUN pip install --no-cache-dir celery flower
 # Install NLTK and download required data
@@ -26,5 +24,22 @@ EXPOSE 5555
 # Define environment variable
 ENV PYTHONUNBUFFERED=1
 
-# Run Supervisor when the container launches
-CMD ["supervisord", "-n", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+# Define the command to run multiple services
+CMD ["sh", "-c", "\
+    set -e; \
+    if [ -f .env ]; then \
+        export $(cat .env | xargs); \
+    fi; \
+    WORKERS=$(nproc); \
+    echo 'Running database migrations...'; \
+    alembic upgrade head; \
+    echo 'Starting Celery worker...'; \
+    celery -A app.celery.celery_app worker --loglevel=debug -Q 'potpieProd_process_repository'  & \
+    CELERY_PID=$!; \
+    echo 'Starting Flower...'; \
+    celery -A app.celery.celery_app flower --port=5555 --broker=$BROKER_URL & \
+    FLOWER_PID=$!; \
+    echo 'Starting momentum application...'; \
+    gunicorn --workers $WORKERS --worker-class uvicorn.workers.UvicornWorker --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app & \
+    GUNICORN_PID=$!; \
+    wait $CELERY_PID $FLOWER_PID $GUNICORN_PID"]
