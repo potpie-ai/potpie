@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: volume-debugger
+  namespace: mom-server
+spec:
+  containers:
+  - name: debug
+    image: alpine  # Or any image that supports shell access
+    command: ["/bin/sh", "-c", "sleep 3600"]  # Keeps pod running
+    volumeMounts:
+    - name: secret-volume
+      mountPath: /app  # Adjust based on your current path
+  volumes:
+  - name: vol-debug
+    persistentVolumeClaim:
+      claimName: vol-debug-pvc  # Reference your PVC
