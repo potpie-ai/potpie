@@ -1,6 +1,9 @@
 pipeline {
     agent any
 
+    parameters {
+        string(name: 'namespace', description: 'namespace to deploy')
+    }
     environment {
         // Access environment variables using Jenkins credentials
         DOCKER_REGISTRY = credentials('momentum-server-docker-registry')
@@ -112,8 +115,8 @@ pipeline {
                     
                     try {
                         sh """
-                        kubectl set image deployment/momentum-server-deployment momentum-server=${DOCKER_REGISTRY}/momentum-server:${imageTag} -n mom-server
-                        kubectl rollout status deployment/momentum-server-deployment -n mom-server
+                        kubectl set image deployment/momentum-server-deployment momentum-server=${DOCKER_REGISTRY}/momentum-server:${imageTag} -n ${params.namespace}
+                        kubectl rollout status deployment/momentum-server-deployment -n ${params.namespace}
                         """
                         imageDeploySucceeded = true
                     } catch (Exception e) {
@@ -122,7 +125,7 @@ pipeline {
 
                     if (!imageDeploySucceeded) {
                         echo 'Rolling back to previous revision...'
-                        sh 'kubectl rollout undo deployment/momentum-server-deployment -n mom-server'
+                        sh 'kubectl rollout undo deployment/momentum-server-deployment -n ${params.namespace}'
                     }
                 }
             }
@@ -137,7 +140,7 @@ pipeline {
                     echo "Pipeline finished"
                     // Check the deployment status
                     sh """
-                    echo "checking the deployment status" && kubectl get pods -n mom-server
+                    echo "checking the deployment status" && kubectl get pods -n ${params.namespace}
                     """
 
                 }
