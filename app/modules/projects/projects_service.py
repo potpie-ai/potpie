@@ -89,10 +89,14 @@ class ProjectService:
             f"Project with ID {project_id} has now been updated with status {status}."
         )
 
-    async def get_project_from_db(self, repo_name: str, user_id: str):
+    async def get_project_from_db(self, repo_name: str, branch_name: str, user_id: str):
         project = (
             self.db.query(Project)
-            .filter(Project.repo_name == repo_name, Project.user_id == user_id)
+            .filter(
+                Project.repo_name == repo_name,
+                Project.user_id == user_id,
+                Project.branch_name == branch_name,
+            )
             .first()
         )
         if project:

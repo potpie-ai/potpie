@@ -210,6 +210,83 @@ class RepoMap:
                 type="unknown",
             )
 
+    @staticmethod
+    def get_tags_from_code(fname, code):
+        lang = filename_to_lang(fname)
+        if not lang:
+            return
+
+        language = get_language(lang)
+        parser = get_parser(lang)
+
+        query_scm = get_scm_fname(lang)
+        if not query_scm.exists():
+            return
+        query_scm = query_scm.read_text()
+
+        if not code:
+            return
+        tree = parser.parse(bytes(code, "utf-8"))
+
+        # Run the tags queries
+        query = language.query(query_scm)
+        captures = query.captures(tree.root_node)
+
+        captures = list(captures)
+
+        saw = set()
+        for node, tag in captures:
+            if tag.startswith("name.definition."):
+                kind = "def"
+                type = tag.split(".")[-1]  #
+            elif tag.startswith("name.reference."):
+                kind = "ref"
+                type = tag.split(".")[-1]  #
+            else:
+                continue
+
+            saw.add(kind)
+
+            result = Tag(
+                rel_fname=fname,
+                fname=fname,
+                name=node.text.decode("utf-8"),
+                kind=kind,
+                line=node.start_point[0],
+                end_line=node.end_point[0],
+                type=type,
+            )
+
+            yield result
+
+        if "ref" in saw:
+            return
+        if "def" not in saw:
+            return
+
+        # We saw defs, without any refs
+        # Some tags files only provide defs (cpp, for example)
+        # Use pygments to backfill refs
+
+        try:
+            lexer = guess_lexer_for_filename(fname, code)
+        except ClassNotFound:
+            return
+
+        tokens = list(lexer.get_tokens(code))
+        tokens = [token[1] for token in tokens if token[0] in Token.Name]
+
+        for token in tokens:
+            yield Tag(
+                rel_fname=fname,
+                fname=fname,
+                name=token,
+                kind="ref",
+                line=-1,
+                end_line=-1,
+                type="unknown",
+            )
+
     def get_ranked_tags(
         self, chat_fnames, other_fnames, mentioned_fnames, mentioned_idents
     ):
@@ -473,7 +550,7 @@ class RepoMap:
                     file_content += "\n"
 
                 # Parse the file using tree-sitter
-                language = self.get_language_for_file(file_path)
+                language = RepoMap.get_language_for_file(file_path)
                 if language:
                     parser = Parser()
                     parser.set_language(language)
@@ -498,7 +575,7 @@ class RepoMap:
 
                         # Extract code for the current tag using AST
                         if language:
-                            node = self.find_node_by_range(
+                            node = RepoMap.find_node_by_range(
                                 root_node, tag.line, node_type
                             )
                             if node:
@@ -537,7 +614,7 @@ class RepoMap:
                         )
                     elif tag.kind == "ref":
                         source = (
-                            f"{current_class}.{current_function}@{rel_path}"
+                            f"{current_class}.{current_function}"
                             if current_class and current_function
                             else (
                                 f"{rel_path}:{current_function}"
@@ -653,7 +730,8 @@ class RepoMap:
         except UnicodeDecodeError:
             return False
 
-    def get_language_for_file(self, file_path):
+    @staticmethod
+    def get_language_for_file(file_path):
         # Map file extensions to tree-sitter languages
         extension = os.path.splitext(file_path)[1].lower()
         language_map = {
@@ -678,7 +756,8 @@ class RepoMap:
         }
         return language_map.get(extension)
 
-    def find_node_by_range(self, root_node, start_line, node_type):
+    @staticmethod
+    def find_node_by_range(root_node, start_line, node_type):
         def traverse(node):
             if node.start_point[0] <= start_line and node.end_point[0] >= start_line:
                 if node_type == "function" and node.type == "function_definition":

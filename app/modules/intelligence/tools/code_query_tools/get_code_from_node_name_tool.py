@@ -28,7 +28,7 @@ class GetCodeFromNodeNameTool:
 
     def run(self, repo_id: str, node_name: str) -> Dict[str, Any]:
         try:
-            node_data = self._get_node_data(repo_id, node_name)
+            node_data = self.get_node_data(repo_id, node_name)
             if not node_data:
                 print(f"Node with name '{node_name}' not found in repo '{repo_id}'")
                 return {
@@ -45,11 +45,11 @@ class GetCodeFromNodeNameTool:
             print(f"Unexpected error in GetCodeFromNodeNameTool: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
-    def _get_node_data(self, repo_id: str, node_name: str) -> Dict[str, Any]:
+    def get_node_data(self, repo_id: str, node_name: str) -> Dict[str, Any]:
         query = """
         MATCH (n:NODE {repoId: $repo_id})
         WHERE toLower(n.name) = toLower($node_name)
-        RETURN n.file_path AS file, n.start_line AS start_line, n.end_line AS end_line
+        RETURN n.file_path AS file, n.start_line AS start_line, n.end_line AS end_line, n.node_id AS node_id
         """
         with self.neo4j_driver.session() as session:
             result = session.run(query, node_name=node_name, repo_id=repo_id)

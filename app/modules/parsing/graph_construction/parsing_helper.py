@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import shutil
 import tarfile
 from typing import Any, Tuple
 
@@ -96,9 +97,18 @@ class ParseHelper:
                     f.write(chunk)
 
             with tarfile.open(tarball_path, "r:gz") as tar:
-                tar.extractall(path=final_dir)
+                temp_dir = os.path.join(final_dir, "temp_extract")
+                tar.extractall(path=temp_dir)
 
-        except (IOError, tarfile.TarError) as e:
+                # Move contents from temp_dir to final_dir
+                extracted_dir = os.path.join(temp_dir, os.listdir(temp_dir)[0])
+                for item in os.listdir(extracted_dir):
+                    shutil.move(os.path.join(extracted_dir, item), final_dir)
+
+                # Remove the temporary directory
+                shutil.rmtree(temp_dir)
+
+        except (IOError, tarfile.TarError, shutil.Error) as e:
             logger.error(f"Error handling tarball: {e}")
             return e
         finally:
@@ -204,11 +214,11 @@ class ParseHelper:
             if isinstance(repo_details, Repo)
             else repo.full_name
         )
-        project = await self.project_manager.get_project_from_db(full_name, user_id)
-        if project:
-            project_id = project.id
-        else:
-            await self.project_manager.register_project(
+        project = await self.project_manager.get_project_from_db(
+            full_name, branch, user_id
+        )
+        if not project:
+            project_id = await self.project_manager.register_project(
                 full_name,
                 branch,
                 user_id,
@@ -350,6 +360,7 @@ class ParseHelper:
         Returns:
             bool: True if the commit IDs match, False otherwise.
         """
+        return False
         project = await self.project_manager.get_project_from_db_by_id(project_id)
         if not project:
             logger.error(f"Project with ID {project_id} not found")

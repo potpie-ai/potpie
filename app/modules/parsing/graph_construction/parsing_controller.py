@@ -32,7 +32,9 @@ class ParsingController:
         repo_name = repo_details.repo_name or repo_details.repo_path.split("/")[-1]
 
         try:
-            project = await project_manager.get_project_from_db(repo_name, user_id)
+            project = await project_manager.get_project_from_db(
+                repo_name, repo_details.branch_name, user_id
+            )
 
             if not project:
                 new_project_id = str(uuid7())

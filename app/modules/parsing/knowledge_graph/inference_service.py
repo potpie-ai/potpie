@@ -7,6 +7,7 @@ from langchain.prompts import ChatPromptTemplate
 from langchain_openai.chat_models import ChatOpenAI
 from neo4j import GraphDatabase
 from sentence_transformers import SentenceTransformer
+from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 from app.modules.parsing.knowledge_graph.inference_schema import (
@@ -14,7 +15,7 @@ from app.modules.parsing.knowledge_graph.inference_schema import (
     DocstringResponse,
 )
 from app.modules.search.search_service import SearchService
-from sqlalchemy.orm import Session
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,6 +29,7 @@ class InferenceService:
         self.llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.3)
         self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
         self.search_service = SearchService(db)
+
     def close(self):
         self.driver.close()
 
@@ -72,6 +74,32 @@ class InferenceService:
                 record["node_id"] for record in data if record["labels"] == ["function"]
             ]
             return nodes_info
+
+    def get_entry_points_for_nodes(
+        self, node_ids: List[str], repo_id: str
+    ) -> Dict[str, List[str]]:
+        with self.driver.session() as session:
+            result = session.run(
+                """
+UNWIND $node_ids AS nodeId
+                MATCH (n)
+                WHERE n.node_id = nodeId and n.repoId = $repo_id
+                OPTIONAL MATCH path = (entryPoint)-[*]->(n)
+                WHERE NOT (entryPoint)<--()
+RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry_point_node_ids
+
+                """,
+                node_ids=node_ids,
+                repo_id=repo_id,
+            )
+            return {
+                record["input_node_id"]: (
+                    record["entry_point_node_ids"]
+                    if len(record["entry_point_node_ids"]) > 0
+                    else [record["input_node_id"]]
+                )
+                for record in result
+            }
 
     def batch_nodes(
         self, nodes: List[Dict], max_tokens: int = 32000
@@ -241,10 +269,11 @@ class InferenceService:
     async def generate_docstrings(self, repo_id: str) -> Dict[str, DocstringResponse]:
         nodes = self.fetch_graph(repo_id)
         for node in nodes:
-            if node.get("file_path") not in {None, ""} and node.get("name") not in {None, ""}:
-                await self.search_service.create_search_index(
-                    repo_id, node
-            )
+            if node.get("file_path") not in {None, ""} and node.get("name") not in {
+                None,
+                "",
+            }:
+                await self.search_service.create_search_index(repo_id, node)
         await self.search_service.commit_indices()
         entry_points = self.get_entry_points(repo_id)
         entry_points_neighbors = {}
