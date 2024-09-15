@@ -57,7 +57,7 @@ pipeline {
                     def dockerRegistry = env.DOCKER_REGISTRY
                     echo "Printing the saved docker registry from env:"
                     echo "${dockerRegistry}"
-                    sh "docker build -t ${DOCKER_REGISTRY}/momentum-server:${imageTag} ."
+                    sh "sudo docker build -t ${DOCKER_REGISTRY}/momentum-server:${imageTag} ."
                 }
             }
         }
@@ -69,7 +69,7 @@ pipeline {
                     def imageTag = env.GIT_COMMIT_HASH
                     echo "printing the user here"
                     sh "whoami && pwd"
-                    sh "docker push ${DOCKER_REGISTRY}/momentum-server:${imageTag}"
+                    sh "sudo docker push ${DOCKER_REGISTRY}/momentum-server:${imageTag}"
                 }
             }
         }
