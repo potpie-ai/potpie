@@ -47,22 +47,6 @@ class GithubService:
 
         return github, response.json(), owner
 
-    def get_public_github_repo(self, repo_name: str) -> Tuple[Dict[str, Any], str]:
-        owner, repo = repo_name.split("/")
-        url = f"https://api.github.com/repos/{owner}/{repo}"
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
-        response = requests.get(url, headers=headers)
-        if response.status_code != 200:
-            raise HTTPException(
-                status_code=response.status_code,
-                detail="Failed to fetch public repository",
-            )
-
-        return response.json(), owner
-
     def get_file_content(
         self, repo_name: str, file_path: str, start_line: int, end_line: int
     ) -> str:
@@ -134,9 +118,9 @@ class GithubService:
                 detail=f"Error processing file content: {str(e)}",
             )
 
-    def _get_repo(self, repo_name: str) -> Tuple[Github, Any]:
-        github, _, _ = self.get_github_repo_details(repo_name)
-        return github, github.get_repo(repo_name)
+    # def _get_repo(self, repo_name: str) -> Tuple[Github, Any]:
+    #     github, _, _ = self.get_github_repo_details(repo_name)
+    #     return github, github.get_repo(repo_name)
 
     @staticmethod
     def _detect_encoding(content_bytes: bytes) -> str:
@@ -167,23 +151,68 @@ class GithubService:
                     status_code=400, detail="GitHub username not found for this user"
                 )
 
-            # Use GitHub App authentication
-            github, _, _ = self.get_github_repo_details(github_username)
+            private_key = (
+                "-----BEGIN RSA PRIVATE KEY-----\n"
+                + config_provider.get_github_key()
+                + "\n-----END RSA PRIVATE KEY-----\n"
+            )
+            app_id = os.environ["GITHUB_APP_ID"]
 
-            repos = []
-            for repo in github.get_user(github_username).get_repos():
-                repos.append(
-                    {
-                        "id": repo.id,
-                        "name": repo.name,
-                        "full_name": repo.full_name,
-                        "private": repo.private,
-                        "url": repo.html_url,
-                        "owner": repo.owner.login,
-                    }
+            auth = AppAuth(app_id=app_id, private_key=private_key)
+            jwt = auth.create_jwt()
+            url = "https://api.github.com/app/installations"
+            headers = {
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {jwt}",
+                "X-GitHub-Api-Version": "2022-11-28",
+            }
+
+            response = requests.get(url, headers=headers)
+
+            if response.status_code != 200:
+                logger.error(f"Failed to get installations. Response: {response.text}")
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Failed to get installations: {response.text}",
                 )
 
-            return {"repositories": repos}
+            all_installations = response.json()
+
+            # Filter installations for the specific user
+            user_installations = [
+                installation
+                for installation in all_installations
+                if installation["account"]["login"].lower() == github_username.lower()
+            ]
+
+            repos = []
+            for installation in user_installations:
+                app_auth = auth.get_installation_auth(installation["id"])
+                github = Github(auth=app_auth)
+                repos_url = installation["repositories_url"]
+                repos_response = requests.get(
+                    repos_url, headers={"Authorization": f"Bearer {app_auth.token}"}
+                )
+                if repos_response.status_code == 200:
+                    repos.extend(repos_response.json().get("repositories", []))
+                else:
+                    logger.error(
+                        f"Failed to fetch repositories for installation ID {installation['id']}"
+                    )
+
+            repo_list = [
+                {
+                    "id": repo["id"],
+                    "name": repo["name"],
+                    "full_name": repo["full_name"],
+                    "private": repo["private"],
+                    "url": repo["html_url"],
+                    "owner": repo["owner"]["login"],
+                }
+                for repo in repos
+            ]
+
+            return {"repositories": repo_list}
 
         except Exception as e:
             logger.error(f"Failed to fetch repositories: {str(e)}", exc_info=True)
@@ -214,19 +243,19 @@ class GithubService:
 
     def get_repo(self, repo_name: str) -> Tuple[Github, Any]:
         try:
-            # Try public access first
-            github = self.get_public_github_instance()
+            # Try authenticated access first
+            github, _, _ = self.get_github_repo_details(repo_name)
             repo = github.get_repo(repo_name)
             return github, repo
-        except Exception as public_error:
-            logger.info(f"Failed to access public repo: {str(public_error)}")
-            # If public access fails, try authenticated access
+        except Exception as private_error:
+            logger.info(f"Failed to access private repo: {str(private_error)}")
+            # If authenticated access fails, try public access
             try:
-                github, _, _ = self.get_github_repo_details(repo_name)
+                github = self.get_public_github_instance()
                 repo = github.get_repo(repo_name)
                 return github, repo
-            except Exception as private_error:
-                logger.error(f"Failed to access private repo: {str(private_error)}")
+            except Exception as public_error:
+                logger.error(f"Failed to access public repo: {str(public_error)}")
                 raise HTTPException(
                     status_code=404,
                     detail="Repository not found or inaccessible on GitHub",

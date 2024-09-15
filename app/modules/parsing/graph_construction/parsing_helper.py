@@ -361,40 +361,40 @@ class ParseHelper:
             bool: True if the commit IDs match, False otherwise.
         """
         return False
-        project = await self.project_manager.get_project_from_db_by_id(project_id)
-        if not project:
-            logger.error(f"Project with ID {project_id} not found")
-            return False
+        # project = await self.project_manager.get_project_from_db_by_id(project_id)
+        # if not project:
+        #     logger.error(f"Project with ID {project_id} not found")
+        #     return False
 
-        current_commit_id = project.get("commit_id")
-        repo_name = project.get("project_name")
-        branch_name = project.get("branch_name")
+        # current_commit_id = project.get("commit_id")
+        # repo_name = project.get("project_name")
+        # branch_name = project.get("branch_name")
 
-        if not repo_name or not branch_name:
-            logger.error(
-                f"Repository name or branch name not found for project ID {project_id}"
-            )
-            return False
+        # if not repo_name or not branch_name:
+        #     logger.error(
+        #         f"Repository name or branch name not found for project ID {project_id}"
+        #     )
+        #     return False
 
-        if len(repo_name.split("/")) < 2:
-            # Local repo, always parse local repos
-            return False
+        # if len(repo_name.split("/")) < 2:
+        #     # Local repo, always parse local repos
+        #     return False
 
-        try:
-            github, repo = self.github_service._get_repo(repo_name)
-            branch = repo.get_branch(branch_name)
-            latest_commit_id = branch.commit.sha
+        # try:
+        #     github, repo = self.github_service._get_repo(repo_name)
+        #     branch = repo.get_branch(branch_name)
+        #     latest_commit_id = branch.commit.sha
 
-            is_up_to_date = current_commit_id == latest_commit_id
-            logger.info(
-                f"Project {project_id} commit status for branch {branch_name}: {'Up to date' if is_up_to_date else 'Outdated'}"
-            )
-            logger.info(f"Current commit ID: {current_commit_id}")
-            logger.info(f"Latest commit ID: {latest_commit_id}")
+        #     is_up_to_date = current_commit_id == latest_commit_id
+        #     logger.info(
+        #         f"Project {project_id} commit status for branch {branch_name}: {'Up to date' if is_up_to_date else 'Outdated'}"
+        #     )
+        #     logger.info(f"Current commit ID: {current_commit_id}")
+        #     logger.info(f"Latest commit ID: {latest_commit_id}")
 
-            return is_up_to_date
-        except Exception as e:
-            logger.error(
-                f"Error fetching latest commit for {repo_name}/{branch_name}: {e}"
-            )
-            return False
+        #     return is_up_to_date
+        # except Exception as e:
+        #     logger.error(
+        #         f"Error fetching latest commit for {repo_name}/{branch_name}: {e}"
+        #     )
+        #     return False
