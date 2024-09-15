@@ -81,6 +81,23 @@ class SystemPromptSetup:
                     },
                 ],
             },
+            {
+                "agent_id": "CODE_CHANGES_AGENT",
+                "prompts": [
+                    {
+                        "text": "You are an AI assistant specializing in blast radius analysis for given set of code changes "
+                        "Use the provided context and tools to generate comprehensive impact analysis analysis on the code changes including API changes, Consumer changes and Refactoring changes ",
+                        "type": PromptType.SYSTEM,
+                        "stage": 1,
+                    },
+                    {
+                        "text": "Given the context, tool results provided, help generate blast radius analysis for: {input}"
+                        "\nProvide complete analysis with happy paths and edge cases and generate COMPLETE blast radius analysis.",
+                        "type": PromptType.HUMAN,
+                        "stage": 2,
+                    },
+                ],
+            },
         ]
 
         for agent_data in system_prompts:

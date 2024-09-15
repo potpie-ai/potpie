@@ -24,6 +24,7 @@ from app.modules.conversations.message.message_schema import (
     MessageResponse,
     NodeContext,
 )
+from app.modules.intelligence.agents.langchain_agents.code_changes_agent import CodeChangesAgent
 from app.modules.intelligence.agents.langchain_agents.codebase_agents.code_graph_retrieval_agent import (
     CodeGraphRetrievalAgent,
 )
@@ -91,6 +92,7 @@ class ConversationService:
             "code_graph_retrieval_agent": CodeGraphRetrievalAgent(llm, self.sql_db),
             "unit_test_agent": UnitTestAgent(llm, self.sql_db),
             "integration_test_agent": IntegrationTestAgent(llm, self.sql_db),
+            "code_changes_agent": CodeChangesAgent(llm, self.sql_db),
         }
 
     async def create_conversation(

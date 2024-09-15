@@ -45,11 +45,11 @@ class GetCodeFromNodeIdTool:
     def _get_node_data(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         query = """
         MATCH (n:NODE {node_id: $node_id, repoId: $repo_id})
-        RETURN n.file_path AS file, n.start_line AS start_line, n.end_line AS end_line
+        RETURN n.file_path AS file_path, n.start_line AS start_line, n.end_line AS end_line
         """
         with self.neo4j_driver.session() as session:
             result = session.run(query, node_id=node_id, repo_id=repo_id)
-            return result.single()
+            return result.data()[0]
 
     def _get_project(self, repo_id: str) -> Project:
         return self.sql_db.query(Project).filter(Project.id == repo_id).first()
@@ -57,7 +57,7 @@ class GetCodeFromNodeIdTool:
     def _process_result(
         self, node_data: Dict[str, Any], project: Project, node_id: str
     ) -> Dict[str, Any]:
-        file_path = node_data["file"]
+        file_path = node_data["file_path"]
         start_line = node_data["start_line"]
         end_line = node_data["end_line"]
 

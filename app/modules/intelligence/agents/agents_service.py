@@ -36,6 +36,11 @@ class AgentsService:
             AgentInfo(
                 id="unit_test_agent",
                 name="Unit Test Agent",
-                description="An agent specialized in generating unit tests for code snippets from the knowledge graph based on node names or IDs.",
+                description="An agent specialized in generating unit tests for code snippets from the knowledge graph based on funtion names",
+            ),
+            AgentInfo(
+                id="code_changes_agent",
+                name="Code Changes Agent",
+                description="An agent specialized in generating detailed analysis of code changes in your current branch compared to default branch.",
             ),
         ]

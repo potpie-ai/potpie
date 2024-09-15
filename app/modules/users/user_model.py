@@ -3,7 +3,8 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 from app.core.base_model import Base
-
+from app.modules.intelligence.prompts.prompt_model import Prompt #noqa
+from app.modules.users.user_preferences_model import UserPreferences #noqa
 
 class User(Base):
     __tablename__ = "users"

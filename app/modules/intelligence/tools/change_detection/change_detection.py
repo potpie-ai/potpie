@@ -1,12 +1,15 @@
+import asyncio
 import logging
 import os
 import re
 
 from fastapi import HTTPException
 from tree_sitter_languages import get_parser
+from langchain.tools import StructuredTool, Tool
 
 from app.core.database import get_db
 from app.modules.github.github_service import GithubService
+from app.modules.intelligence.tools.code_query_tools.get_code_from_node_id_tool import GetCodeFromNodeIdTool
 from app.modules.intelligence.tools.code_query_tools.get_code_from_node_name_tool import (
     GetCodeFromNodeNameTool,
 )
@@ -16,6 +19,20 @@ from app.modules.projects.projects_service import ProjectService
 
 parser = get_parser("python")
 
+from pydantic import BaseModel, Field
+from typing import Dict, List
+
+class ChangeDetectionInput(BaseModel):
+    project_id: str = Field(..., description="The ID of the project being evaluated, this is a UUID.")
+
+class ChangeDetail(BaseModel):
+    updated_code: str = Field(..., description="The updated code for the node")
+    entrypoint_code: str = Field(..., description="The code for the entry point")
+    citations: List[str] = Field(..., description="List of file names referenced in the response")
+
+class ChangeDetectionResponse(BaseModel):
+    patches: Dict[str, str] = Field(..., description="Dictionary of file patches")
+    changes: List[ChangeDetail] = Field(..., description="List of changes with updated and entry point code")
 
 class ChangeDetection:
     def __init__(self, sql_db):
@@ -40,34 +57,7 @@ class ChangeDetection:
                         changed_files[current_file].add(i)
         return changed_files
 
-    def extract_file_name(self, repo_name, branch_name, path):
-        try:
-            pattern = self.get_pattern(repo_name, branch_name)
 
-            match = re.search(pattern, path)
-            if match:
-                file_path = match.group(1)
-                return file_path
-            else:
-                return None
-        except ValueError as e:
-            logging.error(f"Exception {e}")
-            return None
-
-    def get_pattern(self, repo_name, branch_name):
-        # Define regex patterns for POSIX (Linux/macOS) and Windows
-        posix_pattern = re.escape(f"{repo_name}-{branch_name}") + r"-\w+\/(.+)"
-        windows_pattern = re.escape(f"{repo_name}-{branch_name}") + r"-\w+\\(.+)"
-
-        # Check the operating system
-        if os.name == "posix":
-            pattern = posix_pattern
-        elif os.name == "nt":
-            pattern = windows_pattern
-        else:
-            raise ValueError("Unsupported operating system")
-
-        return pattern
 
     async def _find_changed_functions(self, changed_files, repo_id):
         result = []
@@ -177,7 +167,7 @@ class ChangeDetection:
 
         return entry_points
 
-    async def get_changes(self, project_id):
+    async def get_code_changes(self, project_id):
         global patches_dict, repo
         patches_dict = {}
         project_details = await ProjectService(self.sql_db).get_project_from_db_by_id(
@@ -224,10 +214,35 @@ class ChangeDetection:
                                 project_id, identifier
                             )["node_id"]
                         )
+                        
+                    # Fetch code for node ids and store in a dict
+                    node_code_dict = {}
+                    for node_id in node_ids:
+                        node_code = GetCodeFromNodeIdTool(self.sql_db).run(project_id, node_id)
+                        node_code_dict[node_id] = {
+                            'code_content': node_code['code_content'],
+                            'file_path': node_code['file_path']
+                        }
+
                     entry_points = InferenceService(
                         self.sql_db
                     ).get_entry_points_for_nodes(node_ids, project_id)
-                    return entry_points
+
+                    changes = []
+
+                    changes_list = []
+                    for node, entry_point in entry_points.items():
+                        entry_point_code = GetCodeFromNodeIdTool(self.sql_db).run(project_id, entry_point[0])
+                        changes_list.append(ChangeDetail(
+                            updated_code=node_code_dict[node]['code_content'],
+                            entrypoint_code=entry_point_code['code_content'],
+                            citations=[node_code_dict[node]['file_path'], entry_point_code['file_path']]
+                        ))
+
+                    return ChangeDetectionResponse(
+                        patches=patches_dict,
+                        changes=changes_list
+                    )
                 except Exception as e:
                     logging.error(f"project_id: {project_id}, error: {str(e)}")
 
@@ -238,20 +253,26 @@ class ChangeDetection:
                 if github:
                     github.close()
 
+    def get_change_context(self, project_id):
+        return asyncio.run(self.get_code_changes(project_id))
 
-if __name__ == "__main__":
-    # Hardcoded project ID for debugging
-    project_id = "0191f3a3-349e-71eb-aa80-d20681355c71"  # Replace with the actual project ID you want to test
+def get_blast_radius_tool() -> List[Tool]:
+    """
+    Get a list of LangChain Tool objects for use in agents.
+    """
+    change_detection = ChangeDetection(next(get_db()))
+    return [
+        StructuredTool.from_function(
+            func=change_detection.get_change_context,
+            name="Get code changes",
+            description="""
+    Get the changes in the codebase.
+    This tool analyzes the differences between branches in a Git repository and retrieves updated function details, including their entry points and citations. 
+    Inputs for the get_code_changes method:
+    - project_id (str): The ID of the project being evaluated, this is a UUID.
+    The output includes a dictionary of file patches and a list of changes with updated code and entry point code.
+    """,
+            args_schema=ChangeDetectionInput,
+        ),
+    ]
 
-    # Initialize ChangeDetection with a mock SQL database connection
-    sql_db = next(get_db())  # Replace with actual database connection
-    change_detection = ChangeDetection(sql_db)
-    import asyncio
-
-    try:
-        changes = asyncio.run(change_detection.get_changes(project_id))
-        print("Changes:", changes)
-    except HTTPException as e:
-        print(f"HTTP Exception: {e.detail}")
-    except Exception as e:
-        print(f"Error: {str(e)}")
