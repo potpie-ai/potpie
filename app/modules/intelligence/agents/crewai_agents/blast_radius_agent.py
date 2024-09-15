@@ -73,7 +73,7 @@ class BlastRadiusAgent:
             
             Ensure that your output ALWAYS follows the structure outlined in the following pydantic model:
             {self.BlastRadiusAgentResponse.model_json_schema()}""",
-            expected_output=f"Comprehensive impact analysisof the code changes on the codebase and answers to the users query about them. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model : {self.BlastRadiusAgentResponse.model_json_schema()}",
+expected_output=f"Comprehensive impact analysis of the code changes on the codebase and answers to the users query about them. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model : {self.BlastRadiusAgentResponse.model_json_schema()}",
             agent=blast_radius_agent,
             tools=[get_blast_radius_tool()[0],CodeTools.get_tools()[0]],
             output_pydantic=self.BlastRadiusAgentResponse
