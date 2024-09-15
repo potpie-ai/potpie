@@ -21,7 +21,7 @@ class ProjectController:
 
     @staticmethod
     def delete_project(
-        project_id: int, user=Depends(AuthService.check_auth), db=Depends(get_db)
+        project_id: str, user=Depends(AuthService.check_auth), db=Depends(get_db)
     ):
         project_service = ProjectService(db)
         try:

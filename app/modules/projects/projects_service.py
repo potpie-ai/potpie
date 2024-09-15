@@ -182,7 +182,7 @@ class ProjectService:
 
         return None
 
-    def delete_project(self, project_id: int):
+    def delete_project(self, project_id: str):
         project = (
             self.db.query(Project)
             .filter(cast(Project.id, String) == str(project_id))
