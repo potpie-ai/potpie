@@ -31,14 +31,14 @@ class BaseTask(Task):
     bind=True, base=BaseTask, name="app.celery.tasks.parsing_tasks.process_parsing"
 )
 def process_parsing(
-    self, repo_details: Dict[str, Any], user_id: str, user_email: str, project_id: str
+    self, repo_details: Dict[str, Any], user_id: str, user_email: str, project_id: str, cleanup_graph: bool = True
 ) -> None:
     logger.info(f"Task received: Starting parsing process for project {project_id}")
     try:
         parsing_service = ParsingService(self.db)
         asyncio.run(
             parsing_service.parse_directory(
-                ParsingRequest(**repo_details), user_id, user_email, project_id
+                ParsingRequest(**repo_details), user_id, user_email, project_id, cleanup_graph
             )
         )
         logger.info(f"Parsing process completed for project {project_id}")

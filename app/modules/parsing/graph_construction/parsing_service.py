@@ -53,11 +53,27 @@ class ParsingService:
         user_id: str,
         user_email: str,
         project_id: int,
+        cleanup_graph: bool = True,
     ):
         project_manager = ProjectService(self.db)
         extracted_dir = None
 
         try:
+            if cleanup_graph:
+                neo4j_config = config_provider.get_neo4j_config()
+
+                try:
+                    code_graph_service = CodeGraphService(
+                        neo4j_config["uri"],
+                        neo4j_config["username"],
+                        neo4j_config["password"],
+                        self.db,
+                    )
+
+                    await code_graph_service.cleanup_graph(project_id)
+                except Exception as e:
+                    logger.error(f"Error in cleanup_graph: {e}")
+                    raise HTTPException(status_code=500, detail="Internal server error")
             # Remove self.db from the arguments
             repo, owner, auth = await self.parse_helper.clone_or_copy_repository(
                 repo_details, user_id
