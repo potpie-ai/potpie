@@ -120,7 +120,7 @@ class DebuggingAgent:
                 yield json.dumps(
                     {
                         "citations": rag_result.pydantic.citations,
-                        "message": full_response,
+                        "message": content,
                     }
                 )
 

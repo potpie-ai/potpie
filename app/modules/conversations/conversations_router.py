@@ -1,6 +1,6 @@
 from typing import List
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -71,6 +71,9 @@ class ConversationAPI:
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
+        if message.content == "" or message.content is None or message.content.isspace():
+            raise HTTPException(status_code=400, detail="Message content cannot be empty")
+        
         user_id = user["user_id"]
         controller = ConversationController(db, user_id)
         message_stream = controller.post_message(conversation_id, message)

@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Dict
 
 from neo4j import GraphDatabase
@@ -26,10 +27,13 @@ class GetCodeFromNodeIdTool:
     def run(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         try:
             node_data = self._get_node_data(repo_id, node_id)
-            if not node_data:
-                print(f"Node with ID '{node_id}' not found in repo '{repo_id}'")
+            if not node_data or not node_data.get("file_path"):
+                logging.warning(f"Node with ID '{node_id}' not found in repo '{repo_id}'")
                 return {
-                    "error": f"Node with ID '{node_id}' not found in repo '{repo_id}'"
+                    "code_content": "",
+                    "file_path": "",
+                    "start_line": 0,
+                    "end_line": 0
                 }
 
             project = self._get_project(repo_id)

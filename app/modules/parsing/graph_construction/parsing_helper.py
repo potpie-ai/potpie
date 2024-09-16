@@ -360,7 +360,7 @@ class ParseHelper:
         Returns:
             bool: True if the commit IDs match, False otherwise.
         """
-        return False
+
         project = await self.project_manager.get_project_from_db_by_id(project_id)
         if not project:
             logger.error(f"Project with ID {project_id} not found")

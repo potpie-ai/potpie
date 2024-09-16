@@ -24,23 +24,18 @@ class AgentsService:
                 description="An agent specialized in answering questions about the codebase using the knowledge graph and code analysis tools.",
             ),
             AgentInfo(
-                id="code_retrieval_agent",
-                name="Code Retrieval Agent",
-                description="An agent specialized in retrieving and analyzing code snippets from the knowledge graph based on node names or IDs.",
-            ),
-            AgentInfo(
-                id="code_graph_retrieval_agent",
-                name="Code Graph Retrieval Agent",
-                description="An agent specialized in retrieving and analyzing code snippets from the knowledge graph based on node names or IDs.",
-            ),
-            AgentInfo(
                 id="unit_test_agent",
                 name="Unit Test Agent",
-                description="An agent specialized in generating unit tests for code snippets from the knowledge graph based on funtion names",
+                description="An agent specialized in generating unit tests for code snippets for given function names",
+            ),
+            AgentInfo(
+                id="integration_test_agent",
+                name="Integration Test Agent",
+                description="An agent specialized in generating integration tests for code snippets from the knowledge graph based on given function names of entry points. Works best with Py, JS, TS",
             ),
             AgentInfo(
                 id="code_changes_agent",
                 name="Code Changes Agent",
-                description="An agent specialized in generating detailed analysis of code changes in your current branch compared to default branch.",
+                description="An agent specialized in generating detailed analysis of code changes in your current branch compared to default branch. Works best with Py, JS, TS",
             ),
         ]

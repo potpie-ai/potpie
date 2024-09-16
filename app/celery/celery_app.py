@@ -4,7 +4,10 @@ import os
 from celery import Celery
 
 from app.core.models import *  # noqa #This will import and initialize all models
+from dotenv import load_dotenv
 
+# Load environment variables from a .env file if present
+load_dotenv()
 # Redis configuration
 redishost = os.getenv("REDISHOST", "localhost")
 redisport = int(os.getenv("REDISPORT", 6379))
@@ -46,6 +49,10 @@ def configure_celery(queue_prefix: str):
                 "queue": f"{queue_prefix}_process_repository"
             },
         },
+        # Add these new configurations
+        task_acks_late=True,
+        worker_prefetch_multiplier=1,
+        task_reject_on_worker_lost=True,
     )
 
 
