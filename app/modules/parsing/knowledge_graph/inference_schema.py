@@ -11,7 +11,7 @@ class DocstringRequest(BaseModel):
 class DocstringNode(BaseModel):
     node_id: str
     docstring: str
-    tags: Optional[List[str]] = None
+    tags: Optional[List[str]] = []
 
 
 class DocstringResponse(BaseModel):

@@ -56,22 +56,26 @@ class InferenceService:
             data = result.data()
             return [record["node_id"] for record in data]
 
-    def get_neighbours(self, node_id: str):
+    def get_neighbours(self, node_id: str, repo_id: str):
         with self.driver.session() as session:
             result = session.run(
                 """
-                MATCH (p {node_id: $node_id})
-                CALL apoc.neighbors.byhop(p, ">", 10)
-                YIELD nodes
-                UNWIND nodes AS all_nodes
-                RETURN all_nodes.node_id AS node_id, all_nodes.name AS function_name, labels(all_nodes) AS labels
+                MATCH (start {node_id: $node_id, repoId: $repo_id})
+                OPTIONAL MATCH (start)-[:CALLS]->(direct_neighbour)
+                OPTIONAL MATCH (start)-[:CALLS]->()-[:CALLS*0..]->(indirect_neighbour)
+                WITH start, COLLECT(DISTINCT direct_neighbour) + COLLECT(DISTINCT indirect_neighbour) AS all_neighbours
+                UNWIND all_neighbours AS neighbour
+                WITH start, neighbour
+                WHERE neighbour IS NOT NULL AND neighbour <> start
+                RETURN DISTINCT neighbour.node_id AS node_id, neighbour.name AS function_name, labels(neighbour) AS labels
                 """,
                 node_id=node_id,
+                repo_id=repo_id,
             )
             data = result.data()
 
             nodes_info = [
-                record["node_id"] for record in data if record["labels"] == ["function"]
+                record["node_id"] for record in data if "FUNCTION" in record["labels"]
             ]
             return nodes_info
 
@@ -202,7 +206,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
             entry_point_data = {
                 "node_id": entry_point,
                 "entry_docstring": entry_docstring,
-                "flow_description": flow_description,
+                "flow_description": entry_docstring + "\n" + flow_description,
             }
 
             entry_point_tokens = len(entry_docstring) + len(flow_description)
@@ -279,7 +283,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
         entry_points = self.get_entry_points(repo_id)
         entry_points_neighbors = {}
         for entry_point in entry_points:
-            neighbors = self.get_neighbours(entry_point)
+            neighbors = self.get_neighbours(entry_point, repo_id)
             entry_points_neighbors[entry_point] = neighbors
 
         batches = self.batch_nodes(nodes)
@@ -309,15 +313,15 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
 
     async def generate_response(self, batch: List[DocstringRequest]) -> str:
         base_prompt = """
-        For each of the following code snippets, perform the following tasks:
+        For each of the following code snippets, perform the following task:
 
-        **Docstring Generation**: Generate a detailed technical docstring that encapsulates the technical and functional purpose of the code. The docstring should be sufficiently verbose and technical to understand the code via similarity search but concise enough to not take up too much space. ALWAYS Include details about inputs, outputs, function calls, logical flow, and any other relevant information. If the code snippet defines an API, WebSocket, Producer, Consumer, Database interaction, or HTTP communication, ALWAYSinclude relevant technical details like API paths, HTTP methods, topic names, database operations, etc.
+        1. **Docstring Generation**: Generate a detailed technical docstring that encapsulates the technical and functional purpose of the code. The docstring should be sufficiently verbose and technical to understand the code via similarity search but concise enough to not take up too much space. ALWAYS include relevant technical details like API paths, HTTP methods, topic names, function calls, database operations, etc.
+        2. **Classification**: Classify the entry point into one or more of the following broader level tags: **[API, WEBSOCKET, PRODUCER, CONSUMER, DATABASE, HTTP]**. Only use these tags and select the ones that are most relevant to the entry point.
 
         Here are the code snippets:
         {code_snippets}
 
         {format_instructions}
-        "tags" key is not relevant to this task, DO NOT include it.
         """
 
         # Prepare the code snippets
@@ -367,7 +371,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
                 {
                     "node_id": n.node_id,
                     "docstring": n.docstring,
-                    "tags": n.tags if n.tags else [],
+                    "tags": n.tags ,
                     "embedding": self.generate_embedding(n.docstring),
                 }
                 for n in docstrings["docstrings"]
