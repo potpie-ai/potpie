@@ -24,6 +24,7 @@ from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
 from app.modules.utils.email_helper import EmailHelper
+from app.modules.utils.posthog_helper import PostHogClient
 
 from .parsing_schema import ParsingRequest
 
@@ -95,7 +96,6 @@ class ParsingService:
             await project_manager.update_project_status(
                 project_id, ProjectStatusEnum.READY
             )
-            create_task(EmailHelper().send_email(user_email))
             return {"message": message, "id": project_id}
 
         except ParsingServiceError as e:
@@ -138,6 +138,11 @@ class ParsingService:
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.PARSED
                 )
+                PostHogClient().send_event(
+                    user_id,
+                    "project_status_event",
+                    {"project_id": project_id, "status": "Parsed"},
+                )
 
                 # Generate docstrings using InferenceService
                 await self.inference_service.run_inference(project_id)
@@ -145,12 +150,22 @@ class ParsingService:
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.READY
                 )
+                PostHogClient().send_event(
+                    user_id,
+                    "project_status_event",
+                    {"project_id": project_id, "status": "Ready"},
+                )
             except Exception as e:
                 logger.error(e)
                 logger.error(traceback.format_exc())
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.ERROR
                 )
+                PostHogClient().send_event(
+                user_id,
+                "project_status_event",
+                {"project_id": project_id, "status": "Error"},
+            )
             finally:
                 graph_manager.close()
         elif language != "other":

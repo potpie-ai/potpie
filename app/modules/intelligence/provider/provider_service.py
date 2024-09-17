@@ -9,7 +9,7 @@ from app.modules.key_management.secret_manager import SecretManager
 from app.modules.users.user_preferences_model import UserPreferences
 
 from .provider_schema import ProviderInfo
-
+from app.modules.utils.posthog_helper import PostHogClient
 
 class ProviderService:
     def __init__(self, db, user_id: str):
@@ -41,7 +41,9 @@ class ProviderService:
         if not preferences:
             preferences = UserPreferences(user_id=user_id, preferences={})
             self.db.add(preferences)
-
+        PostHogClient().send_event(
+            user_id, "provider_change_event", {"provider": provider}
+        )
         preferences.preferences["llm_provider"] = provider
         self.db.commit()
 
@@ -195,3 +197,15 @@ class ProviderService:
             raise ValueError("Invalid LLM provider selected.")
 
         return self.llm
+
+    def get_llm_provider_name(self) -> str:
+        """Returns the name of the LLM provider based on the LLM instance."""
+        llm = self.get_llm()
+
+        # Check the type of the LLM to determine the provider
+        if isinstance(llm, ChatOpenAI):
+            return "OpenAI"
+        elif isinstance(llm, ChatAnthropic):
+            return "Anthropic"
+        else:
+            return "Unknown"

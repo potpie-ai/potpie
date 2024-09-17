@@ -1,16 +1,13 @@
 import asyncio
 import logging
 from typing import Any, Dict
-
 from celery import Task
-
 from app.celery.celery_app import celery_app
 from app.core.database import SessionLocal
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
 
 logger = logging.getLogger(__name__)
-
 
 class BaseTask(Task):
     _db = None
@@ -41,15 +38,25 @@ def process_parsing(
     logger.info(f"Task received: Starting parsing process for project {project_id}")
     try:
         parsing_service = ParsingService(self.db, user_id)
-        asyncio.run(
-            parsing_service.parse_directory(
+
+        async def run_parsing():
+            import time
+            start_time = time.time()  # Start timing
+            
+            await parsing_service.parse_directory(
                 ParsingRequest(**repo_details),
                 user_id,
                 user_email,
                 project_id,
                 cleanup_graph,
             )
-        )
+            
+            end_time = time.time()  # End timing
+            elapsed_time = end_time - start_time
+            logger.info(f"Parsing process took {elapsed_time:.2f} seconds for project {project_id}")
+        
+        asyncio.run(run_parsing())
+
         logger.info(f"Parsing process completed for project {project_id}")
     except Exception as e:
         logger.error(f"Error during parsing for project {project_id}: {str(e)}")

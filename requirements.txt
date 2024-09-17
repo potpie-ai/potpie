@@ -58,3 +58,4 @@ redis
 flower
 chardet
 sentry_sdk
+posthog

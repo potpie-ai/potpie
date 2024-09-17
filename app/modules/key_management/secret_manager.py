@@ -13,6 +13,7 @@ from app.modules.key_management.secrets_schema import (
 )
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.APIRouter import APIRouter
+from app.modules.utils.posthog_helper import PostHogClient
 
 router = APIRouter()
 
@@ -61,6 +62,11 @@ class SecretManager:
         version = {"payload": {"data": api_key.encode("UTF-8")}}
         client.add_secret_version(
             request={"parent": response.name, "payload": version["payload"]}
+        )
+        PostHogClient().send_event(
+            customer_id,
+            "secret_creation_event",
+            {"provider": request.provider, "key_added": "true"},
         )
 
         return {"message": "Secret created successfully"}
@@ -163,6 +169,11 @@ class SecretManager:
             if user_pref and "provider" in user_pref.preferences:
                 del user_pref.preferences["provider"]
                 db.commit()
+            PostHogClient().send_event(
+                customer_id,
+                "secret_deletion_event",
+                {"provider": provider, "key_removed": "true"},
+            ) 
             return {"message": "Secret deleted successfully"}
         except Exception as e:
             raise HTTPException(status_code=404, detail=f"Secret not found: {str(e)}")
