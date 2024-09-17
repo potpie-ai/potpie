@@ -69,7 +69,7 @@ class RAGAgent:
         if not node_ids:
             node_ids = []
         query_task = Task(
-            description=f"""Query the knowledge graph based on the input query and chat history and input node IDs. 
+            description=f"""Query the knowledge graph based on the input query and chat history and input node IDs.
               Chat History: {chat_history}
               Input Query: {query}
               Project ID: {project_id}
@@ -93,7 +93,7 @@ class RAGAgent:
 
                 Examples:
                 1. Original: "How do I use the XYZ class?"
-                Transformed: 
+                Transformed:
                 - "The XYZ class is used to..."
                 - "Initializing and utilizing the XYZ class involves..."
 
@@ -106,8 +106,8 @@ class RAGAgent:
                 Transformed:
                 - "Error handling in the API request module is implemented by..."
                 - "The API request module raises the following exceptions:"
-                
-              
+
+
               Step 3: Execute query
                 - Use the available tools to query the knowledge graph
                 - Analyze initial results
@@ -128,7 +128,8 @@ class RAGAgent:
         )
 
         rerank_task = Task(
-            description=(f"""
+            description=(
+                f"""
                 Step 1: Analyze initial results
                 - Evaluate the relevance of each result to the original query
                 - Identify potential gaps or redundancies in the information
@@ -162,7 +163,8 @@ class RAGAgent:
                 "Chat History: {chat_history}
                 "Query: {query}
                 "Project ID: {project_id}
-            """),
+            """
+            ),
             expected_output=f"The output of the task is curated context (file name, docstring, code) fetched from the knowledge graph along with required citations. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model :\n{RAGResponse.model_json_schema()}",
             agent=rerank_agent,
             context=[query_task],

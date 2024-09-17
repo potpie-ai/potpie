@@ -18,9 +18,7 @@ class PromptType(str, Enum):
 
 # Request Schema for Creating a Prompt
 class PromptCreate(BaseModel):
-    text: str = Field(
-        ..., min_length=1, description="The text content of the prompt"
-    )
+    text: str = Field(..., min_length=1, description="The text content of the prompt")
     type: PromptType = Field(..., description="Type of the prompt (System or Human)")
     status: Optional[PromptStatusType] = Field(
         PromptStatusType.ACTIVE, description="Status of the prompt (active or inactive)"

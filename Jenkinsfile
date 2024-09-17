@@ -19,7 +19,7 @@ pipeline {
                 script {
                     // Determine environment based on branch
                     def branch = env.GIT_BRANCH
-                    
+
                     if (branch == "origin/temp") {
                         env.ENVIRONMENT = 'temp'
                     } else if (branch == "origin/main") {
@@ -85,25 +85,25 @@ pipeline {
                 }
             }
         }
-        
+
          stage('Ask User for Deployment Confirmation') {
             steps {
                 script {
                     def deployConfirmation = input(
-                        id: 'userInput', 
+                        id: 'userInput',
                         message: 'Do you want to deploy the new Docker image?',
                         parameters: [
                             choice(name: 'Deploy', choices: ['Yes', 'No'], description: 'Select Yes to deploy the image or No to abort.')
                         ]
                     )
-                    
+
                     if (deployConfirmation == 'No') {
                         error('User chose not to deploy the images, stopping the pipeline.')
                     }
                 }
             }
         }
-        
+
         stage('Deploy Image') {
             steps {
                 script {
@@ -112,7 +112,7 @@ pipeline {
 
                     echo "this is the fetched docker image tag: ${imageTag}"
 
-                    
+
                     try {
                         sh """
                         kubectl set image deployment/momentum-server-deployment momentum-server=${DOCKER_REGISTRY}/momentum-server:${imageTag} -n ${params.namespace}

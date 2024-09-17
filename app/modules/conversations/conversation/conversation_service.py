@@ -24,7 +24,9 @@ from app.modules.conversations.message.message_schema import (
     MessageResponse,
     NodeContext,
 )
-from app.modules.intelligence.agents.langchain_agents.code_changes_agent import CodeChangesAgent
+from app.modules.intelligence.agents.langchain_agents.code_changes_agent import (
+    CodeChangesAgent,
+)
 from app.modules.intelligence.agents.langchain_agents.debugging_agent import (
     DebuggingAgent,
 )
@@ -84,8 +86,12 @@ class ConversationService:
             "debugging_agent": DebuggingAgent(mini_llm, reasoning_llm, self.sql_db),
             "codebase_qna_agent": QNAAgent(mini_llm, reasoning_llm, self.sql_db),
             "unit_test_agent": UnitTestAgent(mini_llm, reasoning_llm, self.sql_db),
-            "integration_test_agent": IntegrationTestAgent(mini_llm, reasoning_llm, self.sql_db),
-            "code_changes_agent": CodeChangesAgent(mini_llm, reasoning_llm, self.sql_db),
+            "integration_test_agent": IntegrationTestAgent(
+                mini_llm, reasoning_llm, self.sql_db
+            ),
+            "code_changes_agent": CodeChangesAgent(
+                mini_llm, reasoning_llm, self.sql_db
+            ),
         }
 
     async def create_conversation(

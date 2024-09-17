@@ -56,14 +56,14 @@ class SearchService:
             if result.node_id not in ids:
                 formatted_results.append(
                     {
-                    "node_id": result.node_id,
-                    "name": result.name,
-                    "file_path": result.file_path,
-                    "content": result.content,
-                    "match_type": self._determine_match_type(result, query_words),
-                    "relevance": relevance,
-                }   
-            )
+                        "node_id": result.node_id,
+                        "name": result.name,
+                        "file_path": result.file_path,
+                        "content": result.content,
+                        "match_type": self._determine_match_type(result, query_words),
+                        "relevance": relevance,
+                    }
+                )
             ids.append(result.node_id)
 
         # Sort results by relevance

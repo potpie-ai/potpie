@@ -1,6 +1,7 @@
 import logging
 import os
-from typing import Any, Dict, Tuple, List
+import random
+from typing import Any, Dict, List, Tuple
 
 import chardet
 import requests
@@ -12,8 +13,6 @@ from sqlalchemy.orm import Session
 from app.core.config_provider import config_provider
 from app.modules.projects.projects_service import ProjectService
 from app.modules.users.user_model import User
-from app.modules.users.user_service import UserService
-import random
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +23,13 @@ class GithubService:
     @classmethod
     def initialize_tokens(cls):
         token_string = os.getenv("GH_TOKEN_LIST", "")
-        cls.gh_token_list = [token.strip() for token in token_string.split(",") if token.strip()]
+        cls.gh_token_list = [
+            token.strip() for token in token_string.split(",") if token.strip()
+        ]
         if not cls.gh_token_list:
-            raise ValueError("GitHub token list is empty or not set in environment variables")
+            raise ValueError(
+                "GitHub token list is empty or not set in environment variables"
+            )
         logger.info(f"Initialized {len(cls.gh_token_list)} GitHub tokens")
 
     def __init__(self, db: Session):
@@ -55,8 +58,12 @@ class GithubService:
         }
         response = requests.get(url, headers=headers)
         if response.status_code != 200:
-            logger.error(f"Failed to get installation ID for {repo_name}. Status code: {response.status_code}, Response: {response.text}")
-            raise HTTPException(status_code=400, detail=f"Failed to get installation ID for {repo_name}")
+            logger.error(
+                f"Failed to get installation ID for {repo_name}. Status code: {response.status_code}, Response: {response.text}"
+            )
+            raise HTTPException(
+                status_code=400, detail=f"Failed to get installation ID for {repo_name}"
+            )
 
         logger.info(f"Successfully got installation ID for {repo_name}")
         app_auth = auth.get_installation_auth(response.json()["id"])
@@ -108,7 +115,7 @@ class GithubService:
 
             if start_line == end_line == 0:
                 return decoded_content
-            
+
             selected_lines = lines[start_line:end_line]
             return "\n".join(selected_lines)
         except Exception as e:
@@ -250,20 +257,28 @@ class GithubService:
             logger.info(f"Trying authenticated access for repo: {repo_name}")
             github, _, _ = self.get_github_repo_details(repo_name)
             repo = github.get_repo(repo_name)
-            logger.info(f"Successfully accessed repo {repo_name} with authenticated access")
+            logger.info(
+                f"Successfully accessed repo {repo_name} with authenticated access"
+            )
             return github, repo
         except Exception as private_error:
-            logger.info(f"Failed to access private repo {repo_name}: {str(private_error)}")
+            logger.info(
+                f"Failed to access private repo {repo_name}: {str(private_error)}"
+            )
             # If authenticated access fails, try public access
             try:
                 logger.info(f"Trying public access for repo: {repo_name}")
                 github = self.get_public_github_instance()
                 repo = github.get_repo(repo_name)
-                logger.info(f"Successfully accessed repo {repo_name} with public access")
+                logger.info(
+                    f"Successfully accessed repo {repo_name} with public access"
+                )
                 return github, repo
             except Exception as public_error:
-                logger.error(f"Failed to access public repo {repo_name}: {str(public_error)}")
+                logger.error(
+                    f"Failed to access public repo {repo_name}: {str(public_error)}"
+                )
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Repository {repo_name} not found or inaccessible on GitHub"
+                    detail=f"Repository {repo_name} not found or inaccessible on GitHub",
                 )

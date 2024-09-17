@@ -27,5 +27,6 @@ async def query_vector_index(request: QueryRequest, db: Session = Depends(get_db
             start_line=result.get("start_line") or 0,
             end_line=result.get("end_line") or 0,
             similarity=result.get("similarity"),
-        ) for result in results
+        )
+        for result in results
     ]

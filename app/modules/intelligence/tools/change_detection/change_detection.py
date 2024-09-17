@@ -1,15 +1,15 @@
 import asyncio
 import logging
-import os
-import re
 
 from fastapi import HTTPException
-from tree_sitter_languages import get_parser
 from langchain.tools import StructuredTool, Tool
+from tree_sitter_languages import get_parser
 
 from app.core.database import get_db
 from app.modules.github.github_service import GithubService
-from app.modules.intelligence.tools.code_query_tools.get_code_from_node_id_tool import GetCodeFromNodeIdTool
+from app.modules.intelligence.tools.code_query_tools.get_code_from_node_id_tool import (
+    GetCodeFromNodeIdTool,
+)
 from app.modules.intelligence.tools.code_query_tools.get_code_from_node_name_tool import (
     GetCodeFromNodeNameTool,
 )
@@ -20,20 +20,31 @@ from app.modules.search.search_service import SearchService
 
 parser = get_parser("python")
 
-from pydantic import BaseModel, Field
 from typing import Dict, List
 
+from pydantic import BaseModel, Field
+
+
 class ChangeDetectionInput(BaseModel):
-    project_id: str = Field(..., description="The ID of the project being evaluated, this is a UUID.")
+    project_id: str = Field(
+        ..., description="The ID of the project being evaluated, this is a UUID."
+    )
+
 
 class ChangeDetail(BaseModel):
     updated_code: str = Field(..., description="The updated code for the node")
     entrypoint_code: str = Field(..., description="The code for the entry point")
-    citations: List[str] = Field(..., description="List of file names referenced in the response")
+    citations: List[str] = Field(
+        ..., description="List of file names referenced in the response"
+    )
+
 
 class ChangeDetectionResponse(BaseModel):
     patches: Dict[str, str] = Field(..., description="Dictionary of file patches")
-    changes: List[ChangeDetail] = Field(..., description="List of changes with updated and entry point code")
+    changes: List[ChangeDetail] = Field(
+        ..., description="List of changes with updated and entry point code"
+    )
+
 
 class ChangeDetection:
     def __init__(self, sql_db):
@@ -58,8 +69,6 @@ class ChangeDetection:
                     for i in range(add_start_line, add_start_line + add_num_lines):
                         changed_files[current_file].add(i)
         return changed_files
-
-
 
     async def _find_changed_functions(self, changed_files, repo_id):
         result = []
@@ -212,7 +221,9 @@ class ChangeDetection:
                     )
                     for identifier in identifiers:
                         node_id_query = " ".join(identifier.split(":"))
-                        relevance_search = await self.search_service.search_codebase(project_id, node_id_query)
+                        relevance_search = await self.search_service.search_codebase(
+                            project_id, node_id_query
+                        )
                         if relevance_search:
                             node_id = relevance_search[0]["node_id"]
                             if node_id:
@@ -220,17 +231,19 @@ class ChangeDetection:
                         else:
                             node_ids.append(
                                 GetCodeFromNodeNameTool(self.sql_db).get_node_data(
-                                project_id, identifier
-                            )["node_id"]
+                                    project_id, identifier
+                                )["node_id"]
                             )
-                        
+
                     # Fetch code for node ids and store in a dict
                     node_code_dict = {}
                     for node_id in node_ids:
-                        node_code = GetCodeFromNodeIdTool(self.sql_db).run(project_id, node_id)
+                        node_code = GetCodeFromNodeIdTool(self.sql_db).run(
+                            project_id, node_id
+                        )
                         node_code_dict[node_id] = {
-                            'code_content': node_code['code_content'],
-                            'file_path': node_code['file_path']
+                            "code_content": node_code["code_content"],
+                            "file_path": node_code["file_path"],
                         }
 
                     entry_points = InferenceService(
@@ -241,16 +254,22 @@ class ChangeDetection:
 
                     changes_list = []
                     for node, entry_point in entry_points.items():
-                        entry_point_code = GetCodeFromNodeIdTool(self.sql_db).run(project_id, entry_point[0])
-                        changes_list.append(ChangeDetail(
-                            updated_code=node_code_dict[node]['code_content'],
-                            entrypoint_code=entry_point_code['code_content'],
-                            citations=[node_code_dict[node]['file_path'], entry_point_code['file_path']]
-                        ))
+                        entry_point_code = GetCodeFromNodeIdTool(self.sql_db).run(
+                            project_id, entry_point[0]
+                        )
+                        changes_list.append(
+                            ChangeDetail(
+                                updated_code=node_code_dict[node]["code_content"],
+                                entrypoint_code=entry_point_code["code_content"],
+                                citations=[
+                                    node_code_dict[node]["file_path"],
+                                    entry_point_code["file_path"],
+                                ],
+                            )
+                        )
 
                     return ChangeDetectionResponse(
-                        patches=patches_dict,
-                        changes=changes_list
+                        patches=patches_dict, changes=changes_list
                     )
                 except Exception as e:
                     logging.error(f"project_id: {project_id}, error: {str(e)}")
@@ -265,6 +284,7 @@ class ChangeDetection:
     def get_change_context(self, project_id):
         return asyncio.run(self.get_code_changes(project_id))
 
+
 def get_blast_radius_tool() -> List[Tool]:
     """
     Get a list of LangChain Tool objects for use in agents.
@@ -276,7 +296,7 @@ def get_blast_radius_tool() -> List[Tool]:
             name="Get code changes",
             description="""
     Get the changes in the codebase.
-    This tool analyzes the differences between branches in a Git repository and retrieves updated function details, including their entry points and citations. 
+    This tool analyzes the differences between branches in a Git repository and retrieves updated function details, including their entry points and citations.
     Inputs for the get_code_changes method:
     - project_id (str): The ID of the project being evaluated, this is a UUID.
     The output includes a dictionary of file patches and a list of changes with updated code and entry point code.
@@ -284,4 +304,3 @@ def get_blast_radius_tool() -> List[Tool]:
             args_schema=ChangeDetectionInput,
         ),
     ]
-

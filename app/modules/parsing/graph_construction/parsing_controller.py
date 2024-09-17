@@ -6,8 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
 from app.celery.tasks.parsing_tasks import process_parsing
-from app.core.config_provider import config_provider
-from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.parsing.graph_construction.parsing_validator import (
@@ -45,7 +43,11 @@ class ParsingController:
 
                 logger.info(f"Submitting parsing task for new project {new_project_id}")
                 process_parsing.delay(
-                    repo_details.model_dump(), user_id, user_email, new_project_id, False
+                    repo_details.model_dump(),
+                    user_id,
+                    user_email,
+                    new_project_id,
+                    False,
                 )
 
                 return response
@@ -63,7 +65,11 @@ class ParsingController:
                     f"Submitting parsing task for existing project {project_id}"
                 )
                 process_parsing.delay(
-                    repo_details.model_dump(), user_id, user_email, project_id, cleanup_graph
+                    repo_details.model_dump(),
+                    user_id,
+                    user_email,
+                    project_id,
+                    cleanup_graph,
                 )
 
                 response["status"] = ProjectStatusEnum.SUBMITTED.value

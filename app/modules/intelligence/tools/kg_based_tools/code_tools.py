@@ -5,9 +5,10 @@ import requests
 from langchain.tools import StructuredTool, Tool
 from pydantic import BaseModel, Field
 
+from app.core.config_provider import ConfigProvider
 from app.core.database import get_db
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
-from app.core.config_provider import ConfigProvider
+
 
 class KnowledgeGraphInput(BaseModel):
     query: str = Field(
@@ -16,10 +17,10 @@ class KnowledgeGraphInput(BaseModel):
     project_id: str = Field(
         description="The project id metadata for the project being evaluated"
     )
+
+
 class GetNodesFromTagsInput(BaseModel):
-    tags: List[str] = Field(
-        description="A list of tags to filter the nodes by"
-    )
+    tags: List[str] = Field(description="A list of tags to filter the nodes by")
     project_id: str = Field(
         description="The project id metadata for the project being evaluated"
     )
@@ -42,13 +43,13 @@ class CodeTools:
         kg_query_url = os.getenv("KNOWLEDGE_GRAPH_URL")
         response = requests.post(kg_query_url, json=data, headers=headers)
         return response.json()
-    
+
     @staticmethod
     def get_nodes_from_tags(tags: List[str], project_id: str) -> str:
         """
         Get nodes from the knowledge graph based on the provided tags.
         Inputs for the get_nodes_from_tags method:
-        - tags (List[str]): A list of tags to filter the nodes by.           
+        - tags (List[str]): A list of tags to filter the nodes by.
            * API: Does the code define any API endpoint? Look for route definitions, request handling, or API client usage.
            * WEBSOCKET: Does the code implement or use WebSocket connections? Check for WebSocket-specific libraries or protocols.
            * PRODUCER: Does the code generate and send messages to a queue or topic? Look for message publishing or event emission.
@@ -65,9 +66,14 @@ class CodeTools:
         RETURN n.file_path AS file_path, n.docstring AS docstring, n.text AS text, n.node_id AS node_id, n.name AS name
         """
         neo4j_config = ConfigProvider().get_neo4j_config()
-        nodes = CodeGraphService(neo4j_config['uri'], neo4j_config['username'], neo4j_config['password'], next(get_db())).query_graph(query)
+        nodes = CodeGraphService(
+            neo4j_config["uri"],
+            neo4j_config["username"],
+            neo4j_config["password"],
+            next(get_db()),
+        ).query_graph(query)
         return nodes
-    
+
     @classmethod
     def get_kg_tools(cls) -> List[Tool]:
         """
@@ -92,5 +98,5 @@ class CodeTools:
                 name="Get Nodes from Tags",
                 description="Fetch all nodes from the knowledge graph based on the specified tags. This tool is intended for extremely broad queries where it is ESSENTIAL to retrieve all relevant tags of a given type (API, WEBSOCKET, PRODUCER, CONSUMER, DATABASE, HTTP) for a project. It should be used prior to querying the knowledge graph to provide context node IDs for subsequent knowledge graph queries after filtering from its output. Ensure that the input tags are limited to these specified node types.",
                 args_schema=GetNodesFromTagsInput,
-            ),  
+            ),
         ]

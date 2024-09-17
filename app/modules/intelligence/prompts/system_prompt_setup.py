@@ -55,7 +55,7 @@ class SystemPromptSetup:
                         "stage": 1,
                     },
                     {
-                        "text": """Given the following query, history and tool results {input}, 
+                        "text": """Given the following query, history and tool results {input},
                         Provide a comprehensive answer to the user's query about the codebase. Follow this structure:
 
                         1. Query Analysis:

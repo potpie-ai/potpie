@@ -3,9 +3,13 @@ from typing import Dict, List
 
 from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
-from app.modules.intelligence.tools.kg_based_tools.code_tools import CodeTools
+
 from app.modules.conversations.message.message_schema import NodeContext
-from app.modules.intelligence.tools.change_detection.change_detection import ChangeDetectionResponse, get_blast_radius_tool
+from app.modules.intelligence.tools.change_detection.change_detection import (
+    ChangeDetectionResponse,
+    get_blast_radius_tool,
+)
+from app.modules.intelligence.tools.kg_based_tools.code_tools import CodeTools
 
 
 class BlastRadiusAgent:
@@ -15,7 +19,6 @@ class BlastRadiusAgent:
         self.llm = llm
 
     async def create_agents(self):
-
         blast_radius_agent = Agent(
             role="Blast Radius Agent",
             goal="Explain the blast radius of the changes made in the code.",
@@ -33,7 +36,8 @@ class BlastRadiusAgent:
             description="String response describing the analysis of the changes made in the code.",
         )
         citations: List[str] = Field(
-            ..., description="List of file names extracted from context and referenced in the response"
+            ...,
+            description="List of file names extracted from context and referenced in the response",
         )
 
     async def create_tasks(
@@ -42,8 +46,6 @@ class BlastRadiusAgent:
         query: str,
         blast_radius_agent,
     ):
-        
-
         analyze_changes_task = Task(
             description=f"""Fetch the changes in the current branch for project {project_id} using the get code changes tool.
             The response of the fetch changes tool is in the following format:
@@ -55,12 +57,12 @@ class BlastRadiusAgent:
             You also have access the the query knowledge graph tool. Use it to answer natural language questions about the codebase during the analysis.
 
             Analyze the changes fetched and explain their impact on the codebase. Consider the following:
-            1. Which functions or classes have been directly modified? 
+            1. Which functions or classes have been directly modified?
             2. What are the potential side effects of these changes?
             3. Are there any dependencies that might be affected?
             4. How might these changes impact the overall system behavior?
             5. Based on the entry point code, determine which APIs or consumers etc are impacted by the changes.
-            
+
             Refer to the {query} for any specific instructions and follow them.
 
             Based on the analysis, provide a structured inference of the blast radius:
@@ -69,14 +71,14 @@ class BlastRadiusAgent:
             3. Identify any critical areas that require careful testing
             4. Suggest any necessary refactoring or additional changes to mitigate risks
             6. If the changes are impacting multiple APIs/Consumers, then say so.
-            
-            
+
+
             Ensure that your output ALWAYS follows the structure outlined in the following pydantic model:
             {self.BlastRadiusAgentResponse.model_json_schema()}""",
-expected_output=f"Comprehensive impact analysis of the code changes on the codebase and answers to the users query about them. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model : {self.BlastRadiusAgentResponse.model_json_schema()}",
+            expected_output=f"Comprehensive impact analysis of the code changes on the codebase and answers to the users query about them. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model : {self.BlastRadiusAgentResponse.model_json_schema()}",
             agent=blast_radius_agent,
-            tools=[get_blast_radius_tool()[0],CodeTools.get_kg_tools()[0]],
-            output_pydantic=self.BlastRadiusAgentResponse
+            tools=[get_blast_radius_tool()[0], CodeTools.get_kg_tools()[0]],
+            output_pydantic=self.BlastRadiusAgentResponse,
         )
 
         return analyze_changes_task

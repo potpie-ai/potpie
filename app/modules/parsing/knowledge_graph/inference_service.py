@@ -1,10 +1,10 @@
 import asyncio
 import logging
+import re
 from typing import Dict, List, Optional
 
 from langchain.output_parsers import PydanticOutputParser
 from langchain.prompts import ChatPromptTemplate
-from langchain_openai.chat_models import ChatOpenAI
 from neo4j import GraphDatabase
 from sentence_transformers import SentenceTransformer
 from sqlalchemy.orm import Session
@@ -16,7 +16,7 @@ from app.modules.parsing.knowledge_graph.inference_schema import (
     DocstringResponse,
 )
 from app.modules.search.search_service import SearchService
-import re
+
 logger = logging.getLogger(__name__)
 
 
@@ -112,23 +112,23 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
         batches = []
         current_batch = []
         current_tokens = 0
-        node_dict = {node['node_id']: node for node in nodes}
+        node_dict = {node["node_id"]: node for node in nodes}
 
         def replace_referenced_text(text: str) -> str:
             def replace_match(match):
                 node_id = match.group(1)
                 if node_id in node_dict:
-                    return node_dict[node_id]['text']
+                    return node_dict[node_id]["text"]
                 return match.group(0)  # Return the original text if node_id not found
 
             pattern = r"Code replaced for brevity\. See node_id ([a-f0-9]+)"
             return re.sub(pattern, replace_match, text)
-        
+
         for node in nodes:
             # Skip nodes with None or empty text
             if not node.get("text"):
                 continue
-            
+
             updated_text = replace_referenced_text(node["text"])
             node_tokens = len(updated_text.split())
             if node_tokens > max_tokens:
@@ -348,7 +348,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
 
         For each of the following code snippets, perform these tasks:
 
-        1. **Docstring Generation**: 
+        1. **Docstring Generation**:
            - Begin with a concise, one-sentence summary of the code's purpose.
            - Describe the main functionality in detail, including the problem it solves or the task it performs.
            - List and explain all parameters/inputs and their types.
@@ -358,9 +358,9 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
            - Include relevant technical details like API paths, HTTP methods, topic names, function calls, and database operations.
            - If applicable, provide a brief example of how to use the code.
 
-        2. **Classification**: 
+        2. **Classification**:
            Classify the code snippet into one or more of the following categories. For each category, consider these guidelines:
-           
+
            - API: Does the code define any API endpoint? Look for route definitions, HTTP GET/POST/PUT/DELETE/PATCH methods.
            - WEBSOCKET: Does the code implement or use WebSocket connections? Check for WebSocket-specific libraries or protocols.
            - PRODUCER: Does the code generate and send messages to a queue or topic? Look for message publishing or event emission.
@@ -379,7 +379,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
         - Are the assigned tags justified by the code's functionality?
         - Have you captured all crucial technical details without unnecessary verbosity?
 
-        Refine your output as needed to ensure high-quality, precise documentation. Your job depends on it. 
+        Refine your output as needed to ensure high-quality, precise documentation. Your job depends on it.
 
         {format_instructions}
 
@@ -432,7 +432,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
                 {
                     "node_id": n.node_id,
                     "docstring": n.docstring,
-                    "tags": n.tags ,
+                    "tags": n.tags,
                     "embedding": self.generate_embedding(n.docstring),
                 }
                 for n in docstrings["docstrings"]
