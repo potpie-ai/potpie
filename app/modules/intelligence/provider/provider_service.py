@@ -170,4 +170,4 @@ class ProviderService:
         elif isinstance(llm, ChatAnthropic):
             return "Anthropic"
         else:
-            return "OpenAI"
+            return "Unknown"
