@@ -30,11 +30,11 @@ logger = logging.getLogger(__name__)
 
 
 class ParsingService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, user_id: str):
         self.db = db
         self.parse_helper = ParseHelper(db)
         self.project_service = ProjectService(db)
-        self.inference_service = InferenceService(db)
+        self.inference_service = InferenceService(db, user_id)
         self.search_service = SearchService(db)
         self.github_service = GithubService(db)
 

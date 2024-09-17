@@ -25,8 +25,9 @@ logger = logging.getLogger(__name__)
 
 
 class DebuggingAgent:
-    def __init__(self, llm, db: Session):
-        self.llm = llm
+    def __init__(self, mini_llm, reasoning_llm, db: Session):
+        self.mini_llm = mini_llm
+        self.llm = reasoning_llm
         self.history_manager = ChatHistoryService(db)
         self.tools = CodeTools.get_kg_tools()
         self.prompt_service = PromptService(db)

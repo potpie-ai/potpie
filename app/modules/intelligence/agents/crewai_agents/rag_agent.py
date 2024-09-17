@@ -36,7 +36,7 @@ class RAGAgent:
         query_agent = Agent(
             role="Knowledge Graph Querier",
             goal="Query the knowledge graph based on the input query and retrieve the top k responses.",
-            backstory="""You specialize in querying knowledge graphs to find the most relevant context for a given query. 
+            backstory="""You are an expert in querying complex knowledge graphs. Your task is to analyze the user's query and formulate the most effective strategy to extract relevant information from the code knowledge graph.
             Based on the conversation history and current query, you rephrase the knowledge graph query to be more specific and relevant to the codebase.
             """,
             tools=self.kg_tools,
@@ -46,9 +46,9 @@ class RAGAgent:
         )
 
         rerank_agent = Agent(
-            role="Re-ranker",
-            goal="Re-rank the top k responses and fetch the code for relevant node IDs, but skip the ones already queried.",
-            backstory="You excel at analyzing and re-ranking responses based on query relevance, and retrieving code using corresponding node IDs.",
+            role="Re-ranker and Code Fetcher",
+            goal="Optimize and enrich the query results for maximum relevance and context",
+            backstory="You are a sophisticated algorithm personified, specializing in result optimization and context enrichment. Your task is to take the initial query results and transform them into the most informative and relevant response possible.",
             tools=self.code_tools,
             allow_delegation=False,
             verbose=True,
@@ -70,22 +70,99 @@ class RAGAgent:
             node_ids = []
         query_task = Task(
             description=f"""Query the knowledge graph based on the input query and chat history and input node IDs. 
-              Chat History: {chat_history}\n\nInput Query: {query}\n\nProject ID: {project_id}\n\n Node IDs: {[node.model_dump() for node in node_ids]}
+              Chat History: {chat_history}
+              Input Query: {query}
+              Project ID: {project_id}
+              User Provided Node IDs: {[node.model_dump() for node in node_ids]}
               If the knowledge graph query is not useful, you can use the 'Get Nodes from Tags' tool to get ALL the relevant nodes from the graph for that type. USE THIS ONLY WHEN NECESSARY AS THIS IS EXTREMELY LARGE CONTEXT.
-              Refine the output from this to only include the most relevant nodes for the subsequent knowledge graph query.""",
+              Step 1: Analyze the query
+                - Identify key concepts, code elements, and implied relationships
+                - Consider the context from chat history
+
+              Step 2: Formulate knowledge graph query strategy
+                - Analyze the original query to identify its intent and key technical terms.
+                - Decide whether to use direct node lookup, similarity search, or graph traversal based on the query type.
+                - Determine appropriate tags to filter results.
+                - Transform the query to closely resemble a docstring structure for better similarity scores. Consider the following approaches:
+                1. Rephrase as a statement describing functionality (e.g., "The XYZ class is used to...")
+                2. Use verb-based descriptions for functions (e.g., "Creates..", "Defines...", "Calculates...", "Processes...", "Manages...")
+                3. Incorporate docstring patterns like "Returns", "Raises", or "Args" when relevant.
+                4. Preserve key technical terms from the original query.
+                5. Generate multiple phrasings to increase matching chances.
+                6. Be specific in your questions. Instead of asking "List the HTTP method associated with all API endpoints", ask "List the HTTP method associated with the get_data() function" This increases the chances of a match.
+
+                Examples:
+                1. Original: "How do I use the XYZ class?"
+                Transformed: 
+                - "The XYZ class is used to..."
+                - "Initializing and utilizing the XYZ class involves..."
+
+                2. Original: "What are the parameters for the process_data function?"
+                Transformed:
+                - "The process_data function accepts the following parameters:"
+                - "Args for process_data function include..."
+
+                3. Original: "Explain the error handling in the API request module"
+                Transformed:
+                - "Error handling in the API request module is implemented by..."
+                - "The API request module raises the following exceptions:"
+                
+              
+              Step 3: Execute query
+                - Use the available tools to query the knowledge graph
+                - Analyze initial results
+
+              Step 4: Refine and expand
+                - Based on initial results, determine if additional queries are needed
+                - Consider exploring related nodes or expanding the search scope
+
+              Step 5: Reflect on results
+                - Evaluate the relevance and completeness of the retrieved information
+                - Identify any gaps or areas that need further exploration
+
+              Throughout this process, maintain a balance between breadth and depth of information retrieval. Your goal is to provide a comprehensive yet focused set of results that directly address the user's query.
+              If you are not able to find a lot of information, let the next task fetch the code from the nodes you already retrieved
+            """,
             expected_output="A list of responses responses including the node_id, node name, docstring and similarity score that were retrieved from the knowledge graph",
             agent=query_agent,
         )
 
         rerank_task = Task(
-            description=(
-                "Re-rank the responses of the query task based on how relevant they are to the query. "
-                "Discard the responses that are not relevant to the query. "
-                "Based on the query, filter these responses and call the 'get code by ID' tool using the node_id from the responses FOR RELEVANT RESPONSES ONLY to fetch the corresponding code, "
-                f"Chat History: {chat_history}"
-                f"Query: {query}"
-                f"Project ID: {project_id}"
-            ),
+            description=(f"""
+                Step 1: Analyze initial results
+                - Evaluate the relevance of each result to the original query
+                - Identify potential gaps or redundancies in the information
+
+                Step 2: Re-ranking strategy
+                - Develop a scoring mechanism considering factors like:
+                    * Relevance to query
+                    * Code complexity
+                    * Hierarchical importance in the codebase
+                    * Frequency of references
+
+                Step 3: Context enrichment
+                - For each highly-ranked result, determine what additional context would be most valuable
+                - Decide which related code snippets or documentation to fetch
+
+                Step 4: Code retrieval
+                - Use the available tools to fetch the necessary code and documentation
+                - Retrieve the code only if the docstring is not enough to answer the query
+                - Retrieve the code when it is not already included in the context
+                - Ensure retrieved code is complete and self-contained
+
+                Step 5: Result composition
+                - Organize the re-ranked and enriched results in a logical structure
+                - Ensure traceability by including relevant citations and references
+
+                Step 6: Final reflection
+                - Review the compiled results for overall coherence and relevance
+                - Identify any remaining gaps or potential improvements for future queries
+
+                Your goal is to provide a response that not only answers the user's query but also gives them a deeper understanding of the relevant code and its context within the project.
+                "Chat History: {chat_history}
+                "Query: {query}
+                "Project ID: {project_id}
+            """),
             expected_output=f"The output of the task is curated context (file name, docstring, code) fetched from the knowledge graph along with required citations. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model :\n{RAGResponse.model_json_schema()}",
             agent=rerank_agent,
             context=[query_task],

@@ -19,4 +19,13 @@ async def query_vector_index(request: QueryRequest, db: Session = Depends(get_db
     results = await inference_service.query_vector_index(
         request.project_id, request.query, request.node_ids
     )
-    return [QueryResponse(**result) for result in results]
+    return [
+        QueryResponse(
+            node_id=result.get("node_id"),
+            docstring=result.get("docstring"),
+            file_path=result.get("file_path"),
+            start_line=result.get("start_line") or 0,
+            end_line=result.get("end_line") or 0,
+            similarity=result.get("similarity"),
+        ) for result in results
+    ]

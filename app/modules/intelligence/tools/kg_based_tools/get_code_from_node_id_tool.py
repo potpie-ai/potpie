@@ -119,10 +119,7 @@ class GetCodeFromNodeIdTool:
             docstring = node_data["docstring"]
 
         return {
-            "repo_name": project.repo_name,
-            "branch_name": project.branch_name,
             "node_id": node_id,
-            "file_path": file_path,
             "relative_file_path": relative_file_path,
             "start_line": start_line,
             "end_line": end_line,

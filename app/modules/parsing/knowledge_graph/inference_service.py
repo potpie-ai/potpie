@@ -10,23 +10,24 @@ from sentence_transformers import SentenceTransformer
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
+from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.parsing.knowledge_graph.inference_schema import (
     DocstringRequest,
     DocstringResponse,
 )
 from app.modules.search.search_service import SearchService
-
+import re
 logger = logging.getLogger(__name__)
 
 
 class InferenceService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, user_id: Optional[str] = "dummy"):
         neo4j_config = config_provider.get_neo4j_config()
         self.driver = GraphDatabase.driver(
             neo4j_config["uri"],
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
-        self.llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.3)
+        self.llm = ProviderService(db, user_id).get_small_llm()
         self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
         self.search_service = SearchService(db)
 
@@ -111,13 +112,25 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
         batches = []
         current_batch = []
         current_tokens = 0
+        node_dict = {node['node_id']: node for node in nodes}
 
+        def replace_referenced_text(text: str) -> str:
+            def replace_match(match):
+                node_id = match.group(1)
+                if node_id in node_dict:
+                    return node_dict[node_id]['text']
+                return match.group(0)  # Return the original text if node_id not found
+
+            pattern = r"Code replaced for brevity\. See node_id ([a-f0-9]+)"
+            return re.sub(pattern, replace_match, text)
+        
         for node in nodes:
             # Skip nodes with None or empty text
             if not node.get("text"):
                 continue
-
-            node_tokens = len(node["text"].split())
+            
+            updated_text = replace_referenced_text(node["text"])
+            node_tokens = len(updated_text.split())
             if node_tokens > max_tokens:
                 continue  # Skip nodes that exceed the max_tokens limit
 
@@ -231,15 +244,27 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
         self, batch: List[Dict[str, str]]
     ) -> DocstringResponse:
         prompt = """
-        For each of the following entry points and their function flows, perform the following tasks:
+        You are an expert software architect with deep knowledge of distributed systems and cloud-native applications. Your task is to analyze entry points and their function flows in a codebase.
 
-        1. **Flow Summary**: Generate a concise summary of the overall intent and purpose of the entry point and its flow. The summary should be sufficiently verbose and technical to understand the code via similarity search but concise enough to not take up too much space. ALWAYS Include technical details such as ALL API paths, HTTP methods, topic names, database interactions, and key function calls.
+        For each of the following entry points and their function flows, perform the following task:
 
-        2. **Classification**: Classify the entry point into one or more of the following broader level tags: **[API, WEBSOCKET, PRODUCER, CONSUMER, DATABASE, HTTP]**. Only use these tags and select the ones that are most relevant to the entry point.
+        1. **Flow Summary**: Generate a concise yet comprehensive summary of the overall intent and purpose of the entry point and its flow. Follow these guidelines:
+           - Start with a high-level overview of the entry point's purpose.
+           - Detail the main steps or processes involved in the flow.
+           - Highlight key interactions with external systems or services.
+           - Specify ALL API paths, HTTP methods, topic names, database interactions, and critical function calls.
+           - Identify any error handling or edge cases.
+           - Conclude with the expected output or result of the flow.
+
+        Remember, the summary should be technical enough for a senior developer to understand the code's functionality via similarity search, but concise enough to be quickly parsed. Aim for a balance between detail and brevity.
+
+        Here are the entry points and their flows:
 
         {entry_points}
 
-        Respond with a list of "node_id":"updated docstring","tags" pairs, where the updated docstring includes the original docstring followed by the flow summary.
+        Respond with a list of "node_id":"updated docstring" pairs, where the updated docstring includes the original docstring followed by the flow summary. Do not include any tags in your response.
+
+        Before finalizing your response, take a moment to review and refine your summaries. Ensure they are clear, accurate, and provide valuable insights into the code's functionality. Your job depends on it.
 
         {format_instructions}
         """
@@ -313,15 +338,51 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
 
     async def generate_response(self, batch: List[DocstringRequest]) -> str:
         base_prompt = """
-        For each of the following code snippets, perform the following task:
+        You are a senior software engineer with expertise in code analysis and documentation. Your task is to generate detailed technical docstrings and classify code snippets. Approach this task methodically, following these steps:
 
-        1. **Docstring Generation**: Generate a detailed technical docstring that encapsulates the technical and functional purpose of the code. The docstring should be sufficiently verbose and technical to understand the code via similarity search but concise enough to not take up too much space. ALWAYS include relevant technical details like API paths, HTTP methods, topic names, function calls, database operations, etc.
-        2. **Classification**: Classify the entry point into one or more of the following broader level tags: **[API, WEBSOCKET, PRODUCER, CONSUMER, DATABASE, HTTP]**. Only use these tags and select the ones that are most relevant to the entry point.
+        1. Read and understand the given code snippet thoroughly.
+        2. Identify the main purpose and functionality of the code.
+        3. Determine the inputs, outputs, and key operations performed.
+        4. Recognize any important algorithms, data structures, or design patterns used.
+        5. Note any external dependencies or interactions with other systems.
+
+        For each of the following code snippets, perform these tasks:
+
+        1. **Docstring Generation**: 
+           - Begin with a concise, one-sentence summary of the code's purpose.
+           - Describe the main functionality in detail, including the problem it solves or the task it performs.
+           - List and explain all parameters/inputs and their types.
+           - Specify the return value(s) and their types.
+           - Mention any side effects or state changes.
+           - Note any exceptions that may be raised and under what conditions.
+           - Include relevant technical details like API paths, HTTP methods, topic names, function calls, and database operations.
+           - If applicable, provide a brief example of how to use the code.
+
+        2. **Classification**: 
+           Classify the code snippet into one or more of the following categories. For each category, consider these guidelines:
+           
+           - API: Does the code define any API endpoint? Look for route definitions, HTTP GET/POST/PUT/DELETE/PATCH methods.
+           - WEBSOCKET: Does the code implement or use WebSocket connections? Check for WebSocket-specific libraries or protocols.
+           - PRODUCER: Does the code generate and send messages to a queue or topic? Look for message publishing or event emission.
+           - CONSUMER: Does the code receive and process messages from a queue or topic? Check for message subscription or event handling.
+           - DATABASE: Does the code interact with a database? Look for query execution, data insertion, updates, or deletions.
+           - SCHEMA: Does the code define any database schema? Look for ORM models, table definitions, or schema-related code.
+           - HTTP: Does the code make HTTP requests to external services? Check for HTTP client usage or request handling.
+
+           ONLY use these tags and select the ones that are most relevant to the code snippet. Avoid false positives by ensuring the code clearly exhibits the behavior associated with each tag.
 
         Here are the code snippets:
         {code_snippets}
 
+        Before finalizing your response, review your analysis:
+        - Is the docstring clear, comprehensive, and technically accurate?
+        - Are the assigned tags justified by the code's functionality?
+        - Have you captured all crucial technical details without unnecessary verbosity?
+
+        Refine your output as needed to ensure high-quality, precise documentation. Your job depends on it. 
+
         {format_instructions}
+
         """
 
         # Prepare the code snippets

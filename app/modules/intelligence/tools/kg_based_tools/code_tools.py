@@ -48,7 +48,14 @@ class CodeTools:
         """
         Get nodes from the knowledge graph based on the provided tags.
         Inputs for the get_nodes_from_tags method:
-        - tags (List[str]): A list of tags to filter the nodes by.
+        - tags (List[str]): A list of tags to filter the nodes by.           
+           * API: Does the code define any API endpoint? Look for route definitions, request handling, or API client usage.
+           * WEBSOCKET: Does the code implement or use WebSocket connections? Check for WebSocket-specific libraries or protocols.
+           * PRODUCER: Does the code generate and send messages to a queue or topic? Look for message publishing or event emission.
+           * CONSUMER: Does the code receive and process messages from a queue or topic? Check for message subscription or event handling.
+           * DATABASE: Does the code interact with a database? Look for query execution, data insertion, updates, or deletions.
+           * SCHEMA: Does the code define any database schema? Look for ORM models, table definitions, or schema-related code.
+           * HTTP: Does the code make HTTP requests to external services? Check for HTTP client usage or request handling.
         - project_id (str): The ID of the project being evaluated, this is a UUID.
         """
 

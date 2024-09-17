@@ -78,13 +78,14 @@ class ConversationService:
         return cls(db, user_id, project_service, history_manager, provider_service)
 
     def _initialize_agents(self):
-        llm = self.provider_service.get_llm()
+        mini_llm = self.provider_service.get_small_llm()
+        reasoning_llm = self.provider_service.get_large_llm()
         return {
-            "debugging_agent": DebuggingAgent(llm, self.sql_db),
-            "codebase_qna_agent": QNAAgent(llm, self.sql_db),
-            "unit_test_agent": UnitTestAgent(llm, self.sql_db),
-            "integration_test_agent": IntegrationTestAgent(llm, self.sql_db),
-            "code_changes_agent": CodeChangesAgent(llm, self.sql_db),
+            "debugging_agent": DebuggingAgent(mini_llm, reasoning_llm, self.sql_db),
+            "codebase_qna_agent": QNAAgent(mini_llm, reasoning_llm, self.sql_db),
+            "unit_test_agent": UnitTestAgent(mini_llm, reasoning_llm, self.sql_db),
+            "integration_test_agent": IntegrationTestAgent(mini_llm, reasoning_llm, self.sql_db),
+            "code_changes_agent": CodeChangesAgent(mini_llm, reasoning_llm, self.sql_db),
         }
 
     async def create_conversation(
@@ -146,7 +147,7 @@ class ConversationService:
     async def _add_system_message(
         self, conversation_id: str, project_name: str, user_id: str
     ):
-        content = f"Project {project_name} has been parsed successfully."
+        content = f"You can now ask questions about the {project_name} repository."
         try:
             self.history_manager.add_message_chunk(
                 conversation_id, content, MessageType.SYSTEM_GENERATED, user_id

@@ -19,7 +19,7 @@ class PromptType(str, Enum):
 # Request Schema for Creating a Prompt
 class PromptCreate(BaseModel):
     text: str = Field(
-        ..., min_length=1, max_length=1000, description="The text content of the prompt"
+        ..., min_length=1, description="The text content of the prompt"
     )
     type: PromptType = Field(..., description="Type of the prompt (System or Human)")
     status: Optional[PromptStatusType] = Field(
@@ -33,7 +33,6 @@ class PromptUpdate(BaseModel):
     text: Optional[str] = Field(
         None,
         min_length=1,
-        max_length=1000,
         description="The text content of the prompt",
     )
     type: Optional[PromptType] = Field(

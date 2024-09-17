@@ -35,7 +35,7 @@ def process_parsing(
 ) -> None:
     logger.info(f"Task received: Starting parsing process for project {project_id}")
     try:
-        parsing_service = ParsingService(self.db)
+        parsing_service = ParsingService(self.db, user_id)
         asyncio.run(
             parsing_service.parse_directory(
                 ParsingRequest(**repo_details), user_id, user_email, project_id, cleanup_graph
