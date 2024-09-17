@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from blar_graph.db_managers import Neo4jManager
 from blar_graph.graph_construction.core.graph_builder import GraphConstructor
 from fastapi import HTTPException
+from git import Repo
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
@@ -82,7 +83,13 @@ class ParsingService:
                 repo, repo_details.branch_name, auth, repo, user_id, project_id
             )
 
-            await self.analyze_directory(extracted_dir, project_id, user_id, self.db)
+            if isinstance(repo, Repo):
+                language = self.parse_helper.detect_repo_language(extracted_dir)
+            else:
+                languages = repo.get_languages()
+                language = max(languages, key=languages.get).lower()
+
+            await self.analyze_directory(extracted_dir, project_id, user_id, self.db, language)
 
             message = "The project has been parsed successfully"
             await project_manager.update_project_status(
@@ -116,12 +123,11 @@ class ParsingService:
                 shutil.rmtree(extracted_dir, ignore_errors=True)
 
     async def analyze_directory(
-        self, extracted_dir: str, project_id: int, user_id: str, db
+        self, extracted_dir: str, project_id: int, user_id: str, db, language: str
     ):
         logger.info(f"Analyzing directory: {extracted_dir}")
-        repo_lang = self.parse_helper.detect_repo_language(extracted_dir)
 
-        if repo_lang in ["python", "javascript", "typescript"]:
+        if language in ["python", "javascript", "typescript"]:
             graph_manager = Neo4jManager(project_id, user_id)
 
             try:
@@ -147,7 +153,7 @@ class ParsingService:
                 )
             finally:
                 graph_manager.close()
-        elif repo_lang != "other":
+        elif language != "other":
             try:
                 neo4j_config = config_provider.get_neo4j_config()
                 service = CodeGraphService(
