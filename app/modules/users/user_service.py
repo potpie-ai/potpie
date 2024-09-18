@@ -2,6 +2,7 @@ import logging
 from datetime import datetime
 from typing import List
 
+from sqlalchemy import desc
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -19,38 +20,6 @@ class UserServiceError(Exception):
 class UserService:
     def __init__(self, db: Session):
         self.db = db
-
-    def get_conversations_for_user(
-        self, user_id: str, start: int, limit: int
-    ) -> List[Conversation]:
-        try:
-            conversations = (
-                self.db.query(Conversation)
-                .filter(Conversation.user_id == user_id)
-                .offset(start)
-                .limit(limit)
-                .all()
-            )
-            logger.info(
-                f"Retrieved {len(conversations)} conversations for user {user_id}"
-            )
-            return conversations
-        except SQLAlchemyError as e:
-            logger.error(
-                f"Database error in get_conversations_for_user for user {user_id}: {e}",
-                exc_info=True,
-            )
-            raise UserServiceError(
-                f"Failed to retrieve conversations for user {user_id}"
-            ) from e
-        except Exception as e:
-            logger.error(
-                f"Unexpected error in get_conversations_for_user for user {user_id}: {e}",
-                exc_info=True,
-            )
-            raise UserServiceError(
-                f"An unexpected error occurred while retrieving conversations for user {user_id}"
-            ) from e
 
     def update_last_login(self, uid: str):
         logging.info(f"Updating last login time for user with UID: {uid}")
@@ -115,17 +84,36 @@ class UserService:
             logging.error(f"Error fetching user: {e}")
             return None
 
-    # User CRUD operations
-    def get_user_by_email(db: Session, email: str):
-        return db.query(User).filter(User.email == email).first()
+    def get_conversations_with_projects_for_user(
+        self, user_id: str, start: int, limit: int
+    ) -> List[Conversation]:
+        try:
+            conversations = (
+                self.db.query(Conversation)
+                .filter(Conversation.user_id == user_id)
+                .order_by(desc(Conversation.updated_at))
+                .offset(start)
+                .limit(limit)
+                .all()
+            )
 
-    def get_user_by_username(db: Session, username: str):
-        return db.query(User).filter(User.provider_username == username).first()
-
-    def update_user(db: Session, user_id: str, **kwargs):
-        db.query(User).filter(User.uid == user_id).update(kwargs)
-        db.commit()
-
-    def delete_user(db: Session, user_id: str):
-        db.query(User).filter(User.uid == user_id).delete()
-        db.commit()
+            logger.info(
+                f"Retrieved {len(conversations)} conversations with projects for user {user_id}"
+            )
+            return conversations
+        except SQLAlchemyError as e:
+            logger.error(
+                f"Database error in get_conversations_with_projects_for_user for user {user_id}: {e}",
+                exc_info=True,
+            )
+            raise UserServiceError(
+                f"Failed to retrieve conversations with projects for user {user_id}"
+            ) from e
+        except Exception as e:
+            logger.error(
+                f"Unexpected error in get_conversations_with_projects_for_user for user {user_id}: {e}",
+                exc_info=True,
+            )
+            raise UserServiceError(
+                f"An unexpected error occurred while retrieving conversations with projects for user {user_id}"
+            ) from e
