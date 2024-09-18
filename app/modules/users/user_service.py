@@ -1,15 +1,14 @@
 import logging
 from datetime import datetime
-from typing import List, Set
+from typing import List
 
 from sqlalchemy import desc
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 from app.modules.conversations.conversation.conversation_model import Conversation
 from app.modules.users.user_model import User
 from app.modules.users.user_schema import CreateUser
-from app.modules.projects.projects_model import Project
 
 logger = logging.getLogger(__name__)
 
@@ -97,9 +96,7 @@ class UserService:
                 .limit(limit)
                 .all()
             )
-            
-            # The projects are now automatically loaded due to the relationship
-            
+
             logger.info(
                 f"Retrieved {len(conversations)} conversations with projects for user {user_id}"
             )

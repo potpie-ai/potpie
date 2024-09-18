@@ -10,8 +10,8 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import BYTEA
-from sqlalchemy.orm import relationship, Session
 from sqlalchemy.ext.hybrid import hybrid_property
+from sqlalchemy.orm import relationship
 
 from app.core.base_model import Base
 from app.modules.search.search_models import SearchIndex  # noqa
@@ -51,8 +51,14 @@ class Project(Base):
 
     @hybrid_property
     def conversations(self):
-        from app.modules.conversations.conversation.conversation_model import Conversation
         from app.core.database import SessionLocal
+        from app.modules.conversations.conversation.conversation_model import (
+            Conversation,
+        )
 
         with SessionLocal() as session:
-            return session.query(Conversation).filter(Conversation.project_ids.any(self.id)).all()
+            return (
+                session.query(Conversation)
+                .filter(Conversation.project_ids.any(self.id))
+                .all()
+            )
