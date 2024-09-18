@@ -2,6 +2,7 @@ import logging
 from datetime import datetime
 from typing import List, Set
 
+from sqlalchemy import desc
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, joinedload
 
@@ -91,6 +92,7 @@ class UserService:
             conversations = (
                 self.db.query(Conversation)
                 .filter(Conversation.user_id == user_id)
+                .order_by(desc(Conversation.updated_at))
                 .offset(start)
                 .limit(limit)
                 .all()

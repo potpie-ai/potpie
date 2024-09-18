@@ -14,27 +14,22 @@ class UserController:
         self, user_id: str, start: int, limit: int
     ) -> List[UserConversationListResponse]:
         conversations = self.service.get_conversations_with_projects_for_user(user_id, start, limit)
-
         response = []
         for conversation in conversations:
-            project_details = [
-                {
-                    'id': project.id,
-                    'repo_name': project.repo_name,
-                    'branch_name': project.branch_name
-                }
-                for project in conversation.projects
-            ]
-
+            repo_name = conversation.projects[0].repo_name
+            branch_name = conversation.projects[0].branch_name
+            
             response.append(UserConversationListResponse(
                 id=conversation.id,
                 user_id=conversation.user_id,
                 title=conversation.title,
                 status=conversation.status,
                 project_ids=conversation.project_ids,
+                repository=repo_name,
+                branch=branch_name,
+                agent_id=conversation.agent_ids[0],
                 created_at=conversation.created_at.isoformat(),
                 updated_at=conversation.updated_at.isoformat(),
-                project_details=project_details,
             ))
 
         return response
