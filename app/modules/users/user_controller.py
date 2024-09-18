@@ -13,10 +13,20 @@ class UserController:
     async def get_conversations_for_user(
         self, user_id: str, start: int, limit: int
     ) -> List[UserConversationListResponse]:
-        conversations = self.service.get_conversations_for_user(user_id, start, limit)
+        conversations = self.service.get_conversations_with_projects_for_user(user_id, start, limit)
 
-        response = [
-            UserConversationListResponse(
+        response = []
+        for conversation in conversations:
+            project_details = [
+                {
+                    'id': project.id,
+                    'repo_name': project.repo_name,
+                    'branch_name': project.branch_name
+                }
+                for project in conversation.projects
+            ]
+
+            response.append(UserConversationListResponse(
                 id=conversation.id,
                 user_id=conversation.user_id,
                 title=conversation.title,
@@ -24,8 +34,7 @@ class UserController:
                 project_ids=conversation.project_ids,
                 created_at=conversation.created_at.isoformat(),
                 updated_at=conversation.updated_at.isoformat(),
-            )
-            for conversation in conversations
-        ]
+                project_details=project_details,
+            ))
 
         return response

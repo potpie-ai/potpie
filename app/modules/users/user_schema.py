@@ -15,6 +15,7 @@ class UserConversationListResponse(BaseModel):
     title: Optional[str]
     status: Optional[str]
     project_ids: Optional[List[str]]
+    project_details: Optional[List[dict]]
     created_at: str
     updated_at: str
 
