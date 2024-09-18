@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from typing import Dict, List, Optional
 
 from langchain.output_parsers import PydanticOutputParser
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class InferenceService:
-    def __init__(self, db: Session, user_id: str):
+    def __init__(self, db: Session, user_id: Optional[str] = "dummy"):
         neo4j_config = config_provider.get_neo4j_config()
         self.driver = GraphDatabase.driver(
             neo4j_config["uri"],
@@ -56,22 +57,26 @@ class InferenceService:
             data = result.data()
             return [record["node_id"] for record in data]
 
-    def get_neighbours(self, node_id: str):
+    def get_neighbours(self, node_id: str, repo_id: str):
         with self.driver.session() as session:
             result = session.run(
                 """
-                MATCH (p {node_id: $node_id})
-                CALL apoc.neighbors.byhop(p, ">", 10)
-                YIELD nodes
-                UNWIND nodes AS all_nodes
-                RETURN all_nodes.node_id AS node_id, all_nodes.name AS function_name, labels(all_nodes) AS labels
+                MATCH (start {node_id: $node_id, repoId: $repo_id})
+                OPTIONAL MATCH (start)-[:CALLS]->(direct_neighbour)
+                OPTIONAL MATCH (start)-[:CALLS]->()-[:CALLS*0..]->(indirect_neighbour)
+                WITH start, COLLECT(DISTINCT direct_neighbour) + COLLECT(DISTINCT indirect_neighbour) AS all_neighbours
+                UNWIND all_neighbours AS neighbour
+                WITH start, neighbour
+                WHERE neighbour IS NOT NULL AND neighbour <> start
+                RETURN DISTINCT neighbour.node_id AS node_id, neighbour.name AS function_name, labels(neighbour) AS labels
                 """,
                 node_id=node_id,
+                repo_id=repo_id,
             )
             data = result.data()
 
             nodes_info = [
-                record["node_id"] for record in data if record["labels"] == ["function"]
+                record["node_id"] for record in data if "FUNCTION" in record["labels"]
             ]
             return nodes_info
 
@@ -107,13 +112,25 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
         batches = []
         current_batch = []
         current_tokens = 0
+        node_dict = {node["node_id"]: node for node in nodes}
+
+        def replace_referenced_text(text: str) -> str:
+            def replace_match(match):
+                node_id = match.group(1)
+                if node_id in node_dict:
+                    return node_dict[node_id]["text"]
+                return match.group(0)  # Return the original text if node_id not found
+
+            pattern = r"Code replaced for brevity\. See node_id ([a-f0-9]+)"
+            return re.sub(pattern, replace_match, text)
 
         for node in nodes:
             # Skip nodes with None or empty text
             if not node.get("text"):
                 continue
 
-            node_tokens = len(node["text"].split())
+            updated_text = replace_referenced_text(node["text"])
+            node_tokens = len(updated_text.split())
             if node_tokens > max_tokens:
                 continue  # Skip nodes that exceed the max_tokens limit
 
@@ -202,7 +219,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
             entry_point_data = {
                 "node_id": entry_point,
                 "entry_docstring": entry_docstring,
-                "flow_description": flow_description,
+                "flow_description": entry_docstring + "\n" + flow_description,
             }
 
             entry_point_tokens = len(entry_docstring) + len(flow_description)
@@ -227,13 +244,27 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
         self, batch: List[Dict[str, str]]
     ) -> DocstringResponse:
         prompt = """
-        Analyze the following entry points and their function flows to generate concise summaries of the overall intent and purpose for each:
+        You are an expert software architect with deep knowledge of distributed systems and cloud-native applications. Your task is to analyze entry points and their function flows in a codebase.
+
+        For each of the following entry points and their function flows, perform the following task:
+
+        1. **Flow Summary**: Generate a concise yet comprehensive summary of the overall intent and purpose of the entry point and its flow. Follow these guidelines:
+           - Start with a high-level overview of the entry point's purpose.
+           - Detail the main steps or processes involved in the flow.
+           - Highlight key interactions with external systems or services.
+           - Specify ALL API paths, HTTP methods, topic names, database interactions, and critical function calls.
+           - Identify any error handling or edge cases.
+           - Conclude with the expected output or result of the flow.
+
+        Remember, the summary should be technical enough for a senior developer to understand the code's functionality via similarity search, but concise enough to be quickly parsed. Aim for a balance between detail and brevity.
+
+        Here are the entry points and their flows:
 
         {entry_points}
 
-        For each entry point, provide a brief, high-level description of what the flow accomplishes, such as "API to do XYZ" or "Kafka consumer for consuming topic ABC", but with more technical detail.
-        ALWAYS INCLUDE TECHICAL details about the API Path if relevant e.g. "GET document API at /api/v1/document/id", Topic name e.g. "Kafka consumer with 5 replicas consuming from the 'input' topic", flow of the code, the entry point and the function calls between them.
-        Respond with a list of "node_id":"updated docstring" pairs, where the updated docstring includes the original docstring followed by the flow summary.
+        Respond with a list of "node_id":"updated docstring" pairs, where the updated docstring includes the original docstring followed by the flow summary. Do not include any tags in your response.
+
+        Before finalizing your response, take a moment to review and refine your summaries. Ensure they are clear, accurate, and provide valuable insights into the code's functionality. Your job depends on it.
 
         {format_instructions}
         """
@@ -247,7 +278,6 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
             ]
         )
 
-        # formatted_prompt = prompt.format(entry_points=entry_points_text)
         formatted_prompt = prompt
         return await self.generate_llm_response(
             formatted_prompt, {"entry_points": entry_points_text}
@@ -278,7 +308,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
         entry_points = self.get_entry_points(repo_id)
         entry_points_neighbors = {}
         for entry_point in entry_points:
-            neighbors = self.get_neighbours(entry_point)
+            neighbors = self.get_neighbours(entry_point, repo_id)
             entry_points_neighbors[entry_point] = neighbors
 
         batches = self.batch_nodes(nodes)
@@ -308,14 +338,51 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
 
     async def generate_response(self, batch: List[DocstringRequest]) -> str:
         base_prompt = """
-        Generate a detailed technical docstring for each of the following code snippets.
-        The docstring should encapsulate the technical and functional purpose of the code.
-        Include details about inputs, outputs, function calls, logical flow, and any other relevant information.
-        If the code snippet serves a special purpose like defining an API or a Kafka consumer or Producer, make note of that in the docstring with details like API path, topic name etc.
+        You are a senior software engineer with expertise in code analysis and documentation. Your task is to generate detailed technical docstrings and classify code snippets. Approach this task methodically, following these steps:
+
+        1. Read and understand the given code snippet thoroughly.
+        2. Identify the main purpose and functionality of the code.
+        3. Determine the inputs, outputs, and key operations performed.
+        4. Recognize any important algorithms, data structures, or design patterns used.
+        5. Note any external dependencies or interactions with other systems.
+
+        For each of the following code snippets, perform these tasks:
+
+        1. **Docstring Generation**:
+           - Begin with a concise, one-sentence summary of the code's purpose.
+           - Describe the main functionality in detail, including the problem it solves or the task it performs.
+           - List and explain all parameters/inputs and their types.
+           - Specify the return value(s) and their types.
+           - Mention any side effects or state changes.
+           - Note any exceptions that may be raised and under what conditions.
+           - Include relevant technical details like API paths, HTTP methods, topic names, function calls, and database operations.
+           - If applicable, provide a brief example of how to use the code.
+
+        2. **Classification**:
+           Classify the code snippet into one or more of the following categories. For each category, consider these guidelines:
+
+           - API: Does the code define any API endpoint? Look for route definitions, HTTP GET/POST/PUT/DELETE/PATCH methods.
+           - WEBSOCKET: Does the code implement or use WebSocket connections? Check for WebSocket-specific libraries or protocols.
+           - PRODUCER: Does the code generate and send messages to a queue or topic? Look for message publishing or event emission.
+           - CONSUMER: Does the code receive and process messages from a queue or topic? Check for message subscription or event handling.
+           - DATABASE: Does the code interact with a database? Look for query execution, data insertion, updates, or deletions.
+           - SCHEMA: Does the code define any database schema? Look for ORM models, table definitions, or schema-related code.
+           - HTTP: Does the code make HTTP requests to external services? Check for HTTP client usage or request handling.
+
+           ONLY use these tags and select the ones that are most relevant to the code snippet. Avoid false positives by ensuring the code clearly exhibits the behavior associated with each tag.
+
         Here are the code snippets:
         {code_snippets}
 
+        Before finalizing your response, review your analysis:
+        - Is the docstring clear, comprehensive, and technically accurate?
+        - Are the assigned tags justified by the code's functionality?
+        - Have you captured all crucial technical details without unnecessary verbosity?
+
+        Refine your output as needed to ensure high-quality, precise documentation. Your job depends on it.
+
         {format_instructions}
+
         """
 
         # Prepare the code snippets
@@ -365,6 +432,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
                 {
                     "node_id": n.node_id,
                     "docstring": n.docstring,
+                    "tags": n.tags,
                     "embedding": self.generate_embedding(n.docstring),
                 }
                 for n in docstrings["docstrings"]
@@ -377,7 +445,8 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
                     UNWIND $batch AS item
                     MATCH (n:NODE {repoId: $repo_id, node_id: item.node_id})
                     SET n.docstring = item.docstring,
-                        n.embedding = item.embedding
+                        n.embedding = item.embedding,
+                        n.tags = item.tags
                     """,
                     batch=batch,
                     repo_id=repo_id,
