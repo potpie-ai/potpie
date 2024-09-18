@@ -121,4 +121,3 @@ class ParsingController:
             raise HTTPException(status_code=500, detail="Internal server error")
 
 
-logger.info("Parsing controller module loaded")

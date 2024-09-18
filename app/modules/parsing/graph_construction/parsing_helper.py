@@ -381,7 +381,7 @@ class ParseHelper:
             return False
 
         try:
-            github, repo = self.github_service._get_repo(repo_name)
+            github, repo = self.github_service.get_repo(repo_name)
             branch = repo.get_branch(branch_name)
             latest_commit_id = branch.commit.sha
 
