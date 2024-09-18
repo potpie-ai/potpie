@@ -87,14 +87,14 @@ class ParsingController:
 
                 response["status"] = ProjectStatusEnum.SUBMITTED.value
                 PostHogClient().send_event(
-                user_id,
-                "parsed_repo_event",
-                {
-                    "repo_name": repo_details.repo_name,
-                    "branch": repo_details.branch_name,
-                    "project_id": project_id,
-                },
-            )
+                    user_id,
+                    "parsed_repo_event",
+                    {
+                        "repo_name": repo_details.repo_name,
+                        "branch": repo_details.branch_name,
+                        "project_id": project_id,
+                    },
+                )
 
             return response
         except Exception as e:

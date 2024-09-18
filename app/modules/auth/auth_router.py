@@ -12,6 +12,7 @@ from app.modules.users.user_schema import CreateUser
 from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.utils.posthog_helper import PostHogClient
+
 from .auth_schema import LoginRequest
 
 auth_router = APIRouter()

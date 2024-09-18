@@ -2,7 +2,6 @@ import logging
 import os
 import shutil
 import traceback
-from asyncio import create_task
 from contextlib import contextmanager
 
 from blar_graph.db_managers import Neo4jManager
@@ -23,7 +22,6 @@ from app.modules.parsing.knowledge_graph.inference_service import InferenceServi
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
-from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.posthog_helper import PostHogClient
 
 from .parsing_schema import ParsingRequest
@@ -90,7 +88,9 @@ class ParsingService:
                 languages = repo.get_languages()
                 language = max(languages, key=languages.get).lower()
 
-            await self.analyze_directory(extracted_dir, project_id, user_id, self.db, language)
+            await self.analyze_directory(
+                extracted_dir, project_id, user_id, self.db, language
+            )
 
             message = "The project has been parsed successfully"
             await project_manager.update_project_status(
@@ -162,10 +162,10 @@ class ParsingService:
                     project_id, ProjectStatusEnum.ERROR
                 )
                 PostHogClient().send_event(
-                user_id,
-                "project_status_event",
-                {"project_id": project_id, "status": "Error"},
-            )
+                    user_id,
+                    "project_status_event",
+                    {"project_id": project_id, "status": "Error"},
+                )
             finally:
                 graph_manager.close()
         elif language != "other":

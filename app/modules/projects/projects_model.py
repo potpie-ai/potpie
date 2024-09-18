@@ -11,9 +11,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import BYTEA
 from sqlalchemy.orm import relationship
-from app.modules.search.search_models import SearchIndex #noqa
-from app.modules.tasks.task_model import Task #noqa
+
 from app.core.base_model import Base
+from app.modules.search.search_models import SearchIndex  # noqa
+from app.modules.tasks.task_model import Task  # noqa
 
 
 class Project(Base):

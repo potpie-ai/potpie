@@ -7,9 +7,10 @@ from portkey_ai import PORTKEY_GATEWAY_URL, createHeaders
 
 from app.modules.key_management.secret_manager import SecretManager
 from app.modules.users.user_preferences_model import UserPreferences
+from app.modules.utils.posthog_helper import PostHogClient
 
 from .provider_schema import ProviderInfo
-from app.modules.utils.posthog_helper import PostHogClient
+
 
 class ProviderService:
     def __init__(self, db, user_id: str):

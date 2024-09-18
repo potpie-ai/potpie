@@ -156,7 +156,7 @@ class ConversationService:
             {
                 "project_ids": conversation.project_ids,
                 "agent_ids": conversation.agent_ids,
-                "llm": provider_name
+                "llm": provider_name,
             },
         )
         return conversation_id
@@ -202,7 +202,9 @@ class ConversationService:
             provider_name = self.provider_service.get_llm_provider_name()
 
             PostHogClient().send_event(
-                user_id, "message post event", {"conversation_id": conversation_id, "llm": provider_name}
+                user_id,
+                "message post event",
+                {"conversation_id": conversation_id, "llm": provider_name},
             )
             if message_type == MessageType.HUMAN:
                 conversation = (

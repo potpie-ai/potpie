@@ -173,7 +173,7 @@ class SecretManager:
                 customer_id,
                 "secret_deletion_event",
                 {"provider": provider, "key_removed": "true"},
-            ) 
+            )
             return {"message": "Secret deleted successfully"}
         except Exception as e:
             raise HTTPException(status_code=404, detail=f"Secret not found: {str(e)}")

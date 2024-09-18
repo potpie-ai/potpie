@@ -1,13 +1,16 @@
 import asyncio
 import logging
 from typing import Any, Dict
+
 from celery import Task
+
 from app.celery.celery_app import celery_app
 from app.core.database import SessionLocal
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
 
 logger = logging.getLogger(__name__)
+
 
 class BaseTask(Task):
     _db = None
@@ -25,7 +28,11 @@ class BaseTask(Task):
 
 
 @celery_app.task(
-    bind=True, base=BaseTask, name="app.celery.tasks.parsing_tasks.process_parsing", autoretry_for=(Exception,), retry_kwargs={'max_retries': 2, 'countdown': 30}
+    bind=True,
+    base=BaseTask,
+    name="app.celery.tasks.parsing_tasks.process_parsing",
+    autoretry_for=(Exception,),
+    retry_kwargs={"max_retries": 2, "countdown": 30},
 )
 def process_parsing(
     self,
@@ -41,8 +48,9 @@ def process_parsing(
 
         async def run_parsing():
             import time
+
             start_time = time.time()  # Start timing
-            
+
             await parsing_service.parse_directory(
                 ParsingRequest(**repo_details),
                 user_id,
@@ -50,11 +58,13 @@ def process_parsing(
                 project_id,
                 cleanup_graph,
             )
-            
+
             end_time = time.time()  # End timing
             elapsed_time = end_time - start_time
-            logger.info(f"Parsing process took {elapsed_time:.2f} seconds for project {project_id}")
-        
+            logger.info(
+                f"Parsing process took {elapsed_time:.2f} seconds for project {project_id}"
+            )
+
         asyncio.run(run_parsing())
 
         logger.info(f"Parsing process completed for project {project_id}")

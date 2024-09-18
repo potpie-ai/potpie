@@ -1,4 +1,5 @@
-import os 
+import os
+
 from posthog import Posthog
 
 
@@ -8,7 +9,7 @@ class PostHogClient:
         self.posthog_host = os.getenv("POSTHOG_HOST")
         self.posthog = Posthog(self.api_key, host=self.posthog_host)
 
-    def send_event(self,user_id: str, event_name: str, properties: dict):
+    def send_event(self, user_id: str, event_name: str, properties: dict):
         """
         Sends a custom event to PostHog.
         Args:
@@ -20,7 +21,7 @@ class PostHogClient:
             self.posthog.capture(
                 user_id,  # User's unique identifier
                 event=event_name,  # The event name
-                properties=properties  # Additional event metadata
+                properties=properties,  # Additional event metadata
             )
         except Exception as e:
             # Basic error handling; could be expanded based on use case
