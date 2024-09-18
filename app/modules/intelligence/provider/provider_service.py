@@ -201,7 +201,7 @@ class ProviderService:
 
     def get_llm_provider_name(self) -> str:
         """Returns the name of the LLM provider based on the LLM instance."""
-        llm = self.get_llm()
+        llm = self.get_large_llm()
 
         # Check the type of the LLM to determine the provider
         if isinstance(llm, ChatOpenAI):
