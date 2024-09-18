@@ -104,9 +104,8 @@ class UserService:
             projects = self.db.query(Project).filter(Project.id.in_(project_ids)).all()
             project_map = {project.id: project for project in projects}
             
-            # Attach projects to conversations using the new loaded_projects property
             for conversation in conversations:
-                conversation.projects = [project_map[pid] for pid in conversation.project_ids if pid in project_map]
+                conversation.projects = [project_map[pid] for pid in conversation.project_ids]
             
             logger.info(
                 f"Retrieved {len(conversations)} conversations with projects for user {user_id}"
