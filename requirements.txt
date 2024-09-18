@@ -58,3 +58,5 @@ redis
 flower
 chardet
 sentry_sdk
+posthog
+newrelic==9.0.0

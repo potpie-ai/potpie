@@ -28,7 +28,11 @@ class BaseTask(Task):
 
 
 @celery_app.task(
-    bind=True, base=BaseTask, name="app.celery.tasks.parsing_tasks.process_parsing"
+    bind=True,
+    base=BaseTask,
+    name="app.celery.tasks.parsing_tasks.process_parsing",
+    autoretry_for=(Exception,),
+    retry_kwargs={"max_retries": 2, "countdown": 30},
 )
 def process_parsing(
     self,
@@ -41,19 +45,32 @@ def process_parsing(
     logger.info(f"Task received: Starting parsing process for project {project_id}")
     try:
         parsing_service = ParsingService(self.db, user_id)
-        asyncio.run(
-            parsing_service.parse_directory(
+
+        async def run_parsing():
+            import time
+
+            start_time = time.time()  # Start timing
+
+            await parsing_service.parse_directory(
                 ParsingRequest(**repo_details),
                 user_id,
                 user_email,
                 project_id,
                 cleanup_graph,
             )
-        )
+
+            end_time = time.time()  # End timing
+            elapsed_time = end_time - start_time
+            logger.info(
+                f"Parsing process took {elapsed_time:.2f} seconds for project {project_id}"
+            )
+
+        asyncio.run(run_parsing())
+
         logger.info(f"Parsing process completed for project {project_id}")
     except Exception as e:
         logger.error(f"Error during parsing for project {project_id}: {str(e)}")
-        raise self.retry(exc=e, countdown=60, max_retries=3)
+        raise  # Let the automatic retry handle it
 
 
 logger.info("Parsing tasks module loaded")
