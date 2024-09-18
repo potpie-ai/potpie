@@ -20,9 +20,13 @@ class GetCodeFromMultipleNodeIdsInput(BaseModel):
     repo_id: str = Field(description="The repository ID, this is a UUID")
     node_ids: List[str] = Field(description="List of node IDs, this is a UUID")
 
+
 class GetCodeFromProbableNodeNameInput(BaseModel):
     project_id: str = Field(description="The project ID, this is a UUID")
-    probable_node_name: str = Field(description="A probable node name in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path'")
+    probable_node_name: str = Field(
+        description="A probable node name in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path'"
+    )
+
 
 class GetCodeFromNodeIdTool:
     name = "get_code_from_node_id"
@@ -130,13 +134,16 @@ class GetCodeFromNodeIdTool:
             "code_content": code_content,
             "docstring": docstring,
         }
-    
-    
-    async def find_node_from_probable_name(self, project_id: str, probable_node_name: str) -> Dict[str, Any]:
+
+    async def find_node_from_probable_name(
+        self, project_id: str, probable_node_name: str
+    ) -> Dict[str, Any]:
         try:
             node_id_query = " ".join(probable_node_name.split(":"))
-            relevance_search = await self.search_service.search_codebase(project_id, node_id_query)
-            
+            relevance_search = await self.search_service.search_codebase(
+                project_id, node_id_query
+            )
+
             if relevance_search:
                 node_id = relevance_search[0]["node_id"]
             else:
@@ -144,16 +151,21 @@ class GetCodeFromNodeIdTool:
                 node_id = node_data["node_id"]
 
             if not node_id:
-                return {"error": f"Node with name '{probable_node_name}' not found in project '{project_id}'"}
+                return {
+                    "error": f"Node with name '{probable_node_name}' not found in project '{project_id}'"
+                }
 
             return self.get_code_from_node_id_tool.run(project_id, node_id)
         except Exception as e:
             print(f"Unexpected error in GetCodeFromNodeNameTool: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
-        
-    
-    async def get_code_from_probable_node_name(self, project_id: str, probable_node_name: str) -> Dict[str, Any]:
-        return asyncio.run(self.find_node_from_probable_name(project_id, probable_node_name))
+
+    async def get_code_from_probable_node_name(
+        self, project_id: str, probable_node_name: str
+    ) -> Dict[str, Any]:
+        return asyncio.run(
+            self.find_node_from_probable_name(project_id, probable_node_name)
+        )
 
     @staticmethod
     def _get_relative_file_path(file_path: str) -> str:

@@ -4,7 +4,6 @@ from typing import Dict, List, Optional
 
 from langchain.output_parsers import PydanticOutputParser
 from langchain.prompts import ChatPromptTemplate
-from langchain_openai.chat_models import ChatOpenAI
 from neo4j import GraphDatabase
 from sentence_transformers import SentenceTransformer
 from sqlalchemy.orm import Session
