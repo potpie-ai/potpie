@@ -16,8 +16,13 @@ class UserController:
         conversations = self.service.get_conversations_with_projects_for_user(user_id, start, limit)
         response = []
         for conversation in conversations:
-            repo_name = conversation.projects[0].repo_name
-            branch_name = conversation.projects[0].branch_name
+            projects = conversation.projects
+            if projects:
+                repo_name = projects[0].repo_name
+                branch_name = projects[0].branch_name
+            else:
+                repo_name = None
+                branch_name = None
             
             response.append(UserConversationListResponse(
                 id=conversation.id,
@@ -27,7 +32,7 @@ class UserController:
                 project_ids=conversation.project_ids,
                 repository=repo_name,
                 branch=branch_name,
-                agent_id=conversation.agent_ids[0],
+                agent_id=conversation.agent_ids[0] if conversation.agent_ids else None,
                 created_at=conversation.created_at.isoformat(),
                 updated_at=conversation.updated_at.isoformat(),
             ))

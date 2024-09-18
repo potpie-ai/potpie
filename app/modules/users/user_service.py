@@ -98,16 +98,7 @@ class UserService:
                 .all()
             )
             
-            # Fetch projects for all conversations in a single query
-            project_ids = set()
-            for conversation in conversations:
-                project_ids.update(conversation.project_ids)
-            
-            projects = self.db.query(Project).filter(Project.id.in_(project_ids)).all()
-            project_map = {project.id: project for project in projects}
-            
-            for conversation in conversations:
-                conversation.projects = [project_map[pid] for pid in conversation.project_ids]
+            # The projects are now automatically loaded due to the relationship
             
             logger.info(
                 f"Retrieved {len(conversations)} conversations with projects for user {user_id}"

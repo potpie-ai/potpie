@@ -3,17 +3,16 @@ import enum
 from sqlalchemy import ARRAY, TIMESTAMP, Column
 from sqlalchemy import Enum as SQLAEnum
 from sqlalchemy import ForeignKey, String, func
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, Session
+from sqlalchemy.ext.hybrid import hybrid_property
 
 from app.core.base_model import Base
 from app.modules.conversations.message.message_model import Message  # noqa
-
 
 class ConversationStatus(enum.Enum):
     ACTIVE = "active"
     ARCHIVED = "archived"
     DELETED = "deleted"
-
 
 class Conversation(Base):
     __tablename__ = "conversations"
@@ -44,3 +43,11 @@ class Conversation(Base):
     messages = relationship(
         "Message", back_populates="conversation", cascade="all, delete-orphan"
     )
+
+    @hybrid_property
+    def projects(self):
+        from app.modules.projects.projects_model import Project
+        from app.core.database import SessionLocal
+
+        with SessionLocal() as session:
+            return session.query(Project).filter(Project.id.in_(self.project_ids)).all()
