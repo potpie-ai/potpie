@@ -113,7 +113,7 @@ pipeline {
 
                     try {
                         sh """
-                        kubectl set image deployment/celery-api-deployment celery-server=${DOCKER_REGISTRY}/celery-api:${imageTag} -n ${params.namespace}
+                        kubectl set image deployment/celery-api-deployment celery-api=${DOCKER_REGISTRY}/celery-api:${imageTag} -n ${params.namespace}
                         kubectl rollout status deployment/celery-api-deployment -n ${params.namespace}
                         """
                         imageDeploySucceeded = true
