@@ -41,5 +41,5 @@ EXPOSE 5555
 # Define environment variable
 ENV PYTHONUNBUFFERED=1
 
-# Run Supervisor when the container launches
-CMD ["supervisord", "-n", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+# Run Supervisor when the container launches, but only start the Gunicorn program
+CMD ["supervisorctl", "start", "gunicorn"]
