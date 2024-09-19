@@ -36,10 +36,10 @@ class UnitTestAgent:
     class TestAgentResponse(BaseModel):
         response: str = Field(
             ...,
-            description="String response containing the test plan and the test suite",
+            description="String response containing the Markdown formatted test plan and the test suite code block",
         )
         citations: List[str] = Field(
-            ..., description="List of file names referenced in the response"
+            ..., description="Exhaustive List of file names referenced in the response"
         )
 
     async def create_tasks(
@@ -63,7 +63,12 @@ class UnitTestAgent:
             Process:
             1. Test Setup:
             - Import necessary testing frameworks and modules
+            - Review the provided test plan and the fetched node details from previous tasks.
+            - Identify any additional classes/functions required for mocking:
+               a. Use the get_code_from_probable_node_name tool to fetch its code if not in the provided node IDs. The probable node names look like "filename:class_name" or "filename:function_name"
+               b. Validate the result of the get_code_from_probable_node_name tool against the probable node name. Discard from context if it does not match. 
             - Set up any required test fixtures or mocks
+            - Refer the code context closely to write accurate tests.
 
             2. Test Writing:
             For each scenario in the test plan:
@@ -71,6 +76,7 @@ class UnitTestAgent:
             - Implement the test using the Arrange-Act-Assert pattern
             - Add clear comments explaining the purpose and expectations of each test
             - Refer to the {query} and {history[-min(5, len(history)):]} for any specific instructions and follow them.
+            - Write COMPLETE code for the unit tests.
 
             3. Edge Case and Error Handling:
             - Implement tests for all identified edge cases
@@ -90,11 +96,15 @@ class UnitTestAgent:
             - Ask yourself: "Would another developer understand the purpose and expectations of each test?"
             - Refine and improve based on your reflection
 
-            Project Id: {project_id}""",
-            expected_output=f"Outline the test plan and write unit tests for each node based on the test plan. Write complete code for the unit tests. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model :\n{self.TestAgentResponse.model_json_schema()}",
+            Project Id: {project_id}
+            For citations, include only the file_path of the nodes fetched and used.
+            Ensure that your final response is JSON serialisable but dont wrap it in ```json or ```python or ```code or ```
+            Ensure that your output follows the following pydantic model: {self.TestAgentResponse.model_json_schema()}""",
+            expected_output=f"Outline the test plan and write unit tests for each node based on the test plan.",
             agent=unit_test_agent,
             context=[fetch_docstring_task, test_plan_task],
             output_pydantic=self.TestAgentResponse,
+            tools=[self.code_tools[2]]
         )
 
         return fetch_docstring_task, test_plan_task, unit_test_task

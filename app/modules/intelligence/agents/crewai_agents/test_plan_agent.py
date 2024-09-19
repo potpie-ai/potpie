@@ -45,24 +45,15 @@ class TestPlanAgent:
         fetch_docstring_task = Task(
             description=f"""
             1. Analyze the query: "{query}"
-            2. Fetch docstrings and code for the following node IDs using the get_code_from_node_id tool: {', '.join(node_ids_list)} for Project id {project_id}
-            3. Identify any additional relevant files and functions based on the query.
-            4. For each additional identified file/function:
-               a. Use the get_code_from_probable_node_name tool to fetch its code if not in the provided node IDs. The probable node names look like "filename:class_name" or "filename:function_name"
-               b. Validate the result of the get_code_from_probable_node_name tool against the probable node name. Discard from context if it does not match. 
-            5. For Project ID: {project_id}
-
-            Reasoning process:
-            - Consider the context and intent of the query.
-            - Think about potential related components that might not be explicitly mentioned.
-            - Reflect on your choices: Are there any other relevant parts of the codebase I might be missing?
+            2. Fetch docstrings and code ONLY FOR THE FOLLOWING NODE IDs using the get_code_from_node_id tool: {', '.join(node_ids_list)} for Project id {project_id}
+            3. For Project ID: {project_id}
 
             Final output:
             Provide a dictionary mapping node IDs to their docstring and code, including both initially provided and newly discovered relevant code.
             """,
-            expected_output="A dictionary mapping node IDs to their docstring and code, including newly discovered relevant code",
+            expected_output="A dictionary mapping node IDs to their docstring and code",
             agent=test_plan_agent,
-            tools=self.code_tools,
+            tools=[self.code_tools[0], self.code_tools[1]],
         )
 
         test_plan_task = Task(
@@ -77,16 +68,11 @@ class TestPlanAgent:
             - For each function/method, list:
                 a) Happy path scenarios
                 b) Edge cases (e.g., empty inputs, maximum values, type mismatches)
-                c) Error conditions
-                d) Performance considerations (if applicable)
-                e) Security implications (if applicable)
 
             3. Test Plan Creation:
             - For each scenario, specify:
-                a) Preconditions
-                b) Input data
-                c) Expected output or behavior
-                d) Postconditions
+                a) Input data
+                b) Expected output or behavior
 
             4. Reflection:
             - Review your test plan
@@ -94,7 +80,7 @@ class TestPlanAgent:
             - Refine and expand the plan based on your reflection
 
             Provide a detailed test plan for each function/method, following this structured approach.""",
-            expected_output="A dictionary mapping node IDs to their test plans (happy paths and edge cases)",
+            expected_output=f"Outline the test plan including happy paths and edge cases for each node.",
             agent=test_plan_agent,
             context=[fetch_docstring_task],
         )

@@ -89,11 +89,19 @@ class IntegrationTestAgent:
 
             # Use RAG Agent to get context
             test_response = await kickoff_integration_test_crew(
-                query, project_id, node_ids, self.db, self.llm
+                query, project_id, node_ids, self.db, self.llm, validated_history
             )
+
+            if test_response.pydantic:
+                response = test_response.pydantic.response
+                citations = test_response.pydantic.citations
+            else:
+                response = test_response.raw
+                citations = []
+
             tool_results = [
                 SystemMessage(
-                    content=f"Generated Test plan and test suite:\n {test_response.pydantic.response}"
+                    content=f"Generated Test plan and test suite:\n {response}"
                 )
             ]
 
@@ -114,7 +122,7 @@ class IntegrationTestAgent:
                 )
                 yield json.dumps(
                     {
-                        "citations": test_response.pydantic.citations,
+                        "citations": citations,
                         "message": content,
                     }
                 )
@@ -126,5 +134,5 @@ class IntegrationTestAgent:
             )
 
         except Exception as e:
-            logger.error(f"Error during QNAAgent run: {str(e)}", exc_info=True)
+            logger.error(f"Error during Integration Test Agent run: {str(e)}", exc_info=True)
             yield f"An error occurred: {str(e)}"

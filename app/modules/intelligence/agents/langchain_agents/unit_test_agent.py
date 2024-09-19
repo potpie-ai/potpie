@@ -90,12 +90,20 @@ class UnitTestAgent:
             test_response = await kickoff_unit_test_crew(
                 query, validated_history, project_id, node_ids, self.db, self.llm
             )
+
+            if test_response.pydantic: 
+                citations = test_response.pydantic.ciations
+                response = test_response.pydantic.response
+            else:
+                citations = []
+                response = test_response.raw
+
             tool_results = [
                 SystemMessage(
-                    content=f"Generated Test plan and test suite:\n {test_response.pydantic.response}"
+                    content=f"Generated Test plan and test suite:\n {response}"
                 )
             ]
-
+           
             inputs = {
                 "history": validated_history,
                 "tool_results": tool_results,
@@ -113,7 +121,7 @@ class UnitTestAgent:
                 )
                 yield json.dumps(
                     {
-                        "citations": test_response.pydantic.citations,
+                        "citations": citations,
                         "message": content,
                     }
                 )
