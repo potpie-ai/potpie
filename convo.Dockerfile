@@ -30,7 +30,7 @@ COPY . .
 ENV NEW_RELIC_CONFIG_FILE=/app/newrelic.ini
 
 # Copy the Supervisor configuration file into the container
-COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY convo-api-supervisord.conf /etc/supervisor/conf.d/convo-api-supervisord.conf
 
 # Expose the port that the app runs on
 EXPOSE 8001
@@ -41,5 +41,5 @@ EXPOSE 5555
 # Define environment variable
 ENV PYTHONUNBUFFERED=1
 
-# Run Supervisor when the container launches
-CMD ["supervisord", "start", "gunicorn"]
+# Run Supervisor when the container launches, but only start the Gunicorn program
+CMD ["supervisord", "-n", "-c", "/etc/supervisor/conf.d/convo-api-supervisord.conf"]
