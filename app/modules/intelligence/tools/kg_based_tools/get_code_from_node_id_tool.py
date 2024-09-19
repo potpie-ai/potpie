@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.config_provider import config_provider
 from app.modules.github.github_service import GithubService
 from app.modules.projects.projects_model import Project
+from app.modules.search.search_service import SearchService
 
 
 class GetCodeFromNodeIdInput(BaseModel):
@@ -37,6 +38,7 @@ class GetCodeFromNodeIdTool:
     def __init__(self, sql_db: Session):
         self.sql_db = sql_db
         self.neo4j_driver = self._create_neo4j_driver()
+        self.search_service = SearchService(self.sql_db)
 
     def _create_neo4j_driver(self) -> GraphDatabase.driver:
         neo4j_config = config_provider.get_neo4j_config()
@@ -139,28 +141,26 @@ class GetCodeFromNodeIdTool:
         self, project_id: str, probable_node_name: str
     ) -> Dict[str, Any]:
         try:
-            node_id_query = " ".join(probable_node_name.split(":"))
+            node_id_query = " ".join(probable_node_name.split("/")[-1].split(":"))
             relevance_search = await self.search_service.search_codebase(
                 project_id, node_id_query
             )
 
             if relevance_search:
                 node_id = relevance_search[0]["node_id"]
-            else:
-                node_data = self.get_node_data(project_id, probable_node_name)
-                node_id = node_data["node_id"]
+            
 
             if not node_id:
                 return {
                     "error": f"Node with name '{probable_node_name}' not found in project '{project_id}'"
                 }
 
-            return self.get_code_from_node_id_tool.run(project_id, node_id)
+            return await self.arun(project_id, node_id)
         except Exception as e:
             print(f"Unexpected error in GetCodeFromNodeNameTool: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
-    async def get_code_from_probable_node_name(
+    def get_code_from_probable_node_name(
         self, project_id: str, probable_node_name: str
     ) -> Dict[str, Any]:
         return asyncio.run(

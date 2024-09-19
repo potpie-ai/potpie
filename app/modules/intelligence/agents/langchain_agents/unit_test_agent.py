@@ -88,7 +88,7 @@ class UnitTestAgent:
             ]
 
             test_response = await kickoff_unit_test_crew(
-                query, project_id, node_ids, self.db, self.llm
+                query, validated_history, project_id, node_ids, self.db, self.llm
             )
             tool_results = [
                 SystemMessage(
