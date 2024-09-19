@@ -29,11 +29,11 @@ echo "Postgres is up - applying database migrations"
 alembic upgrade head
 
 echo "Starting momentum application..."
-gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app &
+gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level info app.main:app &
 
 echo "Starting Celery worker"
 # Start Celery worker with the new setup
-celery -A app.celery.celery_app worker --loglevel=debug -Q "${CELERY_QUEUE_NAME}_process_repository" -E --concurrency=1 --pool=solo &
+celery -A app.celery.celery_app worker --loglevel=info -Q "${CELERY_QUEUE_NAME}_process_repository" -E --concurrency=1 --pool=solo &
 
 # Start Flower for monitoring (if needed)
 celery -A app.celery.celery_app flower &
