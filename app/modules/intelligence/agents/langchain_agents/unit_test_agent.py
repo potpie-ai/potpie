@@ -60,7 +60,7 @@ class UnitTestAgent:
                 HumanMessagePromptTemplate.from_template(human_prompt.text),
             ]
         )
-        return prompt_template | self.llm
+        return prompt_template | self.mini_llm
 
     async def run(
         self,
@@ -88,7 +88,7 @@ class UnitTestAgent:
             ]
 
             test_response = await kickoff_unit_test_crew(
-                query, validated_history, project_id, node_ids, self.db, self.llm
+                query, validated_history, project_id, node_ids, self.db, self.mini_llm
             )
 
             if test_response.pydantic: 

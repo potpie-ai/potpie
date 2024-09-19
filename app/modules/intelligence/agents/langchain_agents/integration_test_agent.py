@@ -60,7 +60,7 @@ class IntegrationTestAgent:
                 HumanMessagePromptTemplate.from_template(human_prompt.text),
             ]
         )
-        return prompt_template | self.llm
+        return prompt_template | self.mini_llm
 
     async def run(
         self,
@@ -89,7 +89,7 @@ class IntegrationTestAgent:
 
             # Use RAG Agent to get context
             test_response = await kickoff_integration_test_crew(
-                query, project_id, node_ids, self.db, self.llm, validated_history
+                query, project_id, node_ids, self.db, self.mini_llm, validated_history
             )
 
             if test_response.pydantic:
