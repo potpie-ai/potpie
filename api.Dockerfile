@@ -30,7 +30,7 @@ COPY . .
 ENV NEW_RELIC_CONFIG_FILE=/app/newrelic.ini
 
 # Copy the Supervisor configuration file into the container
-COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY mom-api-supervisord.conf /etc/supervisor/conf.d/mom-api-supervisord.conf
 
 # Expose the port that the app runs on
 EXPOSE 8001
@@ -42,4 +42,4 @@ EXPOSE 5555
 ENV PYTHONUNBUFFERED=1
 
 # Run Supervisor when the container launches, but only start the Gunicorn program
-CMD ["supervisorctl", "start", "gunicorn"]
+CMD ["supervisord", "-n", "-c", "/etc/supervisor/conf.d/mom-api-supervisord.conf"]
