@@ -3,10 +3,10 @@ from posthog import Posthog
 
 class PostHogClient:
     def __init__(self):
-        self.is_development = os.getenv("ENV") == "development"
+        self.is_staging_or_production = os.getenv("ENV") in ["staging", "production"]
         
         # Only initialize PostHog if not in development mode
-        if not self.is_development:
+        if self.is_staging_or_production:
             self.api_key = os.getenv("POSTHOG_API_KEY")
             self.posthog_host = os.getenv("POSTHOG_HOST")
             self.posthog = Posthog(self.api_key, host=self.posthog_host)
@@ -21,7 +21,7 @@ class PostHogClient:
             event_name (str): The name of the event to track.
             properties (dict): Additional properties related to the event.
         """
-        if self.is_development:
+        if not self.is_staging_or_production:
             return
         
         if self.posthog is not None:  # Ensure posthog is initialized
