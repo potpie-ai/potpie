@@ -15,7 +15,7 @@ class PostHogClient:
 
     def send_event(self, user_id: str, event_name: str, properties: dict):
         """
-        Sends a custom event to PostHog unless the environment is set to development.
+        Sends a custom event to PostHog in the stage and production environment.
         Args:
             user_id (str): The ID of the user performing the action.
             event_name (str): The name of the event to track.
