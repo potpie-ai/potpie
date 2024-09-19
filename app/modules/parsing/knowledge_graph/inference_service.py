@@ -107,7 +107,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
             }
 
     def batch_nodes(
-        self, nodes: List[Dict], max_tokens: int = 32000
+        self, nodes: List[Dict], max_tokens: int = 10000
     ) -> List[List[DocstringRequest]]:
         batches = []
         current_batch = []
@@ -135,7 +135,9 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
                 continue  # Skip nodes that exceed the max_tokens limit
 
             if current_tokens + node_tokens > max_tokens:
-                batches.append(current_batch)
+                logger.info(f"Batch exceeded: current_tokens={current_tokens}, adding node_tokens={node_tokens}")
+                if current_batch:
+                    batches.append(current_batch)
                 current_batch = []
                 current_tokens = 0
 
@@ -202,7 +204,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
         self,
         entry_points_neighbors: Dict[str, List[str]],
         docstring_lookup: Dict[str, str],
-        max_tokens: int = 32000,
+        max_tokens: int = 10000,
     ) -> List[List[Dict[str, str]]]:
         batches = []
         current_batch = []
@@ -228,7 +230,9 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
                 continue  # Skip entry points that exceed the max_tokens limit
 
             if current_tokens + entry_point_tokens > max_tokens:
-                batches.append(current_batch)
+                logger.info(f"Batch exceeded: current_tokens={current_tokens}")
+                if current_batch:
+                    batches.append(current_batch)
                 current_batch = []
                 current_tokens = 0
 
