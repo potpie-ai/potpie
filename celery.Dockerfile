@@ -38,5 +38,5 @@ EXPOSE 5555
 # Define environment variable
 ENV PYTHONUNBUFFERED=1
 
-# Run Supervisor when the container launches, but only starting Celery and Flower
-CMD ["sh", "-c", "supervisord -n -c /etc/supervisor/conf.d/supervisord.conf & supervisorctl start celery flower && wait"]
+# Run Supervisor when the container launches, but start only Celery and Flower
+CMD ["sh", "-c", "supervisord -n -c /etc/supervisor/conf.d/supervisord.conf & sleep 5 && supervisorctl start celery flower && wait"]
