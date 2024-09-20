@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.config_provider import config_provider
 from app.modules.github.github_service import GithubService
 from app.modules.projects.projects_model import Project
+from app.modules.search.search_service import SearchService
 
 
 class GetCodeFromNodeIdTool:
@@ -16,6 +17,7 @@ class GetCodeFromNodeIdTool:
     def __init__(self, sql_db: Session):
         self.sql_db = sql_db
         self.neo4j_driver = self._create_neo4j_driver()
+        self.search_service = SearchService(self.sql_db)
 
     def _create_neo4j_driver(self) -> GraphDatabase.driver:
         neo4j_config = config_provider.get_neo4j_config()

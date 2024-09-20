@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, Dict, List
 
 from langchain.tools import StructuredTool
@@ -8,16 +9,24 @@ from sqlalchemy.orm import Session
 from app.core.config_provider import config_provider
 from app.modules.github.github_service import GithubService
 from app.modules.projects.projects_model import Project
+from app.modules.search.search_service import SearchService
 
 
 class GetCodeFromNodeIdInput(BaseModel):
-    repo_id: str = Field(description="The repository ID")
-    node_id: str = Field(description="The node ID")
+    repo_id: str = Field(description="The repository ID, this is a UUID")
+    node_id: str = Field(description="The node ID, this is a UUID")
 
 
 class GetCodeFromMultipleNodeIdsInput(BaseModel):
-    repo_id: str = Field(description="The repository ID")
-    node_ids: List[str] = Field(description="List of node IDs")
+    repo_id: str = Field(description="The repository ID, this is a UUID")
+    node_ids: List[str] = Field(description="List of node IDs, this is a UUID")
+
+
+class GetCodeFromProbableNodeNameInput(BaseModel):
+    project_id: str = Field(description="The project ID, this is a UUID")
+    probable_node_name: str = Field(
+        description="A probable node name in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path'"
+    )
 
 
 class GetCodeFromNodeIdTool:
@@ -29,6 +38,7 @@ class GetCodeFromNodeIdTool:
     def __init__(self, sql_db: Session):
         self.sql_db = sql_db
         self.neo4j_driver = self._create_neo4j_driver()
+        self.search_service = SearchService(self.sql_db)
 
     def _create_neo4j_driver(self) -> GraphDatabase.driver:
         neo4j_config = config_provider.get_neo4j_config()
@@ -127,6 +137,36 @@ class GetCodeFromNodeIdTool:
             "docstring": docstring,
         }
 
+    async def find_node_from_probable_name(
+        self, project_id: str, probable_node_name: str
+    ) -> Dict[str, Any]:
+        try:
+            node_id_query = " ".join(probable_node_name.split("/")[-1].split(":"))
+            relevance_search = await self.search_service.search_codebase(
+                project_id, node_id_query
+            )
+
+            if relevance_search:
+                node_id = relevance_search[0]["node_id"]
+            
+
+            if not node_id:
+                return {
+                    "error": f"Node with name '{probable_node_name}' not found in project '{project_id}'"
+                }
+
+            return await self.arun(project_id, node_id)
+        except Exception as e:
+            print(f"Unexpected error in GetCodeFromNodeNameTool: {str(e)}")
+            return {"error": f"An unexpected error occurred: {str(e)}"}
+
+    def get_code_from_probable_node_name(
+        self, project_id: str, probable_node_name: str
+    ) -> Dict[str, Any]:
+        return asyncio.run(
+            self.find_node_from_probable_name(project_id, probable_node_name)
+        )
+
     @staticmethod
     def _get_relative_file_path(file_path: str) -> str:
         parts = file_path.split("/")
@@ -157,13 +197,28 @@ def get_code_tools(sql_db: Session) -> List[StructuredTool]:
         StructuredTool.from_function(
             func=tool_instance.run,
             name="Get Code and docstring From Node ID",
-            description="Retrieves code for a specific node id in a repository given its node ID",
+            description="""Retrieves code and docstring for a specific node id in a repository given its node ID
+                           Inputs for the run_multiple method:
+                           - repo_id (str): The repository ID to retrieve code and docstring for, this is a UUID.
+                           - node_ids (List[str]): A list of node IDs to retrieve code and docstring for, this is a UUID.""",
             args_schema=GetCodeFromNodeIdInput,
         ),
         StructuredTool.from_function(
             func=tool_instance.run_multiple,
             name="Get Code and docstring From Multiple Node IDs",
-            description="Retrieves code for multiple node ids in a repository given their node IDs",
+            description="""Retrieves code and docstring for multiple node ids in a repository given their node IDs
+                    Inputs for the run_multiple method:
+                    - repo_id (str): The repository ID to retrieve code and docstring for, this is a UUID.
+                    - node_ids (List[str]): A list of node IDs to retrieve code and docstring for, this is a UUID.""",
             args_schema=GetCodeFromMultipleNodeIdsInput,
+        ),
+        StructuredTool.from_function(
+            func=tool_instance.get_code_from_probable_node_name,
+            name="Get Code and docstring From Probable Node Name",
+            description="""Retrieves code and docstring for the closest node name in a repository. Node names are in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path',
+                    Useful to extract code for a function or file mentioned in a stacktrace or error message. Inputs for the get_code_from_probable_node_name method:
+                    - project_id (str): The project ID to retrieve code and docstring for, this is a UUID.
+                    - probable_node_name (str): A probable node name in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path'.""",
+            args_schema=GetCodeFromProbableNodeNameInput,
         ),
     ]

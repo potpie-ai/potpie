@@ -19,7 +19,7 @@ from app.modules.intelligence.agents.crewai_agents.rag_agent import kickoff_rag_
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.tools.kg_based_tools.code_tools import CodeTools
+from app.modules.intelligence.tools.kg_based_tools.graph_tools import CodeTools
 
 logger = logging.getLogger(__name__)
 

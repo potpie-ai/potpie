@@ -42,7 +42,7 @@ class IntegrationTestAgent:
             description="String response containing the test plan and the test suite",
         )
         citations: List[str] = Field(
-            ..., description="List of file names referenced in the response"
+            ..., description="Exhaustive List of file names referenced in the response"
         )
 
     async def create_tasks(
@@ -51,6 +51,7 @@ class IntegrationTestAgent:
         project_id: str,
         query: str,
         graph: Dict[str, Any],
+        history: List[str],
         test_plan_agent,
         integration_test_agent,
     ):
@@ -60,46 +61,50 @@ class IntegrationTestAgent:
 
         integration_test_task = Task(
             description=f"""
-1. Analyze the provided codebase:
-   - Code structure is defined in the {graph}
-   - Determine the programming language used
-   - Identify the main components and their interactions
-   - Note any external dependencies or services
-   - Refer the {query} for any specific instructions and follow them.
+            1. Analyze the provided codebase:
+            - Code structure is defined in the {graph}
+            - Determine the programming language used
+            - Identify the main components and their interactions
+            - Refer the query: '{query}'\n and the history: \n'{history[-min(5, len(history)):]}' for any specific instructions and follow them.
+            - Review the provided test plan and the fetched node details from previous tasks.
+            - Identify any additional classes/functions required for mocking:
+                a. Use the get_code_from_probable_node_name tool to fetch its code if not in the provided node IDs. The probable node names look like "filename:class_name" or "filename:function_name"
+                b. Validate the result of the get_code_from_probable_node_name tool against the probable node name. Discard from context if it does not match. 
+            - Set up any required test fixtures or mocks
+            - Refer the code context closely to write accurate tests.
 
-2. Choose an appropriate testing framework based on the language used in the codebase.
 
-3. Write a comprehensive integration test suite that follows the test plan and includes:
-   - Setup and teardown procedures for each test
-   - Mocking of external services and dependencies
-   - Tests for all major integration points between components
-   - relevant imports. If you don't know the exact import, DO NOT GUESS, use a placeholder and mention it to the user.
+            2. Choose an appropriate testing framework based on the language used in the codebase.
 
-4. Follow these best practices:
-   - Use descriptive test names that explain the scenario being tested
-   - Group related tests together
-   - Ensure each test is independent and can run in isolation
-   - Use appropriate assertions to validate expected outcomes
-   - Include comments explaining complex test logic or setup
+            3. Write a comprehensive integration test suite that follows the test plan and includes:
+            - Setup and teardown procedures for each test
+            - Mocking of external services and dependencies
+            - Tests for all major integration points between components
+            - relevant imports. If you don't know the exact import, DO NOT GUESS, use a placeholder and mention it to the user.
 
-5. Provide a brief explanation of your testing strategy and any assumptions made.
+            4. Follow these best practices:
+            - Use descriptive test names that explain the scenario being tested
+            - Group related tests together
+            - Ensure each test is independent and can run in isolation
+            - Use appropriate assertions to validate expected outcomes
+            - Include comments explaining complex test logic or setup
 
-Output:
-- A complete integration test suite in the appropriate language and framework
-- Setup and teardown procedures
-- Mocking implementations for external dependencies
-- A summary of the testing strategy and coverage
+            5.Output:
+            - A complete integration test suite in the appropriate language and framework
+            - Setup and teardown procedures
+            - Mocking implementations for external dependencies
 
-Additional Notes:
-- If the codebase uses a specific testing framework or follows certain testing conventions, adhere to those.
-- Consider performance implications and optimize tests where possible without sacrificing coverage.
-- If you encounter any ambiguities or need more information about the codebase, request clarification before proceeding.
+            Additional Notes:
+            - If the codebase uses a specific testing framework or follows certain testing conventions, adhere to those.
+            - Consider performance implications and optimize tests where possible without sacrificing coverage.
+            - If you encounter any ambiguities or need more information about the codebase, request clarification before proceeding.
 
-Remember, the goal is to create a robust, maintainable, and comprehensive integration test suite that will help ensure the reliability and correctness of the system's component interactions.""",
-            expected_output=f"Write COMPLETE CODE for integration tests for each node based on the test plan. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model :\n{self.TestAgentResponse.model_json_schema()}",
+            Remember, the goal is to create a robust, maintainable, and comprehensive integration test suite that will help ensure the reliability and correctness of the system's component interactions.
+            Ensure that your final response is JSON serialisable but dont wrap it in ```json or ```python or ```code or ```""",
+            expected_output=f"Write COMPLETE CODE for integration tests for each node based on the test plan. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model:\n{self.TestAgentResponse.model_json_schema()}",
             agent=integration_test_agent,
             context=[fetch_docstring_task, test_plan_task],
-            output_pydantic=self.TestAgentResponse,
+            output_pydantic=self.TestAgentResponse
         )
 
         return fetch_docstring_task, test_plan_task, integration_test_task
@@ -110,12 +115,13 @@ Remember, the goal is to create a robust, maintainable, and comprehensive integr
         node_ids: List[NodeContext],
         query: str,
         graph: Dict[str, Any],
+        history: List,
     ) -> Dict[str, str]:
         os.environ["OPENAI_API_KEY"] = self.openai_api_key
 
         test_plan_agent, integration_test_agent = await self.create_agents()
         docstring_task, test_plan_task, integration_test_task = await self.create_tasks(
-            node_ids, project_id, query, graph, test_plan_agent, integration_test_agent
+            node_ids, project_id, query, graph, history, test_plan_agent, integration_test_agent
         )
 
         crew = Crew(
@@ -126,12 +132,11 @@ Remember, the goal is to create a robust, maintainable, and comprehensive integr
         )
 
         result = await crew.kickoff_async()
-
         return result
 
 
 async def kickoff_integration_test_crew(
-    query: str, project_id: str, node_ids: List[NodeContext], sql_db, llm
+    query: str, project_id: str, node_ids: List[NodeContext], sql_db, llm, history: List[str]
 ) -> Dict[str, str]:
     graph = GetCodeGraphFromNodeIdTool(sql_db).run(project_id, node_ids[0].node_id)
 
@@ -156,5 +161,5 @@ async def kickoff_integration_test_crew(
 
     node_contexts = extract_unique_node_contexts(graph["graph"]["root_node"])
     integration_test_agent = IntegrationTestAgent(sql_db, llm)
-    result = await integration_test_agent.run(project_id, node_contexts, query, graph)
+    result = await integration_test_agent.run(project_id, node_contexts, query, graph, history)
     return result

@@ -247,7 +247,7 @@ class ChangeDetection:
                         }
 
                     entry_points = InferenceService(
-                        self.sql_db
+                        self.sql_db, "dummy"
                     ).get_entry_points_for_nodes(node_ids, project_id)
 
                     changes = []

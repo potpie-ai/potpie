@@ -49,7 +49,7 @@ def process_parsing(
         async def run_parsing():
             import time
 
-            start_time = time.time()  # Start timing
+            start_time = time.time()
 
             await parsing_service.parse_directory(
                 ParsingRequest(**repo_details),
@@ -59,18 +59,17 @@ def process_parsing(
                 cleanup_graph,
             )
 
-            end_time = time.time()  # End timing
+            end_time = time.time()
             elapsed_time = end_time - start_time
             logger.info(
                 f"Parsing process took {elapsed_time:.2f} seconds for project {project_id}"
             )
 
         asyncio.run(run_parsing())
-
         logger.info(f"Parsing process completed for project {project_id}")
     except Exception as e:
         logger.error(f"Error during parsing for project {project_id}: {str(e)}")
-        raise  # Let the automatic retry handle it
+        raise 
 
 
 logger.info("Parsing tasks module loaded")

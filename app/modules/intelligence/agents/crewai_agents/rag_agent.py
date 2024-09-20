@@ -5,10 +5,10 @@ from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
-from app.modules.intelligence.tools.kg_based_tools.code_tools import CodeTools
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     get_code_tools,
 )
+from app.modules.intelligence.tools.kg_based_tools.graph_tools import CodeTools
 
 
 class NodeResponse(BaseModel):
@@ -74,10 +74,11 @@ class RAGAgent:
               Input Query: {query}
               Project ID: {project_id}
               User Provided Node IDs: {[node.model_dump() for node in node_ids]}
-              If the knowledge graph query is not useful, you can use the 'Get Nodes from Tags' tool to get ALL the relevant nodes from the graph for that type. USE THIS ONLY WHEN NECESSARY AS THIS IS EXTREMELY LARGE CONTEXT.
+              If the knowledge graph query is not useful, you can use the Get Nodes from Tags tool to get ALL the relevant nodes from the graph for that type. USE THIS ONLY WHEN NECESSARY AS THIS IS EXTREMELY LARGE CONTEXT.
               Step 1: Analyze the query
                 - Identify key concepts, code elements, and implied relationships
                 - Consider the context from chat history
+                - If there is a stacktrace or mention of a file or function, use the Get Code and docstring From Probable Node Name tool to get additional context
 
               Step 2: Formulate knowledge graph query strategy
                 - Analyze the original query to identify its intent and key technical terms.

@@ -91,9 +91,7 @@ class ParsingService:
             await self.analyze_directory(
                 extracted_dir, project_id, user_id, self.db, language
             )
-
             message = "The project has been parsed successfully"
-
             return {"message": message, "id": project_id}
 
         except ParsingServiceError as e:

@@ -9,7 +9,7 @@ from app.modules.intelligence.tools.change_detection.change_detection import (
     ChangeDetectionResponse,
     get_blast_radius_tool,
 )
-from app.modules.intelligence.tools.kg_based_tools.code_tools import CodeTools
+from app.modules.intelligence.tools.kg_based_tools.graph_tools import CodeTools
 
 
 class BlastRadiusAgent:

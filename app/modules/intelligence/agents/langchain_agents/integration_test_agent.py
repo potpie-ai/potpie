@@ -22,7 +22,7 @@ from app.modules.intelligence.agents.crewai_agents.integration_test_agent import
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.tools.kg_based_tools.code_tools import CodeTools
+from app.modules.intelligence.tools.kg_based_tools.graph_tools import CodeTools
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ class IntegrationTestAgent:
                 HumanMessagePromptTemplate.from_template(human_prompt.text),
             ]
         )
-        return prompt_template | self.llm
+        return prompt_template | self.mini_llm
 
     async def run(
         self,
@@ -89,11 +89,19 @@ class IntegrationTestAgent:
 
             # Use RAG Agent to get context
             test_response = await kickoff_integration_test_crew(
-                query, project_id, node_ids, self.db, self.llm
+                query, project_id, node_ids, self.db, self.mini_llm, validated_history
             )
+
+            if test_response.pydantic:
+                response = test_response.pydantic.response
+                citations = test_response.pydantic.citations
+            else:
+                response = test_response.raw
+                citations = []
+
             tool_results = [
                 SystemMessage(
-                    content=f"Generated Test plan and test suite:\n {test_response.pydantic.response}"
+                    content=f"Generated Test plan and test suite:\n {response}"
                 )
             ]
 
@@ -114,7 +122,7 @@ class IntegrationTestAgent:
                 )
                 yield json.dumps(
                     {
-                        "citations": test_response.pydantic.citations,
+                        "citations": citations,
                         "message": content,
                     }
                 )
@@ -126,5 +134,5 @@ class IntegrationTestAgent:
             )
 
         except Exception as e:
-            logger.error(f"Error during QNAAgent run: {str(e)}", exc_info=True)
+            logger.error(f"Error during Integration Test Agent run: {str(e)}", exc_info=True)
             yield f"An error occurred: {str(e)}"

@@ -119,6 +119,3 @@ class ParsingController:
         except Exception as e:
             logger.error(f"Error in fetch_parsing_status: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
-
-
-logger.info("Parsing controller module loaded")

@@ -16,6 +16,7 @@ from app.modules.parsing.knowledge_graph.inference_schema import (
     DocstringResponse,
 )
 from app.modules.search.search_service import SearchService
+import tiktoken
 
 logger = logging.getLogger(__name__)
 
@@ -34,51 +35,94 @@ class InferenceService:
     def close(self):
         self.driver.close()
 
+    def num_tokens_from_string(self, string: str, model: str = "gpt-4") -> int:
+        """Returns the number of tokens in a text string."""
+        try:
+            encoding = tiktoken.encoding_for_model(model)
+        except KeyError:
+            print("Warning: model not found. Using cl100k_base encoding.")
+            encoding = tiktoken.get_encoding("cl100k_base")
+        return len(encoding.encode(string))
+
+
+
     def fetch_graph(self, repo_id: str) -> List[Dict]:
+        batch_size = 400  # Define the batch size
+        all_nodes = []
         with self.driver.session() as session:
-            result = session.run(
-                "MATCH (n:NODE {repoId: $repo_id}) "
-                "RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path, n.start_line AS start_line, n.end_line AS end_line, n.name AS name",
-                repo_id=repo_id,
-            )
-            return [dict(record) for record in result]
+            offset = 0
+            while True:
+                result = session.run(
+                    "MATCH (n:NODE {repoId: $repo_id}) "
+                    "RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path, n.start_line AS start_line, n.end_line AS end_line, n.name AS name "
+                    "SKIP $offset LIMIT $limit",
+                    repo_id=repo_id,
+                    offset=offset,
+                    limit=batch_size,
+                )
+                batch = [dict(record) for record in result]
+                if not batch:
+                    break
+                all_nodes.extend(batch)
+                offset += batch_size
+        return all_nodes
 
     def get_entry_points(self, repo_id: str) -> List[str]:
+        batch_size = 400  # Define the batch size
+        all_entry_points = []
         with self.driver.session() as session:
-            result = session.run(
-                f"""
-                MATCH (f:FUNCTION)
-                WHERE f.repoId = '{repo_id}'
-                AND NOT ()-[:CALLS]->(f)
-                AND (f)-[:CALLS]->()
-                RETURN f.node_id as node_id
-                """,
-            )
-            data = result.data()
-            return [record["node_id"] for record in data]
+            offset = 0
+            while True:
+                result = session.run(
+                    f"""
+                    MATCH (f:FUNCTION)
+                    WHERE f.repoId = '{repo_id}'
+                    AND NOT ()-[:CALLS]->(f)
+                    AND (f)-[:CALLS]->()
+                    RETURN f.node_id as node_id
+                    SKIP $offset LIMIT $limit
+                    """,
+                    offset=offset,
+                    limit=batch_size,
+                )
+                batch = result.data()
+                if not batch:
+                    break
+                all_entry_points.extend([record["node_id"] for record in batch])
+                offset += batch_size
+        return all_entry_points
 
     def get_neighbours(self, node_id: str, repo_id: str):
         with self.driver.session() as session:
-            result = session.run(
-                """
-                MATCH (start {node_id: $node_id, repoId: $repo_id})
-                OPTIONAL MATCH (start)-[:CALLS]->(direct_neighbour)
-                OPTIONAL MATCH (start)-[:CALLS]->()-[:CALLS*0..]->(indirect_neighbour)
-                WITH start, COLLECT(DISTINCT direct_neighbour) + COLLECT(DISTINCT indirect_neighbour) AS all_neighbours
-                UNWIND all_neighbours AS neighbour
-                WITH start, neighbour
-                WHERE neighbour IS NOT NULL AND neighbour <> start
-                RETURN DISTINCT neighbour.node_id AS node_id, neighbour.name AS function_name, labels(neighbour) AS labels
-                """,
-                node_id=node_id,
-                repo_id=repo_id,
-            )
-            data = result.data()
-
-            nodes_info = [
-                record["node_id"] for record in data if "FUNCTION" in record["labels"]
-            ]
-            return nodes_info
+            batch_size = 400  # Define the batch size
+            all_nodes_info = []
+            offset = 0
+            while True:
+                result = session.run(
+                    """
+                    MATCH (start {node_id: $node_id, repoId: $repo_id})
+                    OPTIONAL MATCH (start)-[:CALLS]->(direct_neighbour)
+                    OPTIONAL MATCH (start)-[:CALLS]->()-[:CALLS*0..]->(indirect_neighbour)
+                    WITH start, COLLECT(DISTINCT direct_neighbour) + COLLECT(DISTINCT indirect_neighbour) AS all_neighbours
+                    UNWIND all_neighbours AS neighbour
+                    WITH start, neighbour
+                    WHERE neighbour IS NOT NULL AND neighbour <> start
+                    RETURN DISTINCT neighbour.node_id AS node_id, neighbour.name AS function_name, labels(neighbour) AS labels
+                    SKIP $offset LIMIT $limit
+                    """,
+                    node_id=node_id,
+                    repo_id=repo_id,
+                    offset=offset,
+                    limit=batch_size,
+                )
+                batch = result.data()
+                if not batch:
+                    break
+                all_nodes_info.extend([
+                    record["node_id"] for record in batch if "FUNCTION" in record["labels"]
+                ])
+                offset += batch_size
+            return all_nodes_info
 
     def get_entry_points_for_nodes(
         self, node_ids: List[str], repo_id: str
@@ -107,7 +151,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
             }
 
     def batch_nodes(
-        self, nodes: List[Dict], max_tokens: int = 32000
+        self, nodes: List[Dict], max_tokens: int = 32000, model: str = "gpt-4"
     ) -> List[List[DocstringRequest]]:
         batches = []
         current_batch = []
@@ -130,7 +174,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
                 continue
 
             updated_text = replace_referenced_text(node["text"])
-            node_tokens = len(updated_text.split())
+            node_tokens = self.num_tokens_from_string(updated_text, model)
             if node_tokens > max_tokens:
                 continue  # Skip nodes that exceed the max_tokens limit
 
@@ -203,6 +247,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
         entry_points_neighbors: Dict[str, List[str]],
         docstring_lookup: Dict[str, str],
         max_tokens: int = 32000,
+        model: str = "gpt-4"
     ) -> List[List[Dict[str, str]]]:
         batches = []
         current_batch = []
@@ -222,7 +267,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
                 "flow_description": entry_docstring + "\n" + flow_description,
             }
 
-            entry_point_tokens = len(entry_docstring) + len(flow_description)
+            entry_point_tokens = self.num_tokens_from_string(entry_docstring + flow_description, model)
 
             if entry_point_tokens > max_tokens:
                 continue  # Skip entry points that exceed the max_tokens limit
