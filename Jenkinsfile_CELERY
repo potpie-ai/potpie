@@ -17,20 +17,29 @@ pipeline {
         stage('Checkout') {
             steps {
                 script {
-                    // Determine environment based on branch
-                    def branch = env.GIT_BRANCH
+                    // Define the directory where you want to check out the code
+                    def checkoutDir = '/var/lib/jenkins/workspace/my-checkout-directory'
+                    
+                    // Create the directory if it doesn't exist
+                    sh "mkdir -p ${checkoutDir}"
 
-                    if (branch == "origin/stage-deploy") {
-                        env.ENVIRONMENT = 'stage-deploy'
-                    } else if (branch == "origin/main"){
-                        env.ENVIORNMENT = 'main'
-                    } else {
-                        error("Unknown branch: ${branch}. This pipeline only supports main and staging branches.")
+                    // Change to the defined directory and perform checkout
+                    dir(checkoutDir) {
+                        // Determine environment based on branch
+                        def branch = env.GIT_BRANCH
+
+                        if (branch == "origin/stage-deploy") {
+                            env.ENVIRONMENT = 'stage-deploy'
+                        } else if (branch == "origin/main") {
+                            env.ENVIRONMENT = 'main'
+                        } else {
+                            error("Unknown branch: ${branch}. This pipeline only supports main and staging branches.")
+                        }
+
+                        checkout scm
+                        // Capture the short Git commit hash to use as the image tag
+                        env.GIT_COMMIT_HASH = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
                     }
-
-                    checkout scm
-                    // Capture the short Git commit hash to use as the image tag
-                    env.GIT_COMMIT_HASH = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
                 }
             }
         }
@@ -55,7 +64,7 @@ pipeline {
                     def dockerRegistry = env.DOCKER_REGISTRY
                     echo "Printing the saved docker registry from env:"
                     echo "${dockerRegistry}"
-                    sh "sudo docker build -f celery.Dockerfile -t ${DOCKER_REGISTRY}/celery-api:${imageTag} ."
+                    sh "sudo docker build -f ${checkoutDir}/celery.Dockerfile -t ${DOCKER_REGISTRY}/celery-api:${imageTag} ${checkoutDir}"
                 }
             }
         }
@@ -84,7 +93,7 @@ pipeline {
             }
         }
 
-         stage('Ask User for Deployment Confirmation') {
+        stage('Ask User for Deployment Confirmation') {
             steps {
                 script {
                     def deployConfirmation = input(
@@ -110,7 +119,6 @@ pipeline {
 
                     echo "this is the fetched docker image tag: ${imageTag}"
 
-
                     try {
                         sh """
                         kubectl set image deployment/celery-api-deployment celery-api=${DOCKER_REGISTRY}/celery-api:${imageTag} -n ${params.namespace}
@@ -129,18 +137,14 @@ pipeline {
             }
         }
 
-
-
         stage('Pipeline finished') {
             steps {
                 script {
-
                     echo "Pipeline finished"
                     // Check the deployment status
                     sh """
                     echo "checking the deployment status" && kubectl get pods -n ${params.namespace}
                     """
-
                 }
             }
         }
@@ -152,7 +156,6 @@ pipeline {
             echo "Pipeline finished"
             // Optional cleanup action
             script {
-
                 // Clean up local Docker images
                 def imageTag = env.GIT_COMMIT_HASH
                 sh """
@@ -162,3 +165,4 @@ pipeline {
         }
     }
 }
+
