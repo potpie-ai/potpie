@@ -1,10 +1,12 @@
 import os
+
 from posthog import Posthog
+
 
 class PostHogClient:
     def __init__(self):
         self.is_staging_or_production = os.getenv("ENV") in ["staging", "production"]
-        
+
         # Only initialize PostHog if not in development mode
         if self.is_staging_or_production:
             self.api_key = os.getenv("POSTHOG_API_KEY")
@@ -23,7 +25,7 @@ class PostHogClient:
         """
         if not self.is_staging_or_production:
             return
-        
+
         if self.posthog is not None:  # Ensure posthog is initialized
             try:
                 self.posthog.capture(
