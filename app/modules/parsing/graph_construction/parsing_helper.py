@@ -11,10 +11,11 @@ from git import GitCommandError, Repo
 from sqlalchemy.orm import Session
 
 from app.modules.github.github_service import GithubService
+from app.modules.parsing.graph_construction import parsing_repomap
 from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
-
+from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
 logger = logging.getLogger(__name__)
 
 
@@ -71,7 +72,17 @@ class ParseHelper:
                 )
 
         return repo, owner, auth
-
+    
+    def is_text_file(self, file_path):
+        # Simple check to determine if a file is likely to be a text file
+        # You might want to expand this based on your specific needs
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                f.read(1024)
+            return True
+        except UnicodeDecodeError:
+            return False
+        
     async def download_and_extract_tarball(
         self, repo, branch, target_dir, auth, repo_details, user_id
     ):
@@ -95,18 +106,27 @@ class ParseHelper:
             with open(tarball_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
-
             with tarfile.open(tarball_path, "r:gz") as tar:
                 temp_dir = os.path.join(final_dir, "temp_extract")
                 tar.extractall(path=temp_dir)
-
-                # Move contents from temp_dir to final_dir
                 extracted_dir = os.path.join(temp_dir, os.listdir(temp_dir)[0])
-                for item in os.listdir(extracted_dir):
-                    shutil.move(os.path.join(extracted_dir, item), final_dir)
-
+                for root, dirs, files in os.walk(extracted_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        if self.is_text_file(file_path):
+                            try:
+                                relative_path = os.path.relpath(file_path, extracted_dir)
+                                dest_path = os.path.join(final_dir, relative_path)
+                                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                                shutil.copy2(file_path, dest_path)
+                            except (shutil.Error, OSError) as e:
+                                logger.error(f"Error copying file {file_path}: {e}")
                 # Remove the temporary directory
-                shutil.rmtree(temp_dir)
+                try:
+                    shutil.rmtree(temp_dir)
+                except OSError as e:
+                    logger.error(f"Error removing temporary directory: {e}")
+                    pass
 
         except (IOError, tarfile.TarError, shutil.Error) as e:
             logger.error(f"Error handling tarball: {e}")

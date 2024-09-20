@@ -93,9 +93,7 @@ class ParsingService:
             )
 
             message = "The project has been parsed successfully"
-            await project_manager.update_project_status(
-                project_id, ProjectStatusEnum.READY
-            )
+
             return {"message": message, "id": project_id}
 
         except ParsingServiceError as e:
