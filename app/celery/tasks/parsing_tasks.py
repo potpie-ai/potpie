@@ -69,7 +69,7 @@ def process_parsing(
         logger.info(f"Parsing process completed for project {project_id}")
     except Exception as e:
         logger.error(f"Error during parsing for project {project_id}: {str(e)}")
-        raise self.retry(exc=e, countdown=60, max_retries=3)
+        raise 
 
 
 logger.info("Parsing tasks module loaded")
