@@ -59,7 +59,7 @@ class CodeChangesAgent:
                 HumanMessagePromptTemplate.from_template(human_prompt.text),
             ]
         )
-        return prompt_template | self.llm
+        return prompt_template | self.mini_llm
 
     async def run(
         self,
@@ -89,7 +89,7 @@ class CodeChangesAgent:
                 project_id,
                 node_ids,
                 self.db,
-                self.llm,
+                self.mini_llm,
             )
 
             tool_results = [
