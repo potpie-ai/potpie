@@ -11,11 +11,10 @@ from git import GitCommandError, Repo
 from sqlalchemy.orm import Session
 
 from app.modules.github.github_service import GithubService
-from app.modules.parsing.graph_construction import parsing_repomap
 from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
-from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
+
 logger = logging.getLogger(__name__)
 
 
@@ -72,7 +71,7 @@ class ParseHelper:
                 )
 
         return repo, owner, auth
-    
+
     def is_text_file(self, file_path):
         # Simple check to determine if a file is likely to be a text file
         # You might want to expand this based on your specific needs
@@ -82,7 +81,7 @@ class ParseHelper:
             return True
         except UnicodeDecodeError:
             return False
-        
+
     async def download_and_extract_tarball(
         self, repo, branch, target_dir, auth, repo_details, user_id
     ):
@@ -115,7 +114,9 @@ class ParseHelper:
                         file_path = os.path.join(root, file)
                         if self.is_text_file(file_path):
                             try:
-                                relative_path = os.path.relpath(file_path, extracted_dir)
+                                relative_path = os.path.relpath(
+                                    file_path, extracted_dir
+                                )
                                 dest_path = os.path.join(final_dir, relative_path)
                                 os.makedirs(os.path.dirname(dest_path), exist_ok=True)
                                 shutil.copy2(file_path, dest_path)

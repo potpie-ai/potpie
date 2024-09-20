@@ -362,13 +362,13 @@ class ConversationService:
                 deleted_messages = (
                     self.sql_db.query(Message)
                     .filter(Message.conversation_id == conversation_id)
-                    .delete(synchronize_session='fetch')
+                    .delete(synchronize_session="fetch")
                 )
 
                 deleted_conversation = (
                     self.sql_db.query(Conversation)
                     .filter(Conversation.id == conversation_id)
-                    .delete(synchronize_session='fetch')
+                    .delete(synchronize_session="fetch")
                 )
 
                 if deleted_conversation == 0:
