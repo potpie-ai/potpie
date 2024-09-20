@@ -356,29 +356,34 @@ class ConversationService:
 
     async def delete_conversation(self, conversation_id: str, user_id: str) -> dict:
         try:
-            # Start a new transaction
-            with self.sql_db.begin():
+            # Use a nested transaction if one is already in progress
+            with self.sql_db.begin_nested():
                 # Delete related messages first
                 deleted_messages = (
                     self.sql_db.query(Message)
                     .filter(Message.conversation_id == conversation_id)
-                    .delete()
+                    .delete(synchronize_session='fetch')
                 )
 
                 deleted_conversation = (
                     self.sql_db.query(Conversation)
                     .filter(Conversation.id == conversation_id)
-                    .delete()
+                    .delete(synchronize_session='fetch')
                 )
-                PostHogClient().send_event(
-                    user_id,
-                    "delete_conversation_event",
-                    {"conversation_id": conversation_id},
-                )
+
                 if deleted_conversation == 0:
                     raise ConversationNotFoundError(
                         f"Conversation with id {conversation_id} not found"
                     )
+
+            # If we get here, commit the transaction
+            self.sql_db.commit()
+
+            PostHogClient().send_event(
+                user_id,
+                "delete_conversation_event",
+                {"conversation_id": conversation_id},
+            )
 
             logger.info(
                 f"Deleted conversation {conversation_id} and {deleted_messages} related messages"
@@ -391,17 +396,18 @@ class ConversationService:
 
         except ConversationNotFoundError as e:
             logger.warning(str(e))
+            self.sql_db.rollback()
             raise
 
         except SQLAlchemyError as e:
             logger.error(f"Database error in delete_conversation: {e}", exc_info=True)
+            self.sql_db.rollback()
             raise ConversationServiceError(
                 f"Failed to delete conversation {conversation_id} due to a database error"
             ) from e
 
         except Exception as e:
             logger.error(f"Unexpected error in delete_conversation: {e}", exc_info=True)
-            # Ensure rollback in case of any other exception
             self.sql_db.rollback()
             raise ConversationServiceError(
                 f"Failed to delete conversation {conversation_id} due to an unexpected error"
