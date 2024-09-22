@@ -148,7 +148,6 @@ class GetCodeFromNodeIdTool:
 
             if relevance_search:
                 node_id = relevance_search[0]["node_id"]
-            
 
             if not node_id:
                 return {

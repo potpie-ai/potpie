@@ -3,6 +3,7 @@ import logging
 from functools import lru_cache
 from typing import AsyncGenerator, Dict, List
 
+from fastapi import HTTPException
 from langchain.schema import HumanMessage, SystemMessage
 from langchain_core.prompts import (
     ChatPromptTemplate,
@@ -11,12 +12,16 @@ from langchain_core.prompts import (
     SystemMessagePromptTemplate,
 )
 from langchain_core.runnables import RunnableSequence
+from langchain_core.output_parsers import PydanticOutputParser
 from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import NodeContext
-from app.modules.intelligence.agents.crewai_agents.rag_agent import kickoff_rag_crew
+from app.modules.intelligence.agents.agentic_tools.unit_test_agent import (
+    kickoff_unit_test_crew,
+)
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
+from app.modules.intelligence.prompts.classification_prompts import AgentType, ClassificationPrompts, ClassificationResponse, ClassificationResult
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.tools.kg_based_tools.graph_tools import CodeTools
@@ -24,7 +29,7 @@ from app.modules.intelligence.tools.kg_based_tools.graph_tools import CodeTools
 logger = logging.getLogger(__name__)
 
 
-class QNAAgent:
+class UnitTestAgent:
     def __init__(self, mini_llm, llm, db: Session):
         self.mini_llm = mini_llm
         self.llm = llm
@@ -37,7 +42,7 @@ class QNAAgent:
     @lru_cache(maxsize=2)
     async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
         prompts = await self.prompt_service.get_prompts_by_agent_id_and_types(
-            "QNA_AGENT", [PromptType.SYSTEM, PromptType.HUMAN]
+            "UNIT_TEST_AGENT", [PromptType.SYSTEM, PromptType.HUMAN]
         )
         return {prompt.type: prompt for prompt in prompts}
 
@@ -47,7 +52,7 @@ class QNAAgent:
         human_prompt = prompts.get(PromptType.HUMAN)
 
         if not system_prompt or not human_prompt:
-            raise ValueError("Required prompts not found for QNA_AGENT")
+            raise ValueError("Required prompts not found for UNIT_TEST_AGENT")
 
         prompt_template = ChatPromptTemplate(
             messages=[
@@ -57,7 +62,27 @@ class QNAAgent:
                 HumanMessagePromptTemplate.from_template(human_prompt.text),
             ]
         )
-        return prompt_template | self.llm
+        return prompt_template | self.mini_llm
+
+    async def _classify_query(self, query: str, history: List[HumanMessage]) :
+        prompt = ClassificationPrompts.get_classification_prompt(AgentType.QNA)
+        inputs = {
+            "query": query,
+            "history": [msg.content for msg in history[-5:]] 
+        }
+        
+        parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
+        prompt_with_parser = ChatPromptTemplate.from_template(
+            template= prompt,
+            partial_variables={
+                "format_instructions": parser.get_format_instructions()
+            },
+        )
+        chain = prompt_with_parser | self.llm | parser
+        response = await chain.ainvoke(input=inputs)
+        
+        return response.classification
+
 
     async def run(
         self,
@@ -71,6 +96,9 @@ class QNAAgent:
             if not self.chain:
                 self.chain = await self._create_chain()
 
+            if not node_ids:
+                raise HTTPException(status_code=400, detail="No node IDs provided")
+
             history = self.history_manager.get_session_history(user_id, conversation_id)
             validated_history = [
                 (
@@ -80,27 +108,27 @@ class QNAAgent:
                 )
                 for msg in history
             ]
+            classification = await self._classify_query(query, validated_history)
 
-            # Use RAG Agent to get context
-            rag_result = await kickoff_rag_crew(
-                query,
-                project_id,
-                [
-                    msg.content
-                    for msg in validated_history
-                    if isinstance(msg, HumanMessage)
-                ],
-                node_ids,
-                self.db,
-                self.llm,
-            )
+            tool_results = []
+            if classification == ClassificationResult.AGENT_REQUIRED:
+                test_response = await kickoff_unit_test_crew(
+                    query, validated_history, project_id, node_ids, self.db, self.mini_llm
+                )
+
+                if test_response.pydantic: 
+                    citations = test_response.pydantic.ciations
+                    response = test_response.pydantic.response
+                else:
+                    citations = []
+                    response = test_response.raw
 
             tool_results = [
                 SystemMessage(
-                    content=f"RAG Agent result: {[node.model_dump() for node in rag_result.pydantic.response]}"
+                    content=f"Generated Test plan and test suite:\n {response}"
                 )
             ]
-
+           
             inputs = {
                 "history": validated_history,
                 "tool_results": tool_results,
@@ -118,12 +146,12 @@ class QNAAgent:
                 )
                 yield json.dumps(
                     {
-                        "citations": rag_result.pydantic.citations,
+                        "citations": citations,
                         "message": content,
                     }
                 )
 
-            logger.info(f"Full LLM response: {full_response}")
+            logger.debug(f"Full LLM response: {full_response}")
 
             self.history_manager.flush_message_buffer(
                 conversation_id, MessageType.AI_GENERATED
