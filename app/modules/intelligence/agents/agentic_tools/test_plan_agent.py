@@ -80,7 +80,7 @@ class TestPlanAgent:
             - Refine and expand the plan based on your reflection
 
             Provide a detailed test plan for each function/method, following this structured approach.""",
-            expected_output=f"Outline the test plan including happy paths and edge cases for each node.",
+            expected_output="Outline the test plan including happy paths and edge cases for each node.",
             agent=test_plan_agent,
             context=[fetch_docstring_task],
         )

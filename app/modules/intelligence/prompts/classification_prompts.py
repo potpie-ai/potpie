@@ -3,6 +3,7 @@ from typing import Dict
 
 from pydantic import BaseModel
 
+
 class AgentType(Enum):
     QNA = "QNA_AGENT"
     DEBUGGING = "DEBUGGING_AGENT"
@@ -10,9 +11,11 @@ class AgentType(Enum):
     INTEGRATION_TEST = "INTEGRATION_TEST_AGENT"
     CODE_CHANGES = "CODE_CHANGES_AGENT"
 
+
 class ClassificationResult(Enum):
     LLM_SUFFICIENT = "LLM_SUFFICIENT"
     AGENT_REQUIRED = "AGENT_REQUIRED"
+
 
 class ClassificationResponse(BaseModel):
     classification: ClassificationResult
@@ -47,21 +50,25 @@ class ClassificationPrompts:
         4. Classify based on the guidelines above.
 
         Output your response in this format:
-        Classification: [LLM_SUFFICIENT or AGENT_REQUIRED]
-        Reason: [Brief explanation for your classification]
+        {{
+            "classification": "[LLM_SUFFICIENT or AGENT_REQUIRED]"
+        }}
 
         Examples:
         1. Query: "What is a decorator in Python?"
-        Classification: LLM_SUFFICIENT
+        {{
+            "classification": "LLM_SUFFICIENT"
+        }}
         Reason: This is a general Python concept that can be explained without specific project context.
 
         2. Query: "Why is the login function in auth.py returning a 404 error?"
-        Classification: AGENT_REQUIRED
+        {{
+            "classification": "AGENT_REQUIRED"
+        }}
         Reason: This requires examination of specific project code and current behavior, which the LLM doesn't have access to.
 
         {format_instructions}
         """,
-
         AgentType.DEBUGGING: """You are an advanced debugging query classifier with multiple expert personas. Your task is to determine if the given debugging query can be addressed using the LLM's knowledge and chat history, or if it requires additional context from a specialized debugging agent.
 
         Personas:
@@ -71,7 +78,9 @@ class ClassificationPrompts:
 
         Given:
         - query: The user's current debugging query
+        {query}
         - history: A list of recent messages from the chat history
+        {history}
 
         Classification Process:
         1. Analyze the query:
@@ -94,39 +103,39 @@ class ClassificationPrompts:
            - How confident are you in your decision?
            - What additional information could alter your classification?
 
-        Classify the query into one of two categories:
-        1. LLM_SUFFICIENT: The debugging query can be addressed using the LLM's knowledge and chat history.
-        2. AGENT_REQUIRED: The debugging query requires additional context or specialized knowledge from a debugging agent.
+        Classification Guidelines:
+        1. LLM_SUFFICIENT if:
+        - The query is about general debugging concepts or practices
+        - The error or issue is common and can be addressed with general knowledge
+        - The chat history contains directly relevant information to solve the problem
+        - No specific code examination is required
 
-        Output your response in the following format:
-        Classification: [LLM_SUFFICIENT or AGENT_REQUIRED]
-        Confidence: [High/Medium/Low]
-        Reasoning:
-        - Error Analyst: [Reasoning from this perspective]
-        - Code Detective: [Reasoning from this perspective]
-        - Context Evaluator: [Reasoning from this perspective]
-        Final Thoughts: [Overall justification for the classification]
+        2. AGENT_REQUIRED if:
+        - The query mentions specific project files, functions, or classes
+        - It requires analysis of actual code implementation or project structure
+        - The error seems unique to the project or requires context not available in the chat history
+        - It involves complex interactions between different parts of the codebase
+
+        Output your response in this format:
+        {{
+            "classification": "[LLM_SUFFICIENT or AGENT_REQUIRED]"
+        }}
 
         Examples:
-        1. Query: "I'm getting a 'KeyError' in Python. How do I fix it?"
-           Classification: LLM_SUFFICIENT
-           Confidence: High
-           Reasoning:
-           - Error Analyst: KeyError is a common Python exception that can be explained generally.
-           - Code Detective: No specific code is mentioned, so general advice can be provided.
-           - Context Evaluator: This error is not project-specific and can be addressed with general Python knowledge.
-           Final Thoughts: The LLM can provide a comprehensive explanation and general strategies to fix KeyErrors without needing project-specific context.
+        1. Query: "What are common causes of NullPointerException in Java?"
+        {{
+            "classification": "LLM_SUFFICIENT"
+        }}
+        Reason: This query is about a general debugging concept in Java that can be explained without specific project context.
 
-        2. Query: "Why am I getting a NullPointerException in the processOrder() method of OrderService.java?"
-           Classification: AGENT_REQUIRED
-           Confidence: High
-           Reasoning:
-           - Error Analyst: While NullPointerException is common, its cause is specific to the implementation.
-           - Code Detective: We need to examine the processOrder() method to identify the null reference.
-           - Context Evaluator: This requires understanding of the OrderService class and its dependencies.
-           Final Thoughts: To accurately debug this issue, we need to analyze the specific code in OrderService.java, which requires the debugging agent's capabilities.
+        2. Query: "Why is the getUserData() method throwing a NullPointerException in line 42 of UserService.java?"
+        {{
+            "classification": "AGENT_REQUIRED"
+        }}
+        Reason: This requires examination of specific project code and current behavior, which the LLM doesn't have access to.
+
+        {format_instructions}
         """,
-
         AgentType.UNIT_TEST: """You are an advanced unit test query classifier with multiple expert personas. Your task is to determine if the given unit test query can be addressed using the LLM's knowledge and chat history, or if it requires additional context from a specialized unit test agent.
 
         Personas:
@@ -136,7 +145,9 @@ class ClassificationPrompts:
 
         Given:
         - query: The user's current unit test query
+        {query}
         - history: A list of recent messages from the chat history
+        {history}
 
         Classification Process:
         1. Understand the query:
@@ -159,39 +170,39 @@ class ClassificationPrompts:
            - How confident are you in your decision?
            - What additional information might change your classification?
 
-        Classify the query into one of two categories:
-        1. LLM_SUFFICIENT: The unit test query can be addressed using the LLM's knowledge and chat history.
-        2. AGENT_REQUIRED: The unit test query requires additional context or specialized knowledge from a unit test agent.
+        Classification Guidelines:
+        1. LLM_SUFFICIENT if:
+        - The query is about general unit testing concepts or best practices
+        - It can be answered with widely known information about testing frameworks
+        - The chat history contains directly relevant information to address the query
+        - No specific code or project structure knowledge is required
 
-        Output your response in the following format:
-        Classification: [LLM_SUFFICIENT or AGENT_REQUIRED]
-        Confidence: [High/Medium/Low]
-        Reasoning:
-        - Test Architect: [Reasoning from this perspective]
-        - Code Analyzer: [Reasoning from this perspective]
-        - Framework Specialist: [Reasoning from this perspective]
-        Final Thoughts: [Overall justification for the classification]
+        2. AGENT_REQUIRED if:
+        - The query mentions specific project files, functions, or classes to be tested
+        - It requires analysis of actual code implementation or existing test suites
+        - The query involves project-specific testing conventions or setup
+        - It requires understanding of complex interactions between different parts of the codebase for effective testing
+
+        Output your response in this format:
+        {{
+            "classification": "[LLM_SUFFICIENT or AGENT_REQUIRED]"
+        }}
 
         Examples:
-        1. Query: "What's the difference between a mock and a stub in unit testing?"
-           Classification: LLM_SUFFICIENT
-           Confidence: High
-           Reasoning:
-           - Test Architect: This is a fundamental concept in unit testing that can be explained without project context.
-           - Code Analyzer: No specific code analysis is required to answer this conceptual question.
-           - Framework Specialist: This concept is universal across testing frameworks and doesn't require tool-specific knowledge.
-           Final Thoughts: The LLM can provide a comprehensive explanation of mocks vs. stubs using general unit testing knowledge.
+        1. Query: "What are the best practices for mocking dependencies in unit tests?"
+        {{
+            "classification": "LLM_SUFFICIENT"
+        }}
+        Reason: This query is about general unit testing principles that can be explained without specific project context.
 
-        2. Query: "How do I write a unit test for the calculateDiscount() method in PricingService?"
-           Classification: AGENT_REQUIRED
-           Confidence: High
-           Reasoning:
-           - Test Architect: While general testing principles apply, we need to know the specific behavior of calculateDiscount().
-           - Code Analyzer: We need to examine the PricingService class and the calculateDiscount() method to write appropriate tests.
-           - Framework Specialist: The project's chosen testing framework and any custom testing utilities need to be considered.
-           Final Thoughts: To write an effective unit test, we need to analyze the specific implementation of calculateDiscount() and understand the project's testing setup, which requires the unit test agent's capabilities.
+        2. Query: "Why is the test case for the UserService.getUserData() method failing?"
+        {{
+            "classification": "AGENT_REQUIRED"
+        }}
+        Reason: This requires examination of specific project code and current behavior, which the LLM doesn't have access to.
+
+        {format_instructions}
         """,
-
         AgentType.INTEGRATION_TEST: """You are an advanced integration test query classifier with multiple expert personas. Your task is to determine if the given integration test query can be addressed using the LLM's knowledge and chat history, or if it requires additional context from a specialized integration test agent.
 
         Personas:
@@ -201,7 +212,9 @@ class ClassificationPrompts:
 
         Given:
         - query: The user's current integration test query
+        {query}
         - history: A list of recent messages from the chat history
+        {history}
 
         Classification Process:
         1. Analyze the query:
@@ -224,39 +237,39 @@ class ClassificationPrompts:
            - How confident are you in your decision?
            - What additional information could change your classification?
 
-        Classify the query into one of two categories:
-        1. LLM_SUFFICIENT: The integration test query can be addressed using the LLM's knowledge and chat history.
-        2. AGENT_REQUIRED: The integration test query requires additional context or specialized knowledge from an integration test agent.
+        Classification Guidelines:
+        1. LLM_SUFFICIENT if:
+        - The query is about general integration testing concepts or best practices
+        - It can be answered with widely known information about testing methodologies
+        - The chat history contains directly relevant information to address the query
+        - No specific system architecture or project structure knowledge is required
 
-        Output your response in the following format:
-        Classification: [LLM_SUFFICIENT or AGENT_REQUIRED]
-        Confidence: [High/Medium/Low]
-        Reasoning:
-        - System Architect: [Reasoning from this perspective]
-        - Test Strategist: [Reasoning from this perspective]
-        - Environment Specialist: [Reasoning from this perspective]
-        Final Thoughts: [Overall justification for the classification]
+        2. AGENT_REQUIRED if:
+        - The query mentions specific system components, services, or APIs to be tested
+        - It requires analysis of actual system architecture or existing integration test suites
+        - The query involves project-specific integration points or data flows
+        - It requires understanding of complex interactions between different parts of the system for effective testing
+
+        Output your response in this format:
+        {{
+            "classification": "[LLM_SUFFICIENT or AGENT_REQUIRED]"
+        }}
 
         Examples:
-        1. Query: "What are the key differences between unit testing and integration testing?"
-           Classification: LLM_SUFFICIENT
-           Confidence: High
-           Reasoning:
-           - System Architect: This is a conceptual question that doesn't require specific system knowledge.
-           - Test Strategist: The differences can be explained using general testing principles and strategies.
-           - Environment Specialist: No specific test environment information is needed to answer this query.
-           Final Thoughts: The LLM can provide a comprehensive comparison of unit and integration testing using general software testing knowledge.
+        1. Query: "What are the best practices for setting up a test environment for integration tests?"
+        {{
+            "classification": "LLM_SUFFICIENT"
+        }}
+        Reason: This query is about general integration testing principles that can be explained without specific project context.
 
-        2. Query: "How should I set up an integration test for the order processing flow from the web API to the database?"
-           Classification: AGENT_REQUIRED
-           Confidence: High
-           Reasoning:
-           - System Architect: We need to understand the specific components involved in the order processing flow.
-           - Test Strategist: Setting up this test requires knowledge of the project's integration points and data flow.
-           - Environment Specialist: Information about the test environment, including API endpoints and database setup, is crucial.
-           Final Thoughts: To provide an accurate answer, we need detailed information about the system's architecture and test environment, which requires the integration test agent's capabilities.
+        2. Query: "Why is the integration test for the UserService.getUserData() method failing?"
+        {{
+            "classification": "AGENT_REQUIRED"
+        }}
+        Reason: This requires examination of specific project code and current behavior, which the LLM doesn't have access to.
+
+        {format_instructions}
         """,
-
         AgentType.CODE_CHANGES: """You are an advanced code changes query classifier with multiple expert personas. Your task is to determine if the given code changes query can be addressed using the LLM's knowledge and chat history, or if it requires additional context from a specialized code changes agent.
 
         Personas:
@@ -266,7 +279,9 @@ class ClassificationPrompts:
 
         Given:
         - query: The user's current code changes query
+        {query}
         - history: A list of recent messages from the chat history
+        {history}
 
         Classification Process:
         1. Analyze the query:
@@ -289,41 +304,41 @@ class ClassificationPrompts:
            - How confident are you in your decision?
            - What additional information might alter your classification?
 
-        Classify the query into one of two categories:
-        1. LLM_SUFFICIENT: The code changes query can be addressed using the LLM's knowledge and chat history.
-        2. AGENT_REQUIRED: The code changes query requires additional context or specialized knowledge from a code changes agent.
+        Classification Guidelines:
+        1. LLM_SUFFICIENT if:
+        - The query is about general version control concepts or best practices
+        - It can be answered with widely known information about code change management
+        - The chat history contains directly relevant information to address the query
+        - No specific project structure or recent code change knowledge is required
 
-        Output your response in the following format:
-        Classification: [LLM_SUFFICIENT or AGENT_REQUIRED]
-        Confidence: [High/Medium/Low]
-        Reasoning:
-        - Version Control Expert: [Reasoning from this perspective]
-        - Code Reviewer: [Reasoning from this perspective]
-        - Project Architect: [Reasoning from this perspective]
-        Final Thoughts: [Overall justification for the classification]
+        2. AGENT_REQUIRED if:
+        - The query mentions specific commits, branches, or code modifications
+        - It requires analysis of actual code changes or commit history
+        - The query involves understanding the impact of changes on the project's functionality
+        - It requires knowledge of the project's branching strategy or release process
+
+        Output your response in this format:
+        {{
+            "classification": "[LLM_SUFFICIENT or AGENT_REQUIRED]"
+        }}
 
         Examples:
-        1. Query: "What's the difference between git merge and git rebase?"
-           Classification: LLM_SUFFICIENT
-           Confidence: High
-           Reasoning:
-           - Version Control Expert: This is a general Git concept that can be explained without project-specific context.
-           - Code Reviewer: Understanding merge vs. rebase doesn't require examining specific code changes.
-           - Project Architect: This query doesn't need knowledge of the project's branching strategy to be answered.
-           Final Thoughts: The LLM can provide a comprehensive explanation of git merge vs. git rebase using general Git knowledge.
+        1. Query: "What are the best practices for writing commit messages?"
+        {{
+            "classification": "LLM_SUFFICIENT"
+        }}
+        Reason: This query is about general version control principles that can be explained without specific project context.
 
-        2. Query: "How do the recent changes in the authentication module affect the user registration process?"
-           Classification: AGENT_REQUIRED
-           Confidence: High
-           Reasoning:
-           - Version Control Expert: We need to examine the recent commits to the authentication module.
-           - Code Reviewer: Understanding the impact requires analyzing the specific code changes and their implications.
-           - Project Architect: We need to know how the authentication module interacts with the user registration process in this project.
-           Final Thoughts: To accurately assess the impact of these changes, we need to analyze the recent code modifications and understand the project's architecture, which requires the code changes agent's capabilities.
-        """
+        2. Query: "Why is the code change in commit 1234567890 causing the login function in auth.py to return a 404 error?"
+        {{
+            "classification": "AGENT_REQUIRED"
+        }}
+        Reason: This requires examination of specific project code and current behavior, which the LLM doesn't have access to.
+
+        {format_instructions}
+        """,
     }
 
     @classmethod
     def get_classification_prompt(cls, agent_type: AgentType) -> str:
         return cls.CLASSIFICATION_PROMPTS.get(agent_type, "")
-

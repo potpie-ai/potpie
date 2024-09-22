@@ -69,7 +69,7 @@ class IntegrationTestAgent:
             - Review the provided test plan and the fetched node details from previous tasks.
             - Identify any additional classes/functions required for mocking:
                 a. Use the get_code_from_probable_node_name tool to fetch its code if not in the provided node IDs. The probable node names look like "filename:class_name" or "filename:function_name"
-                b. Validate the result of the get_code_from_probable_node_name tool against the probable node name. Discard from context if it does not match. 
+                b. Validate the result of the get_code_from_probable_node_name tool against the probable node name. Discard from context if it does not match.
             - Set up any required test fixtures or mocks
             - Refer the code context closely to write accurate tests.
 
@@ -104,7 +104,7 @@ class IntegrationTestAgent:
             expected_output=f"Write COMPLETE CODE for integration tests for each node based on the test plan. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model:\n{self.TestAgentResponse.model_json_schema()}",
             agent=integration_test_agent,
             context=[fetch_docstring_task, test_plan_task],
-            output_pydantic=self.TestAgentResponse
+            output_pydantic=self.TestAgentResponse,
         )
 
         return fetch_docstring_task, test_plan_task, integration_test_task
@@ -121,7 +121,13 @@ class IntegrationTestAgent:
 
         test_plan_agent, integration_test_agent = await self.create_agents()
         docstring_task, test_plan_task, integration_test_task = await self.create_tasks(
-            node_ids, project_id, query, graph, history, test_plan_agent, integration_test_agent
+            node_ids,
+            project_id,
+            query,
+            graph,
+            history,
+            test_plan_agent,
+            integration_test_agent,
         )
 
         crew = Crew(
@@ -136,7 +142,12 @@ class IntegrationTestAgent:
 
 
 async def kickoff_integration_test_crew(
-    query: str, project_id: str, node_ids: List[NodeContext], sql_db, llm, history: List[str]
+    query: str,
+    project_id: str,
+    node_ids: List[NodeContext],
+    sql_db,
+    llm,
+    history: List[str],
 ) -> Dict[str, str]:
     graph = GetCodeGraphFromNodeIdTool(sql_db).run(project_id, node_ids[0].node_id)
 
@@ -161,5 +172,7 @@ async def kickoff_integration_test_crew(
 
     node_contexts = extract_unique_node_contexts(graph["graph"]["root_node"])
     integration_test_agent = IntegrationTestAgent(sql_db, llm)
-    result = await integration_test_agent.run(project_id, node_contexts, query, graph, history)
+    result = await integration_test_agent.run(
+        project_id, node_contexts, query, graph, history
+    )
     return result

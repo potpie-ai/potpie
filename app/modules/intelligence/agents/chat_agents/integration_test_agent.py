@@ -5,6 +5,7 @@ from typing import AsyncGenerator, Dict, List
 
 from fastapi import HTTPException
 from langchain.schema import HumanMessage, SystemMessage
+from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import (
     ChatPromptTemplate,
     HumanMessagePromptTemplate,
@@ -12,7 +13,6 @@ from langchain_core.prompts import (
     SystemMessagePromptTemplate,
 )
 from langchain_core.runnables import RunnableSequence
-from langchain_core.output_parsers import PydanticOutputParser
 from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
@@ -21,7 +21,12 @@ from app.modules.intelligence.agents.agentic_tools.integration_test_agent import
     kickoff_integration_test_crew,
 )
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
-from app.modules.intelligence.prompts.classification_prompts import AgentType, ClassificationPrompts, ClassificationResponse, ClassificationResult
+from app.modules.intelligence.prompts.classification_prompts import (
+    AgentType,
+    ClassificationPrompts,
+    ClassificationResponse,
+    ClassificationResult,
+)
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.tools.kg_based_tools.graph_tools import CodeTools
@@ -64,25 +69,19 @@ class IntegrationTestAgent:
         )
         return prompt_template | self.mini_llm
 
-    async def _classify_query(self, query: str, history: List[HumanMessage]) :
+    async def _classify_query(self, query: str, history: List[HumanMessage]):
         prompt = ClassificationPrompts.get_classification_prompt(AgentType.QNA)
-        inputs = {
-            "query": query,
-            "history": [msg.content for msg in history[-5:]] 
-        }
-        
+        inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
+
         parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
         prompt_with_parser = ChatPromptTemplate.from_template(
-            template= prompt,
-            partial_variables={
-                "format_instructions": parser.get_format_instructions()
-            },
+            template=prompt,
+            partial_variables={"format_instructions": parser.get_format_instructions()},
         )
         chain = prompt_with_parser | self.llm | parser
         response = await chain.ainvoke(input=inputs)
-        
-        return response.classification
 
+        return response.classification
 
     async def run(
         self,
@@ -114,8 +113,13 @@ class IntegrationTestAgent:
             tool_results = []
             if classification == ClassificationResult.AGENT_REQUIRED:
                 test_response = await kickoff_integration_test_crew(
-                    query, project_id, node_ids, self.db, self.mini_llm, validated_history
-            )
+                    query,
+                    project_id,
+                    node_ids,
+                    self.db,
+                    self.mini_llm,
+                    validated_history,
+                )
 
                 if test_response.pydantic:
                     response = test_response.pydantic.response
@@ -124,11 +128,11 @@ class IntegrationTestAgent:
                     response = test_response.raw
                     citations = []
 
-            tool_results = [
-                SystemMessage(
-                    content=f"Generated Test plan and test suite:\n {response}"
-                )
-            ]
+                tool_results = [
+                    SystemMessage(
+                        content=f"Generated Test plan and test suite:\n {response}"
+                    )
+                ]
 
             inputs = {
                 "history": validated_history,
@@ -159,5 +163,7 @@ class IntegrationTestAgent:
             )
 
         except Exception as e:
-            logger.error(f"Error during Integration Test Agent run: {str(e)}", exc_info=True)
+            logger.error(
+                f"Error during Integration Test Agent run: {str(e)}", exc_info=True
+            )
             yield f"An error occurred: {str(e)}"

@@ -27,16 +27,12 @@ from app.modules.conversations.message.message_schema import (
 from app.modules.intelligence.agents.chat_agents.code_changes_agent import (
     CodeChangesAgent,
 )
-from app.modules.intelligence.agents.chat_agents.debugging_agent import (
-    DebuggingAgent,
-)
+from app.modules.intelligence.agents.chat_agents.debugging_agent import DebuggingAgent
 from app.modules.intelligence.agents.chat_agents.integration_test_agent import (
     IntegrationTestAgent,
 )
 from app.modules.intelligence.agents.chat_agents.qna_agent import QNAAgent
-from app.modules.intelligence.agents.chat_agents.unit_test_agent import (
-    UnitTestAgent,
-)
+from app.modules.intelligence.agents.chat_agents.unit_test_agent import UnitTestAgent
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
