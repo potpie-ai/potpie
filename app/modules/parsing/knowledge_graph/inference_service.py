@@ -3,6 +3,7 @@ import logging
 import re
 from typing import Dict, List, Optional
 
+import tiktoken
 from langchain.output_parsers import PydanticOutputParser
 from langchain.prompts import ChatPromptTemplate
 from neo4j import GraphDatabase
@@ -16,7 +17,6 @@ from app.modules.parsing.knowledge_graph.inference_schema import (
     DocstringResponse,
 )
 from app.modules.search.search_service import SearchService
-import tiktoken
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +43,6 @@ class InferenceService:
             print("Warning: model not found. Using cl100k_base encoding.")
             encoding = tiktoken.get_encoding("cl100k_base")
         return len(encoding.encode(string))
-
-
 
     def fetch_graph(self, repo_id: str) -> List[Dict]:
         batch_size = 400  # Define the batch size
@@ -118,9 +116,13 @@ class InferenceService:
                 batch = result.data()
                 if not batch:
                     break
-                all_nodes_info.extend([
-                    record["node_id"] for record in batch if "FUNCTION" in record["labels"]
-                ])
+                all_nodes_info.extend(
+                    [
+                        record["node_id"]
+                        for record in batch
+                        if "FUNCTION" in record["labels"]
+                    ]
+                )
                 offset += batch_size
             return all_nodes_info
 
@@ -247,7 +249,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
         entry_points_neighbors: Dict[str, List[str]],
         docstring_lookup: Dict[str, str],
         max_tokens: int = 32000,
-        model: str = "gpt-4"
+        model: str = "gpt-4",
     ) -> List[List[Dict[str, str]]]:
         batches = []
         current_batch = []
@@ -267,7 +269,9 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
                 "flow_description": entry_docstring + "\n" + flow_description,
             }
 
-            entry_point_tokens = self.num_tokens_from_string(entry_docstring + flow_description, model)
+            entry_point_tokens = self.num_tokens_from_string(
+                entry_docstring + flow_description, model
+            )
 
             if entry_point_tokens > max_tokens:
                 continue  # Skip entry points that exceed the max_tokens limit

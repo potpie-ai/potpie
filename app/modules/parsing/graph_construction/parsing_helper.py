@@ -73,7 +73,6 @@ class ParseHelper:
         return repo, owner, auth
 
     def is_text_file(self, file_path):
-        
         def open_text_file(file_path):
             try:
                 with open(file_path, "r", encoding="utf-8") as f:
@@ -81,58 +80,56 @@ class ParseHelper:
                 return True
             except UnicodeDecodeError:
                 return False
-            
+
         ext = file_path.split(".")[-1]
         exclude_extensions = [
-            ".png",
-            ".jpg",
-            ".jpeg",
-            ".gif",
-            ".bmp",
-            ".tiff",
-            ".webp",
-            ".ico",
-            ".svg",
-            ".mp4",
-            ".avi",
-            ".mov",
-            ".wmv",
-            ".flv",
+            "png",
+            "jpg",
+            "jpeg",
+            "gif",
+            "bmp",
+            "tiff",
+            "webp",
+            "ico",
+            "svg",
+            "mp4",
+            "avi",
+            "mov",
+            "wmv",
+            "flv",
         ]
-
         include_extensions = [
-            ".py",
-            ".js",
-            ".ts",
-            ".c",
-            ".cs",
-            ".cpp",
-            ".el",
-            ".ex",
-            ".exs",
-            ".elm",
-            ".go",
-            ".java",
-            ".ml",
-            ".mli",
-            ".php",
-            ".ql",
-            ".rb",
-            ".rs",
-            ".md",
-            ".txt",
-            ".json",
-            ".yaml",
-            ".yml",
-            ".toml",
-            ".ini",
-            ".cfg",
-            ".conf",
-            ".xml",
-            ".html",
-            ".css",
-            ".sh"
-            
+            "py",
+            "js",
+            "ts",
+            "c",
+            "cs",
+            "cpp",
+            "el",
+            "ex",
+            "exs",
+            "elm",
+            "go",
+            "java",
+            "ml",
+            "mli",
+            "php",
+            "ql",
+            "rb",
+            "rs",
+            "md",
+            "txt",
+            "json",
+            "yaml",
+            "yml",
+            "toml",
+            "ini",
+            "cfg",
+            "conf",
+            "xml",
+            "html",
+            "css",
+            "sh",
         ]
         if ext in exclude_extensions:
             return False
@@ -140,7 +137,7 @@ class ParseHelper:
             return True
         else:
             return False
-        
+
     async def download_and_extract_tarball(
         self, repo, branch, target_dir, auth, repo_details, user_id
     ):

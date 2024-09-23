@@ -1,6 +1,7 @@
 import json
 import logging
-from typing import AsyncGenerator, List
+from functools import lru_cache
+from typing import AsyncGenerator, Dict, List
 
 from langchain.schema import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
@@ -25,7 +26,7 @@ from app.modules.intelligence.prompts.classification_prompts import (
     ClassificationResponse,
     ClassificationResult,
 )
-from app.modules.intelligence.prompts.prompt_schema import PromptType
+from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.tools.kg_based_tools.graph_tools import CodeTools
 
@@ -41,6 +42,13 @@ class CodeChangesAgent:
         self.prompt_service = PromptService(db)
         self.chain = None
         self.db = db
+
+    @lru_cache(maxsize=2)
+    async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
+        prompts = await self.prompt_service.get_prompts_by_agent_id_and_types(
+            "CODE_CHANGES_AGENT", [PromptType.SYSTEM, PromptType.HUMAN]
+        )
+        return {prompt.type: prompt for prompt in prompts}
 
     async def _create_chain(self) -> RunnableSequence:
         prompts = await self._get_prompts()
@@ -99,6 +107,7 @@ class CodeChangesAgent:
             classification = await self._classify_query(query, validated_history)
 
             tool_results = []
+            citations = []
             if classification == ClassificationResult.AGENT_REQUIRED:
                 blast_radius_result = await kickoff_blast_radius_crew(
                     query,
@@ -108,10 +117,15 @@ class CodeChangesAgent:
                     self.mini_llm,
                 )
 
+                if blast_radius_result.pydantic:
+                    citations = blast_radius_result.pydantic.citations
+                    response = blast_radius_result.pydantic.response
+                else:
+                    citations = []
+                    response = blast_radius_result.raw
+
                 tool_results = [
-                    SystemMessage(
-                        content=f"Blast Radius Agent result: {blast_radius_result.pydantic.response}"
-                    )
+                    SystemMessage(content=f"Blast Radius Agent result: {response}")
                 ]
 
             inputs = {
@@ -132,7 +146,7 @@ class CodeChangesAgent:
                 yield json.dumps(
                     {
                         "citations": (
-                            blast_radius_result.pydantic.citations
+                            citations
                             if classification == ClassificationResult.AGENT_REQUIRED
                             else []
                         ),

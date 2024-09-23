@@ -16,7 +16,9 @@ from tree_sitter import Parser
 from tree_sitter_languages import get_language, get_parser
 
 from app.core.database import get_db
-from app.modules.parsing.graph_construction.parsing_helper import ParseHelper  # noqa: E402
+from app.modules.parsing.graph_construction.parsing_helper import (  # noqa: E402
+    ParseHelper,
+)
 
 # tree_sitter is throwing a FutureWarning
 warnings.simplefilter("ignore", category=FutureWarning)
@@ -723,7 +725,6 @@ class RepoMap:
         end_time = time.time()
         logging.info(f"Parsing completed, time taken: {end_time - start_time} seconds")
         return G
-
 
     @staticmethod
     def get_language_for_file(file_path):
