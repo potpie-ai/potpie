@@ -48,10 +48,10 @@ class MainApp:
         self.include_routers()
 
     def setup_sentry(self):
-        if os.getenv("ENV") in ["staging", "production"]:
+        if os.getenv("ENV") == "production":
             sentry_sdk.init(
                 dsn=os.getenv("SENTRY_DSN"),
-                traces_sample_rate=1.0,
+                traces_sample_rate=0.25,
                 profiles_sample_rate=1.0,
             )
 
