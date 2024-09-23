@@ -32,7 +32,7 @@ class BaseTask(Task):
     base=BaseTask,
     name="app.celery.tasks.parsing_tasks.process_parsing",
     autoretry_for=(Exception,),
-    retry_kwargs={"max_retries": 0, "countdown": 30},
+    retry_kwargs={"max_retries": 2, "countdown": 30},
 )
 def process_parsing(
     self,
