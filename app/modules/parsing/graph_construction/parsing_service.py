@@ -129,7 +129,11 @@ class ParsingService:
             try:
                 graph_constructor = GraphConstructor(graph_manager, user_id)
                 n, r = graph_constructor.build_graph(extracted_dir)
-                graph_manager.save_graph(n, r)
+                graph_manager.create_nodes(n)
+                with graph_manager.driver.session() as session:
+                    session.write_transaction(
+                        graph_manager._create_edges_txn, r, 1000, entityId=user_id
+                    )
 
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.PARSED

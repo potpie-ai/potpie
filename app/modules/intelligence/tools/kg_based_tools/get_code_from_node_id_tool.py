@@ -141,14 +141,15 @@ class GetCodeFromNodeIdTool:
         self, project_id: str, probable_node_name: str
     ) -> Dict[str, Any]:
         try:
-            node_id_query = " ".join(probable_node_name.split("/")[-1].split(":"))
+            node_id_query = " ".join(
+                probable_node_name.replace("/", " ").replace(":", " ").split()
+            )
             relevance_search = await self.search_service.search_codebase(
                 project_id, node_id_query
             )
-
+            node_id = None
             if relevance_search:
                 node_id = relevance_search[0]["node_id"]
-            
 
             if not node_id:
                 return {
@@ -217,8 +218,8 @@ def get_code_tools(sql_db: Session) -> List[StructuredTool]:
             name="Get Code and docstring From Probable Node Name",
             description="""Retrieves code and docstring for the closest node name in a repository. Node names are in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path',
                     Useful to extract code for a function or file mentioned in a stacktrace or error message. Inputs for the get_code_from_probable_node_name method:
-                    - project_id (str): The project ID to retrieve code and docstring for, this is a UUID.
-                    - probable_node_name (str): A probable node name in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path'.""",
+                    - project_id (str): The project ID to retrieve code and docstring for, this is ALWAYS a UUID.
+                    - probable_node_name (str): A probable node name in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path'. This CANNOT be a UUID.""",
             args_schema=GetCodeFromProbableNodeNameInput,
         ),
     ]

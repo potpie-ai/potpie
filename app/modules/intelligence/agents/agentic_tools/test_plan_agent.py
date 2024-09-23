@@ -42,35 +42,27 @@ class TestPlanAgent:
         self, node_ids: List[NodeContext], project_id: str, query: str, test_plan_agent
     ):
         node_ids_list = [node.node_id for node in node_ids]
-        fetch_docstring_task = Task(
-            description=f"""
-            1. Analyze the query: "{query}"
-            2. Fetch docstrings and code ONLY FOR THE FOLLOWING NODE IDs using the get_code_from_node_id tool: {', '.join(node_ids_list)} for Project id {project_id}
-            3. For Project ID: {project_id}
-
-            Final output:
-            Provide a dictionary mapping node IDs to their docstring and code, including both initially provided and newly discovered relevant code.
-            """,
-            expected_output="A dictionary mapping node IDs to their docstring and code",
-            agent=test_plan_agent,
-            tools=[self.code_tools[0], self.code_tools[1]],
-        )
 
         test_plan_task = Task(
-            description="""You are a world-class Test Plan Architect with a keen eye for detail and a knack for anticipating edge cases. Your mission is to create comprehensive test plans that serve as a blueprint for bulletproof software.
+            description=f"""You are a world-class Test Plan Architect with a keen eye for detail and a knack for anticipating edge cases. Your mission is to create comprehensive test plans that serve as a blueprint for bulletproof software.
 
             Process:
-            1. Code Analysis:
+            1. Fetch the docstring and code for the provided node IDs using the get_code_from_node_id tool.
+            - Analyze the query: "{query}"
+            - Fetch docstrings and code ONLY FOR THE FOLLOWING NODE IDs using the get_code_from_node_id tool: {', '.join(node_ids_list)} for Project id {project_id}
+            - Project ID: {project_id}
+
+
+            2. Analyse the fetched code and docstrings:
             - Thoroughly examine the provided docstrings and code
             - Identify the purpose, inputs, outputs, and potential side effects of each function/method
 
-            2. Test Scenario Identification:
-            - For each function/method, list:
+            3. Test Plan Generation:
+            - For each function/method, identify:
                 a) Happy path scenarios
                 b) Edge cases (e.g., empty inputs, maximum values, type mismatches)
 
-            3. Test Plan Creation:
-            - For each scenario, specify:
+            - Test Plan Creation: For each scenario, specify:
                 a) Input data
                 b) Expected output or behavior
 
@@ -79,13 +71,14 @@ class TestPlanAgent:
             - Ask yourself: "What scenarios am I missing? What could go wrong that I haven't considered?"
             - Refine and expand the plan based on your reflection
 
-            Provide a detailed test plan for each function/method, following this structured approach.""",
-            expected_output=f"Outline the test plan including happy paths and edge cases for each node.",
+            Provide a detailed test plan for each function/method, following this structured approach
+            Also include the code under test and the docstrings in your output""",
+            expected_output="Outline the test code context, and test plan including happy paths and edge cases for each node.",
             agent=test_plan_agent,
-            context=[fetch_docstring_task],
+            tools=[self.code_tools[0], self.code_tools[1]],
         )
 
-        return fetch_docstring_task, test_plan_task
+        return test_plan_task
 
     async def run(
         self, project_id: str, node_ids: List[NodeContext], query: str
@@ -93,13 +86,13 @@ class TestPlanAgent:
         os.environ["OPENAI_API_KEY"] = self.openai_api_key
 
         test_plan_agent = await self.create_agents()
-        docstring_task, test_plan_task = await self.create_tasks(
+        test_plan_task = await self.create_tasks(
             node_ids, project_id, query, test_plan_agent
         )
 
         crew = Crew(
             agents=[test_plan_agent],
-            tasks=[docstring_task, test_plan_task],
+            tasks=[test_plan_task],
             process=Process.sequential,
             verbose=True,
         )

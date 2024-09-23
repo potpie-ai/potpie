@@ -13,7 +13,12 @@ from pygments.token import Token
 from pygments.util import ClassNotFound
 from tqdm import tqdm
 from tree_sitter import Parser
-from tree_sitter_languages import get_language, get_parser  # noqa: E402
+from tree_sitter_languages import get_language, get_parser
+
+from app.core.database import get_db
+from app.modules.parsing.graph_construction.parsing_helper import (  # noqa: E402
+    ParseHelper,
+)
 
 # tree_sitter is throwing a FutureWarning
 warnings.simplefilter("ignore", category=FutureWarning)
@@ -46,6 +51,7 @@ class RepoMap:
         self.max_context_window = max_context_window
 
         self.repo_content_prefix = repo_content_prefix
+        self.parse_helper = ParseHelper(next(get_db()))
 
     def get_repo_map(
         self, chat_files, other_files, mentioned_fnames=None, mentioned_idents=None
@@ -539,7 +545,7 @@ class RepoMap:
                 file_path = os.path.join(root, file)
                 rel_path = os.path.relpath(file_path, repo_dir)
 
-                if not self.is_text_file(file_path):
+                if not self.parse_helper.is_text_file(file_path):
                     continue
 
                 tags = self.get_tags(file_path, rel_path)
@@ -719,16 +725,6 @@ class RepoMap:
         end_time = time.time()
         logging.info(f"Parsing completed, time taken: {end_time - start_time} seconds")
         return G
-
-    def is_text_file(self, file_path):
-        # Simple check to determine if a file is likely to be a text file
-        # You might want to expand this based on your specific needs
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                f.read(1024)
-            return True
-        except UnicodeDecodeError:
-            return False
 
     @staticmethod
     def get_language_for_file(file_path):

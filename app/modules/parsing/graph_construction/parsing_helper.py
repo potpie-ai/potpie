@@ -73,13 +73,69 @@ class ParseHelper:
         return repo, owner, auth
 
     def is_text_file(self, file_path):
-        # Simple check to determine if a file is likely to be a text file
-        # You might want to expand this based on your specific needs
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                f.read(1024)
+        def open_text_file(file_path):
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    f.read(1024)
+                return True
+            except UnicodeDecodeError:
+                return False
+
+        ext = file_path.split(".")[-1]
+        exclude_extensions = [
+            "png",
+            "jpg",
+            "jpeg",
+            "gif",
+            "bmp",
+            "tiff",
+            "webp",
+            "ico",
+            "svg",
+            "mp4",
+            "avi",
+            "mov",
+            "wmv",
+            "flv",
+        ]
+        include_extensions = [
+            "py",
+            "js",
+            "ts",
+            "c",
+            "cs",
+            "cpp",
+            "el",
+            "ex",
+            "exs",
+            "elm",
+            "go",
+            "java",
+            "ml",
+            "mli",
+            "php",
+            "ql",
+            "rb",
+            "rs",
+            "md",
+            "txt",
+            "json",
+            "yaml",
+            "yml",
+            "toml",
+            "ini",
+            "cfg",
+            "conf",
+            "xml",
+            "html",
+            "css",
+            "sh",
+        ]
+        if ext in exclude_extensions:
+            return False
+        elif ext in include_extensions or open_text_file(file_path):
             return True
-        except UnicodeDecodeError:
+        else:
             return False
 
     async def download_and_extract_tarball(

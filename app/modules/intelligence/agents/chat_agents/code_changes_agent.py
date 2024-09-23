@@ -3,8 +3,8 @@ import logging
 from functools import lru_cache
 from typing import AsyncGenerator, Dict, List
 
-from fastapi import HTTPException
 from langchain.schema import HumanMessage, SystemMessage
+from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import (
     ChatPromptTemplate,
     HumanMessagePromptTemplate,
@@ -16,10 +16,16 @@ from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import NodeContext
-from app.modules.intelligence.agents.crewai_agents.unit_test_agent import (
-    kickoff_unit_test_crew,
+from app.modules.intelligence.agents.agentic_tools.blast_radius_agent import (
+    kickoff_blast_radius_crew,
 )
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
+from app.modules.intelligence.prompts.classification_prompts import (
+    AgentType,
+    ClassificationPrompts,
+    ClassificationResponse,
+    ClassificationResult,
+)
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.tools.kg_based_tools.graph_tools import CodeTools
@@ -27,7 +33,7 @@ from app.modules.intelligence.tools.kg_based_tools.graph_tools import CodeTools
 logger = logging.getLogger(__name__)
 
 
-class UnitTestAgent:
+class CodeChangesAgent:
     def __init__(self, mini_llm, llm, db: Session):
         self.mini_llm = mini_llm
         self.llm = llm
@@ -40,7 +46,7 @@ class UnitTestAgent:
     @lru_cache(maxsize=2)
     async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
         prompts = await self.prompt_service.get_prompts_by_agent_id_and_types(
-            "UNIT_TEST_AGENT", [PromptType.SYSTEM, PromptType.HUMAN]
+            "CODE_CHANGES_AGENT", [PromptType.SYSTEM, PromptType.HUMAN]
         )
         return {prompt.type: prompt for prompt in prompts}
 
@@ -50,7 +56,7 @@ class UnitTestAgent:
         human_prompt = prompts.get(PromptType.HUMAN)
 
         if not system_prompt or not human_prompt:
-            raise ValueError("Required prompts not found for UNIT_TEST_AGENT")
+            raise ValueError("Required prompts not found for CODE_CHANGES_AGENT")
 
         prompt_template = ChatPromptTemplate(
             messages=[
@@ -61,6 +67,20 @@ class UnitTestAgent:
             ]
         )
         return prompt_template | self.mini_llm
+
+    async def _classify_query(self, query: str, history: List[HumanMessage]):
+        prompt = ClassificationPrompts.get_classification_prompt(AgentType.CODE_CHANGES)
+        inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
+
+        parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
+        prompt_with_parser = ChatPromptTemplate.from_template(
+            template=prompt,
+            partial_variables={"format_instructions": parser.get_format_instructions()},
+        )
+        chain = prompt_with_parser | self.llm | parser
+        response = await chain.ainvoke(input=inputs)
+
+        return response.classification
 
     async def run(
         self,
@@ -74,9 +94,6 @@ class UnitTestAgent:
             if not self.chain:
                 self.chain = await self._create_chain()
 
-            if not node_ids:
-                raise HTTPException(status_code=400, detail="No node IDs provided")
-
             history = self.history_manager.get_session_history(user_id, conversation_id)
             validated_history = [
                 (
@@ -87,23 +104,30 @@ class UnitTestAgent:
                 for msg in history
             ]
 
-            test_response = await kickoff_unit_test_crew(
-                query, validated_history, project_id, node_ids, self.db, self.mini_llm
-            )
+            classification = await self._classify_query(query, validated_history)
 
-            if test_response.pydantic: 
-                citations = test_response.pydantic.ciations
-                response = test_response.pydantic.response
-            else:
-                citations = []
-                response = test_response.raw
-
-            tool_results = [
-                SystemMessage(
-                    content=f"Generated Test plan and test suite:\n {response}"
+            tool_results = []
+            citations = []
+            if classification == ClassificationResult.AGENT_REQUIRED:
+                blast_radius_result = await kickoff_blast_radius_crew(
+                    query,
+                    project_id,
+                    node_ids,
+                    self.db,
+                    self.mini_llm,
                 )
-            ]
-           
+
+                if blast_radius_result.pydantic:
+                    citations = blast_radius_result.pydantic.citations
+                    response = blast_radius_result.pydantic.response
+                else:
+                    citations = []
+                    response = blast_radius_result.raw
+
+                tool_results = [
+                    SystemMessage(content=f"Blast Radius Agent result: {response}")
+                ]
+
             inputs = {
                 "history": validated_history,
                 "tool_results": tool_results,
@@ -121,17 +145,20 @@ class UnitTestAgent:
                 )
                 yield json.dumps(
                     {
-                        "citations": citations,
+                        "citations": (
+                            citations
+                            if classification == ClassificationResult.AGENT_REQUIRED
+                            else []
+                        ),
                         "message": content,
                     }
                 )
 
             logger.debug(f"Full LLM response: {full_response}")
-
             self.history_manager.flush_message_buffer(
                 conversation_id, MessageType.AI_GENERATED
             )
 
         except Exception as e:
-            logger.error(f"Error during QNAAgent run: {str(e)}", exc_info=True)
+            logger.error(f"Error during CodeChangesAgent run: {str(e)}", exc_info=True)
             yield f"An error occurred: {str(e)}"

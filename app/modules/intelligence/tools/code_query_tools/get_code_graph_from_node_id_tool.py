@@ -70,7 +70,6 @@ class GetCodeGraphFromNodeIdTool:
         query = """
         MATCH (start:NODE {node_id: $node_id, repoId: $repo_id})
         CALL apoc.path.subgraphAll(start, {
-            relationshipFilter: "CONTAINS|CALLS|FUNCTION_DEFINITION|IMPORTS|INSTANTIATES|CLASS_DEFINITION>",
             maxLevel: 10
         })
         YIELD nodes, relationships

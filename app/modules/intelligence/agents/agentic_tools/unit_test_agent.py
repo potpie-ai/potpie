@@ -5,7 +5,7 @@ from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
-from app.modules.intelligence.agents.crewai_agents.test_plan_agent import TestPlanAgent
+from app.modules.intelligence.agents.agentic_tools.test_plan_agent import TestPlanAgent
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     get_code_tools,
 )
@@ -51,7 +51,7 @@ class UnitTestAgent:
         test_plan_agent,
         unit_test_agent,
     ):
-        fetch_docstring_task, test_plan_task = await self.test_plan_agent.create_tasks(
+        test_plan_task = await self.test_plan_agent.create_tasks(
             node_ids, project_id, query, test_plan_agent
         )
 
@@ -66,7 +66,7 @@ class UnitTestAgent:
             - Review the provided test plan and the fetched node details from previous tasks.
             - Identify any additional classes/functions required for mocking:
                a. Use the get_code_from_probable_node_name tool to fetch its code if not in the provided node IDs. The probable node names look like "filename:class_name" or "filename:function_name"
-               b. Validate the result of the get_code_from_probable_node_name tool against the probable node name. Discard from context if it does not match. 
+               b. Validate the result of the get_code_from_probable_node_name tool against the probable node name. Discard from context if it does not match.
             - Set up any required test fixtures or mocks
             - Refer the code context closely to write accurate tests.
 
@@ -100,14 +100,14 @@ class UnitTestAgent:
             For citations, include only the file_path of the nodes fetched and used.
             Ensure that your final response is JSON serialisable but dont wrap it in ```json or ```python or ```code or ```
             Ensure that your output follows the following pydantic model: {self.TestAgentResponse.model_json_schema()}""",
-            expected_output=f"Outline the test plan and write unit tests for each node based on the test plan.",
+            expected_output="Outline the test plan and write unit tests for each node based on the test plan.",
             agent=unit_test_agent,
-            context=[fetch_docstring_task, test_plan_task],
+            context=[test_plan_task],
             output_pydantic=self.TestAgentResponse,
-            tools=[self.code_tools[2]]
+            tools=[self.code_tools[2], self.code_tools[0]],
         )
 
-        return fetch_docstring_task, test_plan_task, unit_test_task
+        return test_plan_task, unit_test_task
 
     async def run(
         self,
@@ -119,13 +119,13 @@ class UnitTestAgent:
         os.environ["OPENAI_API_KEY"] = self.openai_api_key
 
         test_plan_agent, unit_test_agent = await self.create_agents()
-        docstring_task, test_plan_task, unit_test_task = await self.create_tasks(
+        test_plan_task, unit_test_task = await self.create_tasks(
             node_ids, project_id, query, chat_history, test_plan_agent, unit_test_agent
         )
 
         crew = Crew(
             agents=[test_plan_agent, unit_test_agent],
-            tasks=[docstring_task, test_plan_task, unit_test_task],
+            tasks=[test_plan_task, unit_test_task],
             process=Process.sequential,
             verbose=True,
         )

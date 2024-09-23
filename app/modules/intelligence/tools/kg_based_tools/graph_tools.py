@@ -96,7 +96,20 @@ class CodeTools:
             StructuredTool.from_function(
                 func=cls.get_nodes_from_tags,
                 name="Get Nodes from Tags",
-                description="Fetch all nodes from the knowledge graph based on the specified tags. This tool is intended for extremely broad queries where it is ESSENTIAL to retrieve all relevant tags of a given type (API, WEBSOCKET, PRODUCER, CONSUMER, DATABASE, HTTP) for a project. It should be used prior to querying the knowledge graph to provide context node IDs for subsequent knowledge graph queries after filtering from its output. Ensure that the input tags are limited to these specified node types.",
+                description="""
+                Fetch nodes from the knowledge graph based on specified tags. Use this tool to retrieve nodes of specific types for a project.
+
+                Input:
+                - tags (List[str]): A list of tags to filter nodes. Valid tags are:
+                API, WEBSOCKET, PRODUCER, CONSUMER, DATABASE, SCHEMA, HTTP
+                - project_id (str): The UUID of the project being evaluated
+
+                Usage guidelines:
+                1. Use for broad queries requiring ALL nodes of specific types.
+                2. Limit to 1-2 tags per query for best results.
+                3. Returns file paths, docstrings, text, node IDs, and names.
+
+                Example: To find all API endpoints, use tags=['API']""",
                 args_schema=GetNodesFromTagsInput,
             ),
         ]

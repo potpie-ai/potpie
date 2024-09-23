@@ -88,7 +88,6 @@ class ProviderService:
                 model_name="gpt-4o",
                 api_key=openai_key,  # Use the key properly
                 temperature=0.3,
-                model_kwargs={"stream": True},
                 base_url=PORTKEY_GATEWAY_URL,
                 default_headers=portkey_headers,
             )
