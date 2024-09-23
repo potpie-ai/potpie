@@ -129,11 +129,7 @@ class DebuggingAgent:
                     result = rag_result.raw
                     citations = []
 
-                tool_results = [
-                    SystemMessage(
-                        content=f"RAG Agent result: {result}"
-                    )
-                ]
+                tool_results = [SystemMessage(content=f"RAG Agent result: {result}")]
 
             full_query = f"Query: {query}\nProject ID: {project_id}\nLogs: {logs}\nStacktrace: {stacktrace}"
             inputs = {

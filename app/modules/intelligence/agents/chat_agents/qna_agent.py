@@ -126,11 +126,7 @@ class QNAAgent:
                 else:
                     citations = []
                     result = rag_result.raw
-                tool_results = [
-                    SystemMessage(
-                        content=f"RAG Agent result: {result}"
-                    )
-                ]
+                tool_results = [SystemMessage(content=f"RAG Agent result: {result}")]
 
             inputs = {
                 "history": validated_history,
