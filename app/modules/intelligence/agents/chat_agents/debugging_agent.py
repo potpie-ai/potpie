@@ -124,13 +124,14 @@ class DebuggingAgent:
                 if rag_result.pydantic:
                     response = rag_result.pydantic.response
                     citations = rag_result.pydantic.citations
+                    result = [node.model_dump() for node in response]
                 else:
-                    response = rag_result.raw
+                    result = rag_result.raw
                     citations = []
 
                 tool_results = [
                     SystemMessage(
-                        content=f"RAG Agent result: {[node.model_dump() for node in response]}"
+                        content=f"RAG Agent result: {result}"
                     )
                 ]
 

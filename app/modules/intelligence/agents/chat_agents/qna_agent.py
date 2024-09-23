@@ -149,11 +149,7 @@ class QNAAgent:
                 )
                 yield json.dumps(
                     {
-                        "citations": (
-                            citations
-                            if classification == ClassificationResult.AGENT_REQUIRED
-                            else []
-                        ),
+                        "citations": citations,
                         "message": content,
                     }
                 )
