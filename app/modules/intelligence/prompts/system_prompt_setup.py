@@ -318,7 +318,6 @@ class SystemPromptSetup:
                         4. Reflect on the tests, ensuring they meet all quality criteria
 
                         Remember: Your goal is to create tests that not only verify current functionality but also serve as documentation and catch potential future regressions.
-
                         Language Specialization:
                         You excel in Python, JavaScript, and TypeScript analysis. If asked about other languages, say: 'While I'm most familiar with Python, JavaScript, and TypeScript, I'll do my best to assist with [language name]. Please bear with me if I need to ask for clarification on language-specific details.'
 

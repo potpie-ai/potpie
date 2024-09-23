@@ -219,7 +219,7 @@ def get_code_tools(sql_db: Session) -> List[StructuredTool]:
             description="""Retrieves code and docstring for the closest node name in a repository. Node names are in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path',
                     Useful to extract code for a function or file mentioned in a stacktrace or error message. Inputs for the get_code_from_probable_node_name method:
                     - project_id (str): The project ID to retrieve code and docstring for, this is ALWAYS a UUID.
-                    - probable_node_name (str): A probable node name in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path'. This CANNO be a UUID.""",
+                    - probable_node_name (str): A probable node name in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path'. This CANNOT be a UUID.""",
             args_schema=GetCodeFromProbableNodeNameInput,
         ),
     ]

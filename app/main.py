@@ -48,11 +48,12 @@ class MainApp:
         self.include_routers()
 
     def setup_sentry(self):
-        sentry_sdk.init(
-            dsn=os.getenv("SENTRY_DSN"),
-            traces_sample_rate=1.0,
-            profiles_sample_rate=1.0,
-        )
+        if os.getenv("ENV") in ["staging", "production"]:
+            sentry_sdk.init(
+                dsn=os.getenv("SENTRY_DSN"),
+                traces_sample_rate=1.0,
+                profiles_sample_rate=1.0,
+            )
 
     def setup_cors(self):
         origins = ["*"]

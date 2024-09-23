@@ -167,16 +167,26 @@ class ParseHelper:
             with tarfile.open(tarball_path, "r:gz") as tar:
                 temp_dir = os.path.join(final_dir, "temp_extract")
                 tar.extractall(path=temp_dir)
-
-                # Move contents from temp_dir to final_dir only if they are text files
                 extracted_dir = os.path.join(temp_dir, os.listdir(temp_dir)[0])
-                for item in os.listdir(extracted_dir):
-                    file_path = os.path.join(extracted_dir, item)
-                    if self.is_text_file(file_path):
-                        shutil.move(file_path, final_dir)
-
+                for root, dirs, files in os.walk(extracted_dir):
+                    for file in files:
+                        file_path = os.path.join(root, file)
+                        if self.is_text_file(file_path):
+                            try:
+                                relative_path = os.path.relpath(
+                                    file_path, extracted_dir
+                                )
+                                dest_path = os.path.join(final_dir, relative_path)
+                                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                                shutil.copy2(file_path, dest_path)
+                            except (shutil.Error, OSError) as e:
+                                logger.error(f"Error copying file {file_path}: {e}")
                 # Remove the temporary directory
-                shutil.rmtree(temp_dir)
+                try:
+                    shutil.rmtree(temp_dir)
+                except OSError as e:
+                    logger.error(f"Error removing temporary directory: {e}")
+                    pass
 
         except (IOError, tarfile.TarError, shutil.Error) as e:
             logger.error(f"Error handling tarball: {e}")
