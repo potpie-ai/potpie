@@ -105,6 +105,7 @@ class QNAAgent:
             classification = await self._classify_query(query, validated_history)
 
             tool_results = []
+            citations = []
             if classification == ClassificationResult.AGENT_REQUIRED:
                 rag_result = await kickoff_rag_crew(
                     query,
@@ -118,9 +119,16 @@ class QNAAgent:
                     self.db,
                     self.llm,
                 )
+                if rag_result.pydantic:
+                    citations = rag_result.pydantic.citations
+                    response = rag_result.pydantic.response
+                    result = [node.model_dump() for node in response]
+                else:
+                    citations = []
+                    result = rag_result.raw
                 tool_results = [
                     SystemMessage(
-                        content=f"RAG Agent result: {[node.model_dump() for node in rag_result.pydantic.response]}"
+                        content=f"RAG Agent result: {result}"
                     )
                 ]
 
@@ -142,7 +150,7 @@ class QNAAgent:
                 yield json.dumps(
                     {
                         "citations": (
-                            rag_result.pydantic.citations
+                            citations
                             if classification == ClassificationResult.AGENT_REQUIRED
                             else []
                         ),
