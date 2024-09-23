@@ -61,7 +61,7 @@ class CodeChangesAgent:
         return prompt_template | self.mini_llm
 
     async def _classify_query(self, query: str, history: List[HumanMessage]):
-        prompt = ClassificationPrompts.get_classification_prompt(AgentType.QNA)
+        prompt = ClassificationPrompts.get_classification_prompt(AgentType.CODE_CHANGES)
         inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
 
         parser = PydanticOutputParser(pydantic_object=ClassificationResponse)

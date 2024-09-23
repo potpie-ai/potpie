@@ -51,7 +51,7 @@ class UnitTestAgent:
         test_plan_agent,
         unit_test_agent,
     ):
-        fetch_docstring_task, test_plan_task = await self.test_plan_agent.create_tasks(
+        test_plan_task = await self.test_plan_agent.create_tasks(
             node_ids, project_id, query, test_plan_agent
         )
 
@@ -102,12 +102,12 @@ class UnitTestAgent:
             Ensure that your output follows the following pydantic model: {self.TestAgentResponse.model_json_schema()}""",
             expected_output="Outline the test plan and write unit tests for each node based on the test plan.",
             agent=unit_test_agent,
-            context=[fetch_docstring_task, test_plan_task],
+            context=[test_plan_task],
             output_pydantic=self.TestAgentResponse,
-            tools=[self.code_tools[2]],
+            tools=[self.code_tools[2], self.code_tools[0]],
         )
 
-        return fetch_docstring_task, test_plan_task, unit_test_task
+        return test_plan_task, unit_test_task
 
     async def run(
         self,
@@ -119,13 +119,13 @@ class UnitTestAgent:
         os.environ["OPENAI_API_KEY"] = self.openai_api_key
 
         test_plan_agent, unit_test_agent = await self.create_agents()
-        docstring_task, test_plan_task, unit_test_task = await self.create_tasks(
+        test_plan_task, unit_test_task = await self.create_tasks(
             node_ids, project_id, query, chat_history, test_plan_agent, unit_test_agent
         )
 
         crew = Crew(
             agents=[test_plan_agent, unit_test_agent],
-            tasks=[docstring_task, test_plan_task, unit_test_task],
+            tasks=[test_plan_task, unit_test_task],
             process=Process.sequential,
             verbose=True,
         )

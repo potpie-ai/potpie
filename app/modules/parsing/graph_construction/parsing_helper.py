@@ -72,6 +72,75 @@ class ParseHelper:
 
         return repo, owner, auth
 
+    def is_text_file(self, file_path):
+        
+        def open_text_file(file_path):
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    f.read(1024)
+                return True
+            except UnicodeDecodeError:
+                return False
+            
+        ext = file_path.split(".")[-1]
+        exclude_extensions = [
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".bmp",
+            ".tiff",
+            ".webp",
+            ".ico",
+            ".svg",
+            ".mp4",
+            ".avi",
+            ".mov",
+            ".wmv",
+            ".flv",
+        ]
+
+        include_extensions = [
+            ".py",
+            ".js",
+            ".ts",
+            ".c",
+            ".cs",
+            ".cpp",
+            ".el",
+            ".ex",
+            ".exs",
+            ".elm",
+            ".go",
+            ".java",
+            ".ml",
+            ".mli",
+            ".php",
+            ".ql",
+            ".rb",
+            ".rs",
+            ".md",
+            ".txt",
+            ".json",
+            ".yaml",
+            ".yml",
+            ".toml",
+            ".ini",
+            ".cfg",
+            ".conf",
+            ".xml",
+            ".html",
+            ".css",
+            ".sh"
+            
+        ]
+        if ext in exclude_extensions:
+            return False
+        elif ext in include_extensions or open_text_file(file_path):
+            return True
+        else:
+            return False
+        
     async def download_and_extract_tarball(
         self, repo, branch, target_dir, auth, repo_details, user_id
     ):
@@ -95,15 +164,16 @@ class ParseHelper:
             with open(tarball_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
-
             with tarfile.open(tarball_path, "r:gz") as tar:
                 temp_dir = os.path.join(final_dir, "temp_extract")
                 tar.extractall(path=temp_dir)
 
-                # Move contents from temp_dir to final_dir
+                # Move contents from temp_dir to final_dir only if they are text files
                 extracted_dir = os.path.join(temp_dir, os.listdir(temp_dir)[0])
                 for item in os.listdir(extracted_dir):
-                    shutil.move(os.path.join(extracted_dir, item), final_dir)
+                    file_path = os.path.join(extracted_dir, item)
+                    if self.is_text_file(file_path):
+                        shutil.move(file_path, final_dir)
 
                 # Remove the temporary directory
                 shutil.rmtree(temp_dir)

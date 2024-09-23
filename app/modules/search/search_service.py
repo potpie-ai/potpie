@@ -58,7 +58,11 @@ class SearchService:
                     {
                         "node_id": result.node_id,
                         "name": result.name,
-                        "file_path": result.file_path,
+                        "file_path": (
+                            result.file_path.split("/projects/", 1)[-1]
+                            if "/projects/" in result.file_path
+                            else result.file_path
+                        ),
                         "content": result.content,
                         "match_type": self._determine_match_type(result, query_words),
                         "relevance": relevance,
@@ -69,7 +73,7 @@ class SearchService:
         # Sort results by relevance
         formatted_results.sort(key=lambda x: x["relevance"], reverse=True)
 
-        return formatted_results
+        return formatted_results[:10]
 
     def _calculate_relevance(
         self, result: SearchIndex, query_words: List[str]

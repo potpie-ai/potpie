@@ -70,7 +70,7 @@ class UnitTestAgent:
         return prompt_template | self.mini_llm
 
     async def _classify_query(self, query: str, history: List[HumanMessage]):
-        prompt = ClassificationPrompts.get_classification_prompt(AgentType.QNA)
+        prompt = ClassificationPrompts.get_classification_prompt(AgentType.UNIT_TEST)
         inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
 
         parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
@@ -110,6 +110,7 @@ class UnitTestAgent:
             classification = await self._classify_query(query, validated_history)
 
             tool_results = []
+            citations = []
             if classification == ClassificationResult.AGENT_REQUIRED:
                 test_response = await kickoff_unit_test_crew(
                     query,
@@ -121,7 +122,7 @@ class UnitTestAgent:
                 )
 
                 if test_response.pydantic:
-                    citations = test_response.pydantic.ciations
+                    citations = test_response.pydantic.citations
                     response = test_response.pydantic.response
                 else:
                     citations = []
@@ -136,7 +137,7 @@ class UnitTestAgent:
             inputs = {
                 "history": validated_history,
                 "tool_results": tool_results,
-                "input": query,
+                "query": query,
             }
 
             logger.debug(f"Inputs to LLM: {inputs}")

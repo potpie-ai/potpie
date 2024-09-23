@@ -70,7 +70,9 @@ class IntegrationTestAgent:
         return prompt_template | self.mini_llm
 
     async def _classify_query(self, query: str, history: List[HumanMessage]):
-        prompt = ClassificationPrompts.get_classification_prompt(AgentType.QNA)
+        prompt = ClassificationPrompts.get_classification_prompt(
+            AgentType.INTEGRATION_TEST
+        )
         inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
 
         parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
@@ -109,7 +111,7 @@ class IntegrationTestAgent:
             ]
 
             classification = await self._classify_query(query, validated_history)
-
+            citations = []
             tool_results = []
             if classification == ClassificationResult.AGENT_REQUIRED:
                 test_response = await kickoff_integration_test_crew(

@@ -18,7 +18,7 @@ class IntegrationTestAgent:
     def __init__(self, sql_db, llm):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.sql_db = sql_db
-        self.get_code_tool = get_code_tools(self.sql_db)
+        self.code_tools = get_code_tools(self.sql_db)
         self.test_plan_agent = TestPlanAgent(sql_db, llm)
         self.llm = llm
 
@@ -55,12 +55,13 @@ class IntegrationTestAgent:
         test_plan_agent,
         integration_test_agent,
     ):
-        fetch_docstring_task, test_plan_task = await self.test_plan_agent.create_tasks(
+        test_plan_task = await self.test_plan_agent.create_tasks(
             node_ids, project_id, query, test_plan_agent
         )
 
         integration_test_task = Task(
             description=f"""
+            Project ID: {project_id}
             1. Analyze the provided codebase:
             - Code structure is defined in the {graph}
             - Determine the programming language used
@@ -103,11 +104,12 @@ class IntegrationTestAgent:
             Ensure that your final response is JSON serialisable but dont wrap it in ```json or ```python or ```code or ```""",
             expected_output=f"Write COMPLETE CODE for integration tests for each node based on the test plan. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model:\n{self.TestAgentResponse.model_json_schema()}",
             agent=integration_test_agent,
-            context=[fetch_docstring_task, test_plan_task],
+            context=[test_plan_task],
             output_pydantic=self.TestAgentResponse,
+            tools=[self.code_tools[2], self.code_tools[0]],
         )
 
-        return fetch_docstring_task, test_plan_task, integration_test_task
+        return test_plan_task, integration_test_task
 
     async def run(
         self,
@@ -120,7 +122,7 @@ class IntegrationTestAgent:
         os.environ["OPENAI_API_KEY"] = self.openai_api_key
 
         test_plan_agent, integration_test_agent = await self.create_agents()
-        docstring_task, test_plan_task, integration_test_task = await self.create_tasks(
+        test_plan_task, integration_test_task = await self.create_tasks(
             node_ids,
             project_id,
             query,
@@ -132,7 +134,7 @@ class IntegrationTestAgent:
 
         crew = Crew(
             agents=[test_plan_agent, integration_test_agent],
-            tasks=[docstring_task, test_plan_task, integration_test_task],
+            tasks=[test_plan_task, integration_test_task],
             process=Process.sequential,
             verbose=True,
         )
