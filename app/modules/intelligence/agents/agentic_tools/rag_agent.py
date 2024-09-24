@@ -136,7 +136,7 @@ class RAGAgent:
             Include the file paths of relevant nodes as citations in the response.
 
             ## Note:
-            - If a stacktrace or mention of a file/function is present in the original query, use the "Get Code and docstring From Probable Node Name" tool for additional context before proceeding with other steps.
+            - If a stacktrace or mention of a file/function is present in the original query, use the "Get Code and docstring From Probable Node Name" tool with the probable node names extracted from the stacktrace or mention for additional context before proceeding with other steps.
             - Always use available tools as directed in the original instructions.
             - If insufficient information is found at any stage, proceed to the next step in the algorithm.
             """,
