@@ -27,6 +27,7 @@ class RAGResponse(BaseModel):
 class RAGAgent:
     def __init__(self, sql_db, llm):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        self.max_iter = os.getenv("MAX_ITER", 5)
         self.sql_db = sql_db
         self.kg_tools = CodeTools.get_kg_tools()
         self.code_tools = get_code_tools(self.sql_db)
@@ -43,6 +44,7 @@ class RAGAgent:
             allow_delegation=False,
             verbose=True,
             llm=self.llm,
+            max_iter=self.max_iter,
         )
 
         rerank_agent = Agent(
@@ -53,6 +55,7 @@ class RAGAgent:
             allow_delegation=False,
             verbose=True,
             llm=self.llm,
+            max_iter=self.max_iter,
         )
 
         return query_agent, rerank_agent

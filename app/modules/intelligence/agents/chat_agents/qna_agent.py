@@ -64,7 +64,7 @@ class QNAAgent:
                 HumanMessagePromptTemplate.from_template(human_prompt.text),
             ]
         )
-        return prompt_template | self.llm
+        return prompt_template | self.mini_llm
 
     async def _classify_query(self, query: str, history: List[HumanMessage]):
         prompt = ClassificationPrompts.get_classification_prompt(AgentType.QNA)
@@ -117,7 +117,7 @@ class QNAAgent:
                     ],
                     node_ids,
                     self.db,
-                    self.llm,
+                    self.mini_llm,
                 )
                 if rag_result.pydantic:
                     citations = rag_result.pydantic.citations
@@ -126,11 +126,7 @@ class QNAAgent:
                 else:
                     citations = []
                     result = rag_result.raw
-                tool_results = [
-                    SystemMessage(
-                        content=f"RAG Agent result: {result}"
-                    )
-                ]
+                tool_results = [SystemMessage(content=f"RAG Agent result: {result}")]
 
             inputs = {
                 "history": validated_history,
