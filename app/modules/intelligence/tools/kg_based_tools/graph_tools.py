@@ -1,5 +1,5 @@
 import os
-from typing import List
+from typing import List, Dict
 
 import requests
 from langchain.tools import StructuredTool, Tool
@@ -21,6 +21,15 @@ class KnowledgeGraphInput(BaseModel):
 
 class GetNodesFromTagsInput(BaseModel):
     tags: List[str] = Field(description="A list of tags to filter the nodes by")
+    project_id: str = Field(
+        description="The project id metadata for the project being evaluated"
+    )
+
+
+class MultipleKnowledgeGraphQueriesInput(BaseModel):
+    queries: List[str] = Field(
+        description="A list of natural language questions to ask the knowledge graph"
+    )
     project_id: str = Field(
         description="The project id metadata for the project being evaluated"
     )
@@ -74,25 +83,38 @@ class CodeTools:
         ).query_graph(query)
         return nodes
 
+    @staticmethod
+    def ask_multiple_knowledge_graph_queries(queries: List[str], project_id: str) -> Dict[str, str]:
+        """
+        Query the code knowledge graph using multiple natural language questions.
+        The knowledge graph contains information about every function, class, and file in the codebase.
+        This method allows asking multiple questions about the codebase in a single operation.
+
+        Inputs:
+        - queries (List[str]): A list of natural language questions that the user wants to ask the knowledge graph.
+          Each question should be clear and concise, related to the codebase.
+        - project_id (str): The ID of the project being evaluated, this is a UUID.
+
+        Returns:
+        - Dict[str, str]: A dictionary where keys are the original queries and values are the corresponding responses.
+        """
+        kg_query_url = os.getenv("KNOWLEDGE_GRAPH_URL")
+        headers = {"Content-Type": "application/json"}
+        consolidated_results = {}
+
+        for query in queries:
+            data = {"project_id": project_id, "query": query}
+            response = requests.post(kg_query_url, json=data, headers=headers)
+            consolidated_results[query] = response.json()
+
+        return consolidated_results
+
     @classmethod
     def get_kg_tools(cls) -> List[Tool]:
         """
         Get a list of LangChain Tool objects for use in agents.
         """
         return [
-            StructuredTool.from_function(
-                func=cls.ask_knowledge_graph,
-                name="Ask Knowledge Graph",
-                description=""""
-        Query the code knowledge graph using natural language questions.
-        The knowledge graph contains information about every function, class, and file in the codebase.
-        Ask it questions about the codebase.
-        Inputs for the ask_knowledge_graph method:
-        - query (str): A natural language question that the user wants to ask the knowledge graph. This should be a clear and concise question related to the codebase, such as "What functions are defined in the project?" or "How do I use the XYZ class?".
-        - project_id (str): The ID of the project being evaluated, this is a UUID.
-        Do not use this to query code directly.""",
-                args_schema=KnowledgeGraphInput,
-            ),
             StructuredTool.from_function(
                 func=cls.get_nodes_from_tags,
                 name="Get Nodes from Tags",
@@ -108,8 +130,26 @@ class CodeTools:
                 1. Use for broad queries requiring ALL nodes of specific types.
                 2. Limit to 1-2 tags per query for best results.
                 3. Returns file paths, docstrings, text, node IDs, and names.
+                4. List cannot be empty.
 
                 Example: To find all API endpoints, use tags=['API']""",
                 args_schema=GetNodesFromTagsInput,
+            ),
+            StructuredTool.from_function(
+                func=cls.ask_multiple_knowledge_graph_queries,
+                name="Ask Knowledge Graph Queries",
+                description="""
+            Query the code knowledge graph using multiple natural language questions.
+            The knowledge graph contains information about every function, class, and file in the codebase.
+            This tool allows asking multiple questions about the codebase in a single operation.
+            
+            Inputs:
+            - queries (List[str]): A list of natural language questions to ask the knowledge graph. Each question should be 
+            clear and concise, related to the codebase, such as "What does the XYZ class do?" or "How is the ABC function used?"
+            - project_id (str): The ID of the project being evaluated, this is a UUID.
+            
+            Use this tool when you need to ask multiple related questions about the codebase at once.
+            Do not use this to query code directly.""",
+                args_schema=MultipleKnowledgeGraphQueriesInput,
             ),
         ]

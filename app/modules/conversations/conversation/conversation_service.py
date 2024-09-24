@@ -104,13 +104,13 @@ class ConversationService:
                 conversation.project_ids
             )
 
-            title = conversation.title.strip() if conversation.title else project_name
+            title = conversation.title.strip().replace("Untitled", project_name) if conversation.title else project_name
 
             conversation_id = self._create_conversation_record(
                 conversation, title, user_id
             )
 
-            await self._add_system_message(conversation_id, title, user_id)
+            await self._add_system_message(conversation_id, project_name, user_id)
 
             return conversation_id, "Conversation created successfully."
         except IntegrityError as e:

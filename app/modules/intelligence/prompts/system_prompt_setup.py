@@ -72,7 +72,7 @@ class SystemPromptSetup:
                         - Other
 
                         2. Tailor your response accordingly:
-                        - For new questions: Provide a comprehensive answer, starting with a brief summary
+                        - For new questions: Provide a comprehensive answer
                         - For follow-ups: Build on previous explanations, filling in gaps or expanding on concepts
                         - For clarification requests: Offer clear, concise explanations of specific points
                         - For comments/feedback: Acknowledge and incorporate into your understanding
@@ -91,6 +91,7 @@ class SystemPromptSetup:
 
                         5. Maintain a conversational tone:
                         - Use natural language and transitional phrases
+                        - Try to be concise and clear, do not repeat yourself.
                         - Feel free to ask clarifying questions to better understand the user's needs
                         - Offer follow-up suggestions to guide the conversation productively
 

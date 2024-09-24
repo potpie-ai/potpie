@@ -35,30 +35,28 @@ class RAGAgent:
 
     async def create_agents(self):
         query_agent = Agent(
-            role="Knowledge Graph Querier",
-            goal="Query the knowledge graph based on the input query and retrieve the top k responses.",
-            backstory="""You are an expert in querying complex knowledge graphs. Your task is to analyze the user's query and formulate the most effective strategy to extract relevant information from the code knowledge graph.
-            Based on the conversation history and current query, you rephrase the knowledge graph query to be more specific and relevant to the codebase.
+            role="Context curation agent",
+            goal=(
+                "Handle querying the knowledge graph and refining the results to provide accurate and contextually rich responses."
+            ),
+            backstory=f"""
+                You are a highly efficient and intelligent RAG agent capable of querying complex knowledge graphs and refining the results to generate precise and comprehensive responses.
+                Your tasks include:
+                1. Analyzing the user's query and formulating an effective strategy to extract relevant information from the code knowledge graph.
+                2. Executing the query with minimal iterations, ensuring accuracy and relevance.
+                3. Refining and enriching the initial results to provide a detailed and contextually appropriate response.
+                4. Maintaining traceability by including relevant citations and references in your output.
+                
+                You must adhere to the specified {self.max_iter} iterations to optimize performance and reduce latency.
             """,
-            tools=self.kg_tools,
+            tools=self.kg_tools + self.code_tools,
             allow_delegation=False,
             verbose=True,
             llm=self.llm,
             max_iter=self.max_iter,
         )
 
-        rerank_agent = Agent(
-            role="Re-ranker and Code Fetcher",
-            goal="Optimize and enrich the query results for maximum relevance and context",
-            backstory="You are a sophisticated algorithm personified, specializing in result optimization and context enrichment. Your task is to take the initial query results and transform them into the most informative and relevant response possible.",
-            tools=self.code_tools,
-            allow_delegation=False,
-            verbose=True,
-            llm=self.llm,
-            max_iter=self.max_iter,
-        )
-
-        return query_agent, rerank_agent
+        return query_agent
 
     async def create_tasks(
         self,
@@ -67,7 +65,6 @@ class RAGAgent:
         chat_history: List,
         node_ids: List[NodeContext],
         query_agent,
-        rerank_agent,
     ):
         if not node_ids:
             node_ids = []
@@ -83,7 +80,7 @@ class RAGAgent:
                 - Consider the context from chat history
                 - If there is a stacktrace or mention of a file or function, use the Get Code and docstring From Probable Node Name tool to get additional context
 
-              Step 2: Formulate knowledge graph query strategy
+              Step 2: Formulate knowledge graph query 
                 - Analyze the original query to identify its intent and key technical terms.
                 - Decide whether to use direct node lookup, similarity search, or graph traversal based on the query type.
                 - Determine appropriate tags to filter results.
@@ -127,7 +124,7 @@ class RAGAgent:
               Throughout this process, maintain a balance between breadth and depth of information retrieval. Your goal is to provide a comprehensive yet focused set of results that directly address the user's query.
               If you are not able to find a lot of information, let the next task fetch the code from the nodes you already retrieved
             """,
-            expected_output="A list of responses responses including the node_id, node name, docstring and similarity score that were retrieved from the knowledge graph",
+            expected_output="A list of responses including the node_id, node name, docstring and similarity score that were retrieved from the knowledge graph",
             agent=query_agent,
         )
 
@@ -170,7 +167,7 @@ class RAGAgent:
             """
             ),
             expected_output=f"The output of the task is curated context (file name, docstring, code) fetched from the knowledge graph along with required citations. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model :\n{RAGResponse.model_json_schema()}",
-            agent=rerank_agent,
+            agent=query_agent,
             context=[query_task],
             output_pydantic=RAGResponse,
         )
@@ -186,13 +183,13 @@ class RAGAgent:
     ) -> str:
         os.environ["OPENAI_API_KEY"] = self.openai_api_key
 
-        query_agent, rerank_agent = await self.create_agents()
+        query_agent = await self.create_agents()
         query_task, rerank_task = await self.create_tasks(
-            query, project_id, chat_history, node_ids, query_agent, rerank_agent
+            query, project_id, chat_history, node_ids, query_agent
         )
 
         crew = Crew(
-            agents=[query_agent, rerank_agent],
+            agents=[query_agent],
             tasks=[query_task, rerank_task],
             process=Process.sequential,
             verbose=True,
