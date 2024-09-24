@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     parameters {
-        string(name: 'namespace', defaultValue: "mom-server", description: 'namespace to deploy')
+        string(name: 'namespace', defaultValue: "devops", description: 'namespace to deploy')
     }
     environment {
         // Access environment variables using Jenkins credentials
