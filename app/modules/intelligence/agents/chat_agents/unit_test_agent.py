@@ -95,9 +95,6 @@ class UnitTestAgent:
             if not self.chain:
                 self.chain = await self._create_chain()
 
-            if not node_ids:
-                raise HTTPException(status_code=400, detail="No node IDs provided")
-
             history = self.history_manager.get_session_history(user_id, conversation_id)
             validated_history = [
                 (
@@ -137,7 +134,7 @@ class UnitTestAgent:
             inputs = {
                 "history": validated_history,
                 "tool_results": tool_results,
-                "query": query,
+                "input": query,
             }
 
             logger.debug(f"Inputs to LLM: {inputs}")
