@@ -5,7 +5,6 @@ from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
-from app.modules.intelligence.agents.agentic_tools.test_plan_agent import TestPlanAgent
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     get_code_tools,
 )
@@ -58,7 +57,7 @@ class UnitTestAgent:
             - Fetch the docstrings and code for the provided node IDs using the get_code_from_node_id tool.
             - Node IDs: {', '.join(node_ids_list)}
             - Project ID: {project_id}
-            - Fetch the code for the file path of the function/class mentioned in the user's query using the get code from probable node name tool. This is needed for correct inport of class name in the unit test file. 
+            - Fetch the code for the file path of the function/class mentioned in the user's query using the get code from probable node name tool. This is needed for correct inport of class name in the unit test file.
 
             2. **Analysis:**
             - Analyze the fetched code and docstrings to understand the functionality.
@@ -115,15 +114,14 @@ class UnitTestAgent:
         query: str,
         chat_history: List,
     ) -> Dict[str, str]:
-
         unit_test_agent = await self.create_agents()
         unit_test_task = await self.create_tasks(
             node_ids, project_id, query, chat_history, unit_test_agent
         )
 
         crew = Crew(
-            agents=[ unit_test_agent],
-            tasks=[ unit_test_task],
+            agents=[unit_test_agent],
+            tasks=[unit_test_task],
             process=Process.sequential,
             verbose=True,
         )
@@ -142,7 +140,9 @@ async def kickoff_unit_test_crew(
     llm,
 ) -> Dict[str, str]:
     if not node_ids:
-        return {"error": "No function name is provided by the user. The agent cannot generate test plan or test code without specific class or function being selected by the user. Request the user to use the '@ followed by file or function name' feature to link individual functions to the message. "}
+        return {
+            "error": "No function name is provided by the user. The agent cannot generate test plan or test code without specific class or function being selected by the user. Request the user to use the '@ followed by file or function name' feature to link individual functions to the message. "
+        }
     unit_test_agent = UnitTestAgent(sql_db, llm)
     result = await unit_test_agent.run(project_id, node_ids, query, chat_history)
     return result

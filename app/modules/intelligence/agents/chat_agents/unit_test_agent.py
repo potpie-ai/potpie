@@ -3,7 +3,6 @@ import logging
 from functools import lru_cache
 from typing import AsyncGenerator, Dict, List
 
-from fastapi import HTTPException
 from langchain.schema import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import (

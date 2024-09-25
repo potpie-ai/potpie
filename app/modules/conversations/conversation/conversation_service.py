@@ -104,7 +104,11 @@ class ConversationService:
                 conversation.project_ids
             )
 
-            title = conversation.title.strip().replace("Untitled", project_name) if conversation.title else project_name
+            title = (
+                conversation.title.strip().replace("Untitled", project_name)
+                if conversation.title
+                else project_name
+            )
 
             conversation_id = self._create_conversation_record(
                 conversation, title, user_id
