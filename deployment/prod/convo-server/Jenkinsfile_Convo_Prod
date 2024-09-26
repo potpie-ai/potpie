@@ -57,7 +57,7 @@ pipeline {
                     def dockerRegistry = env.DOCKER_REGISTRY
                     echo "Printing the saved docker registry from env:"
                     echo "${dockerRegistry}"
-                    sh "sudo docker build -f convo.Dockerfile -t ${DOCKER_REGISTRY}/convo:${imageTag} ."
+                    sh "sudo docker build -f deployment/prod/convo-server/convo.Dockerfile -t ${DOCKER_REGISTRY}/convo:${imageTag} ."
                 }
             }
         }

@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y git procps
 WORKDIR /app
 
 # Copy the requirements file into the container -
-COPY requirements.txt .
+COPY ../../../requirements.txt .
 
 # Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
@@ -24,7 +24,7 @@ RUN pip install --no-cache-dir nltk
 RUN python -c "import nltk; nltk.download('punkt');"
 
 # Copy the rest of the application code into the container
-COPY . .
+COPY ../../.. .
 
 # env path for newrelic.ini
 ENV NEW_RELIC_CONFIG_FILE=/app/newrelic.ini
