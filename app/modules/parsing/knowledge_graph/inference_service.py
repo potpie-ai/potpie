@@ -17,6 +17,7 @@ from app.modules.parsing.knowledge_graph.inference_schema import (
     DocstringResponse,
 )
 from app.modules.search.search_service import SearchService
+from app.modules.projects.projects_service import ProjectService
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ class InferenceService:
         self.llm = ProviderService(db, user_id).get_small_llm()
         self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
         self.search_service = SearchService(db)
+        self.project_manager = ProjectService(db)
 
     def close(self):
         self.driver.close()
@@ -500,6 +502,18 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
                     batch=batch,
                     repo_id=repo_id,
                 )
+            project = await self.project_manager.get_project_from_db_by_id(repo_id)
+            repo_name = project.get("project_name")
+
+            if len(repo_name.split("/")) < 2:
+                return  # Do not cleanup if it's a local repo
+
+            session.run(
+                """
+                MATCH (n:NODE {repoId: $repo_id})
+                REMOVE n.text, n.signature
+                """, repo_id=repo_id,
+            )
 
     def create_vector_index(self):
         with self.driver.session() as session:
