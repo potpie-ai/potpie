@@ -23,6 +23,7 @@ services:
       NEO4J_AUTH: neo4j/mysecretpassword
       NEO4JLABS_PLUGINS: '["apoc"]' # Add this line to include APOC plugin
       NEO4J_dbms_security_procedures_unrestricted: 'apoc.*' # Allow APOC procedures
+      NEO4J_dbms_memory_transaction_total_max: 0
     ports:
       - "7474:7474"
       - "7687:7687"

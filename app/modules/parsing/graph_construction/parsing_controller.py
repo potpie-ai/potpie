@@ -43,9 +43,12 @@ class ParsingController:
                 }
 
                 logger.info(f"Submitting parsing task for new project {new_project_id}")
-                await project_manager.update_project_status(
-                    new_project_id, ProjectStatusEnum.SUBMITTED
-                )
+
+                await project_manager.register_project(repo_name,
+                    repo_details.branch_name,
+                    user_id,
+                    new_project_id)
+
                 process_parsing.delay(
                     repo_details.model_dump(),
                     user_id,

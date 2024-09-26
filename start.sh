@@ -34,6 +34,3 @@ gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 1800
 echo "Starting Celery worker"
 # Start Celery worker with the new setup
 celery -A app.celery.celery_app worker --loglevel=debug -Q "${CELERY_QUEUE_NAME}_process_repository" -E --concurrency=1 --pool=solo &
-
-# Start Flower for monitoring (if needed)
-celery -A app.celery.celery_app flower &

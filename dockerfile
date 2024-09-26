@@ -16,8 +16,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Install supervisor
 RUN apt-get update && apt-get install -y supervisor
 
-# Install Celery and Flower
-RUN pip install --no-cache-dir celery flower
+# Install Celery
+RUN pip install --no-cache-dir celery
 
 # Install NLTK and download required data
 RUN pip install --no-cache-dir nltk
@@ -35,8 +35,6 @@ COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 # Expose the port that the app runs on
 EXPOSE 8001
 
-# Expose the port for Flower
-EXPOSE 5555
 
 # Define environment variable
 ENV PYTHONUNBUFFERED=1
