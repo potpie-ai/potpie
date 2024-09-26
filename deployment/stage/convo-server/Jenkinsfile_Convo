@@ -20,12 +20,10 @@ pipeline {
                     // Determine environment based on branch
                     def branch = env.GIT_BRANCH
 
-                    if (branch == "origin/stage-deploy") {
-                        env.ENVIRONMENT = 'stage-deploy'
+                    if (branch == "origin/dir-restruct") {
+                        env.ENVIRONMENT = 'dir-restruct'
                     } else if (branch == "origin/main") {
                         env.ENVIRONMENT = 'main'
-                    } else if (branch == "origin/devops"){
-                        env.ENVIORNMENT = 'devops'
                     } else {
                         error("Unknown branch: ${branch}. This pipeline only supports main and staging branches.")
                     }
