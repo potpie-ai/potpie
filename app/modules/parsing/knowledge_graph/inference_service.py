@@ -488,7 +488,9 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
                 }
                 for n in docstrings["docstrings"]
             ]
-
+            project = await self.project_manager.get_project_from_db_by_id(repo_id)
+            repo_name = project.get("project_name")
+            is_local_repo = len(repo_name.split("/")) < 2
             for i in range(0, len(docstring_list), batch_size):
                 batch = docstring_list[i : i + batch_size]
                 session.run(
@@ -498,22 +500,12 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
                     SET n.docstring = item.docstring,
                         n.embedding = item.embedding,
                         n.tags = item.tags
-                    """,
+                    """ +  (
+                    "" if is_local_repo else "REMOVE n.text, n.signature"
+                ),
                     batch=batch,
                     repo_id=repo_id,
                 )
-            project = await self.project_manager.get_project_from_db_by_id(repo_id)
-            repo_name = project.get("project_name")
-
-            if len(repo_name.split("/")) < 2:
-                return  # Do not cleanup if it's a local repo
-
-            session.run(
-                """
-                MATCH (n:NODE {repoId: $repo_id})
-                REMOVE n.text, n.signature
-                """, repo_id=repo_id,
-            )
 
     def create_vector_index(self):
         with self.driver.session() as session:

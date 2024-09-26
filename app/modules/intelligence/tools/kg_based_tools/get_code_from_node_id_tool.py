@@ -108,23 +108,18 @@ class GetCodeFromNodeIdTool:
         end_line = node_data["end_line"]
 
         relative_file_path = self._get_relative_file_path(file_path)
-        if "code" in node_data and node_data["code"] is None:
-            code_content = GithubService.get_file_content(
+        if "code" in node_data and node_data["code"] is not None:
+            code_content = node_data["code"]
+        else:
+            code_content = GithubService(self.sql_db).get_file_content(
                 project.repo_name,
                 relative_file_path,
                 start_line,
-                end_line,
+                end_line,  # Ensure end_line is passed
             )
-        else:
-            code_content = node_data["code"]
 
         if "docstring" in node_data and node_data["docstring"] is None:
-            docstring = GithubService.get_file_content(
-                project.repo_name,
-                relative_file_path,
-                start_line,
-                end_line,
-            )
+            docstring = None
         else:
             docstring = node_data["docstring"]
 
