@@ -20,7 +20,6 @@ load_dotenv(override=True)
 
 
 class AuthAPI:
-    async def login(login_request: LoginRequest):
     @auth_router.post("/signup")
     async def signup(request: Request, db: Session = Depends(get_db)):
         body = json.loads(await request.body())
