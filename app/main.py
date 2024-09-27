@@ -1,5 +1,6 @@
 import logging
 import os
+import subprocess
 
 import sentry_sdk
 from dotenv import load_dotenv
@@ -101,7 +102,10 @@ class MainApp:
     def add_health_check(self):
         @self.app.get("/health", tags=["Health"])
         def health_check():
-            return {"status": "ok"}
+            return {
+                "status": "ok",
+                "version": subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD']).strip().decode('utf-8'),
+            }
 
     async def startup_event(self):
         db = SessionLocal()

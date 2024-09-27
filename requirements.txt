@@ -13,7 +13,7 @@ tqdm
 grep-ast
 pygments
 networkx
-blar-graph
+blar-graph==1.0.11
 openai
 duckduckgo-search
 uuid6
