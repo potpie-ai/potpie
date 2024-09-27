@@ -46,7 +46,7 @@ class ChangeDetectionResponse(BaseModel):
     )
 
 
-class ChangeDetection:
+class ChangeDetectionTool:
     def __init__(self, sql_db):
         self.sql_db = sql_db
         self.search_service = SearchService(self.sql_db)
@@ -159,7 +159,7 @@ class ChangeDetection:
             traversal_result = self.traverse(
                 identifier=identifier,
                 project_id=project_id,
-                neighbors_fn=ChangeDetection._find_inbound_neighbors,
+                neighbors_fn=ChangeDetectionTool._find_inbound_neighbors,
             )
             for item in traversal_result:
                 if isinstance(item, dict):
@@ -171,7 +171,7 @@ class ChangeDetection:
             traversal_result = self.traverse(
                 identifier=node_dict["id"],
                 project_id=project_id,
-                neighbors_fn=ChangeDetection._find_inbound_neighbors,
+                neighbors_fn=ChangeDetectionTool._find_inbound_neighbors,
             )
             if len(traversal_result) == 1:
                 entry_points.add(node)
@@ -289,10 +289,10 @@ def get_blast_radius_tool() -> List[Tool]:
     """
     Get a list of LangChain Tool objects for use in agents.
     """
-    change_detection = ChangeDetection(next(get_db()))
+    change_detection_tool = ChangeDetectionTool(next(get_db()))
     return [
         StructuredTool.from_function(
-            func=change_detection.get_change_context,
+            func=change_detection_tool.get_change_context,
             name="Get code changes",
             description="""
     Get the changes in the codebase.
