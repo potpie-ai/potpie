@@ -82,9 +82,9 @@ class RAGAgent:
 
             ## Step 1: Initial Context Retrieval
             - If user provided node IDs are present:
-            1. Use the "Get Code and docstring From Node ID" tool for each provided node ID.
+            1. FIRST Use the "Get Code and docstring From Node ID" tool for each provided node ID.
             2. Analyze the retrieved docstrings and code.
-            3. Determine if this information is sufficient to answer the query.
+            3. Determine if this information is sufficient to answer the input query.
 
             ## Step 2: Knowledge Graph Query (if needed)
             If the information from Step 1 is insufficient or if no node IDs were provided:
@@ -100,17 +100,17 @@ class RAGAgent:
                 * Generate multiple keyword variations to increase matching chances.
                 * Be specific in keywords to improve match accuracy.
                 * Ensure the query includes relevant details and follows a similar structure to enhance similarity search results.
-            2. Execute the query using the knowledge graph tool.
-            3. Analyze the returned response and determine if the returned nodes are sufficient to answer the query accurately.
+            2. Execute the transformed query using the knowledge graph tool.
+            3. Analyze the returned response and determine if the returned nodes are sufficient to answer the input query accurately.
 
             ## Step 3: Additional Context Retrieval (if needed)
             If the knowledge graph results are insufficient:
             1. Use the "Node by Tags" tool to retrieve additional relevant nodes.
-            2. Extract probable node names (file, function names) from the original query or results.
+            2. Extract probable node names (file, function names) from the input query or results.
             3. Use the "Get Code and docstring From Probable Node Name" tool for these extracted names.
 
             ## Step 4: Result Analysis and Enrichment
-            - Evaluate the relevance of each result to the original query.
+            - Evaluate the relevance of each result to the input query.
             - Identify potential gaps or redundancies in the information.
             - Develop a scoring mechanism considering:
             * Relevance to query
@@ -118,7 +118,7 @@ class RAGAgent:
             * Hierarchical importance in the codebase
             * Frequency of references
             - For highly-ranked results, determine additional valuable context.
-            - Retrieve code only if the docstring is insufficient to answer the query.
+            - Retrieve code only if the docstring is insufficient to answer the input query.
             - Ensure retrieved code is complete and self-contained.
 
             ## Step 5: Response Composition
