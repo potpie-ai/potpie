@@ -37,6 +37,7 @@ class Message(Base):
         SQLAEnum(MessageStatus), default=MessageStatus.ACTIVE, nullable=False
     )
     created_at = Column(TIMESTAMP(timezone=True), default=func.now(), nullable=False)
+    citations = Column(Text, nullable=True)
 
     conversation = relationship("Conversation", back_populates="messages")
 

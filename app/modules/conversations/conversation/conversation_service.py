@@ -475,6 +475,7 @@ class ConversationService:
                     type=message.type,
                     status=message.status,
                     created_at=message.created_at,
+                    citations=message.citations.split(",") if message.citations else None,
                 )
                 for message in messages
             ]

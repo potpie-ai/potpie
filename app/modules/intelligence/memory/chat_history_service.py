@@ -23,7 +23,7 @@ class ChatHistoryServiceError(Exception):
 class ChatHistoryService:
     def __init__(self, db: Session):
         self.db = db
-        self.message_buffer: Dict[str, str] = {}
+        self.message_buffer: Dict[str, Dict[str, str]] = {}
 
     def get_session_history(
         self, user_id: str, conversation_id: str
@@ -69,10 +69,13 @@ class ChatHistoryService:
         content: str,
         message_type: MessageType,
         sender_id: Optional[str] = None,
+        citations: Optional[List[str]] = None,
     ):
         if conversation_id not in self.message_buffer:
-            self.message_buffer[conversation_id] = ""
-        self.message_buffer[conversation_id] += content
+            self.message_buffer[conversation_id] = {"content": "", "citations": []}
+        self.message_buffer[conversation_id]["content"] += content
+        if citations:
+            self.message_buffer[conversation_id]["citations"].extend(citations)
         logger.debug(
             f"Added message chunk to buffer for conversation: {conversation_id}"
         )
@@ -86,19 +89,23 @@ class ChatHistoryService:
         try:
             if (
                 conversation_id in self.message_buffer
-                and self.message_buffer[conversation_id]
+                and self.message_buffer[conversation_id]["content"]
             ):
+                content = self.message_buffer[conversation_id]["content"]
+                citations = self.message_buffer[conversation_id]["citations"]
+                
                 new_message = Message(
                     id=str(uuid7()),
                     conversation_id=conversation_id,
-                    content=self.message_buffer[conversation_id],
+                    content=content,
                     sender_id=sender_id if message_type == MessageType.HUMAN else None,
                     type=message_type,
                     created_at=datetime.now(timezone.utc),
+                    citations=",".join(set(citations)) if citations else None,  # Use set to remove duplicates
                 )
                 self.db.add(new_message)
                 self.db.commit()
-                self.message_buffer[conversation_id] = ""
+                self.message_buffer[conversation_id] = {"content": "", "citations": []}
                 logger.info(
                     f"Flushed message buffer for conversation: {conversation_id}"
                 )

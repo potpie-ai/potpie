@@ -25,6 +25,7 @@ class MessageResponse(BaseModel):
     reason: Optional[str] = None
     created_at: datetime
     status: MessageStatus
+    citations: Optional[List[str]] = None
 
     class Config:
         from_attributes = True

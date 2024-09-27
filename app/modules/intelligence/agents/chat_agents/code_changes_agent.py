@@ -141,7 +141,10 @@ class CodeChangesAgent:
                 content = chunk.content if hasattr(chunk, "content") else str(chunk)
                 full_response += content
                 self.history_manager.add_message_chunk(
-                    conversation_id, content, MessageType.AI_GENERATED
+                    conversation_id,
+                    content,
+                    MessageType.AI_GENERATED,
+                    citations=citations if classification == ClassificationResult.AGENT_REQUIRED else None
                 )
                 yield json.dumps(
                     {
