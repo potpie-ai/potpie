@@ -409,21 +409,28 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
         Perform the following tasks for every identified `node_id` and its associated code:
 
         1. **Docstring Generation**:
-            - Structured Sections: Organize the docstring into the following sections where applicable:
+            - **Begin with a concise, one-sentence summary of the code's purpose.**
+            - **Describe the main functionality in detail**, including the problem it solves or the task it performs.
+            - **List and explain all parameters/inputs and their types.**
+            - **Specify the return value(s) and their types.**
+            - **Mention any side effects or state changes.**
+            - **Note any exceptions that may be raised and under what conditions.**
+            - **Include relevant technical details**, such as API paths, HTTP methods, function calls, database operations, and topic names.
+            - **Provide a brief example** of how to use the code (if applicable).
+            - **Structured Sections**: Organize the docstring into the following sections where applicable:
                 * Summary: A concise, one-sentence summary of the code's purpose.
                 * Description: A detailed explanation of the main functionality, including the problem it solves or the task it performs.
                 * Parameters: List and explain all parameters/inputs with their types.
                 * Returns: Specify the return value(s) and their types.
                 * Raises: Mention any exceptions that may be raised and under what conditions.
-                * Examples: Provide a brief example of how to use the code (if applicable).
-            - Action-Oriented Description: Use imperative verbs to describe the main functionality (e.g., "Creates", "Initializes").
-            - Technical Precision: Accurately reflect the technical actions, specifying operations and objects involved (e.g., "Creates a new MongoDB document in the specified collection").
-            - Consistent Phrasing:
+            - **Action-Oriented Description**: Use imperative verbs to describe the main functionality (e.g., "Creates", "Initializes").
+            - **Technical Precision**: Accurately reflect the technical actions, specifying operations and objects involved (e.g., "Creates a new MongoDB document in the specified collection").
+            - **Consistent Phrasing**:
                 * Classes: Begin with "Provides" or "Defines" to describe the class's role.
                 * Functions/Methods: Begin with an action verb describing what the function does.
-            - Clear Object Reference: Specify the objects being manipulated (e.g., "document," "collection," "client"). Specify the functions being called.
-            - Contextual Keywords: Incorporate relevant technical terms to provide context and enhance matching accuracy.
-            - Avoid Redundancy and Ambiguity: Ensure each section is unique and clearly related to its heading.
+            - **Clear Object Reference**: Specify the objects being manipulated (e.g., "document," "collection," "client"). Specify the functions being called.
+            - **Contextual Keywords**: Incorporate relevant technical terms to provide context and enhance matching accuracy.
+            - **Avoid Redundancy and Ambiguity**: Ensure each section is unique and clearly related to its heading.
 
         2. **Classification**:
             Classify the code snippet into one or more of the following categories. For each category, consider these guidelines:
