@@ -18,12 +18,14 @@ logger = logging.getLogger(__name__)
 class GetCodeFromNodeIdInput(BaseModel):
     repo_id: str = Field(description="The repository ID, this is a UUID")
     node_id: str = Field(description="The node ID, this is a UUID")
+    branch_name: str = Field(description="The branch name from which to fetch code")
+
 
 
 class GetCodeFromMultipleNodeIdsInput(BaseModel):
     repo_id: str = Field(description="The repository ID, this is a UUID")
     node_ids: List[str] = Field(description="List of node IDs, this is a UUID")
-
+    branch_name: str = Field(description="The branch name from which to fetch code")
 
 class GetCodeFromProbableNodeNameInput(BaseModel):
     project_id: str = Field(description="The project ID, this is a UUID")
@@ -50,7 +52,7 @@ class GetCodeFromNodeIdTool:
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
 
-    def run(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+    def run(self, repo_id: str, node_id: str, branch_name: str) -> Dict[str, Any]:
         try:
             node_data = self._get_node_data(repo_id, node_id)
             if not node_data:
@@ -64,12 +66,12 @@ class GetCodeFromNodeIdTool:
                 logger.error(f"Project with ID '{repo_id}' not found in database")
                 return {"error": f"Project with ID '{repo_id}' not found in database"}
 
-            return self._process_result(node_data, project, node_id)
+            return self._process_result(node_data, project, node_id, branch_name)
         except Exception as e:
             logger.error(f"Unexpected error in GetCodeFromNodeIdTool: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
-    def run_multiple(self, repo_id: str, node_ids: List[str]) -> Dict[str, Any]:
+    def run_multiple(self, repo_id: str, node_ids: List[str], branch_name: str) -> Dict[str, Any]:
         try:
             project = self._get_project(repo_id)
             if not project:
@@ -80,7 +82,7 @@ class GetCodeFromNodeIdTool:
             for node_id in node_ids:
                 node_data = self._get_node_data(repo_id, node_id)
                 if node_data:
-                    results[node_id] = self._process_result(node_data, project, node_id)
+                    results[node_id] = self._process_result(node_data, project, node_id, branch_name)
                 else:
                     results[node_id] = {
                         "error": f"Node with ID '{node_id}' not found in repo '{repo_id}'"
@@ -106,7 +108,7 @@ class GetCodeFromNodeIdTool:
         return self.sql_db.query(Project).filter(Project.id == repo_id).first()
 
     def _process_result(
-        self, node_data: Dict[str, Any], project: Project, node_id: str
+        self, node_data: Dict[str, Any], project: Project, node_id: str, branch_name: str
     ) -> Dict[str, Any]:
         file_path = node_data["file_path"]
         start_line = node_data["start_line"]
@@ -121,6 +123,7 @@ class GetCodeFromNodeIdTool:
                 relative_file_path,
                 start_line,
                 end_line,
+                branch_name
             )
 
         docstring = None
