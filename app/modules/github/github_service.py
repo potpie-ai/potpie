@@ -72,7 +72,7 @@ class GithubService:
         return github, response.json(), owner
 
     def get_file_content(
-        self, repo_name: str, file_path: str, start_line: int, end_line: int
+        self, repo_name: str, file_path: str, start_line: int, end_line: int, branch_name: str
     ) -> str:
         logger.info(f"Attempting to access file: {file_path} in repo: {repo_name}")
 
@@ -87,7 +87,7 @@ class GithubService:
         try:
             # Try authenticated access first
             github, repo = self.get_repo(repo_name)
-            file_contents = repo.get_contents(clean_file_path)
+            file_contents = repo.get_contents(clean_file_path, ref=branch_name)
         except Exception as private_error:
             logger.info(f"Failed to access private repo: {str(private_error)}")
             # If authenticated access fails, try public access
