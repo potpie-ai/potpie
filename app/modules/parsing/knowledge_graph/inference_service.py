@@ -162,22 +162,32 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
         current_tokens = 0
         node_dict = {node["node_id"]: node for node in nodes}
 
-        def replace_referenced_text(text: str) -> str:
+        def replace_referenced_text(text: str, node_dict: Dict[str, Dict[str, str]]) -> str:
+        
+            pattern = r"Code replaced for brevity\. See node_id ([a-f0-9]+)"
+            regex = re.compile(pattern)
+
             def replace_match(match):
                 node_id = match.group(1)
                 if node_id in node_dict:
                     return node_dict[node_id]["text"]
-                return match.group(0)  # Return the original text if node_id not found
+                return match.group(0)  
 
-            pattern = r"Code replaced for brevity\. See node_id ([a-f0-9]+)"
-            return re.sub(pattern, replace_match, text)
+            previous_text = None
+            current_text = text
+
+            while previous_text != current_text:
+                previous_text = current_text
+                current_text = regex.sub(replace_match, current_text)
+
+            return current_text
 
         for node in nodes:
             # Skip nodes with None or empty text
             if not node.get("text"):
                 continue
 
-            updated_text = replace_referenced_text(node["text"])
+            updated_text = replace_referenced_text(node["text"], node_dict)
             node_tokens = self.num_tokens_from_string(updated_text, model)
             if node_tokens > max_tokens:
                 continue  # Skip nodes that exceed the max_tokens limit
@@ -391,49 +401,65 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
         base_prompt = """
         You are a senior software engineer with expertise in code analysis and documentation. Your task is to generate detailed technical docstrings and classify code snippets. Approach this task methodically, following these steps:
 
-        1. Read and understand the given code snippet thoroughly.
-        2. Identify the main purpose and functionality of the code.
-        3. Determine the inputs, outputs, and key operations performed.
-        4. Recognize any important algorithms, data structures, or design patterns used.
-        5. Note any external dependencies or interactions with other systems.
+        1. **Node Identification**:
+        - Carefully parse the provided `code_snippets` to identify each `node_id` and its corresponding code block.
+        - Ensure that every `node_id` present in the `code_snippets` is accounted for and processed individually.
 
-        For each of the following code snippets, perform these tasks:
+        2. **For Each Node**:
+        Perform the following tasks for every identified `node_id` and its associated code:
 
         1. **Docstring Generation**:
-           - Begin with a concise, one-sentence summary of the code's purpose.
-           - Describe the main functionality in detail, including the problem it solves or the task it performs.
-           - List and explain all parameters/inputs and their types.
-           - Specify the return value(s) and their types.
-           - Mention any side effects or state changes.
-           - Note any exceptions that may be raised and under what conditions.
-           - Include relevant technical details like API paths, HTTP methods, topic names, function calls, and database operations.
-           - If applicable, provide a brief example of how to use the code.
+            - Structured Sections: Organize the docstring into the following sections where applicable:
+                * Summary: A concise, one-sentence summary of the code's purpose.
+                * Description: A detailed explanation of the main functionality, including the problem it solves or the task it performs.
+                * Parameters: List and explain all parameters/inputs with their types.
+                * Returns: Specify the return value(s) and their types.
+                * Raises: Mention any exceptions that may be raised and under what conditions.
+                * Examples: Provide a brief example of how to use the code (if applicable).
+            - Action-Oriented Description: Use imperative verbs to describe the main functionality (e.g., "Creates", "Initializes").
+            - Technical Precision: Accurately reflect the technical actions, specifying operations and objects involved (e.g., "Creates a new MongoDB document in the specified collection").
+            - Consistent Phrasing:
+                * Classes: Begin with "Provides" or "Defines" to describe the class's role.
+                * Functions/Methods: Begin with an action verb describing what the function does.
+            - Clear Object Reference: Specify the objects being manipulated (e.g., "document," "collection," "client"). Specify the functions being called.
+            - Contextual Keywords: Incorporate relevant technical terms to provide context and enhance matching accuracy.
+            - Avoid Redundancy and Ambiguity: Ensure each section is unique and clearly related to its heading.
 
         2. **Classification**:
-           Classify the code snippet into one or more of the following categories. For each category, consider these guidelines:
+            Classify the code snippet into one or more of the following categories. For each category, consider these guidelines:
 
-           - API: Does the code define any API endpoint? Look for route definitions, HTTP GET/POST/PUT/DELETE/PATCH methods.
-           - WEBSOCKET: Does the code implement or use WebSocket connections? Check for WebSocket-specific libraries or protocols.
-           - PRODUCER: Does the code generate and send messages to a queue or topic? Look for message publishing or event emission.
-           - CONSUMER: Does the code receive and process messages from a queue or topic? Check for message subscription or event handling.
-           - DATABASE: Does the code interact with a database? Look for query execution, data insertion, updates, or deletions.
-           - SCHEMA: Does the code define any database schema? Look for ORM models, table definitions, or schema-related code.
-           - HTTP: Does the code make HTTP requests to external services? Check for HTTP client usage or request handling.
+            - **API**: Does the code define any API endpoint? Look for route definitions, HTTP GET/POST/PUT/DELETE/PATCH methods.
+            - **WEBSOCKET**: Does the code implement or use WebSocket connections? Check for WebSocket-specific libraries or protocols.
+            - **PRODUCER**: Does the code generate and send messages to a queue or topic? Look for message publishing or event emission.
+            - **CONSUMER**: Does the code receive and process messages from a queue or topic? Check for message subscription or event handling.
+            - **DATABASE**: Does the code interact with a database? Look for query execution, data insertion, updates, or deletions.
+            - **SCHEMA**: Does the code define any database schema? Look for ORM models, table definitions, or schema-related code.
+            - **HTTP**: Does the code make HTTP requests to external services? Check for HTTP client usage or request handling.
+            - **CONFIGURATION**: Does the code represent configuration settings or environment setup? Identify configuration files or scripts.
+            - **SCRIPT**: Is the code a standalone script or automation tool? Look for executable scripts or deployment commands.
 
-           ONLY use these tags and select the ones that are most relevant to the code snippet. Avoid false positives by ensuring the code clearly exhibits the behavior associated with each tag.
+            ONLY use these tags and select the ones that are most relevant to the code snippet. Avoid false positives by ensuring the code clearly exhibits the behavior associated with each tag.
 
-        Here are the code snippets:
-        {code_snippets}
+        3. **Output Compilation**:
+        - Collect the generated docstrings and classifications for each `node_id`.
+        - Ensure that the output includes an entry for every `node_id` provided in the `code_snippets`.
 
-        Before finalizing your response, review your analysis:
-        - Is the docstring clear, comprehensive, and technically accurate?
-        - Are the assigned tags justified by the code's functionality?
-        - Have you captured all crucial technical details without unnecessary verbosity?
+        4. **Review and Verification**:
+        Before finalizing your response, perform the following checks:
+        - **Completeness**: Verify that every `node_id` from the input is present in the output.
+        - **Accuracy**: Ensure that each docstring is clear, comprehensive, and technically accurate.
+        - **Justification**: Confirm that the assigned tags are justified by the code's functionality.
+        - **Clarity**: Make sure all crucial technical details are captured without unnecessary verbosity.
 
         Refine your output as needed to ensure high-quality, precise documentation. Your job depends on it.
 
+        **Format Instructions**:
+
         {format_instructions}
 
+        Here are the code snippets:
+
+        {code_snippets}
         """
 
         # Prepare the code snippets

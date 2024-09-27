@@ -134,7 +134,7 @@ class CodeTools:
 
                 Input:
                 - tags (List[str]): A list of tags to filter nodes. Valid tags are:
-                API, WEBSOCKET, PRODUCER, CONSUMER, DATABASE, SCHEMA, HTTP
+                API, WEBSOCKET, PRODUCER, CONSUMER, DATABASE, SCHEMA, HTTP, CONFIGURATION, SCRIPT
                 - project_id (str): The UUID of the project being evaluated
 
                 Usage guidelines:
