@@ -2,11 +2,11 @@ pipeline {
     agent any
 
     parameters {
-        string(name: 'namespace', defaultValue: "devops", description: 'namespace to deploy')
+        string(name: 'namespace', defaultValue: "micro-services", description: 'namespace to deploy')
     }
     environment {
         // Access environment variables using Jenkins credentials
-        DOCKER_REGISTRY = credentials('convo-docker-registry')
+        DOCKER_REGISTRY = credentials('celery-api-docker-registry')
         GKE_CLUSTER = credentials('mom-core-gke-cluster')
         GKE_ZONE = credentials('gke-zone')
         GCP_PROJECT = credentials('gcp-project')
@@ -20,12 +20,10 @@ pipeline {
                     // Determine environment based on branch
                     def branch = env.GIT_BRANCH
 
-                    if (branch == "origin/stage-deploy") {
-                        env.ENVIRONMENT = 'stage-deploy'
-                    } else if (branch == "origin/main") {
-                        env.ENVIRONMENT = 'main'
-                    } else if (branch == "origin/devops"){
-                        env.ENVIORNMENT = 'devops'
+                    if (branch == "origin/dir-restruct") {
+                        env.ENVIRONMENT = 'dir-restruct'
+                    } else if (branch == "origin/main"){
+                        env.ENVIORNMENT = 'main'
                     } else {
                         error("Unknown branch: ${branch}. This pipeline only supports main and staging branches.")
                     }
@@ -57,7 +55,7 @@ pipeline {
                     def dockerRegistry = env.DOCKER_REGISTRY
                     echo "Printing the saved docker registry from env:"
                     echo "${dockerRegistry}"
-                    sh "sudo docker build -f convo.Dockerfile -t ${DOCKER_REGISTRY}/convo:${imageTag} ."
+                    sh "sudo docker build -f deployment/prod/celery/celery.Dockerfile -t ${DOCKER_REGISTRY}/celery-api:${imageTag} /var/lib/jenkins/workspace/celery_flower-pipeline"
                 }
             }
         }
@@ -69,7 +67,7 @@ pipeline {
                     def imageTag = env.GIT_COMMIT_HASH
                     echo "printing the user here"
                     sh "whoami && pwd"
-                    sh "sudo docker push ${DOCKER_REGISTRY}/convo:${imageTag}"
+                    sh "sudo docker push ${DOCKER_REGISTRY}/celery-api:${imageTag}"
                 }
             }
         }
@@ -93,7 +91,7 @@ pipeline {
                         id: 'userInput',
                         message: 'Do you want to deploy the new Docker image?',
                         parameters: [
-                            choice(name: 'Deploy', choices: ['Yes', 'No'], description: 'Select Yes to deploy the image or No to abort.')
+                            choice(name: 'Deploy', choices: ['Yes', 'No'], description: 'Select Yes to proceed to deploy the image or No to abort.')
                         ]
                     )
 
@@ -115,8 +113,8 @@ pipeline {
 
                     try {
                         sh """
-                        kubectl set image deployment/conversation-server-deployment conversation-server=${DOCKER_REGISTRY}/convo:${imageTag} -n ${params.namespace}
-                        kubectl rollout status deployment/conversation-server-deployment -n ${params.namespace}
+                        kubectl set image deployment/celery-api-deployment celery-api=${DOCKER_REGISTRY}/celery-api:${imageTag} -n ${params.namespace}
+                        kubectl rollout status deployment/celery-api-deployment -n ${params.namespace}
                         """
                         imageDeploySucceeded = true
                     } catch (Exception e) {
@@ -125,7 +123,7 @@ pipeline {
 
                     if (!imageDeploySucceeded) {
                         echo 'Rolling back to previous revision...'
-                        sh 'kubectl rollout undo deployment/conversation-server-deployment -n ${params.namespace}'
+                        sh 'kubectl rollout undo deployment/celery-api-deployment -n ${params.namespace}'
                     }
                 }
             }
@@ -158,7 +156,7 @@ pipeline {
                 // Clean up local Docker images
                 def imageTag = env.GIT_COMMIT_HASH
                 sh """
-                docker rmi ${DOCKER_REGISTRY}/convo:${imageTag} || true
+                docker rmi ${DOCKER_REGISTRY}/celery-api:${imageTag} || true
                 """
             }
         }

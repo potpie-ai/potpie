@@ -16,8 +16,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Install supervisor
 RUN apt-get update && apt-get install -y supervisor
 
-# Install Celery and Flower
-RUN pip install --no-cache-dir celery flower
+# Install Celery
+RUN pip install --no-cache-dir celery
 
 # Install NLTK and download required data
 RUN pip install --no-cache-dir nltk
@@ -26,20 +26,17 @@ RUN python -c "import nltk; nltk.download('punkt');"
 # Copy the rest of the application code into the container
 COPY . .
 
-# Env path for newrelic.ini
+# env path for newrelic.ini
 ENV NEW_RELIC_CONFIG_FILE=/app/newrelic.ini
 
 # Copy the Supervisor configuration file into the container
-COPY celery-api-supervisord.conf /etc/supervisor/conf.d/celery-api-supervisord.conf
+COPY deployment/stage/convo-server/convo-api-supervisord.conf /etc/supervisor/conf.d/convo-api-supervisord.conf
 
 # Expose the port that the app runs on
 EXPOSE 8001
 
-# Expose the port for Flower
-EXPOSE 5555
-
 # Define environment variable
 ENV PYTHONUNBUFFERED=1
 
-# Run Supervisor when the container launches, but start only Celery and Flower
-CMD ["supervisord", "-n", "-c", "/etc/supervisor/conf.d/celery-api-supervisord.conf"]
+# Run Supervisor when the container launches, but only start the Gunicorn program
+CMD ["supervisord", "-n", "-c", "/etc/supervisor/conf.d/convo-api-supervisord.conf"]

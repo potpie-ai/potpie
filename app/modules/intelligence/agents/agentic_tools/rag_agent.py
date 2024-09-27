@@ -47,7 +47,7 @@ class RAGAgent:
                 3. Refining and enriching the initial results to provide a detailed and contextually appropriate response.
                 4. Maintaining traceability by including relevant citations and references in your output.
                 5. Including relevant citations in the response.
-                
+
                 You must adhere to the specified {self.max_iter} iterations to optimize performance and reduce latency.
             """,
             tools=self.kg_tools + self.code_tools,
@@ -69,7 +69,7 @@ class RAGAgent:
     ):
         if not node_ids:
             node_ids = []
-        
+
         combined_task = Task(
             description=f"""
             You must adhere to the specified {self.max_iter} iterations to optimize performance and reduce latency.

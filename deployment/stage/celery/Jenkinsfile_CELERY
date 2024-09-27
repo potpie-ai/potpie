@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     parameters {
-        string(name: 'namespace', defaultValue: "micro-services", description: 'namespace to deploy')
+        string(name: 'namespace', defaultValue: "devops", description: 'namespace to deploy')
     }
     environment {
         // Access environment variables using Jenkins credentials
@@ -20,8 +20,8 @@ pipeline {
                     // Determine environment based on branch
                     def branch = env.GIT_BRANCH
 
-                    if (branch == "origin/stage-deploy") {
-                        env.ENVIRONMENT = 'stage-deploy'
+                    if (branch == "origin/dir-restruct") {
+                        env.ENVIRONMENT = 'dir-restruct'
                     } else if (branch == "origin/main"){
                         env.ENVIORNMENT = 'main'
                     } else {
@@ -55,7 +55,7 @@ pipeline {
                     def dockerRegistry = env.DOCKER_REGISTRY
                     echo "Printing the saved docker registry from env:"
                     echo "${dockerRegistry}"
-                    sh "sudo docker build -f celery.Dockerfile -t ${DOCKER_REGISTRY}/celery-api:${imageTag} ."
+                    sh "sudo docker build -f deployment/stage/celery/celery.Dockerfile -t ${DOCKER_REGISTRY}/celery-api:${imageTag} /var/lib/jenkins/workspace/celery_flower-pipeline/"
                 }
             }
         }

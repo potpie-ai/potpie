@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y git procps
 # Set the working directory in the container
 WORKDIR /app
 
-# Copy the requirements file into the container -
+# Copy the requirements file into the container
 COPY requirements.txt .
 
 # Install any needed packages specified in requirements.txt
@@ -23,14 +23,14 @@ RUN pip install --no-cache-dir celery flower
 RUN pip install --no-cache-dir nltk
 RUN python -c "import nltk; nltk.download('punkt');"
 
-# Copy the rest of the application code into the container
+# Copy the entire project directory into the container
 COPY . .
 
-# env path for newrelic.ini
+# Env path for newrelic.ini
 ENV NEW_RELIC_CONFIG_FILE=/app/newrelic.ini
 
 # Copy the Supervisor configuration file into the container
-COPY mom-api-supervisord.conf /etc/supervisor/conf.d/mom-api-supervisord.conf
+COPY deployment/prod/celery/celery-api-supervisord.conf /etc/supervisor/conf.d/celery-api-supervisord.conf
 
 # Expose the port that the app runs on
 EXPOSE 8001
@@ -41,5 +41,5 @@ EXPOSE 5555
 # Define environment variable
 ENV PYTHONUNBUFFERED=1
 
-# Run Supervisor when the container launches, but only start the Gunicorn program
-CMD ["supervisord", "-n", "-c", "/etc/supervisor/conf.d/mom-api-supervisord.conf"]
+# Run Supervisor when the container launches, but start only Celery and Flower
+CMD ["supervisord", "-n", "-c", "/etc/supervisor/conf.d/celery-api-supervisord.conf"]

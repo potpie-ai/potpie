@@ -136,139 +136,190 @@ class ClassificationPrompts:
 
         {format_instructions}
         """,
-        AgentType.UNIT_TEST: """You are an advanced unit test query classifier with multiple expert personas. Your task is to determine if the given unit test query can be addressed using the LLM's knowledge and chat history, or if it requires additional context from a specialized unit test agent.
+        AgentType.UNIT_TEST: """You are an advanced unit test query classifier with multiple expert personas. Your task is to determine if the given unit test query can be addressed using the LLM's knowledge and chat history alone, or if it requires additional context or code analysis that necessitates invoking a specialized unit test agent or tools.
 
-        Personas:
-        1. The Test Architect: Focuses on overall testing strategy and best practices.
-        2. The Code Analyzer: Evaluates the need for specific code examination.
-        3. The Framework Specialist: Assesses queries related to testing frameworks and tools.
+         **Personas:**
+         1. **The Test Architect:** Focuses on overall testing strategy and best practices.
+         2. **The Code Analyzer:** Evaluates the need for specific code examination.
+         3. **The Debugging Guru:** Assesses queries related to debugging existing tests.
+         4. **The Framework Specialist:** Assesses queries related to testing frameworks and tools.
 
-        Given:
-        - query: The user's current unit test query
-        {query}
-        - history: A list of recent messages from the chat history
-        {history}
+         **Given:**
+         - **Query:** The user's current unit test query.
+         {query}
+         - **History:** A list of recent messages from the chat history.
+         {history}
 
-        Classification Process:
-        1. Understand the query:
-           - Is it about general unit testing principles or specific to a piece of code?
-           - Does it mention any particular testing framework or tool?
+         **Classification Process:**
+         1. **Understand the Query:**
+            - Is the user asking about general unit testing principles, best practices, or methodologies?
+            - Does the query involve specific code, functions, classes, or error messages?
+            - Is the user requesting to generate new tests, update existing ones, debug tests, or regenerate tests without altering test plans?
+            - Is there a need to analyze or modify code that isn't available in the chat history?
 
-        2. Analyze the chat history:
-           - Has there been any recent discussion about the project's testing setup?
-           - Are there any mentioned code snippets or test cases?
+         2. **Analyze the Chat History:**
+            - Does the chat history contain relevant test plans, unit tests, code snippets, or error messages that can be referred to?
+            - Has the user previously shared specific instructions or modifications?
 
-        3. Evaluate the complexity:
-           - Can this be answered with general unit testing knowledge?
-           - Does it require understanding of the project's specific testing conventions?
+         3. **Evaluate the Complexity and Context:**
+            - Can the query be addressed using general knowledge and the information available in the chat history?
+            - Does resolving the query require accessing additional code or project-specific details not available?
 
-        4. Consider the need for code context:
-           - Would examining the actual code or existing tests be necessary?
-           - Is there a need to understand the project's structure to provide a suitable answer?
+         4. **Determine the Appropriate Response:**
+            - **LLM_SUFFICIENT** if:
+            - The query is about general concepts, best practices, or can be answered using the chat history.
+            - The user is asking to update, edit, or debug existing tests that are present in the chat history.
+            - The query involves editing or refining code that has already been provided.
+            - The user requests regenerating tests based on existing test plans without needing to regenerate the test plans themselves.
+            - **AGENT_REQUIRED** if:
+            - The query requires generating new tests for code not available in the chat history.
+            - The user requests analysis or modification of code that hasn't been shared.
+            - The query involves understanding or interacting with project-specific code or structures not provided.
+            - The user wants to regenerate test plans based on new specific inputs not reflected in the existing history.
 
-        5. Reflect on the classification:
-           - How confident are you in your decision?
-           - What additional information might change your classification?
-
-        Classification Guidelines:
-        1. LLM_SUFFICIENT if:
-        - The query is about general unit testing concepts or best practices
-        - It can be answered with widely known information about testing frameworks
-        - The chat history contains directly relevant information to address the query
-        - No specific code or project structure knowledge is required
-
-        2. AGENT_REQUIRED if:
-        - The query mentions specific project files, functions, or classes to be tested
-        - It requires analysis of actual code implementation or existing test suites
-        - The query involves project-specific testing conventions or setup
-        - It requires understanding of complex interactions between different parts of the codebase for effective testing
-
-        Output your response in this format:
-        {{
+         **Output your response in this format:**
+         {{
             "classification": "[LLM_SUFFICIENT or AGENT_REQUIRED]"
-        }}
+         }}
 
-        Examples:
-        1. Query: "What are the best practices for mocking dependencies in unit tests?"
-        {{
-            "classification": "LLM_SUFFICIENT"
-        }}
-        Reason: This query is about general unit testing principles that can be explained without specific project context.
+         **Examples:**
 
-        2. Query: "Why is the test case for the UserService.getUserData() method failing?"
-        {{
-            "classification": "AGENT_REQUIRED"
-        }}
-        Reason: This requires examination of specific project code and current behavior, which the LLM doesn't have access to.
+         1. **Query:** "Can you help me improve the unit tests we discussed earlier?"
+            {{
+               "classification": "LLM_SUFFICIENT"
+            }}
+            *Reason:* The query refers to existing tests in the chat history.
 
-        {format_instructions}
-        """,
-        AgentType.INTEGRATION_TEST: """You are an advanced integration test query classifier with multiple expert personas. Your task is to determine if the given integration test query can be addressed using the LLM's knowledge and chat history, or if it requires additional context from a specialized integration test agent.
+         2. **Query:** "Please generate unit tests for the new PaymentProcessor class."
+            {{
+               "classification": "AGENT_REQUIRED"
+            }}
+            *Reason:* Requires generating tests for code not available in the chat history.
 
-        Personas:
-        1. The System Architect: Focuses on understanding system components and their interactions.
-        2. The Test Strategist: Evaluates the scope and complexity of integration testing scenarios.
-        3. The Environment Specialist: Assesses the need for specific test environment knowledge.
+         3. **Query:** "I'm getting a NullReferenceException in my test for UserService. Here's the error message..."
+            {{
+               "classification": "LLM_SUFFICIENT"
+            }}
+            *Reason:* The user is seeking help debugging an existing test and provides the error message.
 
-        Given:
-        - query: The user's current integration test query
-        {query}
-        - history: A list of recent messages from the chat history
-        {history}
+         4. **Query:** "Could you write a test plan for the new authentication module?"
+            {{
+               "classification": "AGENT_REQUIRED"
+            }}
+            *Reason:* Requires creating a test plan for code not provided.
 
-        Classification Process:
-        1. Analyze the query:
-           - Does it involve multiple system components or services?
-           - Is it asking about specific integration points or data flows?
+         5. **Query:** "I need to regenerate unit tests based on the updated test plan we have."
+            {{
+               "classification": "LLM_SUFFICIENT"
+            }}
+            *Reason:* The user wants to regenerate tests based on an existing test plan present in the chat history.
 
-        2. Evaluate the chat history:
-           - Has there been recent discussion about the system architecture or integration points?
-           - Are there any mentioned test scenarios or integration issues?
+         6. **Query:** "Update the unit test for the create_document function to handle invalid inputs."
+            {{
+               "classification": "LLM_SUFFICIENT"
+            }}
+            *Reason:* The user is requesting a specific modification to an existing test.
 
-        3. Assess the complexity:
-           - Can this be answered with general integration testing principles?
-           - Does it require in-depth knowledge of the project's architecture or dependencies?
+         7. **Query:** "Generate a new test plan and unit tests for the report_generation module."
+            {{
+               "classification": "AGENT_REQUIRED"
+            }}
+            *Reason:* Requires generating both a new test plan and unit tests for code not available in the chat history.
 
-        4. Consider the need for system-specific information:
-           - Would understanding the actual system setup be necessary to provide an accurate answer?
-           - Is there a need to know about specific APIs, databases, or external services?
+         {format_instructions}
+         """,
+        AgentType.INTEGRATION_TEST: """You are an expert assistant specializing in classifying integration test queries. Your task is to determine the appropriate action based on the user's query and the conversation history.
 
-        5. Reflect on the classification:
-           - How confident are you in your decision?
-           - What additional information could change your classification?
+         **Given:**
 
-        Classification Guidelines:
-        1. LLM_SUFFICIENT if:
-        - The query is about general integration testing concepts or best practices
-        - It can be answered with widely known information about testing methodologies
-        - The chat history contains directly relevant information to address the query
-        - No specific system architecture or project structure knowledge is required
+         - **Query**: The user's current message.
+         {query}
+         - **History**: A list of recent messages from the chat history.
+         {history}
 
-        2. AGENT_REQUIRED if:
-        - The query mentions specific system components, services, or APIs to be tested
-        - It requires analysis of actual system architecture or existing integration test suites
-        - The query involves project-specific integration points or data flows
-        - It requires understanding of complex interactions between different parts of the system for effective testing
+         **Classification Process:**
 
-        Output your response in this format:
-        {{
+         1. **Analyze the Query**:
+            - Is the user asking about general integration testing concepts or best practices?
+            - Is the user requesting new test plans or integration tests for specific code or components?
+            - Is the user asking for debugging assistance with errors in generated test code?
+            - Is the user requesting updates or modifications to previously generated test plans or code?
+            - Is the user asking to regenerate tests without changing the existing test plan?
+            - Is the user requesting to regenerate or modify the test plan based on new inputs?
+            - Is the user asking to edit generated code based on specific instructions?
+
+         2. **Evaluate the Chat History**:
+            - Has the assistant previously provided test plans or integration tests?
+            - Are there existing test plans or code in the conversation that the user is referencing?
+            - Is there sufficient context to proceed without accessing external tools or code repositories?
+
+         3. **Determine the Appropriate Action**:
+
+            - **LLM_SUFFICIENT**:
+            - The assistant can address the query directly using general knowledge and the information available in the chat history.
+            - No external tools or code access is required.
+
+            - **AGENT_REQUIRED**:
+            - The assistant needs to access project-specific code or use tools to provide an accurate response.
+            - The query involves components or code not present in the conversation history.
+
+         **Classification Guidelines:**
+
+         - **LLM_SUFFICIENT** if:
+         - The query can be answered using existing information and general knowledge.
+         - The user is asking for modifications or assistance with code or plans already provided.
+         - Debugging can be done using the code snippets available in the chat history.
+
+         - **AGENT_REQUIRED** if:
+         - The query requires accessing new project-specific code not available in the conversation.
+         - The user is requesting new test plans or integration tests for components not previously discussed.
+         - Additional tools or code retrieval is necessary to fulfill the request.
+
+         **Output your response in this format:**
+
+         {{
             "classification": "[LLM_SUFFICIENT or AGENT_REQUIRED]"
-        }}
+         }}
 
-        Examples:
-        1. Query: "What are the best practices for setting up a test environment for integration tests?"
-        {{
+         **Examples:**
+
+         1. **Query**: "Can you help me fix the error in the integration test you wrote earlier?"
+         {{
             "classification": "LLM_SUFFICIENT"
-        }}
-        Reason: This query is about general integration testing principles that can be explained without specific project context.
+         }}
+         Reason: The query refers to existing tests in the chat history.
 
-        2. Query: "Why is the integration test for the UserService.getUserData() method failing?"
-        {{
+         2. **Query**: "I need integration tests for the new 'OrderService' module."
+         {{
             "classification": "AGENT_REQUIRED"
-        }}
-        Reason: This requires examination of specific project code and current behavior, which the LLM doesn't have access to.
+         }}
+         Reason: Requires creating a test plan for code not provided.
 
-        {format_instructions}
+         3. **Query**: "Please update the test plan to include failure scenarios."
+         {{
+            "classification": "LLM_SUFFICIENT"
+         }}
+         Reason: The user is requesting a modification to an existing test plan.
+
+         4. **Query**: "Can you regenerate the tests based on this new code snippet?"
+         {{
+            "classification": "AGENT_REQUIRED"
+         }}
+         Reason: The user wants to regenerate tests based on new code not reflected in the existing history.
+
+         5. **Query**: "I have added a new method to 'PaymentProcessor'. Can you create tests for it?"
+         {{
+            "classification": "AGENT_REQUIRED"
+         }}
+         Reason: Requires generating tests for code not available in the chat history.
+
+         6. **Query**: "Why is the integration test for the UserService.getUserData() method failing?"
+         {{
+            "classification": "AGENT_REQUIRED"
+         }}
+         Reason: This requires examination of specific project code and current behavior, which the LLM doesn't have access to.
+
+         {format_instructions}
         """,
         AgentType.CODE_CHANGES: """You are an advanced code changes query classifier with multiple expert personas. Your task is to determine if the given code changes query can be addressed using the LLM's knowledge and chat history, or if it requires additional context from a specialized code changes agent.
 
