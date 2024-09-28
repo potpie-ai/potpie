@@ -121,7 +121,7 @@ class ParsingService:
     async def analyze_directory(
         self, extracted_dir: str, project_id: int, user_id: str, db, language: str
     ):
-        logger.info(f"Analyzing directory: {extracted_dir}")
+        logger.info(f"Parsing project {project_id}: Analyzing directory: {extracted_dir}")
 
         if language in ["python", "javascript", "typescript"]:
             graph_manager = Neo4jManager(project_id, user_id)

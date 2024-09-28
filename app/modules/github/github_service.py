@@ -146,7 +146,6 @@ class GithubService:
         try:
             logger.info(f"Getting repositories for user: {user_id}")
             user = self.db.query(User).filter(User.uid == user_id).first()
-            logger.info(f"User found: {user}")
             if user is None:
                 raise HTTPException(status_code=404, detail="User not found")
             logger.info(f"User found: {user}")

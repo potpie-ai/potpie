@@ -153,7 +153,6 @@ class QNAAgent:
                     }
                 )
 
-            logger.info(f"Full LLM response: {full_response}")
             self.history_manager.flush_message_buffer(
                 conversation_id, MessageType.AI_GENERATED
             )

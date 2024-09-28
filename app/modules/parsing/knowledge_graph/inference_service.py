@@ -42,7 +42,7 @@ class InferenceService:
         try:
             encoding = tiktoken.encoding_for_model(model)
         except KeyError:
-            print("Warning: model not found. Using cl100k_base encoding.")
+            logger.warning("Warning: model not found. Using cl100k_base encoding.")
             encoding = tiktoken.get_encoding("cl100k_base")
         return len(encoding.encode(string))
 
@@ -209,7 +209,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
 
     async def generate_docstrings_for_entry_points(
         self,
-        all_docstrings: DocstringResponse,
+        all_docstrings,
         entry_points_neighbors: Dict[str, List[str]],
     ) -> Dict[str, DocstringResponse]:
         docstring_lookup = {
@@ -225,7 +225,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
         async def process_batch(batch):
             async with semaphore:
                 response = await self.generate_entry_point_response(batch)
-                if isinstance(response, DocstringResponse):
+                if isinstance(response, DocstringResponse) :
                     return response
                 else:
                     return await self.generate_docstrings_for_entry_points(
@@ -373,23 +373,22 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
             entry_points_neighbors[entry_point] = neighbors
 
         batches = self.batch_nodes(nodes)
-        all_docstrings = {}
+        all_docstrings = {"docstrings": []}
 
         semaphore = asyncio.Semaphore(10)  # Limit to 10 concurrent tasks
 
         async def process_batch(batch):
             async with semaphore:
-                response = await self.generate_response(batch)
-                if isinstance(response, DocstringResponse):
-                    return response
-                else:
-                    return await self.generate_docstrings(repo_id)
-
+                response = await self.generate_response(batch, repo_id)
+                if not isinstance(response, DocstringResponse):
+                    logger.warning(f"Parsing project {repo_id}: Invalid response from LLM. Not an instance of DocstringResponse. Retrying...")
+                    response = await self.generate_response(batch, repo_id) 
+                return response
         tasks = [process_batch(batch) for batch in batches]
         results = await asyncio.gather(*tasks)
 
         for result in results:
-            all_docstrings.update(result)
+            all_docstrings["docstrings"] = all_docstrings["docstrings"] + result.docstrings
 
         updated_docstrings = await self.generate_docstrings_for_entry_points(
             all_docstrings, entry_points_neighbors
@@ -397,7 +396,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
 
         return updated_docstrings
 
-    async def generate_response(self, batch: List[DocstringRequest]) -> str:
+    async def generate_response(self, batch: List[DocstringRequest], repo_id: str) -> str:
         base_prompt = """
         You are a senior software engineer with expertise in code analysis and documentation. Your task is to generate detailed technical docstrings and classify code snippets. Approach this task methodically, following these steps:
 
@@ -463,7 +462,8 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
         **Format Instructions**:
 
         {format_instructions}
-
+        Ensure that the response is a valid DocstringResponse object. Every entry in the response must contain the key "docstring".
+        Even if the docstring is empty, you must still include the node_id and an empty docstring in your response.
         Here are the code snippets:
 
         {code_snippets}
@@ -488,18 +488,17 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
         import time
 
         start_time = time.time()
-        print("Starting the inference process...")
+        logger.info(f"Parsing project {repo_id}: Starting the inference process...")
         total_word_count = len(base_prompt.split()) + sum(
             len(request.text.split()) for request in batch
         )
-        print(f"Request contains {total_word_count} words.")
 
         chain = chat_prompt | self.llm | output_parser
         result = await chain.ainvoke({"code_snippets": code_snippets})
         end_time = time.time()
 
-        print(
-            f"Start Time: {start_time}, End Time: {end_time}, Total Time Taken: {end_time - start_time} seconds"
+        logger.info(
+            f"Parsing project {repo_id}: Start Time: {start_time}, End Time: {end_time}, Total Time Taken: {end_time - start_time} seconds"
         )
         return result
 

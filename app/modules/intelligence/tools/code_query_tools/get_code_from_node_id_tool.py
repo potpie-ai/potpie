@@ -9,6 +9,7 @@ from app.modules.github.github_service import GithubService
 from app.modules.projects.projects_model import Project
 from app.modules.search.search_service import SearchService
 
+logger = logging.getLogger(__name__)
 
 class GetCodeFromNodeIdTool:
     name = "get_code_from_node_id"
@@ -42,12 +43,12 @@ class GetCodeFromNodeIdTool:
 
             project = self._get_project(repo_id)
             if not project:
-                print(f"Project with ID '{repo_id}' not found in database")
+                logger.error(f"Project with ID '{repo_id}' not found in database")
                 return {"error": f"Project with ID '{repo_id}' not found in database"}
 
             return self._process_result(node_data, project, node_id)
         except Exception as e:
-            print(f"Unexpected error in GetCodeFromNodeIdTool: {str(e)}")
+            logger.error(f"Project: {repo_id} Unexpected error in GetCodeFromNodeIdTool: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
     def _get_node_data(self, repo_id: str, node_id: str) -> Dict[str, Any]:
@@ -97,7 +98,7 @@ class GetCodeFromNodeIdTool:
             projects_index = parts.index("projects")
             return "/".join(parts[projects_index + 2 :])
         except ValueError:
-            print(f"'projects' not found in file path: {file_path}")
+            logger.warning(f"'projects' not found in file path: {file_path}")
             return file_path
 
     def __del__(self):

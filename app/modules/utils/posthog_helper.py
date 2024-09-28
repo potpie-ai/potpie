@@ -1,7 +1,9 @@
+import logging
 import os
 
 from posthog import Posthog
 
+logger = logging.getLogger(__name__)
 
 class PostHogClient:
     def __init__(self):
@@ -35,4 +37,4 @@ class PostHogClient:
                 )
             except Exception as e:
                 # Basic error handling; could be expanded based on use case
-                print(f"Failed to send event: {e}")
+                logger.warning(f"Failed to send event: {e}")

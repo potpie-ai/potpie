@@ -310,7 +310,7 @@ class PromptService:
                 )
                 self.db.add(new_prompt)
                 prompt_to_return = new_prompt
-                print("Inserting a new prompt.")
+                logger.info("Inserting a new prompt.")
 
             self.db.commit()
             self.db.refresh(prompt_to_return)

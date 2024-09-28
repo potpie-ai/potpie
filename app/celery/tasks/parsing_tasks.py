@@ -71,5 +71,3 @@ def process_parsing(
         logger.error(f"Error during parsing for project {project_id}: {str(e)}")
         raise
 
-
-logger.info("Parsing tasks module loaded")

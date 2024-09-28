@@ -147,7 +147,7 @@ class ConversationService:
         self.sql_db.add(new_conversation)
         self.sql_db.commit()
         logger.info(
-            f"Created new conversation with ID: {conversation_id}, title: {title}, user_id: {user_id}, agent_id: {conversation.agent_ids[0]}"
+            f"Project id : {conversation.project_ids[0]} Created new conversation with ID: {conversation_id}, title: {title}, user_id: {user_id}, agent_id: {conversation.agent_ids[0]}"
         )
         provider_name = self.provider_service.get_llm_provider_name()
         PostHogClient().send_event(
@@ -231,7 +231,7 @@ class ConversationService:
                         f"Invalid agent_id: {conversation.agent_ids[0]}"
                     )
 
-                logger.info(f"Running agent for repo_id: {repo_id}")
+                logger.info(f"Running agent for repo_id: {repo_id} conversation_id: {conversation_id}")
                 async for chunk in agent.run(
                     message.content, repo_id, user_id, conversation.id, message.node_ids
                 ):
@@ -335,7 +335,7 @@ class ConversationService:
 
         try:
             logger.info(
-                f"Running agent {conversation.project_ids[0]} with query: {query}"
+                f"conversation_id: {conversation_id}Running agent {conversation.agent_ids[0]} with query: {query} "
             )
             async for chunk in agent.run(
                 query, conversation.project_ids[0], user_id, conversation.id, node_ids
