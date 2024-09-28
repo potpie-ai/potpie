@@ -61,7 +61,7 @@ pipeline {
                     // Enable Docker BuildKit for faster builds
                     sh """
                         DOCKER_BUILDKIT=1 sudo docker build -f deployment/stage/celery/celery.Dockerfile \
-                        -t ${dockerRegistry}/celery-api:${imageTag} --progress=plain \
+                        -t ${dockerRegistry}/celery-api:${imageTag} \
                         --cache-from ${dockerRegistry}/celery-api:cache \
                         /var/lib/jenkins/workspace/celery_flower-pipeline/
                     """
