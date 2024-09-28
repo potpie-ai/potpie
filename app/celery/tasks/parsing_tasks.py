@@ -1,15 +1,12 @@
 import asyncio
-import logging
 from typing import Any, Dict
 
-from celery import Task
+import redis
 from celery.contrib.abortable import AbortableTask
 from celery.utils.log import get_task_logger
-
-from app.celery.celery_app import celery_app, redis_url
-import redis
 from redis.exceptions import LockError
 
+from app.celery.celery_app import celery_app, redis_url
 from app.core.database import SessionLocal
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
@@ -18,6 +15,7 @@ logger = get_task_logger(__name__)
 
 # Create a Redis client
 redis_client = redis.from_url(redis_url)
+
 
 class BaseTask(AbortableTask):
     _db = None
@@ -33,6 +31,7 @@ class BaseTask(AbortableTask):
             self._db.close()
             self._db = None
 
+
 @celery_app.task(
     bind=True,
     base=BaseTask,
@@ -47,11 +46,11 @@ def process_parsing(
     cleanup_graph: bool = True,
 ) -> None:
     logger.info(f"Task received: Starting parsing process for project {project_id}")
-    
+
     # Acquire a lock for this specific project
     lock_id = f"parsing_lock_{project_id}"
     lock = redis_client.lock(lock_id, timeout=3600)  # Lock expires after 1 hour
-    
+
     try:
         have_lock = lock.acquire(blocking=False)
         if have_lock:
@@ -85,8 +84,11 @@ def process_parsing(
             finally:
                 lock.release()
         else:
-            logger.info(f"Parsing already in progress for project {project_id}. Skipping.")
+            logger.info(
+                f"Parsing already in progress for project {project_id}. Skipping."
+            )
     except LockError:
         logger.error(f"Failed to acquire lock for project {project_id}")
+
 
 logger.info("Parsing tasks module loaded")

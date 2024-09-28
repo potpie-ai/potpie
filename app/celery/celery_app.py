@@ -55,14 +55,13 @@ def configure_celery(queue_prefix: str):
         task_reject_on_worker_lost=True,
         task_track_started=True,
         # Add Redis lock backend
-        lock_backend='redis://' + redis_url,
+        lock_backend="redis://" + redis_url,
     )
 
 
 configure_celery(queue_name)
 
+# Import the lock decorator
+
 # Import tasks to ensure they are registered
 import app.celery.tasks.parsing_tasks  # noqa # Ensure the task module is imported
-
-# Import the lock decorator
-from celery.contrib.abortable import AbortableTask
