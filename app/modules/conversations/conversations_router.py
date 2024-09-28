@@ -16,7 +16,7 @@ from .conversation.conversation_schema import (
     CreateConversationResponse,
     RenameConversationRequest,
 )
-from .message.message_schema import MessageRequest, MessageResponse
+from .message.message_schema import MessageRequest, MessageResponse, RegenerateRequest
 
 router = APIRouter()
 
@@ -91,13 +91,14 @@ class ConversationAPI:
     )
     async def regenerate_last_message(
         conversation_id: str,
+        request: RegenerateRequest,
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
         controller = ConversationController(db, user_id)
         return StreamingResponse(
-            controller.regenerate_last_message(conversation_id),
+            controller.regenerate_last_message(conversation_id, request.node_ids),
             media_type="text/event-stream",
         )
 

@@ -248,7 +248,7 @@ class ConversationService:
             ) from e
 
     async def regenerate_last_message(
-        self, conversation_id: str, user_id: str
+        self, conversation_id: str, user_id: str, node_ids: List[NodeContext] = []
     ) -> AsyncGenerator[str, None]:
         try:
             last_human_message = await self._get_last_human_message(conversation_id)
@@ -265,7 +265,7 @@ class ConversationService:
             )
 
             async for chunk in self._generate_and_stream_ai_response(
-                last_human_message.content, conversation_id, user_id, []
+                last_human_message.content, conversation_id, user_id, node_ids
             ):
                 yield chunk
         except MessageNotFoundError as e:

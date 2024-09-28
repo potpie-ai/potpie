@@ -17,6 +17,7 @@ from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import (
     MessageRequest,
     MessageResponse,
+    NodeContext,
 )
 
 
@@ -84,11 +85,11 @@ class ConversationController:
             raise HTTPException(status_code=500, detail=str(e))
 
     async def regenerate_last_message(
-        self, conversation_id: str
+        self, conversation_id: str, node_ids: List[NodeContext] = []
     ) -> AsyncGenerator[str, None]:
         try:
             async for chunk in self.service.regenerate_last_message(
-                conversation_id, self.user_id
+                conversation_id, self.user_id, node_ids
             ):
                 yield chunk
         except ConversationNotFoundError as e:
