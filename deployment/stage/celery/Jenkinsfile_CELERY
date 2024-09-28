@@ -55,7 +55,17 @@ pipeline {
                     def dockerRegistry = env.DOCKER_REGISTRY
                     echo "Printing the saved docker registry from env:"
                     echo "${dockerRegistry}"
-                    sh "sudo docker build -f deployment/stage/celery/celery.Dockerfile -t ${DOCKER_REGISTRY}/celery-api:${imageTag} /var/lib/jenkins/workspace/celery_flower-pipeline/"
+                    
+                    echo "Building Docker Image..."
+
+                    // Enable Docker BuildKit for faster builds
+                    sh """
+                        DOCKER_BUILDKIT=1 sudo docker build -f deployment/stage/celery/celery.Dockerfile \
+                        -t ${dockerRegistry}/celery-api:${imageTag} --progress=plain \
+                        --cache-from ${dockerRegistry}/celery-api:cache \
+                        /var/lib/jenkins/workspace/celery_flower-pipeline/
+                    """
+                    // sh "sudo docker build -f deployment/stage/celery/celery.Dockerfile -t ${DOCKER_REGISTRY}/celery-api:${imageTag} /var/lib/jenkins/workspace/celery_flower-pipeline/"
                 }
             }
         }
