@@ -11,6 +11,7 @@ from app.modules.search.search_service import SearchService
 
 logger = logging.getLogger(__name__)
 
+
 class GetCodeFromNodeIdTool:
     name = "get_code_from_node_id"
     description = "Retrieves code for a specific node in a repository given its node ID"
@@ -48,7 +49,9 @@ class GetCodeFromNodeIdTool:
 
             return self._process_result(node_data, project, node_id)
         except Exception as e:
-            logger.error(f"Project: {repo_id} Unexpected error in GetCodeFromNodeIdTool: {str(e)}")
+            logger.error(
+                f"Project: {repo_id} Unexpected error in GetCodeFromNodeIdTool: {str(e)}"
+            )
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
     def _get_node_data(self, repo_id: str, node_id: str) -> Dict[str, Any]:

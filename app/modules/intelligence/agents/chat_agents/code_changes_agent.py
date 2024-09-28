@@ -144,7 +144,11 @@ class CodeChangesAgent:
                     conversation_id,
                     content,
                     MessageType.AI_GENERATED,
-                    citations=citations if classification == ClassificationResult.AGENT_REQUIRED else None
+                    citations=(
+                        citations
+                        if classification == ClassificationResult.AGENT_REQUIRED
+                        else None
+                    ),
                 )
                 yield json.dumps(
                     {

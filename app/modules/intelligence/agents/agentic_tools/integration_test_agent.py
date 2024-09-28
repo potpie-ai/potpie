@@ -71,7 +71,7 @@ class IntegrationTestAgent:
                 - Node IDs: {', '.join(node_ids_list)}
                 - Project ID: {project_id}
                 - Fetch the code for all relevant nodes in the graph to understand the full context of the codebase.
-            
+
             2. **Detailed Component Analysis:**
             - **Functionality Understanding:**
                 - For each component identified in the graph, analyze its purpose, inputs, outputs, and potential side effects.
@@ -122,7 +122,7 @@ class IntegrationTestAgent:
             - Ensure that your final response is JSON serializable and follows the structure outlined in the Pydantic model: {self.TestAgentResponse.model_json_schema()}
             - Do not wrap the response in ```json, ```python, ```code, or ``` symbols.
             - For citations, include only the `file_path` of the nodes fetched and used.
-            """,            
+            """,
             expected_output=f"Write COMPLETE CODE for integration tests for each node based on the test plan. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model:\n{self.TestAgentResponse.model_json_schema()}",
             agent=integration_test_agent,
             output_pydantic=self.TestAgentResponse,
@@ -186,9 +186,7 @@ async def kickoff_integration_test_crew(
         node_contexts = []
         if node["id"] not in visited:
             visited.add(node["id"])
-            node_contexts.append(
-                NodeContext(node_id=node["id"], name=node["name"])
-            )  
+            node_contexts.append(NodeContext(node_id=node["id"], name=node["name"]))
             for child in node.get("children", []):
                 node_contexts.extend(extract_unique_node_contexts(child, visited))
         return node_contexts

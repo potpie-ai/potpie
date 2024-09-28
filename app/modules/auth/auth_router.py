@@ -3,17 +3,14 @@ from datetime import datetime
 
 from dotenv import load_dotenv
 from fastapi import Depends, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.modules.auth.auth_service import auth_handler
 from app.modules.users.user_schema import CreateUser
 from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.utils.posthog_helper import PostHogClient
-
-from .auth_schema import LoginRequest
 
 auth_router = APIRouter()
 load_dotenv(override=True)

@@ -104,7 +104,11 @@ class MainApp:
         def health_check():
             return {
                 "status": "ok",
-                "version": subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD']).strip().decode('utf-8'),
+                "version": subprocess.check_output(
+                    ["git", "rev-parse", "--short", "HEAD"]
+                )
+                .strip()
+                .decode("utf-8"),
             }
 
     async def startup_event(self):

@@ -148,7 +148,7 @@ class DebuggingAgent:
                     conversation_id,
                     content,
                     MessageType.AI_GENERATED,
-                    citations=citations
+                    citations=citations,
                 )
                 yield json.dumps(
                     {

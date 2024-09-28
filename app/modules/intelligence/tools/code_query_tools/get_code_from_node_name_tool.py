@@ -33,7 +33,9 @@ class GetCodeFromNodeNameTool:
         try:
             node_data = self.get_node_data(repo_id, node_name)
             if not node_data:
-                logger.error(f"Node with name '{node_name}' not found in repo '{repo_id}'")
+                logger.error(
+                    f"Node with name '{node_name}' not found in repo '{repo_id}'"
+                )
                 return {
                     "error": f"Node with name '{node_name}' not found in repo '{repo_id}'"
                 }
@@ -45,7 +47,9 @@ class GetCodeFromNodeNameTool:
 
             return self._process_result(node_data, project, node_name)
         except Exception as e:
-            logger.error(f"Project: {repo_id} Unexpected error in GetCodeFromNodeNameTool: {str(e)}")
+            logger.error(
+                f"Project: {repo_id} Unexpected error in GetCodeFromNodeNameTool: {str(e)}"
+            )
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
     def get_node_data(self, repo_id: str, node_name: str) -> Dict[str, Any]:

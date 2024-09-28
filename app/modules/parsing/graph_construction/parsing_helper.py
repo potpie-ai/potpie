@@ -466,7 +466,8 @@ class ParseHelper:
             logger.info(
                 f"""Project {project_id} commit status for branch {branch_name}: {'Up to date' if is_up_to_date else 'Outdated'}"
             Current commit ID: {current_commit_id}
-            Latest commit ID: {latest_commit_id}""")
+            Latest commit ID: {latest_commit_id}"""
+            )
 
             return is_up_to_date
         except Exception as e:

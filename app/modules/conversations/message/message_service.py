@@ -99,7 +99,7 @@ class MessageService:
             await asyncio.get_event_loop().run_in_executor(
                 None, self._sync_mark_message_archived, message_id
             )
-            #TODO: add conversation_id to the log
+            # TODO: add conversation_id to the log
             logger.info(f"Marked message {message_id} as archived")
         except MessageNotFoundError as e:
             logger.warning(str(e))

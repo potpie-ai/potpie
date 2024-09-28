@@ -70,4 +70,3 @@ def process_parsing(
     except Exception as e:
         logger.error(f"Error during parsing for project {project_id}: {str(e)}")
         raise
-

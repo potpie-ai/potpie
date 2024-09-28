@@ -93,7 +93,7 @@ class ChatHistoryService:
             ):
                 content = self.message_buffer[conversation_id]["content"]
                 citations = self.message_buffer[conversation_id]["citations"]
-                
+
                 new_message = Message(
                     id=str(uuid7()),
                     conversation_id=conversation_id,
@@ -101,7 +101,9 @@ class ChatHistoryService:
                     sender_id=sender_id if message_type == MessageType.HUMAN else None,
                     type=message_type,
                     created_at=datetime.now(timezone.utc),
-                    citations=",".join(set(citations)) if citations else None,  # Use set to remove duplicates
+                    citations=(
+                        ",".join(set(citations)) if citations else None
+                    ),  # Use set to remove duplicates
                 )
                 self.db.add(new_message)
                 self.db.commit()

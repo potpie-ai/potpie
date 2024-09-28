@@ -231,7 +231,9 @@ class ConversationService:
                         f"Invalid agent_id: {conversation.agent_ids[0]}"
                     )
 
-                logger.info(f"Running agent for repo_id: {repo_id} conversation_id: {conversation_id}")
+                logger.info(
+                    f"Running agent for repo_id: {repo_id} conversation_id: {conversation_id}"
+                )
                 async for chunk in agent.run(
                     message.content, repo_id, user_id, conversation.id, message.node_ids
                 ):
@@ -479,7 +481,9 @@ class ConversationService:
                     type=message.type,
                     status=message.status,
                     created_at=message.created_at,
-                    citations=message.citations.split(",") if message.citations else None,
+                    citations=(
+                        message.citations.split(",") if message.citations else None
+                    ),
                 )
                 for message in messages
             ]

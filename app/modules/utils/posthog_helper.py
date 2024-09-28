@@ -5,6 +5,7 @@ from posthog import Posthog
 
 logger = logging.getLogger(__name__)
 
+
 class PostHogClient:
     def __init__(self):
         self.is_staging_or_production = os.getenv("ENV") in ["staging", "production"]

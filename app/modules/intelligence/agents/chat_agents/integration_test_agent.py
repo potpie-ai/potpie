@@ -3,7 +3,6 @@ import logging
 from functools import lru_cache
 from typing import AsyncGenerator, Dict, List
 
-from fastapi import HTTPException
 from langchain.schema import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import (
@@ -97,7 +96,6 @@ class IntegrationTestAgent:
             if not self.chain:
                 self.chain = await self._create_chain()
 
-
             history = self.history_manager.get_session_history(user_id, conversation_id)
             validated_history = [
                 (
@@ -150,7 +148,7 @@ class IntegrationTestAgent:
                     conversation_id,
                     content,
                     MessageType.AI_GENERATED,
-                    citations=citations
+                    citations=citations,
                 )
                 yield json.dumps(
                     {
