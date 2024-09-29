@@ -129,6 +129,13 @@ class ParsingService:
             graph_manager = Neo4jManager(project_id, user_id)
             graph_manager.create_entityId_index()
             graph_manager.create_node_id_index()
+            graph_manager.create_function_name_index()
+            with graph_manager.driver.session() as session:
+                node_query = """
+                CREATE INDEX repo_id_node_id_NODE IF NOT EXISTS FOR (n:NODE) ON (n.repoId, n.node_id)
+                """
+                session.run(node_query)
+
             try:
                 graph_constructor = GraphConstructor(graph_manager, user_id)
                 n, r = graph_constructor.build_graph(extracted_dir)
@@ -206,3 +213,4 @@ class ParsingService:
             raise ParsingFailedError(
                 "Repository doesn't consist of a language currently supported."
             )
+
