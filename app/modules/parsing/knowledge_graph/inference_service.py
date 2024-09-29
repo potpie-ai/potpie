@@ -37,6 +37,36 @@ class InferenceService:
     def close(self):
         self.driver.close()
 
+    def log_graph_stats(self, repo_id):
+
+        query = """
+        MATCH (n:NODE {repoId: $repo_id})
+        OPTIONAL MATCH (n)-[r]-(m:NODE {repoId: $repo_id})
+        RETURN 
+        COUNT(DISTINCT n) AS nodeCount,
+        COUNT(DISTINCT r) AS relationshipCount
+        """
+
+        try:
+            # Establish connection
+            with self.driver.session() as session:
+                    # Execute the query
+                    result = session.run(query, repo_id=repo_id)
+                    record = result.single()
+
+                    if record:
+                        node_count = record["nodeCount"]
+                        relationship_count = record["relationshipCount"]
+
+                        # Log the results
+                        logger.info(f"DEBUGNEO4J: Repo ID: {repo_id}, Nodes: {node_count}, Relationships: {relationship_count}")
+                    else:
+                        logger.info(f"DEBUGNEO4J: No data found for repository ID: {repo_id}")
+
+        except Exception as e:
+            print(f"An error occurred: {str(e)}")
+
+
     def num_tokens_from_string(self, string: str, model: str = "gpt-4") -> int:
         """Returns the number of tokens in a text string."""
         try:
@@ -358,7 +388,11 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
         return result
 
     async def generate_docstrings(self, repo_id: str) -> Dict[str, DocstringResponse]:
+        logger.info(f"DEBUGNEO4J: Function: {self.generate_docstrings.__name__}, Repo ID: {repo_id}")
+        self.log_graph_stats(repo_id)
         nodes = self.fetch_graph(repo_id)
+        logger.info(f"DEBUGNEO4J: After fetch graph, Repo ID: {repo_id}, Nodes: {len(nodes)}")
+        self.log_graph_stats(repo_id)
         logger.info(f"Creating search indices for project {repo_id} with nodes count {len(nodes)}")
         
         # Prepare a list of nodes for bulk insert
@@ -381,11 +415,15 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
 
         await self.search_service.commit_indices()
         entry_points = self.get_entry_points(repo_id)
+        logger.info(f"DEBUGNEO4J: After get entry points, Repo ID: {repo_id}, Entry points: {len(entry_points)}")
+        self.log_graph_stats(repo_id)
         entry_points_neighbors = {}
         for entry_point in entry_points:
             neighbors = self.get_neighbours(entry_point, repo_id)
             entry_points_neighbors[entry_point] = neighbors
 
+        logger.info(f"DEBUGNEO4J: After get neighbours, Repo ID: {repo_id}, Entry points neighbors: {len(entry_points_neighbors)}")
+        self.log_graph_stats(repo_id)
         batches = self.batch_nodes(nodes)
         all_docstrings = {"docstrings": []}
 
@@ -575,8 +613,14 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
 
     async def run_inference(self, repo_id: str):
         docstrings = await self.generate_docstrings(repo_id)
+        logger.info(f"DEBUGNEO4J: After generate docstrings, Repo ID: {repo_id}, Docstrings: {len(docstrings)}")
+        self.log_graph_stats(repo_id)
         await self.update_neo4j_with_docstrings(repo_id, docstrings)
+        logger.info(f"DEBUGNEO4J: After update neo4j with docstrings, Repo ID: {repo_id}")
+        self.log_graph_stats(repo_id)
         self.create_vector_index()
+        logger.info(f"DEBUGNEO4J: After create vector index, Repo ID: {repo_id}")
+        self.log_graph_stats(repo_id)
 
     async def query_vector_index(
         self,
