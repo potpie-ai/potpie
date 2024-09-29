@@ -120,8 +120,8 @@ class ParsingService:
 
 
     def create_neo4j_indices(self, graph_manager):
-            # graph_manager.create_entityId_index()
-            # graph_manager.create_node_id_index()
+            graph_manager.create_entityId_index()
+            graph_manager.create_node_id_index()
             # graph_manager.create_function_name_index()
             # with graph_manager.driver.session() as session:
             #     node_query = """
