@@ -565,7 +565,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
         embedding = self.embedding_model.encode(text)
         return embedding.tolist()
 
-    async def update_neo4j_with_docstrings(
+    def update_neo4j_with_docstrings(
         self, repo_id: str, docstrings: DocstringResponse
     ):
         with self.driver.session() as session:
@@ -579,7 +579,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
                 }
                 for n in docstrings["docstrings"]
             ]
-            project = await self.project_manager.get_project_from_db_by_id(repo_id)
+            project = self.project_manager.get_project_from_db_by_id_sync(repo_id)
             repo_name = project.get("project_name")
             is_local_repo = len(repo_name.split("/")) < 2
             for i in range(0, len(docstring_list), batch_size):
@@ -615,14 +615,14 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
         docstrings = await self.generate_docstrings(repo_id)
         logger.info(f"DEBUGNEO4J: After generate docstrings, Repo ID: {repo_id}, Docstrings: {len(docstrings)}")
         self.log_graph_stats(repo_id)
-        await self.update_neo4j_with_docstrings(repo_id, docstrings)
+        self.update_neo4j_with_docstrings(repo_id, docstrings)
         logger.info(f"DEBUGNEO4J: After update neo4j with docstrings, Repo ID: {repo_id}")
         self.log_graph_stats(repo_id)
         self.create_vector_index()
         logger.info(f"DEBUGNEO4J: After create vector index, Repo ID: {repo_id}")
         self.log_graph_stats(repo_id)
 
-    async def query_vector_index(
+    def query_vector_index(
         self,
         project_id: str,
         query: str,

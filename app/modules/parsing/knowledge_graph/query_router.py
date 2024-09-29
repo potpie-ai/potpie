@@ -16,7 +16,7 @@ router = APIRouter()
 @router.post("/query", response_model=List[QueryResponse])
 async def query_vector_index(request: QueryRequest, db: Session = Depends(get_db)):
     inference_service = InferenceService(db, "dummy")
-    results = await inference_service.query_vector_index(
+    results = inference_service.query_vector_index(
         request.project_id, request.query, request.node_ids
     )
     return [
