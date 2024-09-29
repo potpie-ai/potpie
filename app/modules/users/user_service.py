@@ -21,7 +21,7 @@ class UserService:
     def __init__(self, db: Session):
         self.db = db
 
-    def update_last_login(self, uid: str):
+    def update_last_login(self, uid: str, oauth_token: str):
         logging.info(f"Updating last login time for user with UID: {uid}")
         message: str = ""
         error: bool = False
@@ -29,6 +29,9 @@ class UserService:
             user = self.db.query(User).filter(User.uid == uid).first()
             if user:
                 user.last_login_at = datetime.utcnow()
+                provider_info = user.provider_info.copy()
+                provider_info["access_token"] = oauth_token
+                user.provider_info = provider_info
                 self.db.commit()
                 self.db.refresh(user)
                 error = False

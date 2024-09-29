@@ -21,16 +21,19 @@ class AuthAPI:
     async def signup(request: Request, db: Session = Depends(get_db)):
         body = json.loads(await request.body())
         uid = body["uid"]
+        oauth_token = body["accessToken"]
         user_service = UserService(db)
         user = user_service.get_user_by_uid(uid)
         if user:
-            message, error = user_service.update_last_login(uid)
+            message, error = user_service.update_last_login(uid, oauth_token)
             if error:
                 return Response(content=message, status_code=400)
             else:
                 return Response(content=json.dumps({"uid": uid}), status_code=200)
         else:
             first_login = datetime.utcnow()
+            provider_info = body["providerData"][0]
+            provider_info["access_token"] = oauth_token
             user = CreateUser(
                 uid=uid,
                 email=body["email"],
@@ -38,7 +41,7 @@ class AuthAPI:
                 email_verified=body["emailVerified"],
                 created_at=first_login,
                 last_login_at=first_login,
-                provider_info=body["providerData"][0],
+                provider_info=provider_info,
                 provider_username=body["providerUsername"],
             )
             uid, message, error = user_service.create_user(user)

@@ -63,8 +63,8 @@ configure_celery(queue_name)
 
 # Import the lock decorator
 
-# Import tasks to ensure they are registered
-import app.celery.tasks.parsing_tasks  # noqa # Ensure the task module is imported
-
 # Import the lock decorator
 from celery.contrib.abortable import AbortableTask  # noqa
+
+# Import tasks to ensure they are registered
+import app.celery.tasks.parsing_tasks  # noqa # Ensure the task module is imported

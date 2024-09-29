@@ -142,6 +142,12 @@ class GithubService:
 
         return encoding
 
+    def get_github_oauth_token(self, uid: str) -> str:
+        user = self.db.query(User).filter(User.uid == uid).first()
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        return user.provider_info["access_token"]
+
     def get_repos_for_user(self, user_id: str):
         try:
             logger.info(f"Getting repositories for user: {user_id}")
@@ -149,13 +155,29 @@ class GithubService:
             if user is None:
                 raise HTTPException(status_code=404, detail="User not found")
             logger.info(f"User found: {user}")
+
+            firebase_uid = user.uid  # Assuming `uid` is the Firebase UID
             github_username = user.provider_username
-            logger.info(f"GitHub username: {github_username}")
+
             if not github_username:
                 raise HTTPException(
                     status_code=400, detail="GitHub username not found for this user"
                 )
 
+            # Retrieve GitHub OAuth token from Firestore
+            github_oauth_token = self.get_github_oauth_token(firebase_uid)
+            if not github_oauth_token:
+                raise HTTPException(
+                    status_code=400, detail="GitHub OAuth token not found for this user"
+                )
+
+            # Initialize GitHub client with user's OAuth token
+            user_github = Github(github_oauth_token)
+            user_orgs = user_github.get_user().get_orgs()
+            org_logins = [org.login.lower() for org in user_orgs]
+            logger.info(f"User organizations: {org_logins}")
+
+            # Authenticate as GitHub App
             private_key = (
                 "-----BEGIN RSA PRIVATE KEY-----\n"
                 + config_provider.get_github_key()
@@ -165,14 +187,14 @@ class GithubService:
 
             auth = AppAuth(app_id=app_id, private_key=private_key)
             jwt = auth.create_jwt()
-            url = "https://api.github.com/app/installations"
+            installations_url = "https://api.github.com/app/installations"
             headers = {
                 "Accept": "application/vnd.github+json",
                 "Authorization": f"Bearer {jwt}",
                 "X-GitHub-Api-Version": "2022-11-28",
             }
 
-            response = requests.get(url, headers=headers)
+            response = requests.get(installations_url, headers=headers)
 
             if response.status_code != 200:
                 logger.error(f"Failed to get installations. Response: {response.text}")
@@ -183,12 +205,21 @@ class GithubService:
 
             all_installations = response.json()
 
-            # Filter installations for the specific user
-            user_installations = [
-                installation
-                for installation in all_installations
-                if installation["account"]["login"].lower() == github_username.lower()
-            ]
+            # Filter installations: user's personal installation + org installations where user is a member
+            user_installations = []
+            for installation in all_installations:
+                account = installation["account"]
+                account_login = account["login"].lower()
+                account_type = account["type"]  # 'User' or 'Organization'
+
+                if account_type == "User" and account_login == github_username.lower():
+                    user_installations.append(installation)
+                elif account_type == "Organization" and account_login in org_logins:
+                    user_installations.append(installation)
+
+            logger.info(
+                f"Filtered installations: {[inst['id'] for inst in user_installations]}"
+            )
 
             repos = []
             for installation in user_installations:
@@ -202,8 +233,11 @@ class GithubService:
                     repos.extend(repos_response.json().get("repositories", []))
                 else:
                     logger.error(
-                        f"Failed to fetch repositories for installation ID {installation['id']}"
+                        f"Failed to fetch repositories for installation ID {installation['id']}. Response: {repos_response.text}"
                     )
+
+            # Remove duplicate repositories if any
+            unique_repos = {repo["id"]: repo for repo in repos}.values()
 
             repo_list = [
                 {
@@ -214,7 +248,7 @@ class GithubService:
                     "url": repo["html_url"],
                     "owner": repo["owner"]["login"],
                 }
-                for repo in repos
+                for repo in unique_repos
             ]
 
             return {"repositories": repo_list}
