@@ -175,7 +175,6 @@ class GithubService:
             user_github = Github(github_oauth_token)
             user_orgs = user_github.get_user().get_orgs()
             org_logins = [org.login.lower() for org in user_orgs]
-            logger.info(f"User organizations: {org_logins}")
 
             # Authenticate as GitHub App
             private_key = (
