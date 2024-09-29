@@ -120,14 +120,15 @@ class ParsingService:
 
 
     def create_neo4j_indices(self, graph_manager):
-            graph_manager.create_entityId_index()
-            graph_manager.create_node_id_index()
-            graph_manager.create_function_name_index()
-            with graph_manager.driver.session() as session:
-                node_query = """
-                CREATE INDEX repo_id_node_id_NODE IF NOT EXISTS FOR (n:NODE) ON (n.repoId, n.node_id)
-                """
-                session.run(node_query)
+            # graph_manager.create_entityId_index()
+            # graph_manager.create_node_id_index()
+            # graph_manager.create_function_name_index()
+            # with graph_manager.driver.session() as session:
+            #     node_query = """
+            #     CREATE INDEX repo_id_node_id_NODE IF NOT EXISTS FOR (n:NODE) ON (n.repoId, n.node_id)
+            #     """
+            #     session.run(node_query)
+            pass
 
     async def analyze_directory(
         self, extracted_dir: str, project_id: int, user_id: str, db, language: str
