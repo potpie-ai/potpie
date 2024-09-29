@@ -131,6 +131,11 @@ class ParsingService:
             try:
                 graph_constructor = GraphConstructor(graph_manager, user_id)
                 n, r = graph_constructor.build_graph(extracted_dir)
+                if len(n) == 0:
+                    n, r = graph_constructor.build_graph(extracted_dir)
+                    if len(n) == 0:
+                        logger.error(f"Project: {project_id} Failed to build graph")
+                        raise ParsingFailedError(f"Project: {project_id} Failed to build graph")
                 graph_manager.create_nodes(n)
                 with graph_manager.driver.session() as session:
                     session.write_transaction(
