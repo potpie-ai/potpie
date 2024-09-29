@@ -31,7 +31,7 @@ class CodeGraphService:
     def close(self):
         self.driver.close()
 
-    async def create_and_store_graph(self, repo_dir, project_id, user_id):
+    def create_and_store_graph(self, repo_dir, project_id, user_id):
         # Create the graph using RepoMap
         self.repo_map = RepoMap(
             root=repo_dir,
@@ -49,9 +49,6 @@ class CodeGraphService:
             start_time = time.time()  # Start timing
             node_count = nx_graph.number_of_nodes()
             logging.info(f"Creating {node_count} nodes")
-
-            # Initialize SearchService
-            search_service = SearchService(self.db)
 
             # Batch insert nodes
             batch_size = 300
@@ -86,7 +83,6 @@ class CodeGraphService:
                     nodes=nodes_to_create,
                 )
 
-            await search_service.commit_indices()
 
             relationship_count = nx_graph.number_of_edges()
             logging.info(f"Creating {relationship_count} relationships")
@@ -122,7 +118,7 @@ class CodeGraphService:
                 f"Time taken to create graph and search index: {end_time - start_time:.2f} seconds"
             )
 
-    async def cleanup_graph(self, project_id: str):
+    def cleanup_graph(self, project_id: str):
         with self.driver.session() as session:
             session.run(
                 """
@@ -134,7 +130,7 @@ class CodeGraphService:
 
         # Clean up search index
         search_service = SearchService(self.db)
-        await search_service.delete_project_index(project_id)
+        search_service.delete_project_index(project_id)
 
     async def get_node_by_id(self, node_id: str, project_id: str) -> Optional[Dict]:
         with self.driver.session() as session:

@@ -118,6 +118,17 @@ class ParsingService:
             ):
                 shutil.rmtree(extracted_dir, ignore_errors=True)
 
+
+    def create_neo4j_indices(self, graph_manager):
+            graph_manager.create_entityId_index()
+            graph_manager.create_node_id_index()
+            graph_manager.create_function_name_index()
+            with graph_manager.driver.session() as session:
+                node_query = """
+                CREATE INDEX repo_id_node_id_NODE IF NOT EXISTS FOR (n:NODE) ON (n.repoId, n.node_id)
+                """
+                session.run(node_query)
+                
     async def analyze_directory(
         self, extracted_dir: str, project_id: int, user_id: str, db, language: str
     ):
@@ -127,14 +138,7 @@ class ParsingService:
 
         if language in ["python", "javascript", "typescript"]:
             graph_manager = Neo4jManager(project_id, user_id)
-            graph_manager.create_entityId_index()
-            graph_manager.create_node_id_index()
-            graph_manager.create_function_name_index()
-            with graph_manager.driver.session() as session:
-                node_query = """
-                CREATE INDEX repo_id_node_id_NODE IF NOT EXISTS FOR (n:NODE) ON (n.repoId, n.node_id)
-                """
-                session.run(node_query)
+            self.create_neo4j_indices(graph_manager)
 
             try:
                 graph_constructor = GraphConstructor(graph_manager, user_id)
@@ -190,7 +194,7 @@ class ParsingService:
                     db,
                 )
 
-                await service.create_and_store_graph(extracted_dir, project_id, user_id)
+                service.create_and_store_graph(extracted_dir, project_id, user_id)
 
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.PARSED

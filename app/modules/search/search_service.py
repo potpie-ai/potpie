@@ -114,7 +114,7 @@ class SearchService:
         b = b.lower()
         return len(set(a) & set(b)) / float(len(set(a) | set(b)))
 
-    async def delete_project_index(self, project_id: str):
+    def delete_project_index(self, project_id: str):
         # Delete all search index entries for the given project_id
         delete_stmt = delete(SearchIndex).where(SearchIndex.project_id == project_id)
         self.db.execute(delete_stmt)
