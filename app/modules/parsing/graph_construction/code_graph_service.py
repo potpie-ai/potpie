@@ -2,6 +2,7 @@ import hashlib
 import logging
 from typing import Dict, Optional
 
+from fastapi import logger
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 
@@ -119,6 +120,7 @@ class CodeGraphService:
             )
 
     def cleanup_graph(self, project_id: str):
+        logger.info(f"Cleaning up graph for project {project_id}")
         with self.driver.session() as session:
             session.run(
                 """
