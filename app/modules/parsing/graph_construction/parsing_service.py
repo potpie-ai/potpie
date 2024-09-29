@@ -145,10 +145,7 @@ class ParsingService:
                         logger.error(f"Project: {project_id} Failed to build graph")
                         raise ParsingFailedError(f"Project: {project_id} Failed to build graph")
                 graph_manager.create_nodes(n)
-                with graph_manager.driver.session() as session:
-                    session.write_transaction(
-                        graph_manager._create_edges_txn, r, 3000, entityId=user_id
-                    )
+                graph_manager.create_edges(r)
 
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.PARSED
