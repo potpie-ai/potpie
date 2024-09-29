@@ -155,7 +155,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
             }
 
     def batch_nodes(
-        self, nodes: List[Dict], max_tokens: int = 32000, model: str = "gpt-4"
+        self, nodes: List[Dict], max_tokens: int = 64000, model: str = "gpt-4"
     ) -> List[List[DocstringRequest]]:
         batches = []
         current_batch = []
@@ -171,7 +171,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
             def replace_match(match):
                 node_id = match.group(1)
                 if node_id in node_dict:
-                    return node_dict[node_id]["text"]
+                    return node_dict[node_id]["text"].split('\n', 1)[-1]
                 return match.group(0)
 
             previous_text = None
@@ -180,7 +180,6 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
             while previous_text != current_text:
                 previous_text = current_text
                 current_text = regex.sub(replace_match, current_text)
-
             return current_text
 
         for node in nodes:
@@ -199,7 +198,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
                 current_tokens = 0
 
             current_batch.append(
-                DocstringRequest(node_id=node["node_id"], text=node["text"])
+                DocstringRequest(node_id=node["node_id"], text=updated_text)
             )
             current_tokens += node_tokens
 
@@ -355,7 +354,7 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
             },
         )
         chain = chat_prompt | self.llm | output_parser
-        result = await chain.ainvoke(input=inputs)
+        result = await chain.ainvoke(input=inputs) 
         return result
 
     async def generate_docstrings(self, repo_id: str) -> Dict[str, DocstringResponse]:
@@ -367,6 +366,8 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
                 "",
             }:
                 await self.search_service.create_search_index(repo_id, node)
+        logger.info(f"Project {repo_id}: Created search indices over {len(nodes)} nodes")
+
         await self.search_service.commit_indices()
         entry_points = self.get_entry_points(repo_id)
         entry_points_neighbors = {}

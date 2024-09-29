@@ -127,7 +127,8 @@ class ParsingService:
 
         if language in ["python", "javascript", "typescript"]:
             graph_manager = Neo4jManager(project_id, user_id)
-
+            graph_manager.create_entityId_index()
+            graph_manager.create_node_id_index()
             try:
                 graph_constructor = GraphConstructor(graph_manager, user_id)
                 n, r = graph_constructor.build_graph(extracted_dir)
@@ -139,7 +140,7 @@ class ParsingService:
                 graph_manager.create_nodes(n)
                 with graph_manager.driver.session() as session:
                     session.write_transaction(
-                        graph_manager._create_edges_txn, r, 1000, entityId=user_id
+                        graph_manager._create_edges_txn, r, 3000, entityId=user_id
                     )
 
                 await self.project_service.update_project_status(
