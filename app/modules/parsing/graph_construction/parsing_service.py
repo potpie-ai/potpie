@@ -128,7 +128,7 @@ class ParsingService:
                 CREATE INDEX repo_id_node_id_NODE IF NOT EXISTS FOR (n:NODE) ON (n.repoId, n.node_id)
                 """
                 session.run(node_query)
-                
+
     async def analyze_directory(
         self, extracted_dir: str, project_id: int, user_id: str, db, language: str
     ):
@@ -162,7 +162,8 @@ class ParsingService:
 
                 # Generate docstrings using InferenceService
                 await self.inference_service.run_inference(project_id)
-
+                logger.info(f"DEBUGNEO4J: After inference project {project_id}")
+                self.inference_service.log_graph_stats(project_id)
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.READY
                 )
@@ -201,16 +202,23 @@ class ParsingService:
                 )
                 # Generate docstrings using InferenceService
                 await self.inference_service.run_inference(project_id)
-
+                logger.info(f"DEBUGNEO4J: After inference project {project_id}")
+                self.inference_service.log_graph_stats(project_id)
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.READY
                 )
+                logger.info(f"DEBUGNEO4J: After update project status {project_id}")
+                self.inference_service.log_graph_stats(project_id)
             finally:
                 service.close()
+                logger.info(f"DEBUGNEO4J: After close service {project_id}")
+                self.inference_service.log_graph_stats(project_id)
         else:
             await self.project_service.update_project_status(
                 project_id, ProjectStatusEnum.ERROR
             )
+            logger.info(f"DEBUGNEO4J: After update project status {project_id}")
+            self.inference_service.log_graph_stats(project_id)
             raise ParsingFailedError(
                 "Repository doesn't consist of a language currently supported."
             )
