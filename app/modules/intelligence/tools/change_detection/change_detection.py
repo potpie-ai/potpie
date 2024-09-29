@@ -83,6 +83,7 @@ class ChangeDetectionTool:
                     relative_file_path,
                     0,
                     0,
+                    project["branch_name"],
                 )
                 tags = RepoMap.get_tags_from_code(relative_file_path, file_content)
 
