@@ -138,7 +138,7 @@ class ParsingService:
 
         if language in ["python", "javascript", "typescript"]:
             graph_manager = Neo4jManager(project_id, user_id)
-            # self.create_neo4j_indices(graph_manager)
+            self.create_neo4j_indices(graph_manager)
 
             try:
                 graph_constructor = GraphConstructor(graph_manager, user_id)
