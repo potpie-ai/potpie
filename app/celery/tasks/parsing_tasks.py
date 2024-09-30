@@ -1,23 +1,17 @@
 import asyncio
+import logging
 from typing import Any, Dict
 
-import redis
-from celery.contrib.abortable import AbortableTask
-from celery.utils.log import get_task_logger
-from redis.exceptions import LockError
+from celery import Task
 
-from app.celery.celery_app import celery_app, redis_url
+from app.celery.celery_app import celery_app
 from app.core.database import SessionLocal
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
 
-logger = get_task_logger(__name__)
+logger = logging.getLogger(__name__)
 
-# Create a Redis client
-redis_client = redis.from_url(redis_url)
-
-
-class BaseTask(AbortableTask):
+class BaseTask(Task):
     _db = None
 
     @property
@@ -46,49 +40,33 @@ def process_parsing(
     cleanup_graph: bool = True,
 ) -> None:
     logger.info(f"Task received: Starting parsing process for project {project_id}")
-
-    # Acquire a lock for this specific project
-    lock_id = f"parsing_lock_{project_id}"
-    lock = redis_client.lock(lock_id, timeout=3600)  # Lock expires after 1 hour
-
     try:
-        have_lock = lock.acquire(blocking=False)
-        if have_lock:
-            try:
-                parsing_service = ParsingService(self.db, user_id)
+        parsing_service = ParsingService(self.db, user_id)
 
-                async def run_parsing():
-                    import time
+        async def run_parsing():
+            import time
 
-                    start_time = time.time()
+            start_time = time.time()
 
-                    await parsing_service.parse_directory(
-                        ParsingRequest(**repo_details),
-                        user_id,
-                        user_email,
-                        project_id,
-                        cleanup_graph,
-                    )
-
-                    end_time = time.time()
-                    elapsed_time = end_time - start_time
-                    logger.info(
-                        f"Parsing process took {elapsed_time:.2f} seconds for project {project_id}"
-                    )
-
-                asyncio.run(run_parsing())
-                logger.info(f"Parsing process completed for project {project_id}")
-            except Exception as e:
-                logger.error(f"Error during parsing for project {project_id}: {str(e)}")
-                raise
-            finally:
-                lock.release()
-        else:
-            logger.info(
-                f"Parsing already in progress for project {project_id}. Skipping."
+            await parsing_service.parse_directory(
+                ParsingRequest(**repo_details),
+                user_id,
+                user_email,
+                project_id,
+                cleanup_graph,
             )
-    except LockError:
-        logger.error(f"Failed to acquire lock for project {project_id}")
+
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            logger.info(
+                f"Parsing process took {elapsed_time:.2f} seconds for project {project_id}"
+            )
+
+        asyncio.run(run_parsing())
+        logger.info(f"Parsing process completed for project {project_id}")
+    except Exception as e:
+        logger.error(f"Error during parsing for project {project_id}: {str(e)}")
+        raise
 
 
 logger.info("Parsing tasks module loaded")
