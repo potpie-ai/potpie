@@ -1,11 +1,14 @@
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import AsyncGenerator, List
 
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import func
 from uuid6 import uuid7
 
+from app.core.database import get_db
 from app.modules.conversations.conversation.conversation_model import (
     Conversation,
     ConversationStatus,
@@ -37,6 +40,8 @@ from app.modules.intelligence.memory.chat_history_service import ChatHistoryServ
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
 from app.modules.utils.posthog_helper import PostHogClient
+from langchain.prompts import ChatPromptTemplate
+
 
 logger = logging.getLogger(__name__)
 
@@ -207,15 +212,16 @@ class ConversationService:
                 {"conversation_id": conversation_id, "llm": provider_name},
             )
             if message_type == MessageType.HUMAN:
-                conversation = (
-                    self.sql_db.query(Conversation)
-                    .filter_by(id=conversation_id)
-                    .first()
-                )
+                conversation = await self._get_conversation_with_message_count(conversation_id)
                 if not conversation:
                     raise ConversationNotFoundError(
                         f"Conversation with id {conversation_id} not found"
                     )
+
+                # Check if this is the first human message
+                if conversation.human_message_count == 1:
+                    new_title = await self._generate_title(conversation, message.content)
+                    await self._update_conversation_title(conversation_id, new_title)
 
                 repo_id = (
                     conversation.project_ids[0] if conversation.project_ids else None
@@ -246,6 +252,44 @@ class ConversationService:
             raise ConversationServiceError(
                 "Failed to store message or generate AI response."
             ) from e
+
+    async def _get_conversation_with_message_count(self, conversation_id: str) -> Conversation:
+        result = self.sql_db.query(Conversation, func.count(Message.id).filter(Message.type == MessageType.HUMAN).label('human_message_count'))\
+            .outerjoin(Message, Conversation.id == Message.conversation_id)\
+            .filter(Conversation.id == conversation_id)\
+            .group_by(Conversation.id)\
+            .first()
+        
+        if result:
+            conversation, human_message_count = result
+            setattr(conversation, 'human_message_count', human_message_count)
+            return conversation
+        return None
+
+    async def _generate_title(self, conversation: Conversation, message_content: str) -> str:
+
+        agent_type = conversation.agent_ids[0]
+        
+        chat = self.provider_service.get_small_llm()
+        prompt = ChatPromptTemplate.from_template(
+            "Given an agent type '{agent_type}' and an initial message '{message}', "
+            "generate a concise and relevant title for a conversation. "
+            "The title should be no longer than 50 characters. Only return title string, do not wrap in quotes."
+        )
+        
+        messages = prompt.format_messages(agent_type=agent_type, message=message_content)
+        response = await chat.agenerate([messages])
+        
+        generated_title = response.generations[0][0].text.strip()
+        if len(generated_title) > 50:
+            generated_title = generated_title[:50].strip()+'...'
+        return generated_title
+
+    async def _update_conversation_title(self, conversation_id: str, new_title: str):
+        self.sql_db.query(Conversation).filter_by(id=conversation_id).update(
+            {"title": new_title, "updated_at": datetime.now(timezone.utc)}
+        )
+        self.sql_db.commit()
 
     async def regenerate_last_message(
         self, conversation_id: str, user_id: str, node_ids: List[NodeContext] = []
