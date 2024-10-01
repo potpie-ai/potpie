@@ -126,7 +126,7 @@ class UnitTestAgent:
 
                 tool_results = [
                     SystemMessage(
-                        content=f"Generated Test plan and test suite:\n {response}"
+                        content=f"Unit test agent result:\n {response}"
                     )
                 ]
 

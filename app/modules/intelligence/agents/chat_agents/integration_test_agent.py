@@ -128,7 +128,7 @@ class IntegrationTestAgent:
 
                 tool_results = [
                     SystemMessage(
-                        content=f"Generated Test plan and test suite:\n {response}"
+                        content=f"Integration test agent result:\n {response}"
                     )
                 ]
 
