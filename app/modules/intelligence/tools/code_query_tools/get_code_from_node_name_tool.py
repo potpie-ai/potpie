@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.config_provider import config_provider
 from app.modules.github.github_service import GithubService
 from app.modules.projects.projects_model import Project
+from langchain_core.tools import StructuredTool, Tool
 
 logger = logging.getLogger(__name__)
 
@@ -113,3 +114,12 @@ class GetCodeFromNodeNameTool:
 
     async def arun(self, repo_id: str, node_name: str) -> Dict[str, Any]:
         return self.run(repo_id, node_name)
+
+
+def get_code_from_node_name_tool(sql_db: Session) -> Tool:
+    tool_instance = GetCodeFromNodeNameTool(sql_db)
+    return StructuredTool.from_function(
+        func=tool_instance.run,
+        name="Get Code From Node Name",
+        description="Retrieves code for a specific node in a repository given its node name",
+    )

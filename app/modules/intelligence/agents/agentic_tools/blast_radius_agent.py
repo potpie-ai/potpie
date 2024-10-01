@@ -9,7 +9,8 @@ from app.modules.intelligence.tools.change_detection.change_detection import (
     ChangeDetectionResponse,
     get_blast_radius_tool,
 )
-from app.modules.intelligence.tools.kg_based_tools.graph_tools import CodeTools
+from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool import get_nodes_from_tags_tool
+from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import get_ask_knowledge_graph_queries_tool
 
 
 class BlastRadiusAgent:
@@ -17,6 +18,8 @@ class BlastRadiusAgent:
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.sql_db = sql_db
         self.llm = llm
+        self.get_nodes_from_tags = get_nodes_from_tags_tool()
+        self.ask_knowledge_graph_queries = get_ask_knowledge_graph_queries_tool()
 
     async def create_agents(self):
         blast_radius_agent = Agent(
@@ -77,7 +80,7 @@ class BlastRadiusAgent:
             {self.BlastRadiusAgentResponse.model_json_schema()}""",
             expected_output=f"Comprehensive impact analysis of the code changes on the codebase and answers to the users query about them. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model : {self.BlastRadiusAgentResponse.model_json_schema()}",
             agent=blast_radius_agent,
-            tools=[get_blast_radius_tool()[0], CodeTools.get_kg_tools()[0]],
+            tools=[get_blast_radius_tool(), self.get_nodes_from_tags, self.ask_knowledge_graph_queries],
             output_pydantic=self.BlastRadiusAgentResponse,
         )
 

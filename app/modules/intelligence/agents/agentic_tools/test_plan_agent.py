@@ -6,15 +6,17 @@ from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
-    get_code_tools,
+    get_code_from_node_id_tool,
 )
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_multiple_node_ids_tool import get_code_from_multiple_node_ids_tool
 
 
 class TestPlanAgent:
     def __init__(self, sql_db, llm):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.sql_db = sql_db
-        self.code_tools = get_code_tools(self.sql_db)
+        self.get_code_from_node_id = get_code_from_node_id_tool(sql_db)
+        self.get_code_from_multiple_node_ids = get_code_from_multiple_node_ids_tool(sql_db)
         self.llm = llm
 
     async def create_agents(self):
@@ -75,7 +77,7 @@ class TestPlanAgent:
             Also include the code under test and the docstrings in your output""",
             expected_output="Outline the test code context, and test plan including happy paths and edge cases for each node.",
             agent=test_plan_agent,
-            tools=[self.code_tools[0], self.code_tools[1]],
+            tools=[self.get_code_from_node_id, self.get_code_from_multiple_node_ids],
         )
 
         return test_plan_task

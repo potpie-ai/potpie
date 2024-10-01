@@ -10,16 +10,18 @@ from app.modules.intelligence.agents.agentic_tools.test_plan_agent import TestPl
 from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id_tool import (
     GetCodeGraphFromNodeIdTool,
 )
-from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
-    get_code_tools,
-)
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import get_code_from_node_id_tool
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_multiple_node_ids_tool import get_code_from_multiple_node_ids_tool
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_name_tool import get_code_from_probable_node_name_tool
 
 
 class IntegrationTestAgent:
     def __init__(self, sql_db, llm):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.sql_db = sql_db
-        self.code_tools = get_code_tools(self.sql_db)
+        self.get_code_from_node_id = get_code_from_node_id_tool(sql_db)
+        self.get_code_from_multiple_node_ids = get_code_from_multiple_node_ids_tool(sql_db)
+        self.get_code_from_probable_node_name = get_code_from_probable_node_name_tool(sql_db)
         self.test_plan_agent = TestPlanAgent(sql_db, llm)
         self.llm = llm
         self.max_iterations = os.getenv("MAX_ITER", 15)
@@ -126,7 +128,7 @@ class IntegrationTestAgent:
             expected_output=f"Write COMPLETE CODE for integration tests for each node based on the test plan. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model:\n{self.TestAgentResponse.model_json_schema()}",
             agent=integration_test_agent,
             output_pydantic=self.TestAgentResponse,
-            tools=[self.code_tools[2], self.code_tools[0]],
+            tools=[self.get_code_from_probable_node_name, self.get_code_from_node_id],
         )
 
         return integration_test_task

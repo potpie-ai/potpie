@@ -18,7 +18,6 @@ from app.modules.parsing.knowledge_graph.inference_service import InferenceServi
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
 
-parser = get_parser("python")
 
 from typing import Dict, List
 
@@ -286,13 +285,12 @@ class ChangeDetectionTool:
         return asyncio.run(self.get_code_changes(project_id))
 
 
-def get_blast_radius_tool() -> List[Tool]:
+def get_blast_radius_tool() -> Tool:
     """
     Get a list of LangChain Tool objects for use in agents.
     """
     change_detection_tool = ChangeDetectionTool(next(get_db()))
-    return [
-        StructuredTool.from_function(
+    return StructuredTool.from_function(
             func=change_detection_tool.get_change_context,
             name="Get code changes",
             description="""
@@ -303,5 +301,5 @@ def get_blast_radius_tool() -> List[Tool]:
     The output includes a dictionary of file patches and a list of changes with updated code and entry point code.
     """,
             args_schema=ChangeDetectionInput,
-        ),
-    ]
+        )
+    

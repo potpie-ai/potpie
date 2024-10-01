@@ -6,14 +6,16 @@ from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
-    get_code_tools,
+    get_code_from_node_id_tool,
 )
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_name_tool import get_code_from_probable_node_name_tool
 
 
 class UnitTestAgent:
     def __init__(self, sql_db, llm):
         self.sql_db = sql_db
-        self.code_tools = get_code_tools(self.sql_db)
+        self.get_code_from_node_id = get_code_from_node_id_tool(sql_db)
+        self.get_code_from_probable_node_name = get_code_from_probable_node_name_tool(sql_db)
         self.llm = llm
         self.max_iterations = os.getenv("MAX_ITER", 15)
 
@@ -102,7 +104,7 @@ class UnitTestAgent:
             expected_output="Outline the test plan and write unit tests for each node based on the test plan.",
             agent=unit_test_agent,
             output_pydantic=self.TestAgentResponse,
-            tools=[self.code_tools[2], self.code_tools[0]],
+            tools=[self.get_code_from_probable_node_name, self.get_code_from_node_id],
         )
 
         return unit_test_task

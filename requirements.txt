@@ -57,7 +57,7 @@ celery
 redis
 flower
 chardet
-sentry_sdk
+sentry-sdk[fastapi]
 posthog
 newrelic==9.0.0
 tiktoken
