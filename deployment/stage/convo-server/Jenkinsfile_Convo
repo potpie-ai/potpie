@@ -20,8 +20,8 @@ pipeline {
                     // Determine environment based on branch
                     def branch = env.GIT_BRANCH
 
-                    if (branch == "origin/dir-restruct") {
-                        env.ENVIRONMENT = 'dir-restruct'
+                    if (branch == "origin/neo4j-issue") {
+                        env.ENVIRONMENT = 'neo4j-issue'
                     } else if (branch == "origin/main") {
                         env.ENVIRONMENT = 'main'
                     } else {
