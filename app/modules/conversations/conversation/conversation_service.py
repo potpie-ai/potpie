@@ -27,15 +27,7 @@ from app.modules.conversations.message.message_schema import (
     MessageResponse,
     NodeContext,
 )
-from app.modules.intelligence.agents.chat_agents.code_changes_agent import (
-    CodeChangesAgent,
-)
-from app.modules.intelligence.agents.chat_agents.debugging_agent import DebuggingAgent
-from app.modules.intelligence.agents.chat_agents.integration_test_agent import (
-    IntegrationTestAgent,
-)
-from app.modules.intelligence.agents.chat_agents.qna_agent import QNAAgent
-from app.modules.intelligence.agents.chat_agents.unit_test_agent import UnitTestAgent
+from app.modules.intelligence.agents.agent_injector_service import AgentInjectorService
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
@@ -66,41 +58,28 @@ class ConversationService:
         project_service: ProjectService,
         history_manager: ChatHistoryService,
         provider_service: ProviderService,
+        agent_injector_service: AgentInjectorService,
     ):
         self.sql_db = db
         self.user_id = user_id
         self.project_service = project_service
         self.history_manager = history_manager
         self.provider_service = provider_service
-        self.agents = self._initialize_agents()
+        self.agent_injector_service = agent_injector_service
 
     @classmethod
     def create(cls, db: Session, user_id: str):
         project_service = ProjectService(db)
         history_manager = ChatHistoryService(db)
         provider_service = ProviderService(db, user_id)
-        return cls(db, user_id, project_service, history_manager, provider_service)
-
-    def _initialize_agents(self):
-        mini_llm = self.provider_service.get_small_llm()
-        reasoning_llm = self.provider_service.get_large_llm()
-        return {
-            "debugging_agent": DebuggingAgent(mini_llm, reasoning_llm, self.sql_db),
-            "codebase_qna_agent": QNAAgent(mini_llm, reasoning_llm, self.sql_db),
-            "unit_test_agent": UnitTestAgent(mini_llm, reasoning_llm, self.sql_db),
-            "integration_test_agent": IntegrationTestAgent(
-                mini_llm, reasoning_llm, self.sql_db
-            ),
-            "code_changes_agent": CodeChangesAgent(
-                mini_llm, reasoning_llm, self.sql_db
-            ),
-        }
+        agent_injector_service = AgentInjectorService(db, provider_service)
+        return cls(db, user_id, project_service, history_manager, provider_service, agent_injector_service)
 
     async def create_conversation(
         self, conversation: CreateConversationRequest, user_id: str
     ) -> tuple[str, str]:
         try:
-            if conversation.agent_ids[0] not in self.agents:
+            if not self.agent_injector_service.validate_agent_id(conversation.agent_ids[0]):
                 raise ConversationServiceError(
                     f"Invalid agent_id: {conversation.agent_ids[0]}"
                 )
@@ -231,7 +210,7 @@ class ConversationService:
                         "No project associated with this conversation"
                     )
 
-                agent = self.agents.get(conversation.agent_ids[0])
+                agent = self.agent_injector_service.get_agent(conversation.agent_ids[0])
                 if not agent:
                     raise ConversationServiceError(
                         f"Invalid agent_id: {conversation.agent_ids[0]}"
@@ -373,7 +352,7 @@ class ConversationService:
             raise ConversationNotFoundError(
                 f"Conversation with id {conversation_id} not found"
             )
-        agent = self.agents.get(conversation.agent_ids[0])
+        agent = self.agent_injector_service.get_agent(conversation.agent_ids[0])
         if not agent:
             raise ConversationServiceError(
                 f"Invalid agent_id: {conversation.agent_ids[0]}"
