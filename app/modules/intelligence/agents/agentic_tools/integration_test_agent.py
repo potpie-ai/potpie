@@ -111,7 +111,12 @@ class IntegrationTestAgent:
             - **Structured Output:**
                 - Provide the test plans and integration tests in your response.
                 - Ensure that the response is JSON serializable and follows the specified Pydantic model.
-                - For citations, include only the `file_path` of the nodes fetched and used.
+                - The response MUST be a valid JSON object with two fields:
+                    1. "response": A string containing the full test plan and integration tests.
+                    2. "citations": A list of strings, each being a file_path of the nodes fetched and used.
+                - Include the full test plan and integration tests in the "response" field.
+                - For citations, include only the `file_path` of the nodes fetched and used in the "citations" field.
+                - Include any specific instructions or context from the chat history in the "response" field based on the user's query.
 
             **Constraints:**
             - **User Query:** Refer to the user's query: "{query}"
@@ -119,14 +124,16 @@ class IntegrationTestAgent:
             - **Iteration Limit:** Respect the max iterations limit of {self.max_iterations} when planning and executing tools.
 
             **Output Requirements:**
-            - Ensure that your final response is JSON serializable and follows the structure outlined in the Pydantic model: {self.TestAgentResponse.model_json_schema()}
+            - Ensure that your final response MUST be a valid JSON object which follows the structure outlined in the Pydantic model: {self.TestAgentResponse.model_json_schema()}
             - Do not wrap the response in ```json, ```python, ```code, or ``` symbols.
             - For citations, include only the `file_path` of the nodes fetched and used.
+            - Do not include any explanation or additional text outside of this JSON object.
+            - Ensure all test plans and code are included within the "response" string.
             """,
             expected_output=f"Write COMPLETE CODE for integration tests for each node based on the test plan. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model:\n{self.TestAgentResponse.model_json_schema()}",
             agent=integration_test_agent,
             output_pydantic=self.TestAgentResponse,
-            tools=[self.code_tools[2], self.code_tools[0]],
+            tools=[self.code_tools[2], self.code_tools[1]],
         )
 
         return integration_test_task
