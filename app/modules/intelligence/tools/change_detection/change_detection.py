@@ -1,27 +1,24 @@
 import asyncio
 import logging
+from typing import Dict, List
 
 from fastapi import HTTPException
 from langchain.tools import StructuredTool, Tool
+from pydantic import BaseModel, Field
 from tree_sitter_languages import get_parser
 
 from app.core.database import get_db
 from app.modules.github.github_service import GithubService
-from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
-    GetCodeFromNodeIdTool,
-)
 from app.modules.intelligence.tools.code_query_tools.get_code_from_node_name_tool import (
     GetCodeFromNodeNameTool,
+)
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
+    GetCodeFromNodeIdTool,
 )
 from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
-
-
-from typing import Dict, List
-
-from pydantic import BaseModel, Field
 
 
 class ChangeDetectionInput(BaseModel):
@@ -291,15 +288,14 @@ def get_blast_radius_tool() -> Tool:
     """
     change_detection_tool = ChangeDetectionTool(next(get_db()))
     return StructuredTool.from_function(
-            func=change_detection_tool.get_change_context,
-            name="Get code changes",
-            description="""
+        func=change_detection_tool.get_change_context,
+        name="Get code changes",
+        description="""
     Get the changes in the codebase.
     This tool analyzes the differences between branches in a Git repository and retrieves updated function details, including their entry points and citations.
     Inputs for the get_code_changes method:
     - project_id (str): The ID of the project being evaluated, this is a UUID.
     The output includes a dictionary of file patches and a list of changes with updated code and entry point code.
     """,
-            args_schema=ChangeDetectionInput,
-        )
-    
+        args_schema=ChangeDetectionInput,
+    )

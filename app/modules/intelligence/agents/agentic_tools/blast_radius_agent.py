@@ -9,8 +9,12 @@ from app.modules.intelligence.tools.change_detection.change_detection import (
     ChangeDetectionResponse,
     get_blast_radius_tool,
 )
-from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool import get_nodes_from_tags_tool
-from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import get_ask_knowledge_graph_queries_tool
+from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import (
+    get_ask_knowledge_graph_queries_tool,
+)
+from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool import (
+    get_nodes_from_tags_tool,
+)
 
 
 class BlastRadiusAgent:
@@ -57,7 +61,7 @@ class BlastRadiusAgent:
             The changes contain the list of changes with the updated and entry point code. Entry point corresponds to the API/Consumer upstream of the function that the change was made in.
             The citations contain the list of file names referenced in the changed code and entry point code.
 
-            You also have access the the query knowledge graph tool to answer natural language questions about the codebase during the analysis. 
+            You also have access the the query knowledge graph tool to answer natural language questions about the codebase during the analysis.
             Based on the response from the get code changes tool, formulate queries to ask details about specific changed code elements.
             1. Frame your query for the knowledge graph tool:
             - Identify key concepts, code elements, and implied relationships from the changed code.
@@ -95,7 +99,11 @@ class BlastRadiusAgent:
             {self.BlastRadiusAgentResponse.model_json_schema()}""",
             expected_output=f"Comprehensive impact analysis of the code changes on the codebase and answers to the users query about them. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model : {self.BlastRadiusAgentResponse.model_json_schema()}",
             agent=blast_radius_agent,
-            tools=[get_blast_radius_tool(), self.get_nodes_from_tags, self.ask_knowledge_graph_queries],
+            tools=[
+                get_blast_radius_tool(),
+                self.get_nodes_from_tags,
+                self.ask_knowledge_graph_queries,
+            ],
             output_pydantic=self.BlastRadiusAgentResponse,
         )
 

@@ -14,11 +14,13 @@ from app.modules.search.search_service import SearchService
 
 logger = logging.getLogger(__name__)
 
+
 class GetCodeFromProbableNodeNameInput(BaseModel):
     project_id: str = Field(description="The project ID, this is a UUID")
     probable_node_name: str = Field(
         description="A probable node name in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path'"
     )
+
 
 class GetCodeFromProbableNodeNameTool:
     name = "get_code_from_probable_node_name"
@@ -36,10 +38,16 @@ class GetCodeFromProbableNodeNameTool:
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
 
-    async def find_node_from_probable_name(self, project_id: str, probable_node_name: str) -> Dict[str, Any]:
+    async def find_node_from_probable_name(
+        self, project_id: str, probable_node_name: str
+    ) -> Dict[str, Any]:
         try:
-            node_id_query = " ".join(probable_node_name.replace("/", " ").replace(":", " ").split())
-            relevance_search = await self.search_service.search_codebase(project_id, node_id_query)
+            node_id_query = " ".join(
+                probable_node_name.replace("/", " ").replace(":", " ").split()
+            )
+            relevance_search = await self.search_service.search_codebase(
+                project_id, node_id_query
+            )
             node_id = None
             if relevance_search:
                 node_id = relevance_search[0]["node_id"]
@@ -51,11 +59,17 @@ class GetCodeFromProbableNodeNameTool:
 
             return await self.arun(project_id, node_id)
         except Exception as e:
-            logger.error(f"Unexpected error in GetCodeFromProbableNodeNameTool: {str(e)}")
+            logger.error(
+                f"Unexpected error in GetCodeFromProbableNodeNameTool: {str(e)}"
+            )
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
-    def get_code_from_probable_node_name(self, project_id: str, probable_node_name: str) -> Dict[str, Any]:
-        return asyncio.run(self.find_node_from_probable_name(project_id, probable_node_name))
+    def get_code_from_probable_node_name(
+        self, project_id: str, probable_node_name: str
+    ) -> Dict[str, Any]:
+        return asyncio.run(
+            self.find_node_from_probable_name(project_id, probable_node_name)
+        )
 
     async def arun(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         return self.run(repo_id, node_id)
@@ -65,7 +79,9 @@ class GetCodeFromProbableNodeNameTool:
             node_data = self._get_node_data(repo_id, node_id)
             if not node_data:
                 logger.error(f"Node with ID '{node_id}' not found in repo '{repo_id}'")
-                return {"error": f"Node with ID '{node_id}' not found in repo '{repo_id}'"}
+                return {
+                    "error": f"Node with ID '{node_id}' not found in repo '{repo_id}'"
+                }
 
             project = self._get_project(repo_id)
             if not project:
@@ -74,7 +90,9 @@ class GetCodeFromProbableNodeNameTool:
 
             return self._process_result(node_data, project, node_id)
         except Exception as e:
-            logger.error(f"Unexpected error in GetCodeFromProbableNodeNameTool: {str(e)}")
+            logger.error(
+                f"Unexpected error in GetCodeFromProbableNodeNameTool: {str(e)}"
+            )
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
     def _get_node_data(self, repo_id: str, node_id: str) -> Dict[str, Any]:
@@ -89,7 +107,9 @@ class GetCodeFromProbableNodeNameTool:
     def _get_project(self, repo_id: str) -> Project:
         return self.sql_db.query(Project).filter(Project.id == repo_id).first()
 
-    def _process_result(self, node_data: Dict[str, Any], project: Project, node_id: str) -> Dict[str, Any]:
+    def _process_result(
+        self, node_data: Dict[str, Any], project: Project, node_id: str
+    ) -> Dict[str, Any]:
         file_path = node_data["file_path"]
         start_line = node_data["start_line"]
         end_line = node_data["end_line"]
@@ -103,7 +123,7 @@ class GetCodeFromProbableNodeNameTool:
                 relative_file_path,
                 start_line,
                 end_line,
-                project.branch_name
+                project.branch_name,
             )
 
         docstring = None
@@ -132,6 +152,7 @@ class GetCodeFromProbableNodeNameTool:
     def __del__(self):
         if hasattr(self, "neo4j_driver"):
             self.neo4j_driver.close()
+
 
 def get_code_from_probable_node_name_tool(sql_db: Session) -> StructuredTool:
     tool_instance = GetCodeFromProbableNodeNameTool(sql_db)

@@ -2,13 +2,13 @@ import logging
 from typing import Any, Dict
 
 from fastapi import HTTPException
+from langchain_core.tools import StructuredTool, Tool
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 from app.modules.github.github_service import GithubService
 from app.modules.projects.projects_model import Project
-from langchain_core.tools import StructuredTool, Tool
 
 logger = logging.getLogger(__name__)
 

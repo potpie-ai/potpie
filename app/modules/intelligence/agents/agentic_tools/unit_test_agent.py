@@ -8,14 +8,18 @@ from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     get_code_from_node_id_tool,
 )
-from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_name_tool import get_code_from_probable_node_name_tool
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_name_tool import (
+    get_code_from_probable_node_name_tool,
+)
 
 
 class UnitTestAgent:
     def __init__(self, sql_db, llm):
         self.sql_db = sql_db
         self.get_code_from_node_id = get_code_from_node_id_tool(sql_db)
-        self.get_code_from_probable_node_name = get_code_from_probable_node_name_tool(sql_db)
+        self.get_code_from_probable_node_name = get_code_from_probable_node_name_tool(
+            sql_db
+        )
         self.llm = llm
         self.max_iterations = os.getenv("MAX_ITER", 15)
 

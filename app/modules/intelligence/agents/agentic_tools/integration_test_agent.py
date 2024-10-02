@@ -10,9 +10,15 @@ from app.modules.intelligence.agents.agentic_tools.test_plan_agent import TestPl
 from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id_tool import (
     GetCodeGraphFromNodeIdTool,
 )
-from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import get_code_from_node_id_tool
-from app.modules.intelligence.tools.kg_based_tools.get_code_from_multiple_node_ids_tool import get_code_from_multiple_node_ids_tool
-from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_name_tool import get_code_from_probable_node_name_tool
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_multiple_node_ids_tool import (
+    get_code_from_multiple_node_ids_tool,
+)
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
+    get_code_from_node_id_tool,
+)
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_name_tool import (
+    get_code_from_probable_node_name_tool,
+)
 
 
 class IntegrationTestAgent:
@@ -20,8 +26,12 @@ class IntegrationTestAgent:
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.sql_db = sql_db
         self.get_code_from_node_id = get_code_from_node_id_tool(sql_db)
-        self.get_code_from_multiple_node_ids = get_code_from_multiple_node_ids_tool(sql_db)
-        self.get_code_from_probable_node_name = get_code_from_probable_node_name_tool(sql_db)
+        self.get_code_from_multiple_node_ids = get_code_from_multiple_node_ids_tool(
+            sql_db
+        )
+        self.get_code_from_probable_node_name = get_code_from_probable_node_name_tool(
+            sql_db
+        )
         self.test_plan_agent = TestPlanAgent(sql_db, llm)
         self.llm = llm
         self.max_iterations = os.getenv("MAX_ITER", 15)

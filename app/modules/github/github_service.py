@@ -72,7 +72,12 @@ class GithubService:
         return github, response.json(), owner
 
     def get_file_content(
-        self, repo_name: str, file_path: str, start_line: int, end_line: int, branch_name: str
+        self,
+        repo_name: str,
+        file_path: str,
+        start_line: int,
+        end_line: int,
+        branch_name: str,
     ) -> str:
         logger.info(f"Attempting to access file: {file_path} in repo: {repo_name}")
 
@@ -116,7 +121,7 @@ class GithubService:
             if start_line == end_line == 0:
                 return decoded_content
 
-            selected_lines = lines[start_line-2:end_line]
+            selected_lines = lines[start_line - 2 : end_line]
             return "\n".join(selected_lines)
         except Exception as e:
             logger.error(

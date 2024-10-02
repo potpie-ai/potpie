@@ -12,13 +12,17 @@ from app.modules.projects.projects_model import Project
 
 logger = logging.getLogger(__name__)
 
+
 class GetCodeFromMultipleNodeIdsInput(BaseModel):
     repo_id: str = Field(description="The repository ID, this is a UUID")
     node_ids: List[str] = Field(description="List of node IDs, this is a UUID")
 
+
 class GetCodeFromMultipleNodeIdsTool:
     name = "get_code_from_multiple_node_ids"
-    description = "Retrieves code for multiple node ids in a repository given their node IDs"
+    description = (
+        "Retrieves code for multiple node ids in a repository given their node IDs"
+    )
 
     def __init__(self, sql_db: Session):
         self.sql_db = sql_db
@@ -50,7 +54,9 @@ class GetCodeFromMultipleNodeIdsTool:
 
             return results
         except Exception as e:
-            logger.error(f"Unexpected error in GetCodeFromMultipleNodeIdsTool: {str(e)}")
+            logger.error(
+                f"Unexpected error in GetCodeFromMultipleNodeIdsTool: {str(e)}"
+            )
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
     def _get_node_data(self, repo_id: str, node_id: str) -> Dict[str, Any]:
@@ -65,7 +71,9 @@ class GetCodeFromMultipleNodeIdsTool:
     def _get_project(self, repo_id: str) -> Project:
         return self.sql_db.query(Project).filter(Project.id == repo_id).first()
 
-    def _process_result(self, node_data: Dict[str, Any], project: Project, node_id: str) -> Dict[str, Any]:
+    def _process_result(
+        self, node_data: Dict[str, Any], project: Project, node_id: str
+    ) -> Dict[str, Any]:
         file_path = node_data["file_path"]
         start_line = node_data["start_line"]
         end_line = node_data["end_line"]
@@ -79,7 +87,7 @@ class GetCodeFromMultipleNodeIdsTool:
                 relative_file_path,
                 start_line,
                 end_line,
-                project.branch_name
+                project.branch_name,
             )
 
         docstring = None
@@ -108,6 +116,7 @@ class GetCodeFromMultipleNodeIdsTool:
     def __del__(self):
         if hasattr(self, "neo4j_driver"):
             self.neo4j_driver.close()
+
 
 def get_code_from_multiple_node_ids_tool(sql_db: Session) -> StructuredTool:
     tool_instance = GetCodeFromMultipleNodeIdsTool(sql_db)

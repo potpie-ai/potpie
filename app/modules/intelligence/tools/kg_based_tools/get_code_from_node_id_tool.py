@@ -12,9 +12,11 @@ from app.modules.projects.projects_model import Project
 
 logger = logging.getLogger(__name__)
 
+
 class GetCodeFromNodeIdInput(BaseModel):
     repo_id: str = Field(description="The repository ID, this is a UUID")
     node_id: str = Field(description="The node ID, this is a UUID")
+
 
 class GetCodeFromNodeIdTool:
     name = "get_code_from_node_id"
@@ -36,7 +38,9 @@ class GetCodeFromNodeIdTool:
             node_data = self._get_node_data(repo_id, node_id)
             if not node_data:
                 logger.error(f"Node with ID '{node_id}' not found in repo '{repo_id}'")
-                return {"error": f"Node with ID '{node_id}' not found in repo '{repo_id}'"}
+                return {
+                    "error": f"Node with ID '{node_id}' not found in repo '{repo_id}'"
+                }
 
             project = self._get_project(repo_id)
             if not project:
@@ -60,7 +64,9 @@ class GetCodeFromNodeIdTool:
     def _get_project(self, repo_id: str) -> Project:
         return self.sql_db.query(Project).filter(Project.id == repo_id).first()
 
-    def _process_result(self, node_data: Dict[str, Any], project: Project, node_id: str) -> Dict[str, Any]:
+    def _process_result(
+        self, node_data: Dict[str, Any], project: Project, node_id: str
+    ) -> Dict[str, Any]:
         file_path = node_data["file_path"]
         start_line = node_data["start_line"]
         end_line = node_data["end_line"]
@@ -74,7 +80,7 @@ class GetCodeFromNodeIdTool:
                 relative_file_path,
                 start_line,
                 end_line,
-                project.branch_name
+                project.branch_name,
             )
 
         docstring = None
@@ -103,6 +109,7 @@ class GetCodeFromNodeIdTool:
     def __del__(self):
         if hasattr(self, "neo4j_driver"):
             self.neo4j_driver.close()
+
 
 def get_code_from_node_id_tool(sql_db: Session) -> StructuredTool:
     tool_instance = GetCodeFromNodeIdTool(sql_db)

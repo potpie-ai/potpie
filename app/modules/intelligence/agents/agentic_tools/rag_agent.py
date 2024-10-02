@@ -5,13 +5,21 @@ from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
+from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import (
+    get_ask_knowledge_graph_queries_tool,
+)
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_multiple_node_ids_tool import (
+    get_code_from_multiple_node_ids_tool,
+)
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     get_code_from_node_id_tool,
 )
-from app.modules.intelligence.tools.kg_based_tools.get_code_from_multiple_node_ids_tool import get_code_from_multiple_node_ids_tool
-from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_name_tool import get_code_from_probable_node_name_tool
-from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool import get_nodes_from_tags_tool
-from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import get_ask_knowledge_graph_queries_tool
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_name_tool import (
+    get_code_from_probable_node_name_tool,
+)
+from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool import (
+    get_nodes_from_tags_tool,
+)
 
 
 class NodeResponse(BaseModel):
@@ -33,8 +41,12 @@ class RAGAgent:
         self.max_iter = os.getenv("MAX_ITER", 5)
         self.sql_db = sql_db
         self.get_code_from_node_id = get_code_from_node_id_tool(sql_db)
-        self.get_code_from_multiple_node_ids = get_code_from_multiple_node_ids_tool(sql_db)
-        self.get_code_from_probable_node_name = get_code_from_probable_node_name_tool(sql_db)
+        self.get_code_from_multiple_node_ids = get_code_from_multiple_node_ids_tool(
+            sql_db
+        )
+        self.get_code_from_probable_node_name = get_code_from_probable_node_name_tool(
+            sql_db
+        )
         self.get_nodes_from_tags = get_nodes_from_tags_tool()
         self.ask_knowledge_graph_queries = get_ask_knowledge_graph_queries_tool()
         self.llm = llm
@@ -56,7 +68,13 @@ class RAGAgent:
 
                 You must adhere to the specified {self.max_iter} iterations to optimize performance and reduce latency.
             """,
-            tools=[self.get_nodes_from_tags, self.ask_knowledge_graph_queries , self.get_code_from_node_id, self.get_code_from_multiple_node_ids, self.get_code_from_probable_node_name],
+            tools=[
+                self.get_nodes_from_tags,
+                self.ask_knowledge_graph_queries,
+                self.get_code_from_node_id,
+                self.get_code_from_multiple_node_ids,
+                self.get_code_from_probable_node_name,
+            ],
             allow_delegation=False,
             verbose=True,
             llm=self.llm,
