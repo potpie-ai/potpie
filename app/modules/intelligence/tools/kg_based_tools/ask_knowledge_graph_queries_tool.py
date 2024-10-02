@@ -6,6 +6,8 @@ import aiohttp
 from langchain.tools import StructuredTool
 from pydantic import BaseModel, Field
 
+from app.modules.projects.projects_service import ProjectService
+
 
 class QueryRequest(BaseModel):
     node_ids: List[str] = Field(description="A list of node ids to query")
@@ -26,53 +28,67 @@ class MultipleKnowledgeGraphQueriesInput(BaseModel):
     )
 
 
-async def ask_multiple_knowledge_graph_queries(
-    queries: List[QueryRequest],
-) -> Dict[str, str]:
-    kg_query_url = os.getenv("KNOWLEDGE_GRAPH_URL")
-    headers = {"Content-Type": "application/json"}
+class KnowledgeGraphQueryTool:
+    def __init__(self, sql_db, user_id):
+        self.kg_query_url = os.getenv("KNOWLEDGE_GRAPH_URL")
+        self.headers = {"Content-Type": "application/json"}
+        self.user_id = user_id
+        self.sql_db = sql_db
 
-    async def fetch_query(query_request: QueryRequest) -> Tuple[str, str]:
-        data = query_request.dict()
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                kg_query_url, json=data, headers=headers
-            ) as response:
-                result = await response.json()
-                return query_request.query, result
+    async def ask_multiple_knowledge_graph_queries(
+        self, queries: List[QueryRequest]
+    ) -> Dict[str, str]:
+        async def fetch_query(query_request: QueryRequest) -> Tuple[str, str]:
+            data = query_request.dict()
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self.kg_query_url, json=data, headers=self.headers
+                ) as response:
+                    result = await response.json()
+                    return query_request.query, result
 
-    tasks = [fetch_query(query) for query in queries]
-    results = await asyncio.gather(*tasks)
+        tasks = [fetch_query(query) for query in queries]
+        results = await asyncio.gather(*tasks)
 
-    return dict(results)
+        return dict(results)
+
+    def ask_knowledge_graph_query(
+        self, queries: List[str], project_id: str, node_ids: List[str] = []
+    ) -> Dict[str, str]:
+        """
+        Query the code knowledge graph using multiple natural language questions.
+        The knowledge graph contains information about every function, class, and file in the codebase.
+        This method allows asking multiple questions about the codebase in a single operation.
+
+        Inputs:
+        - queries (List[str]): A list of natural language questions that the user wants to ask the knowledge graph.
+          Each question should be clear and concise, related to the codebase.
+        - project_id (str): The ID of the project being evaluated, this is a UUID.
+        - node_ids (List[str]): A list of node ids to query, this is an optional parameter that can be used to query a specific node.
+
+        Returns:
+        - Dict[str, str]: A dictionary where keys are the original queries and values are the corresponding responses.
+        """
+        project = asyncio.run(
+            ProjectService(self.sql_db).get_project_repo_details_from_db(
+                project_id, self.user_id
+            )
+        )
+        if not project:
+            raise ValueError(
+                f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
+            )
+        project_id = project["id"]
+        query_list = [
+            QueryRequest(query=query, project_id=project_id, node_ids=node_ids)
+            for query in queries
+        ]
+        return asyncio.run(self.ask_multiple_knowledge_graph_queries(query_list))
 
 
-def ask_knowledge_graph_query(
-    queries: List[str], project_id: str, node_ids: List[str] = []
-) -> Dict[str, str]:
-    """
-    Query the code knowledge graph using multiple natural language questions.
-    The knowledge graph contains information about every function, class, and file in the codebase.
-    This method allows asking multiple questions about the codebase in a single operation.
-
-    Inputs:
-    - queries (List[str]): A list of natural language questions that the user wants to ask the knowledge graph.
-      Each question should be clear and concise, related to the codebase.
-    - project_id (str): The ID of the project being evaluated, this is a UUID.
-
-    Returns:
-    - Dict[str, str]: A dictionary where keys are the original queries and values are the corresponding responses.
-    """
-    query_list = [
-        QueryRequest(query=query, project_id=project_id, node_ids=node_ids)
-        for query in queries
-    ]
-    return asyncio.run(ask_multiple_knowledge_graph_queries(query_list))
-
-
-def get_ask_knowledge_graph_queries_tool() -> StructuredTool:
+def get_ask_knowledge_graph_queries_tool(sql_db, user_id) -> StructuredTool:
     return StructuredTool.from_function(
-        func=ask_knowledge_graph_query,
+        func=KnowledgeGraphQueryTool(sql_db, user_id).ask_knowledge_graph_query,
         name="Ask Knowledge Graph Queries",
         description="""
     Query the code knowledge graph using multiple natural language questions.

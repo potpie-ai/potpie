@@ -18,12 +18,14 @@ from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool impo
 
 
 class BlastRadiusAgent:
-    def __init__(self, sql_db, llm):
+    def __init__(self, sql_db, user_id, llm):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.sql_db = sql_db
         self.llm = llm
-        self.get_nodes_from_tags = get_nodes_from_tags_tool()
-        self.ask_knowledge_graph_queries = get_ask_knowledge_graph_queries_tool()
+        self.get_nodes_from_tags = get_nodes_from_tags_tool(sql_db, user_id)
+        self.ask_knowledge_graph_queries = get_ask_knowledge_graph_queries_tool(
+            sql_db, user_id
+        )
 
     async def create_agents(self):
         blast_radius_agent = Agent(
@@ -132,8 +134,8 @@ class BlastRadiusAgent:
 
 
 async def kickoff_blast_radius_crew(
-    query: str, project_id: str, node_ids: List[NodeContext], sql_db, llm
+    query: str, project_id: str, node_ids: List[NodeContext], sql_db, user_id, llm
 ) -> Dict[str, str]:
-    blast_radius_agent = BlastRadiusAgent(sql_db, llm)
+    blast_radius_agent = BlastRadiusAgent(sql_db, user_id, llm)
     result = await blast_radius_agent.run(project_id, node_ids, query)
     return result

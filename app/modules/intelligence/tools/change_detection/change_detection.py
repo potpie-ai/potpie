@@ -43,8 +43,9 @@ class ChangeDetectionResponse(BaseModel):
 
 
 class ChangeDetectionTool:
-    def __init__(self, sql_db):
+    def __init__(self, sql_db, user_id):
         self.sql_db = sql_db
+        self.user_id = user_id
         self.search_service = SearchService(self.sql_db)
 
     def _parse_diff_detail(self, patch_details):
@@ -185,6 +186,11 @@ class ChangeDetectionTool:
         if project_details is None:
             raise HTTPException(status_code=400, detail="Project Details not found.")
 
+        if project_details["user_id"] != self.user_id:
+            raise ValueError(
+                f"Project id {project_id} not found for user {self.user_id}"
+            )
+
         repo_name = project_details["project_name"]
         branch_name = project_details["branch_name"]
         github = None
@@ -227,17 +233,17 @@ class ChangeDetectionTool:
                                 node_ids.append(node_id)
                         else:
                             node_ids.append(
-                                GetCodeFromNodeNameTool(self.sql_db).get_node_data(
-                                    project_id, identifier
-                                )["node_id"]
+                                GetCodeFromNodeNameTool(
+                                    self.sql_db, self.user_id
+                                ).get_node_data(project_id, identifier)["node_id"]
                             )
 
                     # Fetch code for node ids and store in a dict
                     node_code_dict = {}
                     for node_id in node_ids:
-                        node_code = GetCodeFromNodeIdTool(self.sql_db).run(
-                            project_id, node_id
-                        )
+                        node_code = GetCodeFromNodeIdTool(
+                            self.sql_db, self.user_id
+                        ).run(project_id, node_id)
                         node_code_dict[node_id] = {
                             "code_content": node_code["code_content"],
                             "file_path": node_code["file_path"],
@@ -251,9 +257,9 @@ class ChangeDetectionTool:
 
                     changes_list = []
                     for node, entry_point in entry_points.items():
-                        entry_point_code = GetCodeFromNodeIdTool(self.sql_db).run(
-                            project_id, entry_point[0]
-                        )
+                        entry_point_code = GetCodeFromNodeIdTool(
+                            self.sql_db, self.user_id
+                        ).run(project_id, entry_point[0])
                         changes_list.append(
                             ChangeDetail(
                                 updated_code=node_code_dict[node]["code_content"],
@@ -282,11 +288,11 @@ class ChangeDetectionTool:
         return asyncio.run(self.get_code_changes(project_id))
 
 
-def get_blast_radius_tool() -> Tool:
+def get_blast_radius_tool(user_id: str) -> Tool:
     """
     Get a list of LangChain Tool objects for use in agents.
     """
-    change_detection_tool = ChangeDetectionTool(next(get_db()))
+    change_detection_tool = ChangeDetectionTool(next(get_db()), user_id)
     return StructuredTool.from_function(
         func=change_detection_tool.get_change_context,
         name="Get code changes",

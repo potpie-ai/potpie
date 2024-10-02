@@ -515,7 +515,7 @@ class InferenceService:
             - **CONSUMER**: Does the code receive and process messages from a queue or topic? Check for message subscription or event handling.
             - **DATABASE**: Does the code interact with a database? Look for query execution, data insertion, updates, or deletions.
             - **SCHEMA**: Does the code define any database schema? Look for ORM models, table definitions, or schema-related code.
-            - **HTTP**: Does the code make HTTP requests to external services? Check for HTTP client usage or request handling.
+            - **EXTERNAL_SERVICE**: Does the code make HTTP requests to external services? Check for HTTP client usage or request handling.
             - **CONFIGURATION**: Does the code represent configuration settings or environment setup? Identify configuration files or scripts.
             - **SCRIPT**: Is the code a standalone script or automation tool? Look for executable scripts or deployment commands.
 

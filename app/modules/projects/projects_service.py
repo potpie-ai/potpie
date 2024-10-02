@@ -138,11 +138,10 @@ class ProjectService:
         )
         if project:
             return {
-                "project_name": project.project_name,
-                "directory": project.directory,
                 "id": project.id,
                 "repo_name": project.repo_name,
                 "branch_name": project.branch_name,
+                "user_id": project.user_id,
             }
         else:
             return None

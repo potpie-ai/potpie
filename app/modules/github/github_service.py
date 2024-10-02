@@ -118,7 +118,7 @@ class GithubService:
             decoded_content = content_bytes.decode(encoding)
             lines = decoded_content.splitlines()
 
-            if start_line == end_line == 0:
+            if (start_line == end_line == 0) or (start_line == end_line == None):
                 return decoded_content
 
             selected_lines = lines[start_line - 2 : end_line]

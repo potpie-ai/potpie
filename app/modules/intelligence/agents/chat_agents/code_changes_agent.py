@@ -114,6 +114,7 @@ class CodeChangesAgent:
                     project_id,
                     node_ids,
                     self.db,
+                    user_id,
                     self.mini_llm,
                 )
 

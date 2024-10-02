@@ -118,6 +118,7 @@ class QNAAgent:
                     node_ids,
                     self.db,
                     self.mini_llm,
+                    user_id,
                 )
                 if rag_result.pydantic:
                     citations = rag_result.pydantic.citations

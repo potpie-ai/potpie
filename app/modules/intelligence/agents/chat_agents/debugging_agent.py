@@ -120,6 +120,7 @@ class DebuggingAgent:
                     node_ids,
                     self.db,
                     self.mini_llm,
+                    user_id,
                 )
                 if rag_result.pydantic:
                     response = rag_result.pydantic.response

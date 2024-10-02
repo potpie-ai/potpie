@@ -24,8 +24,9 @@ class GetCodeFromMultipleNodeIdsTool:
         "Retrieves code for multiple node ids in a repository given their node IDs"
     )
 
-    def __init__(self, sql_db: Session):
+    def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db
+        self.user_id = user_id
         self.neo4j_driver = self._create_neo4j_driver()
 
     def _create_neo4j_driver(self) -> GraphDatabase.driver:
@@ -41,7 +42,10 @@ class GetCodeFromMultipleNodeIdsTool:
             if not project:
                 logger.error(f"Project with ID '{repo_id}' not found in database")
                 return {"error": f"Project with ID '{repo_id}' not found in database"}
-
+            if project.user_id != self.user_id:
+                raise ValueError(
+                    f"Project with ID '{repo_id}' not found in database for user '{self.user_id}'"
+                )
             results = {}
             for node_id in node_ids:
                 node_data = self._get_node_data(repo_id, node_id)
@@ -118,8 +122,10 @@ class GetCodeFromMultipleNodeIdsTool:
             self.neo4j_driver.close()
 
 
-def get_code_from_multiple_node_ids_tool(sql_db: Session) -> StructuredTool:
-    tool_instance = GetCodeFromMultipleNodeIdsTool(sql_db)
+def get_code_from_multiple_node_ids_tool(
+    sql_db: Session, user_id: str
+) -> StructuredTool:
+    tool_instance = GetCodeFromMultipleNodeIdsTool(sql_db, user_id)
     return StructuredTool.from_function(
         func=tool_instance.run_multiple,
         name="Get Code and docstring From Multiple Node IDs",

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.config_provider import config_provider
 from app.modules.github.github_service import GithubService
 from app.modules.projects.projects_model import Project
+from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
 
 logger = logging.getLogger(__name__)
@@ -26,8 +27,9 @@ class GetCodeFromProbableNodeNameTool:
     name = "get_code_from_probable_node_name"
     description = "Retrieves code for the closest node name in a repository"
 
-    def __init__(self, sql_db: Session):
+    def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db
+        self.user_id = user_id
         self.neo4j_driver = self._create_neo4j_driver()
         self.search_service = SearchService(self.sql_db)
 
@@ -67,6 +69,15 @@ class GetCodeFromProbableNodeNameTool:
     def get_code_from_probable_node_name(
         self, project_id: str, probable_node_name: str
     ) -> Dict[str, Any]:
+        project = asyncio.run(
+            ProjectService(self.sql_db).get_project_repo_details_from_db(
+                project_id, self.user_id
+            )
+        )
+        if not project:
+            raise ValueError(
+                f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
+            )
         return asyncio.run(
             self.find_node_from_probable_name(project_id, probable_node_name)
         )
@@ -154,8 +165,10 @@ class GetCodeFromProbableNodeNameTool:
             self.neo4j_driver.close()
 
 
-def get_code_from_probable_node_name_tool(sql_db: Session) -> StructuredTool:
-    tool_instance = GetCodeFromProbableNodeNameTool(sql_db)
+def get_code_from_probable_node_name_tool(
+    sql_db: Session, user_id: str
+) -> StructuredTool:
+    tool_instance = GetCodeFromProbableNodeNameTool(sql_db, user_id)
     return StructuredTool.from_function(
         func=tool_instance.get_code_from_probable_node_name,
         name="Get Code and docstring From Probable Node Name",

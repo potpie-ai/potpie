@@ -36,20 +36,23 @@ class RAGResponse(BaseModel):
 
 
 class RAGAgent:
-    def __init__(self, sql_db, llm):
+    def __init__(self, sql_db, llm, user_id):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.max_iter = os.getenv("MAX_ITER", 5)
         self.sql_db = sql_db
-        self.get_code_from_node_id = get_code_from_node_id_tool(sql_db)
+        self.get_code_from_node_id = get_code_from_node_id_tool(sql_db, user_id)
         self.get_code_from_multiple_node_ids = get_code_from_multiple_node_ids_tool(
-            sql_db
+            sql_db, user_id
         )
         self.get_code_from_probable_node_name = get_code_from_probable_node_name_tool(
-            sql_db
+            sql_db, user_id
         )
-        self.get_nodes_from_tags = get_nodes_from_tags_tool()
-        self.ask_knowledge_graph_queries = get_ask_knowledge_graph_queries_tool()
+        self.get_nodes_from_tags = get_nodes_from_tags_tool(sql_db, user_id)
+        self.ask_knowledge_graph_queries = get_ask_knowledge_graph_queries_tool(
+            sql_db, user_id
+        )
         self.llm = llm
+        self.user_id = user_id
 
     async def create_agents(self):
         query_agent = Agent(
@@ -194,6 +197,7 @@ class RAGAgent:
             tasks=[query_task],
             process=Process.sequential,
             verbose=True,
+            inputs={"user_id": self.user_id},
         )
 
         result = await crew.kickoff_async()
@@ -207,7 +211,8 @@ async def kickoff_rag_crew(
     node_ids: List[NodeContext],
     sql_db,
     llm,
+    user_id: str,
 ) -> str:
-    rag_agent = RAGAgent(sql_db, llm)
+    rag_agent = RAGAgent(sql_db, llm, user_id)
     result = await rag_agent.run(query, project_id, chat_history, node_ids)
     return result
