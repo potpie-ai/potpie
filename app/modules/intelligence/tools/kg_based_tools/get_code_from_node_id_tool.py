@@ -20,6 +20,8 @@ class GetCodeFromNodeIdInput(BaseModel):
     node_id: str = Field(description="The node ID, this is a UUID")
 
 
+
+
 class GetCodeFromMultipleNodeIdsInput(BaseModel):
     repo_id: str = Field(description="The repository ID, this is a UUID")
     node_ids: List[str] = Field(description="List of node IDs, this is a UUID")
@@ -121,6 +123,7 @@ class GetCodeFromNodeIdTool:
                 relative_file_path,
                 start_line,
                 end_line,
+                project.branch_name
             )
 
         docstring = None

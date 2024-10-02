@@ -7,7 +7,7 @@ from tree_sitter_languages import get_parser
 
 from app.core.database import get_db
 from app.modules.github.github_service import GithubService
-from app.modules.intelligence.tools.code_query_tools.get_code_from_node_id_tool import (
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     GetCodeFromNodeIdTool,
 )
 from app.modules.intelligence.tools.code_query_tools.get_code_from_node_name_tool import (
@@ -83,6 +83,7 @@ class ChangeDetectionTool:
                     relative_file_path,
                     0,
                     0,
+                    project["branch_name"],
                 )
                 tags = RepoMap.get_tags_from_code(relative_file_path, file_content)
 

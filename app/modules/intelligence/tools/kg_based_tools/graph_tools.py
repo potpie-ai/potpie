@@ -9,6 +9,10 @@ from pydantic import BaseModel, Field
 from app.core.config_provider import ConfigProvider
 from app.core.database import get_db
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
+from app.modules.parsing.knowledge_graph.inference_schema import (
+    QueryResponse
+)
+from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 
 
 class QueryRequest(BaseModel):
@@ -79,21 +83,30 @@ class CodeTools:
 
     @staticmethod
     async def ask_multiple_knowledge_graph_queries(
-        queries: List[QueryRequest],
+        queries: List[QueryRequest]
     ) -> Dict[str, str]:
-        kg_query_url = os.getenv("KNOWLEDGE_GRAPH_URL")
-        headers = {"Content-Type": "application/json"}
 
-        async def fetch_query(query_request: QueryRequest) -> Tuple[str, str]:
-            data = query_request.dict()
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    kg_query_url, json=data, headers=headers
-                ) as response:
-                    result = await response.json()
-                    return query_request.query, result
+        db = next(get_db())
+        inference_service = InferenceService(db, "dummy")
 
-        tasks = [fetch_query(query) for query in queries]
+        async def process_query(query_request: QueryRequest) -> List[QueryResponse]:
+            # Call the query_vector_index method directly from InferenceService
+            results = inference_service.query_vector_index(
+                query_request.project_id, query_request.query, query_request.node_ids
+            )
+            return [
+                QueryResponse(
+                    node_id=result.get("node_id"),
+                    docstring=result.get("docstring"),
+                    file_path=result.get("file_path"),
+                    start_line=result.get("start_line") or 0,
+                    end_line=result.get("end_line") or 0,
+                    similarity=result.get("similarity"),
+                )
+            for result in results
+        ]
+
+        tasks = [process_query(query) for query in queries]
         results = await asyncio.gather(*tasks)
 
         return dict(results)

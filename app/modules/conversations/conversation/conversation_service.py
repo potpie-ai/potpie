@@ -1,11 +1,14 @@
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import AsyncGenerator, List
 
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import func
 from uuid6 import uuid7
 
+from app.core.database import get_db
 from app.modules.conversations.conversation.conversation_model import (
     Conversation,
     ConversationStatus,
@@ -24,19 +27,13 @@ from app.modules.conversations.message.message_schema import (
     MessageResponse,
     NodeContext,
 )
-from app.modules.intelligence.agents.chat_agents.code_changes_agent import (
-    CodeChangesAgent,
-)
-from app.modules.intelligence.agents.chat_agents.debugging_agent import DebuggingAgent
-from app.modules.intelligence.agents.chat_agents.integration_test_agent import (
-    IntegrationTestAgent,
-)
-from app.modules.intelligence.agents.chat_agents.qna_agent import QNAAgent
-from app.modules.intelligence.agents.chat_agents.unit_test_agent import UnitTestAgent
+from app.modules.intelligence.agents.agent_injector_service import AgentInjectorService
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
 from app.modules.utils.posthog_helper import PostHogClient
+from langchain.prompts import ChatPromptTemplate
+
 
 logger = logging.getLogger(__name__)
 
@@ -61,41 +58,28 @@ class ConversationService:
         project_service: ProjectService,
         history_manager: ChatHistoryService,
         provider_service: ProviderService,
+        agent_injector_service: AgentInjectorService,
     ):
         self.sql_db = db
         self.user_id = user_id
         self.project_service = project_service
         self.history_manager = history_manager
         self.provider_service = provider_service
-        self.agents = self._initialize_agents()
+        self.agent_injector_service = agent_injector_service
 
     @classmethod
     def create(cls, db: Session, user_id: str):
         project_service = ProjectService(db)
         history_manager = ChatHistoryService(db)
         provider_service = ProviderService(db, user_id)
-        return cls(db, user_id, project_service, history_manager, provider_service)
-
-    def _initialize_agents(self):
-        mini_llm = self.provider_service.get_small_llm()
-        reasoning_llm = self.provider_service.get_large_llm()
-        return {
-            "debugging_agent": DebuggingAgent(mini_llm, reasoning_llm, self.sql_db),
-            "codebase_qna_agent": QNAAgent(mini_llm, reasoning_llm, self.sql_db),
-            "unit_test_agent": UnitTestAgent(mini_llm, reasoning_llm, self.sql_db),
-            "integration_test_agent": IntegrationTestAgent(
-                mini_llm, reasoning_llm, self.sql_db
-            ),
-            "code_changes_agent": CodeChangesAgent(
-                mini_llm, reasoning_llm, self.sql_db
-            ),
-        }
+        agent_injector_service = AgentInjectorService(db, provider_service)
+        return cls(db, user_id, project_service, history_manager, provider_service, agent_injector_service)
 
     async def create_conversation(
         self, conversation: CreateConversationRequest, user_id: str
     ) -> tuple[str, str]:
         try:
-            if conversation.agent_ids[0] not in self.agents:
+            if not self.agent_injector_service.validate_agent_id(conversation.agent_ids[0]):
                 raise ConversationServiceError(
                     f"Invalid agent_id: {conversation.agent_ids[0]}"
                 )
@@ -207,15 +191,16 @@ class ConversationService:
                 {"conversation_id": conversation_id, "llm": provider_name},
             )
             if message_type == MessageType.HUMAN:
-                conversation = (
-                    self.sql_db.query(Conversation)
-                    .filter_by(id=conversation_id)
-                    .first()
-                )
+                conversation = await self._get_conversation_with_message_count(conversation_id)
                 if not conversation:
                     raise ConversationNotFoundError(
                         f"Conversation with id {conversation_id} not found"
                     )
+
+                # Check if this is the first human message
+                if conversation.human_message_count == 1:
+                    new_title = await self._generate_title(conversation, message.content)
+                    await self._update_conversation_title(conversation_id, new_title)
 
                 repo_id = (
                     conversation.project_ids[0] if conversation.project_ids else None
@@ -225,7 +210,7 @@ class ConversationService:
                         "No project associated with this conversation"
                     )
 
-                agent = self.agents.get(conversation.agent_ids[0])
+                agent = self.agent_injector_service.get_agent(conversation.agent_ids[0])
                 if not agent:
                     raise ConversationServiceError(
                         f"Invalid agent_id: {conversation.agent_ids[0]}"
@@ -246,6 +231,44 @@ class ConversationService:
             raise ConversationServiceError(
                 "Failed to store message or generate AI response."
             ) from e
+
+    async def _get_conversation_with_message_count(self, conversation_id: str) -> Conversation:
+        result = self.sql_db.query(Conversation, func.count(Message.id).filter(Message.type == MessageType.HUMAN).label('human_message_count'))\
+            .outerjoin(Message, Conversation.id == Message.conversation_id)\
+            .filter(Conversation.id == conversation_id)\
+            .group_by(Conversation.id)\
+            .first()
+        
+        if result:
+            conversation, human_message_count = result
+            setattr(conversation, 'human_message_count', human_message_count)
+            return conversation
+        return None
+
+    async def _generate_title(self, conversation: Conversation, message_content: str) -> str:
+
+        agent_type = conversation.agent_ids[0]
+        
+        chat = self.provider_service.get_small_llm()
+        prompt = ChatPromptTemplate.from_template(
+            "Given an agent type '{agent_type}' and an initial message '{message}', "
+            "generate a concise and relevant title for a conversation. "
+            "The title should be no longer than 50 characters. Only return title string, do not wrap in quotes."
+        )
+        
+        messages = prompt.format_messages(agent_type=agent_type, message=message_content)
+        response = await chat.agenerate([messages])
+        
+        generated_title = response.generations[0][0].text.strip()
+        if len(generated_title) > 50:
+            generated_title = generated_title[:50].strip()+'...'
+        return generated_title
+
+    async def _update_conversation_title(self, conversation_id: str, new_title: str):
+        self.sql_db.query(Conversation).filter_by(id=conversation_id).update(
+            {"title": new_title, "updated_at": datetime.now(timezone.utc)}
+        )
+        self.sql_db.commit()
 
     async def regenerate_last_message(
         self, conversation_id: str, user_id: str, node_ids: List[NodeContext] = []
@@ -329,7 +352,7 @@ class ConversationService:
             raise ConversationNotFoundError(
                 f"Conversation with id {conversation_id} not found"
             )
-        agent = self.agents.get(conversation.agent_ids[0])
+        agent = self.agent_injector_service.get_agent(conversation.agent_ids[0])
         if not agent:
             raise ConversationServiceError(
                 f"Invalid agent_id: {conversation.agent_ids[0]}"

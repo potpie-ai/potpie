@@ -81,6 +81,7 @@ class GetCodeFromNodeNameTool:
                 relative_file_path,
                 start_line,
                 end_line,
+                project.branch_name,
             )
         except HTTPException as http_exc:
             return {"error": f"Failed to retrieve code content: {http_exc.detail}"}

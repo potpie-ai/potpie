@@ -23,7 +23,6 @@ from app.modules.key_management.secret_manager import router as secret_manager_r
 from app.modules.parsing.graph_construction.parsing_router import (
     router as parsing_router,
 )
-from app.modules.parsing.knowledge_graph.query_router import router as query_router
 from app.modules.projects.projects_router import router as projects_router
 from app.modules.search.search_router import router as search_router
 from app.modules.users.user_router import router as user_router
@@ -97,7 +96,6 @@ class MainApp:
         self.app.include_router(agent_router, prefix="/api/v1", tags=["Agents"])
 
         self.app.include_router(provider_router, prefix="/api/v1", tags=["Providers"])
-        self.app.include_router(query_router, prefix="/api/v1", tags=["Query"])
 
     def add_health_check(self):
         @self.app.get("/health", tags=["Health"])
