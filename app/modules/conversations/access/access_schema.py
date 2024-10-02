@@ -4,7 +4,7 @@ from typing import Optional, List
 
 class ShareChatRequest(BaseModel):
     conversation_id: str  
-    recipientEmail: EmailStr  
+    recipientEmails: List[EmailStr]  
 
 
 class ShareChatResponse(BaseModel):
