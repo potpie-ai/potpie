@@ -57,7 +57,22 @@ class BlastRadiusAgent:
             The changes contain the list of changes with the updated and entry point code. Entry point corresponds to the API/Consumer upstream of the function that the change was made in.
             The citations contain the list of file names referenced in the changed code and entry point code.
 
-            You also have access the the query knowledge graph tool. Use it to answer natural language questions about the codebase during the analysis.
+            You also have access the the query knowledge graph tool to answer natural language questions about the codebase during the analysis. 
+            Based on the response from the get code changes tool, formulate queries to ask details about specific changed code elements.
+            1. Frame your query for the knowledge graph tool:
+            - Identify key concepts, code elements, and implied relationships from the changed code.
+            - Consider the context from the users query: {query}.
+            - Determine the intent and key technical terms.
+            - Transform into keyword phrases that might match docstrings:
+                * Use concise, functionality-based phrases (e.g., "creates document MongoDB collection").
+                * Focus on verb-based keywords (e.g., "create", "define", "calculate").
+                * Include docstring-related keywords like "parameters", "returns", "raises" when relevant.
+                * Preserve key technical terms from the original query.
+                * Generate multiple keyword variations to increase matching chances.
+                * Be specific in keywords to improve match accuracy.
+                * Ensure the query includes relevant details and follows a similar structure to enhance similarity search results.
+
+            2. Execute your formulated query using the knowledge graph tool.
 
             Analyze the changes fetched and explain their impact on the codebase. Consider the following:
             1. Which functions or classes have been directly modified?

@@ -83,7 +83,7 @@ class GetCodeFromNodeIdTool:
 
         return {
             "node_id": node_id,
-            "relative_file_path": relative_file_path,
+            "file_path": relative_file_path,
             "start_line": start_line,
             "end_line": end_line,
             "code_content": code_content,

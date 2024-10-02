@@ -164,12 +164,12 @@ class InferenceService:
         with self.driver.session() as session:
             result = session.run(
                 """
-UNWIND $node_ids AS nodeId
-                MATCH (n)
+                UNWIND $node_ids AS nodeId
+                MATCH (n:FUNCTION:FILE)
                 WHERE n.node_id = nodeId and n.repoId = $repo_id
                 OPTIONAL MATCH path = (entryPoint)-[*]->(n)
                 WHERE NOT (entryPoint)<--()
-RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry_point_node_ids
+                RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry_point_node_ids
 
                 """,
                 node_ids=node_ids,
@@ -482,13 +482,14 @@ RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry
                 * Returns: Specify the return value(s) and their types.
                 * Raises: Mention any exceptions that may be raised and under what conditions.
             - **Action-Oriented Description**: Use imperative verbs to describe the main functionality (e.g., "Creates", "Initializes").
-            - **Technical Precision**: Accurately reflect the technical actions, specifying operations and objects involved (e.g., "Creates a new MongoDB document in the specified collection").
+            - **Technical Precision**: Accurately reflect the technical actions, specifying operations and objects involved (e.g., "Creates a new MongoDB document in the specified collection"). "Calls the create_user function"
             - **Consistent Phrasing**:
                 * Classes: Begin with "Provides" or "Defines" to describe the class's role.
                 * Functions/Methods: Begin with an action verb describing what the function does.
             - **Clear Object Reference**: Specify the objects being manipulated (e.g., "document," "collection," "client"). Specify the functions being called.
             - **Contextual Keywords**: Incorporate relevant technical terms to provide context and enhance matching accuracy.
             - **Avoid Redundancy and Ambiguity**: Ensure each section is unique and clearly related to its heading.
+            - **Identifier**: Include the function / class / file name in the docstring.
 
         2. **Classification**:
             Classify the code snippet into one or more of the following categories. For each category, consider these guidelines:

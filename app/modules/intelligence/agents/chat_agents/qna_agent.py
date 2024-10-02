@@ -26,8 +26,7 @@ from app.modules.intelligence.prompts.classification_prompts import (
 )
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.tools.kg_based_tools.graph_tools import CodeTools
-
+from app.modules.intelligence.agents.agents_service import AgentsService
 logger = logging.getLogger(__name__)
 
 
@@ -36,8 +35,8 @@ class QNAAgent:
         self.mini_llm = mini_llm
         self.llm = llm
         self.history_manager = ChatHistoryService(db)
-        self.tools = CodeTools.get_kg_tools()
         self.prompt_service = PromptService(db)
+        self.agents_service = AgentsService(db)
         self.chain = None
         self.db = db
 
@@ -135,7 +134,7 @@ class QNAAgent:
             }
 
             logger.debug(f"Inputs to LLM: {inputs}")
-
+            citations = self.agents_service.cleanup_citations(citations)
             full_response = ""
             async for chunk in self.chain.astream(inputs):
                 content = chunk.content if hasattr(chunk, "content") else str(chunk)
