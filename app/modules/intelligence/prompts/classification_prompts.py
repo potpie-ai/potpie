@@ -185,67 +185,46 @@ class ClassificationPrompts:
          **Examples:**
 
          1. **Query:** "Can you help me improve the unit tests we discussed earlier?"
-            **History:**
-            - "Here are the unit tests for the UserService class."
-            - "These tests cover the basic functionality, but we might need more edge cases."
             {{
                "classification": "LLM_SUFFICIENT"
             }}
             *Reason:* The query refers to existing tests in the chat history.
 
          2. **Query:** "Please generate unit tests for the new PaymentProcessor class."
-            **History:**
-            - "We've implemented a new PaymentProcessor class."
-            - "It handles credit card and PayPal transactions."
             {{
                "classification": "AGENT_REQUIRED"
             }}
             *Reason:* Requires generating tests for code not available in the chat history.
 
          3. **Query:** "I'm getting a NullReferenceException in my test for UserService. Here's the error message..."
-            **History:**
-            - "Here are the unit tests for the UserService class."
-            - "Test_CreateUser is failing with a NullReferenceException."
             {{
                "classification": "LLM_SUFFICIENT"
             }}
             *Reason:* The user is seeking help debugging an existing test and provides the error message.
 
          4. **Query:** "Could you write a test plan for the new authentication module?"
-            **History:**
-            - "We've added a new authentication module to our application."
-            - "It uses JWT for token-based authentication."
             {{
                "classification": "AGENT_REQUIRED"
             }}
-            *Reason:* Requires creating a test plan for code not provided in detail.
+            *Reason:* Requires creating a test plan for code not provided.
 
          5. **Query:** "I need to regenerate unit tests based on the updated test plan we have."
-            **History:**
-            - "Here's our current test plan for the UserService."
-            - "We've updated the plan to include more edge cases."
             {{
                "classification": "LLM_SUFFICIENT"
             }}
             *Reason:* The user wants to regenerate tests based on an existing test plan present in the chat history.
 
          6. **Query:** "Update the unit test for the create_document function to handle invalid inputs."
-            **History:**
-            - "Here are the current unit tests for the DocumentService."
-            - "The create_document function test doesn't cover invalid inputs yet."
             {{
                "classification": "LLM_SUFFICIENT"
             }}
             *Reason:* The user is requesting a specific modification to an existing test.
 
          7. **Query:** "Generate a new test plan and unit tests for the report_generation module."
-            **History:**
-            - "We've implemented a new report_generation module."
-            - "It can generate PDF and CSV reports from various data sources."
             {{
                "classification": "AGENT_REQUIRED"
             }}
-            *Reason:* Requires generating both a new test plan and unit tests for code not available in detail in the chat history.
+            *Reason:* Requires generating both a new test plan and unit tests for code not available in the chat history.
 
          {format_instructions}
          """,
@@ -301,65 +280,47 @@ class ClassificationPrompts:
          {{
             "classification": "[LLM_SUFFICIENT or AGENT_REQUIRED]"
          }}
-      **Examples:**
 
-      1. **Query**: "Can you help me fix the error in the integration test you wrote earlier for the UserService?"
-         **History**:
-         - "Here's the integration test for UserService: [code snippet]"
-         - "I'm getting an error when running this test."
+         **Examples:**
+
+         1. **Query**: "Can you help me fix the error in the integration test you wrote earlier?"
          {{
             "classification": "LLM_SUFFICIENT"
          }}
          Reason: The query refers to existing tests in the chat history.
 
-      2. **Query**: "I need integration tests for the new OrderService module."
-         **History**:
-         - "We've been discussing the UserService module."
-         - "Here are the tests for UserService: [code snippet]"
+         2. **Query**: "I need integration tests for the new 'OrderService' module."
          {{
             "classification": "AGENT_REQUIRED"
          }}
-         Reason: OrderService is a new module not previously discussed, requiring new code access.
+         Reason: Requires creating a test plan for code not provided.
 
-      3. **Query**: "Can you explain the best practices for mocking external services in integration tests?"
-         **History**:
-         - "We've been discussing various testing strategies."
-         - "Here's an example of a test with a mocked service: [code snippet]"
+         3. **Query**: "Please update the test plan to include failure scenarios."
          {{
             "classification": "LLM_SUFFICIENT"
          }}
-         Reason: This is a general question about best practices, which can be answered with existing knowledge and the context provided.
+         Reason: The user is requesting a modification to an existing test plan.
 
-      4. **Query**: "Please retrieve the latest version of the OrderProcessing service code and generate new integration tests for it."
-         **History**:
-         - "We last discussed OrderProcessing a month ago."
-         - "Here were the previous tests: [old test snippet]"
+         4. **Query**: "Can you regenerate the tests based on this new code snippet?"
          {{
             "classification": "AGENT_REQUIRED"
          }}
-         Reason: The user is asking to fetch new code and generate new tests, which requires accessing updated project files and potentially using code analysis tools.
+         Reason: The user wants to regenerate tests based on new code not reflected in the existing history.
 
-      5. **Query**: "You seem to have hallucinated this previous context. Please fetch the code for update_document again and generate test plans and code for it."
-         **History**:
-         - "Here's the implementation of update_document: [potentially hallucinated code snippet]"
-         - "And here are some test cases for it: [potentially hallucinated test cases]"
+         5. **Query**: "I have added a new method to 'PaymentProcessor'. Can you create tests for it?"
          {{
             "classification": "AGENT_REQUIRED"
          }}
-         Reason: The user is explicitly stating that the previous context might be hallucinated and is requesting to fetch the actual code and generate new test plans. This requires accessing the current project state and potentially using code analysis tools.
+         Reason: Requires generating tests for code not available in the chat history.
 
-         **Additional Guidelines:**
-
-         - Always classify queries as AGENT_REQUIRED when:
-         1. The user explicitly mentions or implies that previous information might be incorrect or hallucinated.
-         2. The user requests to fetch, retrieve, or get the actual/current/latest code or documentation.
-         3. The user asks to generate new test plans or code based on the current state of the project.
-         4. There's any doubt about the accuracy or currency of the information in the conversation history.
-
-         - When in doubt, prefer AGENT_REQUIRED to ensure accurate and up-to-date information is provided.
+         6. **Query**: "Why is the integration test for the UserService.getUserData() method failing?"
+         {{
+            "classification": "AGENT_REQUIRED"
+         }}
+         Reason: This requires examination of specific project code and current behavior, which the LLM doesn't have access to.
 
          {format_instructions}
-      """,
+        """,
         AgentType.CODE_CHANGES: """You are an advanced code changes query classifier with multiple expert personas. Your task is to determine if the given code changes query can be addressed using the LLM's knowledge and chat history, or if it requires additional context from a specialized code changes agent.
 
         Personas:

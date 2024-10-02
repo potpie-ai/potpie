@@ -11,7 +11,6 @@ from app.modules.parsing.graph_construction.parsing_service import ParsingServic
 
 logger = logging.getLogger(__name__)
 
-
 class BaseTask(Task):
     _db = None
 

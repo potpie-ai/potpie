@@ -51,12 +51,10 @@ class UnitTestAgent:
 
         unit_test_task = Task(
             description=f"""Your mission is to create comprehensive test plans and corresponding unit tests based on the user's query and provided code.
-            Given the following context:
-            - Chat History: {history}
 
             Process:
             1. **Code Retrieval:**
-            - If not already present in the history, Fetch the docstrings and code for the provided node IDs using the get_code_from_node_id tool.
+            - Fetch the docstrings and code for the provided node IDs using the get_code_from_node_id tool.
             - Node IDs: {', '.join(node_ids_list)}
             - Project ID: {project_id}
             - Fetch the code for the file path of the function/class mentioned in the user's query using the get code from probable node name tool. This is needed for correct inport of class name in the unit test file.

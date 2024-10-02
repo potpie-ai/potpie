@@ -28,9 +28,6 @@ from app.modules.intelligence.prompts.classification_prompts import (
 )
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.tools.code_query_tools.get_code_from_node_id_tool import (
-    GetCodeFromNodeIdTool,
-)
 from app.modules.intelligence.tools.kg_based_tools.graph_tools import CodeTools
 
 logger = logging.getLogger(__name__)
@@ -97,27 +94,7 @@ class UnitTestAgent:
             if not self.chain:
                 self.chain = await self._create_chain()
 
-            if not node_ids:
-                content = "It looks like there is no context selected. Please type @ followed by file or function name to interact with the unit test agent"
-                self.history_manager.add_message_chunk(
-                    conversation_id,
-                    content,
-                    MessageType.AI_GENERATED,
-                    citations=citations,
-                )
-                yield json.dumps({"citations": [], "message": content})
-                self.history_manager.flush_message_buffer(
-                    conversation_id, MessageType.AI_GENERATED
-                )
-                return
-
             history = self.history_manager.get_session_history(user_id, conversation_id)
-            for node in node_ids:
-                history.append(
-                    HumanMessage(
-                        content=f"{node.name}: {GetCodeFromNodeIdTool(self.db).run(project_id, node.node_id)}"
-                    )
-                )
             validated_history = [
                 (
                     HumanMessage(content=str(msg))
@@ -148,7 +125,9 @@ class UnitTestAgent:
                     response = test_response.raw
 
                 tool_results = [
-                    SystemMessage(content=f"Unit test agent result:\n {response}")
+                    SystemMessage(
+                        content=f"Generated Test plan and test suite:\n {response}"
+                    )
                 ]
 
             inputs = {

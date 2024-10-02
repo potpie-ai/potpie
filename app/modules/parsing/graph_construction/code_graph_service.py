@@ -84,6 +84,7 @@ class CodeGraphService:
                     nodes=nodes_to_create,
                 )
 
+
             relationship_count = nx_graph.number_of_edges()
             logging.info(f"Creating {relationship_count} relationships")
 
