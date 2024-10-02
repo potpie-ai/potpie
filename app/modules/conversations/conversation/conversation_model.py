@@ -8,6 +8,7 @@ from sqlalchemy.orm import relationship
 
 from app.core.base_model import Base
 from app.modules.conversations.message.message_model import Message  # noqa
+from app.modules.conversations.access.access_model import SharedChat  # noqa 
 
 
 class ConversationStatus(enum.Enum):
@@ -44,6 +45,9 @@ class Conversation(Base):
     user = relationship("User", back_populates="conversations")
     messages = relationship(
         "Message", back_populates="conversation", cascade="all, delete-orphan"
+    )
+    shared_chats = relationship(
+        "SharedChat", back_populates="conversation", cascade="all, delete-orphan"
     )
 
     @hybrid_property

@@ -17,6 +17,8 @@ from .conversation.conversation_schema import (
     RenameConversationRequest,
 )
 from .message.message_schema import MessageRequest, MessageResponse, RegenerateRequest
+from app.modules.conversations.access.access_service import ShareChatService, ShareChatServiceError
+from app.modules.conversations.access.access_schema import ShareChatRequest, ShareChatResponse, SharedChatResponse
 
 router = APIRouter()
 
@@ -135,3 +137,28 @@ class ConversationAPI:
         user_id = user["user_id"]
         controller = ConversationController(db, user_id)
         return await controller.rename_conversation(conversation_id, request.title)
+
+@router.post("/conversations/share", response_model=ShareChatResponse, status_code=201)
+async def share_chat(
+    request: ShareChatRequest,
+    db: Session = Depends(get_db),
+):
+    service = ShareChatService(db)
+    try:
+        shareable_link = await service.share_chat(request.conversation_id, request.recipientEmail)
+        return ShareChatResponse(
+            message="Chat shared successfully!",
+            shareableLink=shareable_link
+        )
+    except ShareChatServiceError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/conversations/shared/{conversation_id}", response_model=SharedChatResponse)
+async def retrieve_shared_chat(conversation_id: str, db: Session = Depends(get_db), user=Depends(AuthService.check_auth)):
+    user_email = user["email"]
+    service = ShareChatService(db)
+    try:
+        chat = await service.retrieve_shared_chat(conversation_id, user_email)
+        return SharedChatResponse(chat=chat)
+    except ShareChatServiceError as e:
+        raise HTTPException(status_code=404, detail=str(e))
