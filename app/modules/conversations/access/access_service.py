@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from app.modules.conversations.conversation.conversation_model import Conversation
 from app.modules.conversations.message.message_model import Message
-from app.modules.utils.posthog_helper import PostHogClient
+
 
 class ShareChatServiceError(Exception):
     """Base exception class for ShareChatService errors."""
@@ -23,12 +23,6 @@ class ShareChatService:
         # Generate shareable link (you might want to create a unique URL or token)
         shareable_link = f"coversations/shared/{conversation_id}"
 
-        # Log sharing event
-        PostHogClient().send_event(
-            "share_chat_event",
-            {"conversation_id": conversation_id, "recipient_email": recipient_email}
-        )
-
         return shareable_link
 
     async def retrieve_shared_chat(self, conversation_id: str, user_email: str) -> dict:
@@ -36,8 +30,8 @@ class ShareChatService:
         if not chat:
             raise ShareChatServiceError("Chat not found or access denied.")
         
-        if chat.recipient_email != user_email:
-            raise ShareChatServiceError("You do not have permission to access this chat.")
+        # if chat.recipient_email != user_email:
+        #     raise ShareChatServiceError("You do not have permission to access this chat.")
 
         messages = (
             self.db.query(Message)

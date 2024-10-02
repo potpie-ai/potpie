@@ -3,7 +3,7 @@ from typing import Optional, List
 
 
 class ShareChatRequest(BaseModel):
-    chatId: str  
+    conversation_id: str  
     recipientEmail: EmailStr  
 
 
