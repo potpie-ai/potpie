@@ -497,7 +497,7 @@ class InferenceService:
                 * Returns: Specify the return value(s) and their types.
                 * Raises: Mention any exceptions that may be raised and under what conditions.
             - **Action-Oriented Description**: Use imperative verbs to describe the main functionality (e.g., "Creates", "Initializes").
-            - **Technical Precision**: Accurately reflect the technical actions, specifying operations and objects involved (e.g., "Creates a new MongoDB document in the specified collection"). "Calls the create_user function"
+            - **Technical Precision**: Accurately reflect the technical actions, specifying operations and objects involved (e.g., "Creates a new MongoDB document in the specified collection", "Calls the create_user function").
             - **Consistent Phrasing**:
                 * Classes: Begin with "Provides" or "Defines" to describe the class's role.
                 * Functions/Methods: Begin with an action verb describing what the function does.
