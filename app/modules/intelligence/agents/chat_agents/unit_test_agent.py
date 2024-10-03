@@ -28,7 +28,7 @@ from app.modules.intelligence.prompts.classification_prompts import (
 )
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.tools.code_query_tools.get_code_from_node_id_tool import (
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     GetCodeFromNodeIdTool,
 )
 from app.modules.intelligence.tools.kg_based_tools.graph_tools import CodeTools

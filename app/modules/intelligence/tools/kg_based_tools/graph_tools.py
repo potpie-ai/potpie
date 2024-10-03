@@ -109,7 +109,7 @@ class CodeTools:
         tasks = [process_query(query) for query in queries]
         results = await asyncio.gather(*tasks)
 
-        return dict(results)
+        return results
 
     def ask_knowledge_graph_query(
         queries: List[str], project_id: str, node_ids: List[str] = []
