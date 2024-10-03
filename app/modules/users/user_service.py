@@ -131,11 +131,3 @@ class UserService:
         except Exception as e:
             logger.error(f"Error fetching user ID by email {email}: {e}")
             return None
-
-    def get_user_ids_by_emails(self, emails: List[str]) -> List[str]:
-        user_ids = []
-        for email in emails:
-            user_id = self.get_user_id_by_email(email)
-            user_ids.append(user_id)
-        logger.info(f"User IDs retrieved for emails: {emails} | Result: {user_ids}")
-        return user_ids
