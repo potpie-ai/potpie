@@ -115,7 +115,7 @@ class UnitTestAgent:
             for node in node_ids:
                 history.append(
                     HumanMessage(
-                        content=f"{node.name}: {GetCodeFromNodeIdTool(self.db).run(project_id, node.node_id)}"
+                        content=f"{node.name}: {GetCodeFromNodeIdTool(self.db, user_id).run(project_id, node.node_id)}"
                     )
                 )
             validated_history = [
