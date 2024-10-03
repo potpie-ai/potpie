@@ -6,6 +6,7 @@ pipeline {
     }
     environment {
         // Access environment variables using Jenkins credentials
+        //not updating credential name
         DOCKER_REGISTRY = credentials('momentum-server-docker-registry')
         GKE_CLUSTER = credentials('mom-core-gke-cluster')
         GKE_ZONE = credentials('gke-zone')
@@ -57,7 +58,7 @@ pipeline {
                     def dockerRegistry = env.DOCKER_REGISTRY
                     echo "Printing the saved docker registry from env:"
                     echo "${dockerRegistry}"
-                    sh "sudo docker build -t ${DOCKER_REGISTRY}/momentum-server:${imageTag} ."
+                    sh "sudo docker build -t ${DOCKER_REGISTRY}/potpit:${imageTag} ."
                 }
             }
         }
@@ -69,7 +70,7 @@ pipeline {
                     def imageTag = env.GIT_COMMIT_HASH
                     echo "printing the user here"
                     sh "whoami && pwd"
-                    sh "sudo docker push ${DOCKER_REGISTRY}/momentum-server:${imageTag}"
+                    sh "sudo docker push ${DOCKER_REGISTRY}/potpie:${imageTag}"
                 }
             }
         }
@@ -115,8 +116,8 @@ pipeline {
 
                     try {
                         sh """
-                        kubectl set image deployment/momentum-server-deployment momentum-server=${DOCKER_REGISTRY}/momentum-server:${imageTag} -n ${params.namespace}
-                        kubectl rollout status deployment/momentum-server-deployment -n ${params.namespace}
+                        kubectl set image deployment/potpie-deployment potpie=${DOCKER_REGISTRY}/potpie:${imageTag} -n ${params.namespace}
+                        kubectl rollout status deployment/potpie-deployment -n ${params.namespace}
                         """
                         imageDeploySucceeded = true
                     } catch (Exception e) {
@@ -125,7 +126,7 @@ pipeline {
 
                     if (!imageDeploySucceeded) {
                         echo 'Rolling back to previous revision...'
-                        sh 'kubectl rollout undo deployment/momentum-server-deployment -n ${params.namespace}'
+                        sh 'kubectl rollout undo deployment/potpie-deployment -n ${params.namespace}'
                     }
                 }
             }
@@ -158,7 +159,7 @@ pipeline {
                 // Clean up local Docker images
                 def imageTag = env.GIT_COMMIT_HASH
                 sh """
-                docker rmi ${DOCKER_REGISTRY}/momentum-server:${imageTag} || true
+                docker rmi ${DOCKER_REGISTRY}/potpie:${imageTag} || true
                 """
             }
         }
