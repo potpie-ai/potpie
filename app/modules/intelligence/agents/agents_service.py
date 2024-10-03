@@ -40,7 +40,7 @@ class AgentsService:
             ),
         ]
 
-    def cleanup_citations(self, citations: List[str]) -> List[str]:
+    def format_citations(self, citations: List[str]) -> List[str]:
         cleaned_citations = []
         for citation in citations:
             cleaned_citations.append(

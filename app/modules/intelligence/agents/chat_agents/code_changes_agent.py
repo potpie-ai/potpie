@@ -138,7 +138,7 @@ class CodeChangesAgent:
             logger.debug(f"Inputs to LLM: {inputs}")
 
             full_response = ""
-            citations = self.agents_service.cleanup_citations(citations)
+            citations = self.agents_service.format_citations(citations)
             async for chunk in self.chain.astream(inputs):
                 content = chunk.content if hasattr(chunk, "content") else str(chunk)
                 full_response += content

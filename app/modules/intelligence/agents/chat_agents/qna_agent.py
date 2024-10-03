@@ -136,7 +136,7 @@ class QNAAgent:
             }
 
             logger.debug(f"Inputs to LLM: {inputs}")
-            citations = self.agents_service.cleanup_citations(citations)
+            citations = self.agents_service.format_citations(citations)
             full_response = ""
             async for chunk in self.chain.astream(inputs):
                 content = chunk.content if hasattr(chunk, "content") else str(chunk)
