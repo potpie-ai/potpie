@@ -120,3 +120,22 @@ class UserService:
             raise UserServiceError(
                 f"An unexpected error occurred while retrieving conversations with projects for user {user_id}"
             ) from e
+
+    def get_user_id_by_email(self, email: str) -> str:
+        try:
+            user = self.db.query(User).filter(User.email == email).first()
+            if user:
+                return user.uid
+            else:
+                return None
+        except Exception as e:
+            logger.error(f"Error fetching user ID by email {email}: {e}")
+            return None
+
+    def get_user_ids_by_emails(self, emails: List[str]) -> List[str]:
+        user_ids = []
+        for email in emails:
+            user_id = self.get_user_id_by_email(email)
+            user_ids.append(user_id)
+        logger.info(f"User IDs retrieved for emails: {emails} | Result: {user_ids}")
+        return user_ids

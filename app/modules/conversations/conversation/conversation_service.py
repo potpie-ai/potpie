@@ -12,10 +12,12 @@ from app.core.database import get_db
 from app.modules.conversations.conversation.conversation_model import (
     Conversation,
     ConversationStatus,
+    
 )
 from app.modules.conversations.conversation.conversation_schema import (
     ConversationInfoResponse,
     CreateConversationRequest,
+    ConversationAccessType
 )
 from app.modules.conversations.message.message_model import (
     Message,
@@ -31,6 +33,7 @@ from app.modules.intelligence.agents.agent_injector_service import AgentInjector
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
+from app.modules.users.user_service import UserService
 from app.modules.utils.posthog_helper import PostHogClient
 from langchain.prompts import ChatPromptTemplate
 
@@ -562,3 +565,28 @@ class ConversationService:
             raise ConversationServiceError(
                 "Failed to rename conversation due to an unexpected error"
             ) from e
+
+    async def check_conversation_access(self, conversation_id: str, user_email: str) -> str:
+        user_service = UserService(self.sql_db)
+        user_id = user_service.get_user_id_by_email(user_email)
+
+        # Retrieve the conversation
+        conversation = self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
+        if not conversation:
+            return ConversationAccessType.NOT_FOUND  # Return 'not found' if conversation doesn't exist
+
+        # Check if the conversation is shared
+        if conversation.shared_with_emails:
+            # Convert shared emails to user IDs
+            shared_user_ids = [
+                user_service.get_user_id_by_email(email) for email in conversation.shared_with_emails
+            ]
+
+            # Check if the current user ID is in the shared user IDs
+            if user_id in shared_user_ids:
+                if conversation.user_id == user_id:  # Check if the user is the creator
+                    return ConversationAccessType.WRITE  # Creator can write
+                else:
+                    return ConversationAccessType.READ  # Shared user can only read
+
+        return ConversationAccessType.NOT_FOUND

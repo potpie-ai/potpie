@@ -34,6 +34,7 @@ class UserController:
                     agent_id=conversation.agent_ids[0],
                     created_at=conversation.created_at.isoformat(),
                     updated_at=conversation.updated_at.isoformat(),
+                    shared_with_emails=conversation.shared_with_emails
                 )
             )
 

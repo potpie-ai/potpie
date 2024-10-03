@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import List
 
 from pydantic import BaseModel
-
+from enum import Enum
 from app.modules.conversations.conversation.conversation_model import ConversationStatus
 
 
@@ -39,3 +39,11 @@ ConversationInfoResponse.update_forward_refs()
 
 class RenameConversationRequest(BaseModel):
     title: str
+
+class ConversationAccessType(str, Enum):
+    """
+    Enum for access type
+    """
+    READ = "read"
+    WRITE = "write"
+    NOT_FOUND = "not_found"
