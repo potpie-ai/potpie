@@ -115,6 +115,7 @@ class UnitTestAgent:
                     node_ids,
                     self.db,
                     self.mini_llm,
+                    user_id,
                 )
 
                 if test_response.pydantic:

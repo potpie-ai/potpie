@@ -113,6 +113,7 @@ class ProjectService:
                 "commit_id": project.commit_id,
                 "status": project.status,
                 "branch_name": project.branch_name,
+                "user_id": project.user_id,
             }
         else:
             return None

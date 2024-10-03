@@ -14,11 +14,12 @@ from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_n
 
 
 class UnitTestAgent:
-    def __init__(self, sql_db, llm):
+    def __init__(self, sql_db, llm, user_id):
         self.sql_db = sql_db
-        self.get_code_from_node_id = get_code_from_node_id_tool(sql_db)
+        self.user_id = user_id
+        self.get_code_from_node_id = get_code_from_node_id_tool(sql_db, user_id)
         self.get_code_from_probable_node_name = get_code_from_probable_node_name_tool(
-            sql_db
+            sql_db, user_id
         )
         self.llm = llm
         self.max_iterations = os.getenv("MAX_ITER", 15)
@@ -144,11 +145,12 @@ async def kickoff_unit_test_crew(
     node_ids: List[NodeContext],
     sql_db,
     llm,
+    user_id,
 ) -> Dict[str, str]:
     if not node_ids:
         return {
             "error": "No function name is provided by the user. The agent cannot generate test plan or test code without specific class or function being selected by the user. Request the user to use the '@ followed by file or function name' feature to link individual functions to the message. "
         }
-    unit_test_agent = UnitTestAgent(sql_db, llm)
+    unit_test_agent = UnitTestAgent(sql_db, llm, user_id)
     result = await unit_test_agent.run(project_id, node_ids, query, chat_history)
     return result

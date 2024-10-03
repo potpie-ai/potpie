@@ -116,6 +116,7 @@ class IntegrationTestAgent:
                     node_ids,
                     self.db,
                     self.mini_llm,
+                    user_id,
                     validated_history,
                 )
 

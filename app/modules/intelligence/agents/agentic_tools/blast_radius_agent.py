@@ -21,6 +21,7 @@ class BlastRadiusAgent:
     def __init__(self, sql_db, user_id, llm):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.sql_db = sql_db
+        self.user_id = user_id
         self.llm = llm
         self.get_nodes_from_tags = get_nodes_from_tags_tool(sql_db, user_id)
         self.ask_knowledge_graph_queries = get_ask_knowledge_graph_queries_tool(
@@ -102,7 +103,7 @@ class BlastRadiusAgent:
             expected_output=f"Comprehensive impact analysis of the code changes on the codebase and answers to the users query about them. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model : {self.BlastRadiusAgentResponse.model_json_schema()}",
             agent=blast_radius_agent,
             tools=[
-                get_blast_radius_tool(),
+                get_blast_radius_tool(self.user_id),
                 self.get_nodes_from_tags,
                 self.ask_knowledge_graph_queries,
             ],
