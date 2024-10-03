@@ -2,9 +2,13 @@ import asyncio
 import os
 from typing import Dict, List, Tuple
 
-import aiohttp
 from langchain.tools import StructuredTool
 from pydantic import BaseModel, Field
+from app.core.database import get_db
+from app.modules.parsing.knowledge_graph.inference_schema import (
+    QueryResponse
+)
+from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 
 from app.modules.projects.projects_service import ProjectService
 
@@ -35,22 +39,35 @@ class KnowledgeGraphQueryTool:
         self.user_id = user_id
         self.sql_db = sql_db
 
-    async def ask_multiple_knowledge_graph_queries(
-        self, queries: List[QueryRequest]
-    ) -> Dict[str, str]:
-        async def fetch_query(query_request: QueryRequest) -> Tuple[str, str]:
-            data = query_request.dict()
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    self.kg_query_url, json=data, headers=self.headers
-                ) as response:
-                    result = await response.json()
-                    return query_request.query, result
 
-        tasks = [fetch_query(query) for query in queries]
+    async def ask_multiple_knowledge_graph_queries(self,
+        queries: List[QueryRequest]
+    ) -> Dict[str, str]:
+
+            
+        inference_service = InferenceService(self.sql_db, "dummy")
+
+        async def process_query(query_request: QueryRequest) -> List[QueryResponse]:
+            # Call the query_vector_index method directly from InferenceService
+            results = inference_service.query_vector_index(
+                query_request.project_id, query_request.query, query_request.node_ids
+            )
+            return [
+                QueryResponse(
+                    node_id=result.get("node_id"),
+                    docstring=result.get("docstring"),
+                    file_path=result.get("file_path"),
+                    start_line=result.get("start_line") or 0,
+                    end_line=result.get("end_line") or 0,
+                    similarity=result.get("similarity"),
+            )
+            for result in results
+        ]
+
+        tasks = [process_query(query) for query in queries]
         results = await asyncio.gather(*tasks)
 
-        return dict(results)
+        return results
 
     def ask_knowledge_graph_query(
         self, queries: List[str], project_id: str, node_ids: List[str] = []
