@@ -129,7 +129,7 @@ class IntegrationTestAgent:
 
                 tool_results = [
                     SystemMessage(
-                        content=f"Integration test agent result:\n {response}"
+                        content=f"Integration test agent result, this is not visible to user:\n {response}"
                     )
                 ]
 
