@@ -564,9 +564,6 @@ class InferenceService:
 
         start_time = time.time()
         logger.info(f"Parsing project {repo_id}: Starting the inference process...")
-        total_word_count = len(base_prompt.split()) + sum(
-            len(request.text.split()) for request in batch
-        )
 
         chain = chat_prompt | self.llm | output_parser
         result = await chain.ainvoke({"code_snippets": code_snippets})
