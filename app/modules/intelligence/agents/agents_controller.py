@@ -9,7 +9,7 @@ from app.modules.intelligence.agents.agents_service import AgentsService
 
 class AgentsController:
     def __init__(self, db: Session):
-        self.service = AgentsService.create(db)
+        self.service = AgentsService(db)  # Direct instantiation
 
     async def list_available_agents(self) -> List[AgentInfo]:
         try:
@@ -19,3 +19,6 @@ class AgentsController:
             raise HTTPException(
                 status_code=500, detail=f"Error listing agents: {str(e)}"
             )
+
+    async def get_agent_details(self, agent_id: str) -> AgentInfo:
+        return await self.service.get_agent_details(agent_id)

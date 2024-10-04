@@ -5,7 +5,8 @@ import requests
 from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth
-
+import hmac
+import hashlib
 
 class AuthService:
     def login(self, email, password):
@@ -65,5 +66,13 @@ class AuthService:
             res.headers["WWW-Authenticate"] = 'Bearer realm="auth_required"'
             return decoded_token
 
+    def verify_hmac_signature(user_id: str, hmac_signature: str) -> bool:
+        shared_key = os.environ.get("SHARED_HMAC_KEY")
+        expected_signature = hmac.new(
+            key=shared_key.encode(), 
+            msg=user_id.encode(), 
+            digestmod=hashlib.sha256
+        ).hexdigest()
+        return hmac.compare_digest(hmac_signature, expected_signature)
 
 auth_handler = AuthService()

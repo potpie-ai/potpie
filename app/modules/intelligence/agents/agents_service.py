@@ -1,22 +1,22 @@
 from typing import List
-
-from app.modules.intelligence.agents.agents_schema import AgentInfo
+from sqlalchemy.orm import Session
+from app.modules.intelligence.agents.agents_schema import AgentDetailsAsACrewAIAgent, AgentInfo, PromptInfo
+from app.modules.intelligence.prompts.prompt_schema import PromptType
+from app.modules.intelligence.prompts.prompt_service import PromptService
 
 
 class AgentsService:
-    def __init__(self, db):
+    def __init__(self, db: Session):
         self.db = db
+        self.prompt_service = PromptService(db)
 
-    @classmethod
-    def create(cls, db):
-        return cls(db)
 
     async def list_available_agents(self) -> List[AgentInfo]:
         return [
             AgentInfo(
                 id="debugging_agent",
                 name="Debugging with Knowledge Graph Agent",
-                description="An agent specialized in debugging using knowledge graphs.",
+                description="An agent specialized in debugging using knowledge graphs."
             ),
             AgentInfo(
                 id="codebase_qna_agent",
@@ -49,3 +49,22 @@ class AgentsService:
                 else citation
             )
         return cleaned_citations
+
+    async def get_agent_details(self, agent_id: str) -> AgentDetailsAsACrewAIAgent:
+        # Fetch prompts and other components related to the agent
+        prompts = await self.prompt_service.get_prompts_by_agent_id_and_types(agent_id, [PromptType.SYSTEM, PromptType.HUMAN])
+        
+        # Extract backstory and goals from prompts
+        backstory = next((prompt.text for prompt in prompts if prompt.type == PromptType.SYSTEM), "")
+        goals = [prompt.text for prompt in prompts if prompt.type == PromptType.HUMAN]
+        
+        # Construct the agent details
+        agent_details = AgentDetailsAsACrewAIAgent(
+            id=agent_id,
+            name=f"{agent_id.replace('_', ' ').title()}",
+            description=f"Details for {agent_id.replace('_', ' ').title()}",
+            backstory=backstory,
+            goals=goals,
+            tools=[]  # Assuming no tools for now, you may need to fetch these separately
+        )
+        return agent_details
