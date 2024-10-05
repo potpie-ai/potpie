@@ -59,7 +59,9 @@ class SearchService:
                         "node_id": result.node_id,
                         "name": result.name,
                         "file_path": (
-                            result.file_path.split("/projects/", 1)[-1]
+                            result.file_path.split("/projects/", 1)[-1].split("/", 1)[
+                                -1
+                            ]
                             if "/projects/" in result.file_path
                             else result.file_path
                         ),

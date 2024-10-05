@@ -6,14 +6,21 @@ from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
-    get_code_tools,
+    get_code_from_node_id_tool,
+)
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_name_tool import (
+    get_code_from_probable_node_name_tool,
 )
 
 
 class UnitTestAgent:
-    def __init__(self, sql_db, llm):
+    def __init__(self, sql_db, llm, user_id):
         self.sql_db = sql_db
-        self.code_tools = get_code_tools(self.sql_db)
+        self.user_id = user_id
+        self.get_code_from_node_id = get_code_from_node_id_tool(sql_db, user_id)
+        self.get_code_from_probable_node_name = get_code_from_probable_node_name_tool(
+            sql_db, user_id
+        )
         self.llm = llm
         self.max_iterations = os.getenv("MAX_ITER", 15)
 
@@ -51,10 +58,12 @@ class UnitTestAgent:
 
         unit_test_task = Task(
             description=f"""Your mission is to create comprehensive test plans and corresponding unit tests based on the user's query and provided code.
+            Given the following context:
+            - Chat History: {history}
 
             Process:
             1. **Code Retrieval:**
-            - Fetch the docstrings and code for the provided node IDs using the get_code_from_node_id tool.
+            - If not already present in the history, Fetch the docstrings and code for the provided node IDs using the get_code_from_node_id tool.
             - Node IDs: {', '.join(node_ids_list)}
             - Project ID: {project_id}
             - Fetch the code for the file path of the function/class mentioned in the user's query using the get code from probable node name tool. This is needed for correct inport of class name in the unit test file.
@@ -102,7 +111,7 @@ class UnitTestAgent:
             expected_output="Outline the test plan and write unit tests for each node based on the test plan.",
             agent=unit_test_agent,
             output_pydantic=self.TestAgentResponse,
-            tools=[self.code_tools[2], self.code_tools[0]],
+            tools=[self.get_code_from_probable_node_name, self.get_code_from_node_id],
         )
 
         return unit_test_task
@@ -138,11 +147,12 @@ async def kickoff_unit_test_crew(
     node_ids: List[NodeContext],
     sql_db,
     llm,
+    user_id,
 ) -> Dict[str, str]:
     if not node_ids:
         return {
             "error": "No function name is provided by the user. The agent cannot generate test plan or test code without specific class or function being selected by the user. Request the user to use the '@ followed by file or function name' feature to link individual functions to the message. "
         }
-    unit_test_agent = UnitTestAgent(sql_db, llm)
+    unit_test_agent = UnitTestAgent(sql_db, llm, user_id)
     result = await unit_test_agent.run(project_id, node_ids, query, chat_history)
     return result

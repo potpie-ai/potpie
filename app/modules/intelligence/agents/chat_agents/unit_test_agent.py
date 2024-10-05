@@ -19,6 +19,7 @@ from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.agents.agentic_tools.unit_test_agent import (
     kickoff_unit_test_crew,
 )
+from app.modules.intelligence.agents.agents_service import AgentsService
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.classification_prompts import (
     AgentType,
@@ -28,7 +29,9 @@ from app.modules.intelligence.prompts.classification_prompts import (
 )
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.tools.kg_based_tools.graph_tools import CodeTools
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
+    GetCodeFromNodeIdTool,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +41,8 @@ class UnitTestAgent:
         self.mini_llm = mini_llm
         self.llm = llm
         self.history_manager = ChatHistoryService(db)
-        self.tools = CodeTools.get_kg_tools()
         self.prompt_service = PromptService(db)
+        self.agents_service = AgentsService(db)
         self.chain = None
         self.db = db
 
@@ -94,7 +97,27 @@ class UnitTestAgent:
             if not self.chain:
                 self.chain = await self._create_chain()
 
+            if not node_ids:
+                content = "It looks like there is no context selected. Please type @ followed by file or function name to interact with the unit test agent"
+                self.history_manager.add_message_chunk(
+                    conversation_id,
+                    content,
+                    MessageType.AI_GENERATED,
+                    citations=citations,
+                )
+                yield json.dumps({"citations": [], "message": content})
+                self.history_manager.flush_message_buffer(
+                    conversation_id, MessageType.AI_GENERATED
+                )
+                return
+
             history = self.history_manager.get_session_history(user_id, conversation_id)
+            for node in node_ids:
+                history.append(
+                    HumanMessage(
+                        content=f"{node.name}: {GetCodeFromNodeIdTool(self.db, user_id).run(project_id, node.node_id)}"
+                    )
+                )
             validated_history = [
                 (
                     HumanMessage(content=str(msg))
@@ -115,6 +138,7 @@ class UnitTestAgent:
                     node_ids,
                     self.db,
                     self.mini_llm,
+                    user_id,
                 )
 
                 if test_response.pydantic:
@@ -126,7 +150,7 @@ class UnitTestAgent:
 
                 tool_results = [
                     SystemMessage(
-                        content=f"Generated Test plan and test suite:\n {response}"
+                        content=f"Unit testing agent response, this is not visible to user:\n {response}"
                     )
                 ]
 
@@ -137,7 +161,7 @@ class UnitTestAgent:
             }
 
             logger.debug(f"Inputs to LLM: {inputs}")
-
+            citations = self.agents_service.format_citations(citations)
             full_response = ""
             async for chunk in self.chain.astream(inputs):
                 content = chunk.content if hasattr(chunk, "content") else str(chunk)

@@ -1,6 +1,7 @@
 import logging
 from typing import Any, Dict, List, Optional
 
+from langchain_core.tools import StructuredTool, Tool
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 
@@ -188,3 +189,12 @@ class GetCodeGraphFromNodeNameTool:
     async def arun(self, repo_id: str, node_name: str) -> Dict[str, Any]:
         """Asynchronous version of the run method."""
         return self.run(repo_id, node_name)
+
+
+def get_code_graph_from_node_name_tool(sql_db: Session) -> Tool:
+    tool_instance = GetCodeGraphFromNodeNameTool(sql_db)
+    return StructuredTool.from_function(
+        func=tool_instance.run,
+        name="Get Code Graph From Node Name",
+        description="Retrieves a code graph for a specific node in a repository given its node name",
+    )

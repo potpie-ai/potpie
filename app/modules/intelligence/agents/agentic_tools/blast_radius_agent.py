@@ -9,14 +9,24 @@ from app.modules.intelligence.tools.change_detection.change_detection import (
     ChangeDetectionResponse,
     get_blast_radius_tool,
 )
-from app.modules.intelligence.tools.kg_based_tools.graph_tools import CodeTools
+from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import (
+    get_ask_knowledge_graph_queries_tool,
+)
+from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool import (
+    get_nodes_from_tags_tool,
+)
 
 
 class BlastRadiusAgent:
-    def __init__(self, sql_db, llm):
+    def __init__(self, sql_db, user_id, llm):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.sql_db = sql_db
+        self.user_id = user_id
         self.llm = llm
+        self.get_nodes_from_tags = get_nodes_from_tags_tool(sql_db, user_id)
+        self.ask_knowledge_graph_queries = get_ask_knowledge_graph_queries_tool(
+            sql_db, user_id
+        )
 
     async def create_agents(self):
         blast_radius_agent = Agent(
@@ -54,7 +64,22 @@ class BlastRadiusAgent:
             The changes contain the list of changes with the updated and entry point code. Entry point corresponds to the API/Consumer upstream of the function that the change was made in.
             The citations contain the list of file names referenced in the changed code and entry point code.
 
-            You also have access the the query knowledge graph tool. Use it to answer natural language questions about the codebase during the analysis.
+            You also have access the the query knowledge graph tool to answer natural language questions about the codebase during the analysis.
+            Based on the response from the get code changes tool, formulate queries to ask details about specific changed code elements.
+            1. Frame your query for the knowledge graph tool:
+            - Identify key concepts, code elements, and implied relationships from the changed code.
+            - Consider the context from the users query: {query}.
+            - Determine the intent and key technical terms.
+            - Transform into keyword phrases that might match docstrings:
+                * Use concise, functionality-based phrases (e.g., "creates document MongoDB collection").
+                * Focus on verb-based keywords (e.g., "create", "define", "calculate").
+                * Include docstring-related keywords like "parameters", "returns", "raises" when relevant.
+                * Preserve key technical terms from the original query.
+                * Generate multiple keyword variations to increase matching chances.
+                * Be specific in keywords to improve match accuracy.
+                * Ensure the query includes relevant details and follows a similar structure to enhance similarity search results.
+
+            2. Execute your formulated query using the knowledge graph tool.
 
             Analyze the changes fetched and explain their impact on the codebase. Consider the following:
             1. Which functions or classes have been directly modified?
@@ -77,7 +102,11 @@ class BlastRadiusAgent:
             {self.BlastRadiusAgentResponse.model_json_schema()}""",
             expected_output=f"Comprehensive impact analysis of the code changes on the codebase and answers to the users query about them. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model : {self.BlastRadiusAgentResponse.model_json_schema()}",
             agent=blast_radius_agent,
-            tools=[get_blast_radius_tool()[0], CodeTools.get_kg_tools()[0]],
+            tools=[
+                get_blast_radius_tool(self.user_id),
+                self.get_nodes_from_tags,
+                self.ask_knowledge_graph_queries,
+            ],
             output_pydantic=self.BlastRadiusAgentResponse,
         )
 
@@ -106,8 +135,8 @@ class BlastRadiusAgent:
 
 
 async def kickoff_blast_radius_crew(
-    query: str, project_id: str, node_ids: List[NodeContext], sql_db, llm
+    query: str, project_id: str, node_ids: List[NodeContext], sql_db, user_id, llm
 ) -> Dict[str, str]:
-    blast_radius_agent = BlastRadiusAgent(sql_db, llm)
+    blast_radius_agent = BlastRadiusAgent(sql_db, user_id, llm)
     result = await blast_radius_agent.run(project_id, node_ids, query)
     return result
