@@ -2,7 +2,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import AsyncGenerator, List
-
+from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
@@ -58,6 +58,7 @@ class ConversationService:
         self,
         db: Session,
         user_id: str,
+        user_email: str,
         project_service: ProjectService,
         history_manager: ChatHistoryService,
         provider_service: ProviderService,
@@ -65,18 +66,43 @@ class ConversationService:
     ):
         self.sql_db = db
         self.user_id = user_id
+        self.user_email = user_email
         self.project_service = project_service
         self.history_manager = history_manager
         self.provider_service = provider_service
         self.agent_injector_service = agent_injector_service
 
     @classmethod
-    def create(cls, db: Session, user_id: str):
+    def create(cls, db: Session, user_id: str, user_email: str):
         project_service = ProjectService(db)
         history_manager = ChatHistoryService(db)
         provider_service = ProviderService(db, user_id)
         agent_injector_service = AgentInjectorService(db, provider_service)
-        return cls(db, user_id, project_service, history_manager, provider_service, agent_injector_service)
+        return cls(db, user_id, user_email ,project_service, history_manager, provider_service, agent_injector_service)
+    
+    async def check_conversation_access(self, conversation_id: str, user_email: str) -> str:
+        user_service = UserService(self.sql_db)
+        user_id = user_service.get_user_id_by_email(user_email)
+
+        # Retrieve the conversation
+        conversation = self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
+        if not conversation:
+            return ConversationAccessType.NOT_FOUND  # Return 'not found' if conversation doesn't exist
+        
+        if user_id == conversation.user_id:  # Check if the user is the creator
+            return ConversationAccessType.WRITE  # Creator can write
+        # Check if the conversation is shared
+        if conversation.shared_with_emails:
+            # Convert shared emails to user IDs
+            shared_user_ids = [
+                user_service.get_user_id_by_email(email) for email in conversation.shared_with_emails
+            ]
+            shared_user_ids = [uid for uid in shared_user_ids if uid] #Filtering out None values 
+            # Check if the current user ID is in the shared user IDs
+            if user_id in shared_user_ids:
+                return ConversationAccessType.READ  # Shared user can only read
+        return ConversationAccessType.NOT_FOUND
+
 
     async def create_conversation(
         self, conversation: CreateConversationRequest, user_id: str
@@ -179,6 +205,9 @@ class ConversationService:
         user_id: str,
     ) -> AsyncGenerator[str, None]:
         try:
+            access_level = await self.check_conversation_access(conversation_id, self.user_email)
+            if access_level == ConversationAccessType.READ:
+                raise HTTPException(status_code=403, detail="Read Only.")
             self.history_manager.add_message_chunk(
                 conversation_id, message.content, message_type, user_id
             )
@@ -277,6 +306,9 @@ class ConversationService:
         self, conversation_id: str, user_id: str, node_ids: List[NodeContext] = []
     ) -> AsyncGenerator[str, None]:
         try:
+            access_level = await self.check_conversation_access(conversation_id, self.user_email)
+            if access_level == ConversationAccessType.READ:
+                raise HTTPException(status_code=403, detail="Read Only.")
             last_human_message = await self._get_last_human_message(conversation_id)
             if not last_human_message:
                 raise MessageNotFoundError("No human message found to regenerate from")
@@ -384,6 +416,9 @@ class ConversationService:
 
     async def delete_conversation(self, conversation_id: str, user_id: str) -> dict:
         try:
+            access_level = await self.check_conversation_access(conversation_id, self.user_email)
+            if access_level == ConversationAccessType.READ:
+                raise HTTPException(status_code=403, detail="Access denied.")
             # Use a nested transaction if one is already in progress
             with self.sql_db.begin_nested():
                 # Delete related messages first
@@ -445,6 +480,10 @@ class ConversationService:
         self, conversation_id: str, user_id: str
     ) -> ConversationInfoResponse:
         try:
+            access_type = await self.check_conversation_access(conversation_id, self.user_email)
+            if access_type == ConversationAccessType.NOT_FOUND:
+                raise HTTPException(status_code=403, detail="Not Found")
+        
             conversation = (
                 self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
             )
@@ -466,6 +505,7 @@ class ConversationService:
                 updated_at=conversation.updated_at,
                 total_messages=total_messages,
                 agent_ids=conversation.agent_ids,
+                access_type=access_type,
             )
         except ConversationNotFoundError as e:
             logger.warning(str(e))
@@ -480,6 +520,9 @@ class ConversationService:
         self, conversation_id: str, start: int, limit: int, user_id: str
     ) -> List[MessageResponse]:
         try:
+            access_level = await self.check_conversation_access(conversation_id, self.user_email)
+            if access_level == ConversationAccessType.NOT_FOUND:
+                raise HTTPException(status_code=403, detail="Not Found.")
             conversation = (
                 self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
             )
@@ -530,6 +573,9 @@ class ConversationService:
         self, conversation_id: str, new_title: str, user_id: str
     ) -> dict:
         try:
+            access_level = await self.check_conversation_access(conversation_id, self.user_email)
+            if access_level == ConversationAccessType.READ:
+                raise HTTPException(status_code=403, detail="Read Only.")
             conversation = (
                 self.sql_db.query(Conversation)
                 .filter_by(id=conversation_id, user_id=user_id)
@@ -566,27 +612,3 @@ class ConversationService:
                 "Failed to rename conversation due to an unexpected error"
             ) from e
 
-    async def check_conversation_access(self, conversation_id: str, user_email: str) -> str:
-        user_service = UserService(self.sql_db)
-        user_id = user_service.get_user_id_by_email(user_email)
-
-        # Retrieve the conversation
-        conversation = self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
-        if not conversation:
-            return ConversationAccessType.NOT_FOUND  # Return 'not found' if conversation doesn't exist
-
-        # Check if the conversation is shared
-        if conversation.shared_with_emails:
-            # Convert shared emails to user IDs
-            shared_user_ids = [
-                user_service.get_user_id_by_email(email) for email in conversation.shared_with_emails
-            ]
-
-            # Check if the current user ID is in the shared user IDs
-            if user_id in shared_user_ids:
-                if conversation.user_id == user_id:  # Check if the user is the creator
-                    return ConversationAccessType.WRITE  # Creator can write
-                else:
-                    return ConversationAccessType.READ  # Shared user can only read
-
-        return ConversationAccessType.NOT_FOUND

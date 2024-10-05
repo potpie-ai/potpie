@@ -13,6 +13,13 @@ class CreateConversationRequest(BaseModel):
     project_ids: List[str]
     agent_ids: List[str]
 
+class ConversationAccessType(str, Enum):
+    """
+    Enum for access type
+    """
+    READ = "read"
+    WRITE = "write"
+    NOT_FOUND = "not_found"
 
 class CreateConversationResponse(BaseModel):
     message: str
@@ -28,6 +35,7 @@ class ConversationInfoResponse(BaseModel):
     updated_at: datetime
     total_messages: int
     agent_ids: List[str]
+    access_type: ConversationAccessType
 
     class Config:
         from_attributes = True
@@ -40,10 +48,4 @@ ConversationInfoResponse.update_forward_refs()
 class RenameConversationRequest(BaseModel):
     title: str
 
-class ConversationAccessType(str, Enum):
-    """
-    Enum for access type
-    """
-    READ = "read"
-    WRITE = "write"
-    NOT_FOUND = "not_found"
+
