@@ -43,11 +43,10 @@ class GetNodesFromTags:
            * EXTERNAL_SERVICE: Does the code make HTTP requests to external services? Check for HTTP client usage or request handling.
         - project_id (str): The ID of the project being evaluated, this is a UUID.
         """
-        project = asyncio.run(
-            ProjectService(self.sql_db).get_project_repo_details_from_db(
+        project = ProjectService(self.sql_db).get_project_repo_details_from_db_sync(
                 project_id, self.user_id
             )
-        )
+        
         if not project:
             raise ValueError(
                 f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
@@ -66,19 +65,9 @@ class GetNodesFromTags:
         ).query_graph(query)
         return nodes
 
-    def run(self, tags: List[str], project_id: str) -> Dict[str, Any]:
+    def run(self, tags: List[str], repo_id: str) -> Dict[str, Any]:
         try:
-            project = asyncio.run(
-                ProjectService(self.sql_db).get_project_repo_details_from_db(
-                    project_id, self.user_id
-                )
-            )
-            if not project:
-                raise ValueError(
-                    f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
-                )
-
-            nodes = self.fetch_nodes(tags, project_id)
+            nodes = self.fetch_nodes(tags, repo_id)
             return {"nodes": nodes}
         except Exception as e:
             logger.error(f"Unexpected error in GetNodesFromTags: {str(e)}")

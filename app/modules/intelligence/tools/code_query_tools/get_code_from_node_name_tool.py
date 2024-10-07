@@ -35,12 +35,9 @@ class GetCodeFromNodeNameTool:
 
     def run(self, repo_id: str, node_name: str) -> Dict[str, Any]:
         try:
-            project = asyncio.run(
-                ProjectService(self.sql_db).get_project_repo_details_from_db(
-                    repo_id, self.user_id
-                )
-            )
-            if not project:
+            project = self._get_project(repo_id)
+            
+            if not project.user_id == self.user_id:
                 raise ValueError(
                     f"Project with ID '{repo_id}' not found in database for user '{self.user_id}'"
                 )

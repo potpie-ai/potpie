@@ -2,6 +2,7 @@ from typing import Dict, Any, List
 
 from sqlalchemy.orm import Session
 
+from app.modules.intelligence.tools.change_detection.change_detection import ChangeDetectionTool
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import GetCodeFromNodeIdTool
 from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool import GetNodesFromTags
 from app.modules.intelligence.tools.code_query_tools.get_code_from_node_name_tool import GetCodeFromNodeNameTool
@@ -28,6 +29,7 @@ class ToolService:
             "ask_knowledge_graph_queries": KnowledgeGraphQueryTool(self.db, self.user_id),
             "get_code_from_multiple_node_ids": GetCodeFromMultipleNodeIdsTool(self.db, self.user_id),
             "get_code_from_probable_node_name": GetCodeFromProbableNodeNameTool(self.db, self.user_id),
+            "get_change_context": ChangeDetectionTool(self.db, self.user_id),
         }
 
     def run_tool(self, tool_id: str, params: Dict[str, Any]) -> Dict[str, Any]:

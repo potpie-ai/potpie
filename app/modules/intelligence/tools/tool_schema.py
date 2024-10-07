@@ -9,7 +9,7 @@ class ToolRequest(BaseModel):
     params: Dict[str, Any]
 
 class ToolResponse(BaseModel):
-    result: Dict[str, Any]
+    results: Any
 
 class ToolInfo(BaseModel):
     id: str

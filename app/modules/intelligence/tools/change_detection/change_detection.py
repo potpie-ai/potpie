@@ -286,6 +286,9 @@ class ChangeDetectionTool:
 
     def get_change_context(self, project_id):
         return asyncio.run(self.get_code_changes(project_id))
+    
+    def run(self, repo_id):
+        return asyncio.run(self.get_code_changes(repo_id))
 
 
 def get_blast_radius_tool(user_id: str) -> Tool:

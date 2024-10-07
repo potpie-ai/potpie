@@ -63,7 +63,7 @@ class KnowledgeGraphQueryTool:
                     file_path=result.get("file_path"),
                     start_line=result.get("start_line") or 0,
                     end_line=result.get("end_line") or 0,
-                    similarity=result.get("similarity"),
+                    similarity=result.get("similarity") or 0,
                 )
                 for result in results
             ]
@@ -90,11 +90,10 @@ class KnowledgeGraphQueryTool:
         Returns:
         - Dict[str, str]: A dictionary where keys are the original queries and values are the corresponding responses.
         """
-        project = asyncio.run(
-            ProjectService(self.sql_db).get_project_repo_details_from_db(
-                project_id, self.user_id
-            )
+        project = ProjectService(self.sql_db).get_project_repo_details_from_db_sync(
+            project_id, self.user_id
         )
+        
         if not project:
             raise ValueError(
                 f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
@@ -107,25 +106,11 @@ class KnowledgeGraphQueryTool:
         return asyncio.run(self.ask_multiple_knowledge_graph_queries(query_list))
     
     def run(
-        self, queries: List[str], project_id: str, node_ids: List[str] = []
+        self, queries: List[str], repo_id: str, node_ids: List[str] = []
     ) -> Dict[str, Any]:
         try:
-            project = asyncio.run(
-                ProjectService(self.sql_db).get_project_repo_details_from_db(
-                    project_id, self.user_id
-                )
-            )
-            if not project:
-                raise ValueError(
-                    f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
-                )
-
-            query_list = [
-                QueryRequest(query=query, project_id=project_id, node_ids=node_ids)
-                for query in queries
-            ]
-            results = asyncio.run(self.ask_multiple_knowledge_graph_queries(query_list))
-            return {"results": results}
+            results =  self.ask_knowledge_graph_query(queries, repo_id, node_ids)
+            return results
         except Exception as e:
             logger.error(f"Unexpected error in KnowledgeGraphQueryTool: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
