@@ -24,8 +24,8 @@ async def run_tool(
 
     tool_service = ToolService(db, user_id)
     try:
-        result = tool_service.run_tool(request.tool_id, request.params)
-        return ToolResponse(result=result)
+        result = await tool_service.run_tool(request.tool_id, request.params)
+        return ToolResponse(results=result)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

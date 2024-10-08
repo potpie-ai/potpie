@@ -32,8 +32,8 @@ class GetCodeFromNodeNameTool:
             neo4j_config["uri"],
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
-
-    def run(self, repo_id: str, node_name: str) -> Dict[str, Any]:
+    
+    def get_code_from_node_name(self, repo_id: str, node_name: str) -> Dict[str, Any]:
         try:
             project = self._get_project(repo_id)
             
@@ -57,6 +57,12 @@ class GetCodeFromNodeNameTool:
                 f"Project: {repo_id} Unexpected error in GetCodeFromNodeNameTool: {str(e)}"
             )
             return {"error": f"An unexpected error occurred: {str(e)}"}
+
+    async def run(self, repo_id: str, node_name: str) -> Dict[str, Any]:
+        return self.get_code_from_node_name(repo_id, node_name)
+    
+    def run_tool(self, repo_id: str, node_name: str) -> Dict[str, Any]:
+        return self.get_code_from_node_name(repo_id, node_name)
 
     def get_node_data(self, repo_id: str, node_name: str) -> Dict[str, Any]:
         query = """
@@ -124,7 +130,7 @@ class GetCodeFromNodeNameTool:
 def get_code_from_node_name_tool(sql_db: Session, user_id: str) -> Tool:
     tool_instance = GetCodeFromNodeNameTool(sql_db, user_id)
     return StructuredTool.from_function(
-        func=tool_instance.run,
+        coroutine=tool_instance.run,
         name="Get Code From Node Name",
         description="Retrieves code for a specific node in a repository given its node name",
     )

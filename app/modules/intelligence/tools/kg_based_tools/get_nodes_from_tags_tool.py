@@ -65,7 +65,7 @@ class GetNodesFromTags:
         ).query_graph(query)
         return nodes
 
-    def run(self, tags: List[str], repo_id: str) -> Dict[str, Any]:
+    async def run(self, tags: List[str], repo_id: str) -> Dict[str, Any]:
         try:
             nodes = self.fetch_nodes(tags, repo_id)
             return {"nodes": nodes}
@@ -76,6 +76,7 @@ class GetNodesFromTags:
 
 def get_nodes_from_tags_tool(sql_db, user_id) -> StructuredTool:
     return StructuredTool.from_function(
+        coroutine=GetNodesFromTags(sql_db, user_id).run,
         func=GetNodesFromTags(sql_db, user_id).fetch_nodes,
         name="Get Nodes from Tags",
         description="""

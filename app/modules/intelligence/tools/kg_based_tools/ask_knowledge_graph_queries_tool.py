@@ -73,7 +73,18 @@ class KnowledgeGraphQueryTool:
 
         return results
 
-    def ask_knowledge_graph_query(
+    def run_tool(
+        self, queries: List[str], project_id: str, node_ids: List[str] = []
+    ) -> Dict[str, str]:
+                # Create a new event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        # Run the coroutine using the event loop
+        return loop.run_until_complete(self.ask_knowledge_graph_query(queries, project_id, node_ids))
+    
+        
+    async def ask_knowledge_graph_query(
         self, queries: List[str], project_id: str, node_ids: List[str] = []
     ) -> Dict[str, str]:
         """
@@ -90,7 +101,7 @@ class KnowledgeGraphQueryTool:
         Returns:
         - Dict[str, str]: A dictionary where keys are the original queries and values are the corresponding responses.
         """
-        project = ProjectService(self.sql_db).get_project_repo_details_from_db_sync(
+        project = await ProjectService(self.sql_db).get_project_repo_details_from_db(
             project_id, self.user_id
         )
         
@@ -103,13 +114,13 @@ class KnowledgeGraphQueryTool:
             QueryRequest(query=query, project_id=project_id, node_ids=node_ids)
             for query in queries
         ]
-        return asyncio.run(self.ask_multiple_knowledge_graph_queries(query_list))
+        return await self.ask_multiple_knowledge_graph_queries(query_list)
     
-    def run(
+    async def run(
         self, queries: List[str], repo_id: str, node_ids: List[str] = []
     ) -> Dict[str, Any]:
         try:
-            results =  self.ask_knowledge_graph_query(queries, repo_id, node_ids)
+            results =  await self.ask_knowledge_graph_query(queries, repo_id, node_ids)
             return results
         except Exception as e:
             logger.error(f"Unexpected error in KnowledgeGraphQueryTool: {str(e)}")
@@ -119,7 +130,8 @@ class KnowledgeGraphQueryTool:
 
 def get_ask_knowledge_graph_queries_tool(sql_db, user_id) -> StructuredTool:
     return StructuredTool.from_function(
-        func=KnowledgeGraphQueryTool(sql_db, user_id).ask_knowledge_graph_query,
+        coroutine=KnowledgeGraphQueryTool(sql_db, user_id).run,
+        func=KnowledgeGraphQueryTool(sql_db, user_id).run_tool,
         name="Ask Knowledge Graph Queries",
         description="""
     Query the code knowledge graph using multiple natural language questions.

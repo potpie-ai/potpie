@@ -108,6 +108,7 @@ class BlastRadiusAgent:
                 self.ask_knowledge_graph_queries,
             ],
             output_pydantic=self.BlastRadiusAgentResponse,
+            async_execution=True,
         )
 
         return analyze_changes_task

@@ -11,9 +11,6 @@ from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_t
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_multiple_node_ids_tool import (
     get_code_from_multiple_node_ids_tool,
 )
-from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
-    get_code_from_node_id_tool,
-)
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_name_tool import (
     get_code_from_probable_node_name_tool,
 )
@@ -40,7 +37,6 @@ class RAGAgent:
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.max_iter = os.getenv("MAX_ITER", 5)
         self.sql_db = sql_db
-        self.get_code_from_node_id = get_code_from_node_id_tool(sql_db, user_id)
         self.get_code_from_multiple_node_ids = get_code_from_multiple_node_ids_tool(
             sql_db, user_id
         )
@@ -74,7 +70,6 @@ class RAGAgent:
             tools=[
                 self.get_nodes_from_tags,
                 self.ask_knowledge_graph_queries,
-                self.get_code_from_node_id,
                 self.get_code_from_multiple_node_ids,
                 self.get_code_from_probable_node_name,
             ],
@@ -174,6 +169,7 @@ class RAGAgent:
             ),
             agent=query_agent,
             output_pydantic=RAGResponse,
+            async_execution=True,
         )
 
         return combined_task
@@ -198,6 +194,7 @@ class RAGAgent:
             process=Process.sequential,
             verbose=True,
             inputs={"user_id": self.user_id},
+
         )
 
         result = await crew.kickoff_async()

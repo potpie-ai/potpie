@@ -21,22 +21,14 @@ class ToolService:
 
     def _initialize_tools(self) -> Dict[str, Any]:
         return {
-            "get_code_from_node_id": GetCodeFromNodeIdTool(self.db, self.user_id),
-            "get_nodes_from_tags": GetNodesFromTags(self.db, self.user_id),
-            "get_code_from_node_name": GetCodeFromNodeNameTool(self.db, self.user_id),
-            "get_code_graph_from_node_id": GetCodeGraphFromNodeIdTool(self.db),
-            "get_code_graph_from_node_name": GetCodeGraphFromNodeNameTool(self.db),
-            "ask_knowledge_graph_queries": KnowledgeGraphQueryTool(self.db, self.user_id),
-            "get_code_from_multiple_node_ids": GetCodeFromMultipleNodeIdsTool(self.db, self.user_id),
             "get_code_from_probable_node_name": GetCodeFromProbableNodeNameTool(self.db, self.user_id),
-            "get_change_context": ChangeDetectionTool(self.db, self.user_id),
         }
 
-    def run_tool(self, tool_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def run_tool(self, tool_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
         tool = self.tools.get(tool_id)
         if not tool:
             raise ValueError(f"Invalid tool_id: {tool_id}")
-        return tool.run(**params)
+        return await tool.run(**params)
 
     def list_tools(self) -> List[ToolInfo]:
         return [

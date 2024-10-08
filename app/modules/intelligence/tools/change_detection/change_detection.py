@@ -22,7 +22,7 @@ from app.modules.search.search_service import SearchService
 
 
 class ChangeDetectionInput(BaseModel):
-    project_id: str = Field(
+    repo_id: str = Field(
         ..., description="The ID of the project being evaluated, this is a UUID."
     )
 
@@ -241,7 +241,7 @@ class ChangeDetectionTool:
                     # Fetch code for node ids and store in a dict
                     node_code_dict = {}
                     for node_id in node_ids:
-                        node_code = GetCodeFromNodeIdTool(
+                        node_code = await GetCodeFromNodeIdTool(
                             self.sql_db, self.user_id
                         ).run(project_id, node_id)
                         node_code_dict[node_id] = {
@@ -257,7 +257,7 @@ class ChangeDetectionTool:
 
                     changes_list = []
                     for node, entry_point in entry_points.items():
-                        entry_point_code = GetCodeFromNodeIdTool(
+                        entry_point_code = await GetCodeFromNodeIdTool(
                             self.sql_db, self.user_id
                         ).run(project_id, entry_point[0])
                         changes_list.append(
@@ -284,11 +284,18 @@ class ChangeDetectionTool:
                 if github:
                     github.close()
 
-    def get_change_context(self, project_id):
-        return asyncio.run(self.get_code_changes(project_id))
     
-    def run(self, repo_id):
-        return asyncio.run(self.get_code_changes(repo_id))
+    async def run(self, repo_id):
+        return await self.get_code_changes(repo_id)
+    
+    def run_tool(self, repo_id):
+                # Create a new event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        # Run the coroutine using the event loop
+        return loop.run_until_complete(self.get_code_changes(repo_id))
+            
 
 
 def get_blast_radius_tool(user_id: str) -> Tool:
@@ -297,13 +304,14 @@ def get_blast_radius_tool(user_id: str) -> Tool:
     """
     change_detection_tool = ChangeDetectionTool(next(get_db()), user_id)
     return StructuredTool.from_function(
-        func=change_detection_tool.get_change_context,
+        coroutine=change_detection_tool.run,
+        func=change_detection_tool.run_tool,
         name="Get code changes",
         description="""
     Get the changes in the codebase.
     This tool analyzes the differences between branches in a Git repository and retrieves updated function details, including their entry points and citations.
     Inputs for the get_code_changes method:
-    - project_id (str): The ID of the project being evaluated, this is a UUID.
+    - repo_id (str): The ID of the project being evaluated, this is a UUID.
     The output includes a dictionary of file patches and a list of changes with updated code and entry point code.
     """,
         args_schema=ChangeDetectionInput,
