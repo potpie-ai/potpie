@@ -123,17 +123,17 @@ class ChangeDetectionTool:
         return await self._find_changed_functions(changed_files, repo_id)
 
     @staticmethod
-    def _find_inbound_neighbors(tx, node_id, project_id, with_bodies):
+    def _find_inbound_neighbors(tx, entrypoint_id, project_id, with_bodies):
         query = f"""
-        MATCH (start:Function {{id: $endpoint_id, project_id: $project_id}})
+        MATCH (start:Function {{node_id: $entrypoint_id, repoId: $project_id}})
         CALL {{
             WITH start
-            MATCH (neighbor:Function {{project_id: $project_id}})-[:CALLS*]->(start)
+            MATCH (neighbor:Function {{repoId: $project_id}})-[:CALLS*]->(start)
             RETURN neighbor{', neighbor.body AS body' if with_bodies else ''}
         }}
         RETURN start, collect({{neighbor: neighbor{', body: neighbor.body' if with_bodies else ''}}}) AS neighbors
         """
-        result = tx.run(query, endpoint_id=node_id, project_id=project_id)
+        result = tx.run(query, entrypoint_id=entrypoint_id, project_id=project_id)
         record = result.single()
         if not record:
             return []
@@ -284,18 +284,16 @@ class ChangeDetectionTool:
                 if github:
                     github.close()
 
-    
     async def run(self, repo_id):
         return await self.get_code_changes(repo_id)
-    
+
     def run_tool(self, repo_id):
-                # Create a new event loop
+        # Create a new event loop
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
         # Run the coroutine using the event loop
         return loop.run_until_complete(self.get_code_changes(repo_id))
-            
 
 
 def get_blast_radius_tool(user_id: str) -> Tool:

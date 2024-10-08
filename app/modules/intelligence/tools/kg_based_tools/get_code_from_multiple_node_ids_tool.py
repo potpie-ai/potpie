@@ -35,7 +35,7 @@ class GetCodeFromMultipleNodeIdsTool:
             neo4j_config["uri"],
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
-    
+
     def get_code(self, repo_id: str, node_ids: List[str]) -> Dict[str, Any]:
         try:
             project = self._get_project(repo_id)
@@ -65,6 +65,7 @@ class GetCodeFromMultipleNodeIdsTool:
 
     def run_tool(self, repo_id: str, node_ids: List[str]) -> Dict[str, Any]:
         return self.get_code(repo_id, node_ids)
+
     async def run(self, repo_id: str, node_ids: List[str]) -> Dict[str, Any]:
         return self.get_code(repo_id, node_ids)
 

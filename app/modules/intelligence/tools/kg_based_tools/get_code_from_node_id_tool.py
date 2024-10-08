@@ -33,6 +33,7 @@ class GetCodeFromNodeIdTool:
             neo4j_config["uri"],
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
+
     def get_code_from_node_id(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         try:
             node_data = self._get_node_data(repo_id, node_id)
@@ -58,7 +59,7 @@ class GetCodeFromNodeIdTool:
 
     def run_tool(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         return self.get_code_from_node_id(repo_id, node_id)
-    
+
     async def run(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         return self.get_code_from_node_id(repo_id, node_id)
 

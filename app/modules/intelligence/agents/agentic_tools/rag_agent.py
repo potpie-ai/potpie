@@ -194,7 +194,6 @@ class RAGAgent:
             process=Process.sequential,
             verbose=True,
             inputs={"user_id": self.user_id},
-
         )
 
         result = await crew.kickoff_async()

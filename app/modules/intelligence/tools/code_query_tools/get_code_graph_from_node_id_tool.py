@@ -34,7 +34,7 @@ class GetCodeGraphFromNodeIdTool:
             neo4j_config["uri"],
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
-    
+
     def fetch_graph_data(self, repo_id: str, node_id: str) -> Optional[Dict[str, Any]]:
         """
         Run the tool to retrieve the code graph.
@@ -64,7 +64,7 @@ class GetCodeGraphFromNodeIdTool:
 
     async def run(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         return self.fetch_graph_data(repo_id, node_id)
-    
+
     async def run_tool(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         return self.fetch_graph_data(repo_id, node_id)
 

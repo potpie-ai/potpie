@@ -1,15 +1,19 @@
+from typing import List
 
-from fastapi import Depends, HTTPException, APIRouter, Header
+from fastapi import APIRouter, Depends, Header, HTTPException
+from sqlalchemy.orm import Session
+
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
-from app.modules.intelligence.tools.tool_schema import ToolRequest, ToolResponse
+from app.modules.intelligence.tools.tool_schema import (
+    ToolInfo,
+    ToolRequest,
+    ToolResponse,
+)
 from app.modules.intelligence.tools.tool_service import ToolService
-from sqlalchemy.orm import Session
-from typing import List
-from app.modules.intelligence.tools.tool_schema import ToolInfo
-
 
 router = APIRouter()
+
 
 @router.post("/tools/run_tool", response_model=ToolResponse)
 async def run_tool(
@@ -29,7 +33,10 @@ async def run_tool(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"An unexpected error occurred: {str(e)}"
+        )
+
 
 @router.get("/tools/list_tools", response_model=List[ToolInfo])
 async def list_tools(

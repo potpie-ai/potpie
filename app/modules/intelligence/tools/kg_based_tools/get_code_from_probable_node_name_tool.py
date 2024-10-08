@@ -91,18 +91,17 @@ class GetCodeFromProbableNodeNameTool:
         self, project_id: str, probable_node_name: str
     ) -> Dict[str, Any]:
         project = await ProjectService(self.sql_db).get_project_repo_details_from_db(
-                project_id, self.user_id
-            )
+            project_id, self.user_id
+        )
         if not project:
             raise ValueError(
                 f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
             )
         return await self.find_node_from_probable_name(project_id, probable_node_name)
-        
 
     async def run(self, repo_id: str, probable_node_name: str) -> Dict[str, Any]:
         return await self.get_code_from_probable_node_name(repo_id, probable_node_name)
-    
+
     def run_tool(self, repo_id: str, probable_node_name: str) -> Dict[str, Any]:
         # Create a new event loop
         loop = asyncio.new_event_loop()
@@ -110,7 +109,7 @@ class GetCodeFromProbableNodeNameTool:
 
         # Run the coroutine using the event loop
         return loop.run_until_complete(self.run(repo_id, probable_node_name))
-    
+
     def _get_node_data(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         query = """
         MATCH (n:NODE {node_id: $node_id, repoId: $repo_id})

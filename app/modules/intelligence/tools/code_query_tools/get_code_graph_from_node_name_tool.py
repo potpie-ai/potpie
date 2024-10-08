@@ -36,7 +36,7 @@ class GetCodeGraphFromNodeNameTool:
             neo4j_config["uri"],
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
-    
+
     def fetch_graph_data(self, repo_id: str, node_name: str) -> Dict[str, Any]:
         """
         Run the tool to retrieve the code graph.
@@ -72,7 +72,7 @@ class GetCodeGraphFromNodeNameTool:
 
     async def run(self, repo_id: str, node_name: str) -> Dict[str, Any]:
         return self.fetch_graph_data(repo_id, node_name)
-    
+
     def run_tool(self, repo_id: str, node_name: str) -> Dict[str, Any]:
         return self.fetch_graph_data(repo_id, node_name)
 
@@ -89,7 +89,7 @@ class GetCodeGraphFromNodeNameTool:
         """
         with self.neo4j_driver.session() as session:
             result = session.run(query, node_name=node_name, repo_id=repo_id)
-            node_id = result.single().get("node_id") 
+            node_id = result.single().get("node_id")
             return node_id
 
     def _get_graph_data(self, repo_id: str, node_id: str) -> Optional[Dict[str, Any]]:

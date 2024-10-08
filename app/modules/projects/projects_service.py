@@ -146,7 +146,7 @@ class ProjectService:
             }
         else:
             return None
-    
+
     def get_project_repo_details_from_db_sync(self, project_id: int, user_id: str):
         project = (
             self.db.query(Project)

@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from typing import Any, Dict
 
@@ -10,7 +9,6 @@ from sqlalchemy.orm import Session
 from app.core.config_provider import config_provider
 from app.modules.github.github_service import GithubService
 from app.modules.projects.projects_model import Project
-from app.modules.projects.projects_service import ProjectService
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +30,12 @@ class GetCodeFromNodeNameTool:
             neo4j_config["uri"],
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
-    
+
     def get_code_from_node_name(self, repo_id: str, node_name: str) -> Dict[str, Any]:
         try:
             project = self._get_project(repo_id)
-            
-            if not project.user_id == self.user_id:
+
+            if project.user_id != self.user_id:
                 raise ValueError(
                     f"Project with ID '{repo_id}' not found in database for user '{self.user_id}'"
                 )
@@ -60,7 +58,7 @@ class GetCodeFromNodeNameTool:
 
     async def run(self, repo_id: str, node_name: str) -> Dict[str, Any]:
         return self.get_code_from_node_name(repo_id, node_name)
-    
+
     def run_tool(self, repo_id: str, node_name: str) -> Dict[str, Any]:
         return self.get_code_from_node_name(repo_id, node_name)
 

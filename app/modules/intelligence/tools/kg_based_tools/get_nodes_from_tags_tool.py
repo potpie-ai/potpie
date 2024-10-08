@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from typing import Any, Dict, List
 
@@ -44,9 +43,9 @@ class GetNodesFromTags:
         - project_id (str): The ID of the project being evaluated, this is a UUID.
         """
         project = ProjectService(self.sql_db).get_project_repo_details_from_db_sync(
-                project_id, self.user_id
-            )
-        
+            project_id, self.user_id
+        )
+
         if not project:
             raise ValueError(
                 f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"

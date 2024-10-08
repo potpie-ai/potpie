@@ -68,7 +68,6 @@ class AuthService:
             res.headers["WWW-Authenticate"] = 'Bearer realm="auth_required"'
             return decoded_token
 
-    @classmethod
     @staticmethod
     def verify_hmac_signature(payload_body: dict, hmac_signature: str) -> bool:
         if os.getenv("ENV") == "development":
@@ -78,7 +77,7 @@ class AuthService:
             expected_signature = hmac.new(
                 key=shared_key.encode(),
                 msg=json.dumps(payload_body).encode(),
-                digestmod=hashlib.sha256
+                digestmod=hashlib.sha256,
             ).hexdigest()
             return hmac.compare_digest(hmac_signature, expected_signature)
 

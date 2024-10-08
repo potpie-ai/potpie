@@ -34,7 +34,6 @@ class MultipleKnowledgeGraphQueriesInput(BaseModel):
 
 
 class KnowledgeGraphQueryTool:
-
     name = "ask_knowledge_graph_queries"
     description = (
         "Query the code knowledge graph using multiple natural language questions"
@@ -76,14 +75,15 @@ class KnowledgeGraphQueryTool:
     def run_tool(
         self, queries: List[str], project_id: str, node_ids: List[str] = []
     ) -> Dict[str, str]:
-                # Create a new event loop
+        # Create a new event loop
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
         # Run the coroutine using the event loop
-        return loop.run_until_complete(self.ask_knowledge_graph_query(queries, project_id, node_ids))
-    
-        
+        return loop.run_until_complete(
+            self.ask_knowledge_graph_query(queries, project_id, node_ids)
+        )
+
     async def ask_knowledge_graph_query(
         self, queries: List[str], project_id: str, node_ids: List[str] = []
     ) -> Dict[str, str]:
@@ -104,7 +104,7 @@ class KnowledgeGraphQueryTool:
         project = await ProjectService(self.sql_db).get_project_repo_details_from_db(
             project_id, self.user_id
         )
-        
+
         if not project:
             raise ValueError(
                 f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
@@ -115,17 +115,16 @@ class KnowledgeGraphQueryTool:
             for query in queries
         ]
         return await self.ask_multiple_knowledge_graph_queries(query_list)
-    
+
     async def run(
         self, queries: List[str], repo_id: str, node_ids: List[str] = []
     ) -> Dict[str, Any]:
         try:
-            results =  await self.ask_knowledge_graph_query(queries, repo_id, node_ids)
+            results = await self.ask_knowledge_graph_query(queries, repo_id, node_ids)
             return results
         except Exception as e:
             logger.error(f"Unexpected error in KnowledgeGraphQueryTool: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
-
 
 
 def get_ask_knowledge_graph_queries_tool(sql_db, user_id) -> StructuredTool:
