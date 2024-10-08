@@ -97,7 +97,6 @@ class ConversationService:
             shared_user_ids = [
                 user_service.get_user_id_by_email(email) for email in conversation.shared_with_emails
             ]
-            shared_user_ids = [uid for uid in shared_user_ids if uid] #Filtering out None values 
             # Check if the current user ID is in the shared user IDs
             if user_id in shared_user_ids:
                 return ConversationAccessType.READ  # Shared user can only read
