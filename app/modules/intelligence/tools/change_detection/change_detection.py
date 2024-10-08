@@ -123,7 +123,7 @@ class ChangeDetectionTool:
         return await self._find_changed_functions(changed_files, repo_id)
 
     @staticmethod
-    def _find_inbound_neighbors(tx, entrypoint_id, project_id, with_bodies):
+    def _find_inbound_neighbors(tx, identifier_id, repo_id, with_bodies):
         query = f"""
         MATCH (start:Function {{node_id: $entrypoint_id, repoId: $project_id}})
         CALL {{
@@ -133,7 +133,7 @@ class ChangeDetectionTool:
         }}
         RETURN start, collect({{neighbor: neighbor{', body: neighbor.body' if with_bodies else ''}}}) AS neighbors
         """
-        result = tx.run(query, entrypoint_id=entrypoint_id, project_id=project_id)
+        result = tx.run(query, entrypoint_id=identifier_id, project_id=repo_id)
         record = result.single()
         if not record:
             return []
