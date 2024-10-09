@@ -7,7 +7,7 @@ from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
 
 from .provider_controller import ProviderController
-from .provider_schema import ProviderInfo, SetProviderRequest, GetProviderResponse
+from .provider_schema import GetProviderResponse, ProviderInfo, SetProviderRequest
 
 router = APIRouter()
 
@@ -45,6 +45,6 @@ class ProviderAPI:
     ):
         if not AuthService.verify_hmac_signature(user_id, hmac_signature):
             raise HTTPException(status_code=401, detail="Invalid HMAC signature")
-        
+
         controller = ProviderController(db, user_id)
         return await controller.get_preferred_llm(user_id)

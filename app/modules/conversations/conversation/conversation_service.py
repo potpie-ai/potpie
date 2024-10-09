@@ -70,13 +70,22 @@ class ConversationService:
         history_manager = ChatHistoryService(db)
         provider_service = ProviderService(db, user_id)
         agent_injector_service = AgentInjectorService(db, provider_service)
-        return cls(db, user_id, project_service, history_manager, provider_service, agent_injector_service)
+        return cls(
+            db,
+            user_id,
+            project_service,
+            history_manager,
+            provider_service,
+            agent_injector_service,
+        )
 
     async def create_conversation(
         self, conversation: CreateConversationRequest, user_id: str
     ) -> tuple[str, str]:
         try:
-            if not self.agent_injector_service.validate_agent_id(conversation.agent_ids[0]):
+            if not self.agent_injector_service.validate_agent_id(
+                conversation.agent_ids[0]
+            ):
                 raise ConversationServiceError(
                     f"Invalid agent_id: {conversation.agent_ids[0]}"
                 )

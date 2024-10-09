@@ -218,11 +218,13 @@ class ProviderService:
         )
 
         preferred_provider = (
-            user_pref.preferences.get("llm_provider", "openai") 
-            if user_pref 
+            user_pref.preferences.get("llm_provider", "openai")
+            if user_pref
             else "openai"
         )
 
-        model_type = "gpt-4o" if preferred_provider == "openai" else "claude-3-5-sonnet-20240620"
+        model_type = (
+            "gpt-4o" if preferred_provider == "openai" else "claude-3-5-sonnet-20240620"
+        )
 
         return preferred_provider, model_type

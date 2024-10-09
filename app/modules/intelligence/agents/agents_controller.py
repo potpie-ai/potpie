@@ -3,7 +3,7 @@ from typing import List
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.modules.intelligence.agents.agents_schema import AgentInfo
+from app.modules.intelligence.agents.agents_schema import Agent, AgentInfo
 from app.modules.intelligence.agents.agents_service import AgentsService
 
 
@@ -22,3 +22,21 @@ class AgentsController:
 
     async def get_agent_details(self, agent_id: str) -> AgentInfo:
         return await self.service.get_agent_details(agent_id)
+
+    async def create_or_update_agent(
+        self,
+        user_id: str,
+        role: str,
+        goal: str,
+        backstory: str,
+        tool_ids: List[str],
+        tasks: List[dict],
+    ) -> Agent:
+        return await self.service.create_or_update_agent(
+            user_id=user_id,
+            role=role,
+            goal=goal,
+            backstory=backstory,
+            tool_ids=tool_ids,
+            tasks=tasks,
+        )
