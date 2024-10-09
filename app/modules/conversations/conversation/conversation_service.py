@@ -93,10 +93,9 @@ class ConversationService:
             return ConversationAccessType.WRITE  # Creator can write
         # Check if the conversation is shared
         if conversation.shared_with_emails:
-            # Convert shared emails to user IDs
-            shared_user_ids = [
-                user_service.get_user_id_by_email(email) for email in conversation.shared_with_emails
-            ]
+            shared_user_ids = user_service.get_user_ids_by_emails(
+                conversation.shared_with_emails
+            )
             # Check if the current user ID is in the shared user IDs
             if user_id in shared_user_ids:
                 return ConversationAccessType.READ  # Shared user can only read

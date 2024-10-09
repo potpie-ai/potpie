@@ -153,10 +153,10 @@ async def share_chat(
 ):
     service = ShareChatService(db)
     try:
-        shareable_link = await service.share_chat(request.conversation_id, request.recipientEmails)
+        shared_conversation = await service.share_chat(request.conversation_id, request.recipientEmails)
         return ShareChatResponse(
             message="Chat shared successfully!",
-            shareableLink=shareable_link
+            sharedID=shared_conversation
         )
     except ShareChatServiceError as e:
         raise HTTPException(status_code=400, detail=str(e))

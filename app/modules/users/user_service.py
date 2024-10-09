@@ -134,9 +134,11 @@ class UserService:
         
     def get_user_ids_by_emails(self, emails: List[str]) -> List[str]:
         try:
-            user = self.db.query(User).filter(User.email in emails).all()
-            if user:
-                return user.uid
+            users = self.db.query(User).filter(User.email.in_(emails)).all()
+            print(users)
+            if users:
+                user_ids = [user.uid for user in users]
+                return user_ids
             else:
                 return None
         except Exception as e:

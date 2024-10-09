@@ -9,7 +9,7 @@ class ShareChatRequest(BaseModel):
 
 class ShareChatResponse(BaseModel):
     message: str  
-    shareableLink: str  
+    sharedID: str  
 
 
 class SharedChatResponse(BaseModel):
