@@ -50,7 +50,7 @@ class AgentsAPI:
                 goal=request.goal,
                 backstory=request.backstory,
                 tool_ids=request.tool_ids,
-                tasks=[task.dict(exclude_unset=True) for task in request.tasks],
+                tasks=[task.model_dump(exclude_unset=True) for task in request.tasks],
             )
         except Exception as e:
             raise HTTPException(status_code=400, detail=str(e))

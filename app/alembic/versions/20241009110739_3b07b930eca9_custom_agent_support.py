@@ -28,6 +28,8 @@ def upgrade() -> None:
     sa.Column('backstory', sa.String(), nullable=True),
     sa.Column('tool_ids', postgresql.ARRAY(sa.String()), nullable=True),
     sa.Column('tasks', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    sa.Column('deployment_url', sa.String(), nullable=True),
+
     sa.ForeignKeyConstraint(['user_id'], ['users.uid'], ),
     sa.PrimaryKeyConstraint('id')
     )

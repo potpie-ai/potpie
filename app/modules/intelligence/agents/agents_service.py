@@ -89,9 +89,9 @@ class AgentsService:
         tool_ids: List[str],
         tasks: List[dict],
     ) -> Agent:
-        id = str(uuid7())
+        agent_id = str(uuid7())
         custom_agent = CustomAgent(
-            id=id,
+            id=agent_id,
             user_id=user_id,
             role=role,
             goal=goal,

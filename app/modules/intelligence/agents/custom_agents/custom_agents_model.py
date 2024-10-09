@@ -15,5 +15,6 @@ class CustomAgent(Base):
     backstory = Column(String)
     tool_ids = Column(ARRAY(String))
     tasks = Column(JSONB)
+    deployment_url = Column(String)
 
     user = relationship(User)
