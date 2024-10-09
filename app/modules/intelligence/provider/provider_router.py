@@ -41,10 +41,6 @@ class ProviderAPI:
     async def get_preferred_llm(
         user_id: str,
         db: Session = Depends(get_db),
-        hmac_signature: str = Header(..., alias="X-HMAC-Signature"),
     ):
-        if not AuthService.verify_hmac_signature(user_id, hmac_signature):
-            raise HTTPException(status_code=401, detail="Invalid HMAC signature")
-
         controller = ProviderController(db, user_id)
         return await controller.get_preferred_llm(user_id)
