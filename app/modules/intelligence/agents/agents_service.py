@@ -3,10 +3,7 @@ from typing import List
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.modules.intelligence.agents.agents_schema import (
-    Agent,
-    AgentInfo,
-)
+from app.modules.intelligence.agents.agents_schema import Agent, AgentInfo
 from app.modules.intelligence.agents.custom_agents.custom_agents_model import (
     CustomAgent,
 )

@@ -3,22 +3,10 @@ from typing import List
 from pydantic import BaseModel, validator
 
 
-class PromptInfo(BaseModel):
-    type: str
-    text: str
-
-
-class ToolInfo(BaseModel):
-    name: str
-    description: str
-
-
 class AgentInfo(BaseModel):
     id: str
     name: str
     description: str
-    prompts: List[PromptInfo]
-    tools: List[ToolInfo]
 
 
 class TaskCreate(BaseModel):
