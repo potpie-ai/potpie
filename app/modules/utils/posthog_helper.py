@@ -8,10 +8,10 @@ logger = logging.getLogger(__name__)
 
 class PostHogClient:
     def __init__(self):
-        self.is_staging_or_production = os.getenv("ENV") in ["staging", "production"]
+        self.environment = os.getenv("ENV")
 
         # Only initialize PostHog if not in development mode
-        if self.is_staging_or_production:
+        if self.environment == "production":
             self.api_key = os.getenv("POSTHOG_API_KEY")
             self.posthog_host = os.getenv("POSTHOG_HOST")
             self.posthog = Posthog(self.api_key, host=self.posthog_host)
