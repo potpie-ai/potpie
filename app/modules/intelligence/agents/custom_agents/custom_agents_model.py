@@ -1,4 +1,4 @@
-from sqlalchemy import Column, ForeignKey, String
+from sqlalchemy import TIMESTAMP, Column, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import relationship
 
@@ -17,5 +17,12 @@ class CustomAgent(Base):
     tool_ids = Column(ARRAY(String))
     tasks = Column(JSONB)
     deployment_url = Column(String)
+    created_at = Column(TIMESTAMP(timezone=True), default=func.now(), nullable=False)
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
 
     user = relationship(User)
