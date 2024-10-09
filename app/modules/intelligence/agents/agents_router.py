@@ -22,19 +22,6 @@ class AgentsAPI:
         return await controller.list_available_agents()
 
     @staticmethod
-    @router.get("/agent-details/{agent_id}", response_model=AgentInfo)
-    async def get_agent_details(
-        agent_id: str,
-        db: Session = Depends(get_db),
-        user=Depends(AuthService.check_auth),
-    ):
-        controller = AgentsController(db)
-        try:
-            return await controller.get_agent_details(agent_id)
-        except Exception as e:
-            raise HTTPException(status_code=404, detail=str(e))
-
-    @staticmethod
     @router.post("/agents/", response_model=Agent)
     async def create_or_update_agent(
         request: AgentCreate,

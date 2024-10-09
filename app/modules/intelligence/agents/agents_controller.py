@@ -20,9 +20,6 @@ class AgentsController:
                 status_code=500, detail=f"Error listing agents: {str(e)}"
             )
 
-    async def get_agent_details(self, agent_id: str) -> AgentInfo:
-        return await self.service.get_agent_details(agent_id)
-
     async def create_or_update_agent(
         self,
         user_id: str,

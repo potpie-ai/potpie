@@ -21,15 +21,6 @@ class AgentInfo(BaseModel):
     tools: List[ToolInfo]
 
 
-class AgentDetailsAsACrewAIAgent(BaseModel):
-    id: str
-    name: str
-    description: str
-    backstory: str
-    goals: List[str]
-    tools: List[ToolInfo]
-
-
 class TaskCreate(BaseModel):
     description: str
     expected_output: str
@@ -42,10 +33,10 @@ class AgentCreate(BaseModel):
     tool_ids: List[str]
     tasks: List[TaskCreate]
 
-    @validator('tasks')
+    @validator("tasks")
     def validate_tasks(cls, tasks):
         if not 1 <= len(tasks) <= 5:
-            raise ValueError('Number of tasks must be between 1 and 5')
+            raise ValueError("Number of tasks must be between 1 and 5")
         return tasks
 
 

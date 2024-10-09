@@ -1,9 +1,10 @@
-from sqlalchemy import Column, String, ForeignKey
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, ForeignKey, String
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.orm import relationship
 
 from app.core.base_model import Base
 from app.modules.users.user_model import User
+
 
 class CustomAgent(Base):
     __tablename__ = "custom_agents"
