@@ -23,7 +23,7 @@ class AgentsAPI:
 
     @staticmethod
     @router.post("/agents/", response_model=Agent)
-    async def create_or_update_agent(
+    async def create_custom_agent(
         request: AgentCreate,
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
@@ -31,7 +31,7 @@ class AgentsAPI:
         user_id = user["user_id"]
         controller = AgentsController(db)
         try:
-            return await controller.create_or_update_agent(
+            return await controller.create_custom_agent(
                 user_id=user_id,
                 role=request.role,
                 goal=request.goal,

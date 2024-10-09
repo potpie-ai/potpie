@@ -20,7 +20,7 @@ class AgentsController:
                 status_code=500, detail=f"Error listing agents: {str(e)}"
             )
 
-    async def create_or_update_agent(
+    async def create_custom_agent(
         self,
         user_id: str,
         role: str,
@@ -29,7 +29,7 @@ class AgentsController:
         tool_ids: List[str],
         tasks: List[dict],
     ) -> Agent:
-        return await self.service.create_or_update_agent(
+        return await self.service.create_custom_agent(
             user_id=user_id,
             role=role,
             goal=goal,

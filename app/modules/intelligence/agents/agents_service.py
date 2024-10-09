@@ -54,7 +54,7 @@ class AgentsService:
             )
         return cleaned_citations
 
-    async def create_or_update_agent(
+    async def create_custom_agent(
         self,
         user_id: str,
         role: str,
