@@ -150,32 +150,6 @@ class ChangeDetectionTool:
                 self._traverse, identifier, project_id, neighbors_query
             )
 
-    def find_entry_points(self, identifiers, project_id):
-        all_inbound_nodes = set()
-
-        for identifier in identifiers:
-            traversal_result = self.traverse(
-                identifier=identifier,
-                project_id=project_id,
-                neighbors_fn=ChangeDetectionTool._find_inbound_neighbors,
-            )
-            for item in traversal_result:
-                if isinstance(item, dict):
-                    all_inbound_nodes.update([frozenset(item.items())])
-
-        entry_points = set()
-        for node in all_inbound_nodes:
-            node_dict = dict(node)
-            traversal_result = self.traverse(
-                identifier=node_dict["id"],
-                project_id=project_id,
-                neighbors_fn=ChangeDetectionTool._find_inbound_neighbors,
-            )
-            if len(traversal_result) == 1:
-                entry_points.add(node)
-
-        return entry_points
-
     async def get_code_changes(self, project_id):
         global patches_dict, repo
         patches_dict = {}

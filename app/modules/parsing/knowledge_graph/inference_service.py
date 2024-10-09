@@ -172,8 +172,8 @@ class InferenceService:
                 OPTIONAL MATCH path = (entryPoint:FUNCTION)-[:CALLS*]->(n)
                 WHERE NOT (:FUNCTION)-[:CALLS]->(entryPoint)
                 WITH n, collect(DISTINCT entryPoint) AS entryPoints
-                RETURN n.node_id AS input_node_id, 
-                       CASE 
+                RETURN n.node_id AS input_node_id,
+                       CASE
                            WHEN size(entryPoints) = 0 THEN [n.node_id]
                            ELSE [ep IN entryPoints | ep.node_id]
                        END AS entry_point_node_ids
