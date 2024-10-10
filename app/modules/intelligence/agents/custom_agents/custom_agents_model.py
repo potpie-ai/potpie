@@ -1,5 +1,5 @@
 from sqlalchemy import TIMESTAMP, Column, ForeignKey, String, func
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 from app.core.base_model import Base

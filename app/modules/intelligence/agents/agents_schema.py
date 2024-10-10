@@ -1,6 +1,6 @@
-from typing import List, Any, Union, Dict
-import json
-from pydantic import BaseModel, field_validator, Field, Json
+from typing import Any, List
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class AgentInfo(BaseModel):
@@ -15,11 +15,11 @@ class TaskCreate(BaseModel):
     expected_output: Any = Field(description="A JSON object")
     tools: List[str]
 
-    @field_validator('expected_output')
+    @field_validator("expected_output")
     @classmethod
     def validate_json_object(cls, v):
         if not isinstance(v, dict):
-            raise ValueError('Expected a JSON object')
+            raise ValueError("Expected a JSON object")
         return v
 
 
