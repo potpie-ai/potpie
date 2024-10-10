@@ -35,7 +35,7 @@ class GetCodeGraphFromNodeIdTool:
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
 
-    def run(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+    def fetch_graph_data(self, repo_id: str, node_id: str) -> Optional[Dict[str, Any]]:
         """
         Run the tool to retrieve the code graph.
 
@@ -61,6 +61,12 @@ class GetCodeGraphFromNodeIdTool:
         except Exception as e:
             logging.exception(f"An unexpected error occurred: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
+
+    async def run(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+        return self.fetch_graph_data(repo_id, node_id)
+
+    async def run_tool(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+        return self.fetch_graph_data(repo_id, node_id)
 
     def _get_project(self, repo_id: str) -> Optional[Project]:
         """Retrieve project from the database."""
@@ -192,7 +198,8 @@ class GetCodeGraphFromNodeIdTool:
 def get_code_graph_from_node_id_tool(sql_db: Session) -> Tool:
     tool_instance = GetCodeGraphFromNodeIdTool(sql_db)
     return StructuredTool.from_function(
-        func=tool_instance.run,
+        coroutine=tool_instance.run,
+        func=tool_instance.run_tool,
         name="Get Code Graph From Node ID",
         description="Retrieves a code graph for a specific node in a repository given its node ID",
     )

@@ -36,7 +36,7 @@ class GetCodeFromMultipleNodeIdsTool:
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
 
-    def run_multiple(self, repo_id: str, node_ids: List[str]) -> Dict[str, Any]:
+    def get_code(self, repo_id: str, node_ids: List[str]) -> Dict[str, Any]:
         try:
             project = self._get_project(repo_id)
             if not project:
@@ -56,12 +56,18 @@ class GetCodeFromMultipleNodeIdsTool:
                         "error": f"Node with ID '{node_id}' not found in repo '{repo_id}'"
                     }
 
-            return results
+            return {"results": results}
         except Exception as e:
             logger.error(
                 f"Unexpected error in GetCodeFromMultipleNodeIdsTool: {str(e)}"
             )
             return {"error": f"An unexpected error occurred: {str(e)}"}
+
+    def run_tool(self, repo_id: str, node_ids: List[str]) -> Dict[str, Any]:
+        return self.get_code(repo_id, node_ids)
+
+    async def run(self, repo_id: str, node_ids: List[str]) -> Dict[str, Any]:
+        return self.get_code(repo_id, node_ids)
 
     def _get_node_data(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         query = """
@@ -127,10 +133,11 @@ def get_code_from_multiple_node_ids_tool(
 ) -> StructuredTool:
     tool_instance = GetCodeFromMultipleNodeIdsTool(sql_db, user_id)
     return StructuredTool.from_function(
-        func=tool_instance.run_multiple,
+        coroutine=tool_instance.run,
+        func=tool_instance.run_tool,
         name="Get Code and docstring From Multiple Node IDs",
         description="""Retrieves code and docstring for multiple node ids in a repository given their node IDs
-                Inputs for the run_multiple method:
+                Inputs for the run method:
                 - repo_id (str): The repository ID to retrieve code and docstring for, this is a UUID.
                 - node_ids (List[str]): A list of node IDs to retrieve code and docstring for, this is a UUID.""",
         args_schema=GetCodeFromMultipleNodeIdsInput,

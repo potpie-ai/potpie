@@ -1,5 +1,5 @@
-import asyncio
-from typing import List
+import logging
+from typing import Any, Dict, List
 
 from langchain.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -8,6 +8,9 @@ from app.core.config_provider import ConfigProvider
 from app.core.database import get_db
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.projects.projects_service import ProjectService
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class GetNodesFromTagsInput(BaseModel):
@@ -18,6 +21,9 @@ class GetNodesFromTagsInput(BaseModel):
 
 
 class GetNodesFromTags:
+    name = "get_nodes_from_tags"
+    description = "Get nodes from the knowledge graph based on the provided tags"
+
     def __init__(self, sql_db, user_id):
         self.sql_db = sql_db
         self.user_id = user_id
@@ -36,11 +42,10 @@ class GetNodesFromTags:
            * EXTERNAL_SERVICE: Does the code make HTTP requests to external services? Check for HTTP client usage or request handling.
         - project_id (str): The ID of the project being evaluated, this is a UUID.
         """
-        project = asyncio.run(
-            ProjectService(self.sql_db).get_project_repo_details_from_db(
-                project_id, self.user_id
-            )
+        project = ProjectService(self.sql_db).get_project_repo_details_from_db_sync(
+            project_id, self.user_id
         )
+
         if not project:
             raise ValueError(
                 f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
@@ -59,9 +64,18 @@ class GetNodesFromTags:
         ).query_graph(query)
         return nodes
 
+    async def run(self, tags: List[str], repo_id: str) -> Dict[str, Any]:
+        try:
+            nodes = self.fetch_nodes(tags, repo_id)
+            return {"nodes": nodes}
+        except Exception as e:
+            logger.error(f"Unexpected error in GetNodesFromTags: {str(e)}")
+            return {"error": f"An unexpected error occurred: {str(e)}"}
+
 
 def get_nodes_from_tags_tool(sql_db, user_id) -> StructuredTool:
     return StructuredTool.from_function(
+        coroutine=GetNodesFromTags(sql_db, user_id).run,
         func=GetNodesFromTags(sql_db, user_id).fetch_nodes,
         name="Get Nodes from Tags",
         description="""

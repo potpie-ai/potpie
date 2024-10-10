@@ -112,6 +112,7 @@ class UnitTestAgent:
             agent=unit_test_agent,
             output_pydantic=self.TestAgentResponse,
             tools=[self.get_code_from_probable_node_name, self.get_code_from_node_id],
+            async_execution=True,
         )
 
         return unit_test_task
