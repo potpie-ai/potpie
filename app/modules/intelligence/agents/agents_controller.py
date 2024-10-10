@@ -26,7 +26,6 @@ class AgentsController:
         role: str,
         goal: str,
         backstory: str,
-        tool_ids: List[str],
         tasks: List[dict],
     ) -> Agent:
         return await self.service.create_custom_agent(
@@ -34,6 +33,5 @@ class AgentsController:
             role=role,
             goal=goal,
             backstory=backstory,
-            tool_ids=tool_ids,
             tasks=tasks,
         )

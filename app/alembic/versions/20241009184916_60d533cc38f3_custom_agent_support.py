@@ -26,7 +26,6 @@ def upgrade() -> None:
     sa.Column('role', sa.String(), nullable=True),
     sa.Column('goal', sa.String(), nullable=True),
     sa.Column('backstory', sa.String(), nullable=True),
-    sa.Column('tool_ids', postgresql.ARRAY(sa.String()), nullable=True),
     sa.Column('tasks', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.Column('deployment_url', sa.String(), nullable=True),
     sa.Column('created_at', sa.TIMESTAMP(timezone=True), nullable=False),

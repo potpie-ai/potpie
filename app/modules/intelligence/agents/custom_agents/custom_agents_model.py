@@ -14,7 +14,6 @@ class CustomAgent(Base):
     role = Column(String)
     goal = Column(String)
     backstory = Column(String)
-    tool_ids = Column(ARRAY(String))
     tasks = Column(JSONB)
     deployment_url = Column(String)
     created_at = Column(TIMESTAMP(timezone=True), default=func.now(), nullable=False)

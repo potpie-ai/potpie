@@ -60,7 +60,6 @@ class AgentsService:
         role: str,
         goal: str,
         backstory: str,
-        tool_ids: List[str],
         tasks: List[dict],
     ) -> Agent:
         agent_id = str(uuid7())
@@ -70,11 +69,9 @@ class AgentsService:
             role=role,
             goal=goal,
             backstory=backstory,
-            tool_ids=tool_ids,
             tasks=tasks,
         )
         self.db.add(custom_agent)
-
         self.db.commit()
         self.db.refresh(custom_agent)
         return Agent(**custom_agent.__dict__)

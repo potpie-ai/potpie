@@ -1,6 +1,6 @@
 from typing import List
 
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, field_validator
 
 
 class AgentInfo(BaseModel):
@@ -12,16 +12,17 @@ class AgentInfo(BaseModel):
 class TaskCreate(BaseModel):
     description: str
     expected_output: str
+    tools: List[str]
 
 
 class AgentCreate(BaseModel):
     role: str
     goal: str
     backstory: str
-    tool_ids: List[str]
     tasks: List[TaskCreate]
 
-    @validator("tasks")
+    @field_validator("tasks")
+    @classmethod
     def validate_tasks(cls, tasks):
         if not 1 <= len(tasks) <= 5:
             raise ValueError("Number of tasks must be between 1 and 5")
