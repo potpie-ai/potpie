@@ -13,7 +13,7 @@ class TaskCreate(BaseModel):
     description: str
     tools: List[str]
     expected_output: Any = Field(description="A JSON object")
-
+    #TODO: validate the json object with pydantic
     @field_validator("expected_output")
     @classmethod
     def validate_json_object(cls, v):
