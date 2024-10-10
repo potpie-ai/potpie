@@ -167,12 +167,16 @@ class InferenceService:
             result = session.run(
                 """
                 UNWIND $node_ids AS nodeId
-                MATCH (n:FUNCTION:FILE)
-                WHERE n.node_id = nodeId and n.repoId = $repo_id
-                OPTIONAL MATCH path = (entryPoint)-[*]->(n)
-                WHERE NOT (entryPoint)<--()
-                RETURN n.node_id AS input_node_id, collect(DISTINCT entryPoint.node_id) AS entry_point_node_ids
-
+                MATCH (n:FUNCTION)
+                WHERE n.node_id = nodeId AND n.repoId = $repo_id
+                OPTIONAL MATCH path = (entryPoint:FUNCTION)-[:CALLS*]->(n)
+                WHERE NOT (:FUNCTION)-[:CALLS]->(entryPoint)
+                WITH n, collect(DISTINCT entryPoint) AS entryPoints
+                RETURN n.node_id AS input_node_id,
+                       CASE
+                           WHEN size(entryPoints) = 0 THEN [n.node_id]
+                           ELSE [ep IN entryPoints | ep.node_id]
+                       END AS entry_point_node_ids
                 """,
                 node_ids=node_ids,
                 repo_id=repo_id,
@@ -564,9 +568,6 @@ class InferenceService:
 
         start_time = time.time()
         logger.info(f"Parsing project {repo_id}: Starting the inference process...")
-        total_word_count = len(base_prompt.split()) + sum(
-            len(request.text.split()) for request in batch
-        )
 
         chain = chat_prompt | self.llm | output_parser
         result = await chain.ainvoke({"code_snippets": code_snippets})
