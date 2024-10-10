@@ -13,7 +13,6 @@ class TaskCreate(BaseModel):
     description: str
     tools: List[str]
     expected_output: Any = Field(description="A JSON object")
-    tools: List[str]
 
     @field_validator("expected_output")
     @classmethod
