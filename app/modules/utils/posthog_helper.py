@@ -26,7 +26,7 @@ class PostHogClient:
             event_name (str): The name of the event to track.
             properties (dict): Additional properties related to the event.
         """
-        if not self.is_staging_or_production:
+        if self.environment != "production":
             return
 
         if self.posthog is not None:  # Ensure posthog is initialized
