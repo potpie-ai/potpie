@@ -19,7 +19,7 @@ class GetCodeGraphFromNodeNameTool:
         "Retrieves a code graph for a specific node in a repository given its node name"
     )
 
-    def __init__(self, sql_db: Session):
+    def __init__(self, sql_db: Session, user_id: str):
         """
         Initialize the tool with a SQL database session.
 
@@ -27,6 +27,7 @@ class GetCodeGraphFromNodeNameTool:
             sql_db (Session): SQLAlchemy database session.
         """
         self.sql_db = sql_db
+        self.user_id = user_id
         self.neo4j_driver = self._create_neo4j_driver()
 
     def _create_neo4j_driver(self) -> GraphDatabase.driver:
@@ -78,7 +79,9 @@ class GetCodeGraphFromNodeNameTool:
 
     def _get_project(self, repo_id: str) -> Optional[Project]:
         """Retrieve project from the database."""
-        return self.sql_db.query(Project).filter(Project.id == repo_id).first()
+        return self.sql_db.query(Project).filter(
+            Project.id == repo_id, Project.user_id == self.user_id
+        ).first()
 
     def _get_node_id(self, repo_id: str, node_name: str) -> Optional[str]:
         """Retrieve node ID from Neo4j."""
@@ -217,8 +220,8 @@ class GetCodeGraphFromNodeNameTool:
         return self.run(repo_id, node_name)
 
 
-def get_code_graph_from_node_name_tool(sql_db: Session) -> Tool:
-    tool_instance = GetCodeGraphFromNodeNameTool(sql_db)
+def get_code_graph_from_node_name_tool(sql_db: Session, user_id: str) -> Tool:
+    tool_instance = GetCodeGraphFromNodeNameTool(sql_db, user_id)
     return StructuredTool.from_function(
         coroutine=tool_instance.run,
         func=tool_instance.run_tool,
