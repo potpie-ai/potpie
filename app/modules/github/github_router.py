@@ -11,14 +11,14 @@ router = APIRouter()
 
 
 @router.get("/github/user-repos")
-def get_user_repos(user=Depends(AuthService.check_auth), db: Session = Depends(get_db)):
-    return GithubController(db).get_user_repos(user=user)
+async def get_user_repos(user=Depends(AuthService.check_auth), db: Session = Depends(get_db)):
+    return await GithubController(db).get_user_repos(user=user)
 
 
 @router.get("/github/get-branch-list")
-def get_branch_list(
+async def get_branch_list(
     repo_name: str = Query(..., description="Repository name"),
     user=Depends(AuthService.check_auth),
     db: Session = Depends(get_db),
 ):
-    return GithubController(db).get_branch_list(repo_name=repo_name)
+    return await GithubController(db).get_branch_list(repo_name=repo_name)

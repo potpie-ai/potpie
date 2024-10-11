@@ -15,7 +15,7 @@ async def get_project_list(user=Depends(AuthService.check_auth), db=Depends(get_
 
 
 @router.delete("/projects")
-def delete_project(
+async def delete_project(
     project_id: str, user=Depends(AuthService.check_auth), db=Depends(get_db)
 ):
-    return ProjectController.delete_project(project_id=project_id, user=user, db=db)
+    return await ProjectController.delete_project(project_id=project_id, user=user, db=db)

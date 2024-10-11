@@ -153,7 +153,7 @@ class GithubService:
             raise HTTPException(status_code=404, detail="User not found")
         return user.provider_info["access_token"]
 
-    def get_repos_for_user(self, user_id: str):
+    async def get_repos_for_user(self, user_id: str):
         try:
             logger.info(f"Getting repositories for user: {user_id}")
             user = self.db.query(User).filter(User.uid == user_id).first()
@@ -263,7 +263,7 @@ class GithubService:
                 status_code=500, detail=f"Failed to fetch repositories: {str(e)}"
             )
 
-    def get_branch_list(self, repo_name: str):
+    async def get_branch_list(self, repo_name: str):
         try:
             github, repo = self.get_repo(repo_name)
             branches = repo.get_branches()

@@ -91,7 +91,7 @@ class ConversationService:
                 else project_name
             )
 
-            conversation_id = self._create_conversation_record(
+            conversation_id = await self._create_conversation_record(
                 conversation, title, user_id
             )
 
@@ -111,7 +111,7 @@ class ConversationService:
                 "An unexpected error occurred while creating the conversation."
             ) from e
 
-    def _create_conversation_record(
+    async def _create_conversation_record(
         self, conversation: CreateConversationRequest, title: str, user_id: str
     ) -> str:
         conversation_id = str(uuid7())
