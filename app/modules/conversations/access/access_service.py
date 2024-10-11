@@ -20,7 +20,6 @@ class ShareChatService:
             raise ShareChatServiceError("Chat not found.")
         
         existing_emails = chat.shared_with_emails or []
-        new_emails_set = set(recipient_emails)
         existing_emails_set = set(existing_emails)
         unique_new_emails_set = set(recipient_emails)
 
