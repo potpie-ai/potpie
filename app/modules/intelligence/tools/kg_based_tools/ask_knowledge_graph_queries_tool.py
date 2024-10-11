@@ -1,15 +1,12 @@
 import asyncio
 import os
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 from langchain.tools import StructuredTool
 from pydantic import BaseModel, Field
-from app.core.database import get_db
-from app.modules.parsing.knowledge_graph.inference_schema import (
-    QueryResponse
-)
-from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 
+from app.modules.parsing.knowledge_graph.inference_schema import QueryResponse
+from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 from app.modules.projects.projects_service import ProjectService
 
 
@@ -39,12 +36,9 @@ class KnowledgeGraphQueryTool:
         self.user_id = user_id
         self.sql_db = sql_db
 
-
-    async def ask_multiple_knowledge_graph_queries(self,
-        queries: List[QueryRequest]
+    async def ask_multiple_knowledge_graph_queries(
+        self, queries: List[QueryRequest]
     ) -> Dict[str, str]:
-
-            
         inference_service = InferenceService(self.sql_db, "dummy")
 
         async def process_query(query_request: QueryRequest) -> List[QueryResponse]:
@@ -60,9 +54,9 @@ class KnowledgeGraphQueryTool:
                     start_line=result.get("start_line") or 0,
                     end_line=result.get("end_line") or 0,
                     similarity=result.get("similarity"),
-            )
-            for result in results
-        ]
+                )
+                for result in results
+            ]
 
         tasks = [process_query(query) for query in queries]
         results = await asyncio.gather(*tasks)

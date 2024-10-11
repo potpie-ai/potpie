@@ -68,7 +68,7 @@ class QNAAgent:
 
     async def _classify_query(self, query: str, history: List[HumanMessage]):
         prompt = ClassificationPrompts.get_classification_prompt(AgentType.QNA)
-        inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
+        inputs = {"query": query, "history": [msg.content for msg in history[-10:]]}
 
         parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
         prompt_with_parser = ChatPromptTemplate.from_template(
@@ -128,9 +128,18 @@ class QNAAgent:
                     citations = []
                     result = rag_result.raw
                 tool_results = [SystemMessage(content=f"RAG Agent result: {result}")]
+                self.history_manager.add_message_chunk(
+                    conversation_id,
+                    tool_results[0].content,
+                    MessageType.AI_GENERATED,
+                    citations=citations,
+                )
+                self.history_manager.flush_message_buffer(
+                    conversation_id, MessageType.SYSTEM_GENERATED
+                )
 
             inputs = {
-                "history": validated_history,
+                "history": validated_history[-10:],
                 "tool_results": tool_results,
                 "input": query,
             }

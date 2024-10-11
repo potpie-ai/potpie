@@ -5,6 +5,7 @@ from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
+from app.modules.github.github_service import GithubService
 from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import (
     get_ask_knowledge_graph_queries_tool,
 )
@@ -92,6 +93,7 @@ class RAGAgent:
         project_id: str,
         chat_history: List,
         node_ids: List[NodeContext],
+        file_structure: str,
         query_agent,
     ):
         if not node_ids:
@@ -106,7 +108,20 @@ class RAGAgent:
             - **Input Query:** {query}
             - **Project ID:** {project_id}
             - **User Provided Node IDs:** {[node.model_dump() for node in node_ids]}
+            - **File Structure:** {file_structure}
 
+            ## Step 0: Project Structure Analysis
+            - Thoroughly analyze the provided file structure to understand the project's organization.
+            - Identify key directories and their purposes based on common conventions and naming patterns.
+            - Note any separation of concerns between different modules or components.
+            - Identify important files like main entry points, configuration files, and core modules.
+            - Use this structure to:
+                1. Guide your search strategy in subsequent steps.
+                2. Provide context for interpreting query results.
+                3. Identify potential entry points or important modules related to the input query.
+            - If the input query mentions specific functionalities, attempt to locate relevant files within the structure.
+            - ALWAYS Use these relevant file names as probable node names for the "Get Code and docstring From Probable Node Name" tool to get context to answer users input query.
+            - ALWAYS look at the file structure to fetch relevant file nodes to aswer the input query.
             ## Step 1: Initial Context Retrieval
             - If user provided node IDs are present:
             1. FIRST Use the "Get Code and docstring From Node ID" tool for each provided node ID.
@@ -126,15 +141,18 @@ class RAGAgent:
                 * Preserve key technical terms from the original query.
                 * Generate multiple keyword variations to increase matching chances.
                 * Be specific in keywords to improve match accuracy.
-                * Ensure the query includes relevant details and follows a similar structure to enhance similarity search results.
+                * Phrase it as a docstring to improve match accuracy.
             2. Execute the transformed query using the knowledge graph tool.
             3. Analyze the returned response and determine if the returned nodes are sufficient to answer the input query accurately.
 
             ## Step 3: Additional Context Retrieval (if needed)
             If the knowledge graph results are insufficient:
-            1. Use the "Node by Tags" tool to retrieve additional relevant nodes.
-            2. Extract probable node names (file, function names) from the input query or results.
-            3. Use the "Get Code and docstring From Probable Node Name" tool for these extracted names.
+            1. Extract probable node names (file, function names) from the input query or results.
+            2. Use the "Get Code and docstring From Probable Node Name" tool for these extracted names.
+
+            ## Step 3.5: FETCH USING TAGS AS A LAST RESORT ONLY IF REALLY REQUIRED
+            - NEVER USE the "Get Nodes from Tags" tool to retrieve additional relevant nodes UNLESS REALLY REQUIRED.
+            - USE THIS TOOL ONLY AFTER YOU HAVE TRIED TO GET RESPONSE USING ALL OTHER TOOLS AVAILABLE TO YOU.
 
             ## Step 4: Result Analysis and Enrichment
             - Evaluate the relevance of each result to the input query.
@@ -147,6 +165,8 @@ class RAGAgent:
             - For highly-ranked results, determine additional valuable context.
             - Retrieve code only if the docstring is insufficient to answer the input query.
             - Ensure retrieved code is complete and self-contained.
+
+
 
             ## Step 5: Response Composition
             - Organize the re-ranked and enriched results logically.
@@ -184,12 +204,13 @@ class RAGAgent:
         project_id: str,
         chat_history: List,
         node_ids: List[NodeContext],
+        file_structure: str,
     ) -> str:
         os.environ["OPENAI_API_KEY"] = self.openai_api_key
 
         query_agent = await self.create_agents()
         query_task = await self.create_tasks(
-            query, project_id, chat_history, node_ids, query_agent
+            query, project_id, chat_history, node_ids, file_structure, query_agent
         )
 
         crew = Crew(
@@ -197,6 +218,7 @@ class RAGAgent:
             tasks=[query_task],
             process=Process.sequential,
             verbose=True,
+            memory=True,
             inputs={"user_id": self.user_id},
         )
 
@@ -214,5 +236,8 @@ async def kickoff_rag_crew(
     user_id: str,
 ) -> str:
     rag_agent = RAGAgent(sql_db, llm, user_id)
-    result = await rag_agent.run(query, project_id, chat_history, node_ids)
+    file_structure = GithubService(sql_db).get_project_structure(project_id)
+    result = await rag_agent.run(
+        query, project_id, chat_history, node_ids, file_structure
+    )
     return result

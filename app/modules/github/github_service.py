@@ -8,6 +8,7 @@ import requests
 from fastapi import HTTPException
 from github import Github
 from github.Auth import AppAuth
+from redis import Redis
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
@@ -37,6 +38,7 @@ class GithubService:
         self.project_manager = ProjectService(db)
         if not GithubService.gh_token_list:
             GithubService.initialize_tokens()
+        self.redis = Redis.from_url(config_provider.get_redis_url())
 
     def get_github_repo_details(self, repo_name: str) -> Tuple[Github, Dict, str]:
         logger.info(f"Getting GitHub repo details for: {repo_name}")
@@ -319,3 +321,98 @@ class GithubService:
                     status_code=404,
                     detail=f"Repository {repo_name} not found or inaccessible on GitHub",
                 )
+
+    def get_project_structure(self, project_id: str) -> str:
+        logger.info(f"Fetching project structure for project ID: {project_id}")
+
+        # Try to get the structure from Redis cache
+        cache_key = f"project_structure:{project_id}"
+        cached_structure = self.redis.get(cache_key)
+
+        if cached_structure:
+            logger.info(
+                f"Project structure found in cache for project ID: {project_id}"
+            )
+            return cached_structure.decode("utf-8")
+
+        project = self.project_manager.get_project_from_db_by_id_sync(project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        repo_name = project["project_name"]
+        if not repo_name:
+            raise HTTPException(
+                status_code=400, detail="Project has no associated GitHub repository"
+            )
+
+        try:
+            github, repo = self.get_repo(repo_name)
+            structure = self._fetch_repo_structure(repo)
+            formatted_structure = self._format_tree_structure(structure)
+
+            # Cache the formatted structure in Redis
+            self.redis.setex(cache_key, 3600, formatted_structure)  # Cache for 1 hour
+
+            return formatted_structure
+        except HTTPException as he:
+            raise he
+        except Exception as e:
+            logger.error(
+                f"Error fetching project structure for {repo_name}: {str(e)}",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to fetch project structure: {str(e)}",
+            )
+
+    def _fetch_repo_structure(self, repo: Any, path: str = "") -> Dict[str, Any]:
+        structure = {
+            "type": "directory",
+            "name": path.split("/")[-1] or repo.name,
+            "children": [],
+        }
+
+        try:
+            contents = repo.get_contents(path)
+        except Exception as e:
+            logger.error(f"Error fetching contents for path {path}: {str(e)}")
+            return structure
+
+        for item in contents:
+            if item.type == "dir":
+                structure["children"].append(
+                    self._fetch_repo_structure(repo, item.path)
+                )
+            else:
+                structure["children"].append(
+                    {
+                        "type": "file",
+                        "name": item.name,
+                        "path": item.path,
+                    }
+                )
+
+        return structure
+
+    def _format_tree_structure(
+        self, structure: Dict[str, Any], prefix: str = ""
+    ) -> str:
+        output = []
+        name = structure["name"]
+        if prefix:
+            output.append(f"{prefix[:-1]}└── {name}")
+        else:
+            output.append(name)
+
+        children = sorted(structure["children"], key=lambda x: (x["type"], x["name"]))
+        for i, child in enumerate(children):
+            is_last = i == len(children) - 1
+            new_prefix = prefix + ("    " if is_last else "│   ")
+
+            if child["type"] == "directory":
+                output.append(self._format_tree_structure(child, new_prefix))
+            else:
+                output.append(f"{new_prefix[:-1]}└── {child['name']}")
+
+        return "\n".join(output)

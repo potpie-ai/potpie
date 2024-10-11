@@ -23,10 +23,11 @@ class IntegrationTestAgent:
         self.user_id = user_id
         self.sql_db = sql_db
         self.get_code_from_multiple_node_ids = get_code_from_multiple_node_ids_tool(
-            sql_db, user_id)
+            sql_db, user_id
+        )
         self.get_code_from_probable_node_name = get_code_from_probable_node_name_tool(
             sql_db, user_id
-            )
+        )
         self.llm = llm
         self.max_iterations = os.getenv("MAX_ITER", 15)
 
@@ -139,7 +140,10 @@ class IntegrationTestAgent:
             expected_output=f"Write COMPLETE CODE for integration tests for each node based on the test plan. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model:\n{self.TestAgentResponse.model_json_schema()}",
             agent=integration_test_agent,
             output_pydantic=self.TestAgentResponse,
-            tools=[self.get_code_from_probable_node_name, self.get_code_from_multiple_node_ids],
+            tools=[
+                self.get_code_from_probable_node_name,
+                self.get_code_from_multiple_node_ids,
+            ],
         )
 
         return integration_test_task

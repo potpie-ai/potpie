@@ -481,60 +481,59 @@ class InferenceService:
         2. **For Each Node**:
         Perform the following tasks for every identified `node_id` and its associated code:
 
-        1. **Docstring Generation**:
-            - **Begin with a concise, one-sentence summary of the code's purpose.**
-            - **Describe the main functionality in detail**, including the problem it solves or the task it performs.
-            - **List and explain all parameters/inputs and their types.**
-            - **Specify the return value(s) and their types.**
-            - **Mention any side effects or state changes.**
-            - **Note any exceptions that may be raised and under what conditions.**
-            - **Include relevant technical details**, such as API paths, HTTP methods, function calls, database operations, and topic names.
-            - **Provide a brief example** of how to use the code (if applicable).
-            - **Structured Sections**: Organize the docstring into the following sections where applicable:
-                * Summary: A concise, one-sentence summary of the code's purpose.
-                * Description: A detailed explanation of the main functionality, including the problem it solves or the task it performs.
-                * Parameters: List and explain all parameters/inputs with their types.
-                * Returns: Specify the return value(s) and their types.
-                * Raises: Mention any exceptions that may be raised and under what conditions.
-            - **Action-Oriented Description**: Use imperative verbs to describe the main functionality (e.g., "Creates", "Initializes").
-            - **Technical Precision**: Accurately reflect the technical actions, specifying operations and objects involved (e.g., "Creates a new MongoDB document in the specified collection", "Calls the create_user function").
-            - **Consistent Phrasing**:
-                * Classes: Begin with "Provides" or "Defines" to describe the class's role.
-                * Functions/Methods: Begin with an action verb describing what the function does.
-            - **Clear Object Reference**: Specify the objects being manipulated (e.g., "document," "collection," "client"). Specify the functions being called.
-            - **Contextual Keywords**: Incorporate relevant technical terms to provide context and enhance matching accuracy.
-            - **Avoid Redundancy and Ambiguity**: Ensure each section is unique and clearly related to its heading.
-            - **Identifier**: Include the function / class / file name in the docstring.
+        2.1 **Docstring Generation**:
+            - **Code Analysis**:
+                * Carefully analyze the provided code for node id to understand the overall structure and purpose of the code.
+                * Identify the type of code (e.g., API router, class definition, utility functions, etc.).
+                * Note any imports, dependencies, and key components used in the code.
+            - For files containing multiple API endpoints or functions:
+                * Begin with a high-level summary of the file's purpose and main components.
+                * List all API endpoints or main functions with a brief description for each.
+                * Include details about authentication, permissions, and common parameters used across endpoints.
+            - For individual functions or API endpoints:
+                * Start with a concise summary of the function's purpose.
+                * Describe the functionality in detail, including the problem it solves or the task it performs.
+                * List and explain all parameters/inputs and their types.
+                * Specify the return value(s) and their types.
+                * Mention any side effects, state changes, or interactions with external systems.
+                * Note any exceptions that may be raised and under what conditions.
+            - For classes:
+                * Provide an overview of the class's purpose and its role in the larger system.
+                * Describe key methods and attributes.
+                * Explain any inheritance or important relationships with other classes.
+            - Include relevant technical details such as:
+                * API paths and HTTP methods for endpoints
+                * Database operations and models used
+                * External services or APIs called
+                * Authentication and authorization mechanisms
 
-        2. **Classification**:
-            Classify the code snippet into one or more of the following categories. For each category, consider these guidelines:
-
-            - **API**: Does the code define any API endpoint? Look for route definitions, HTTP GET/POST/PUT/DELETE/PATCH methods.
-            - **WEBSOCKET**: Does the code implement or use WebSocket connections? Check for WebSocket-specific libraries or protocols.
-            - **PRODUCER**: Does the code generate and send messages to a queue or topic? Look for message publishing or event emission.
-            - **CONSUMER**: Does the code receive and process messages from a queue or topic? Check for message subscription or event handling.
-            - **DATABASE**: Does the code interact with a database? Look for query execution, data insertion, updates, or deletions.
-            - **SCHEMA**: Does the code define any database schema? Look for ORM models, table definitions, or schema-related code.
-            - **EXTERNAL_SERVICE**: Does the code make HTTP requests to external services? Check for HTTP client usage or request handling.
-            - **CONFIGURATION**: Does the code represent configuration settings or environment setup? Identify configuration files or scripts.
-            - **SCRIPT**: Is the code a standalone script or automation tool? Look for executable scripts or deployment commands.
-
-            ONLY use these tags and select the ones that are most relevant to the code snippet. Avoid false positives by ensuring the code clearly exhibits the behavior associated with each tag.
+        2.2 **Classification**:
+            Classify the code snippet into one or more of the following categories:
+            - API: Does the code define API endpoints? Identify HTTP methods and routes.
+            - WEBSOCKET: Does it implement WebSocket connections?
+            - PRODUCER: Does it generate and send messages to a queue or topic?
+            - CONSUMER: Does it receive and process messages from a queue or topic?
+            - DATABASE: Does it interact with a database? Identify query operations.
+            - SCHEMA: Does it define database schemas or models?
+            - EXTERNAL_SERVICE: Does it make requests to external services?
+            - CONFIGURATION: Does it handle configuration settings?
+            - SCRIPT: Is it a standalone script or automation tool?
+            - AUTH: Does it handle authentication or authorization?
+            - MIDDLEWARE: Does it implement middleware functionality?
+            - UTILITY: Does it provide utility functions used across the application?
 
         3. **Output Compilation**:
         - Collect the generated docstrings and classifications for each `node_id`.
         - Ensure that the output includes an entry for every `node_id` provided in the `code_snippets`.
 
         4. **Review and Verification**:
-        Before finalizing your response, perform the following checks:
-        - **Completeness**: Verify that every `node_id` from the input is present in the output.
-        - **Accuracy**: Ensure that each docstring is clear, comprehensive, and technically accurate.
-        - **Justification**: Confirm that the assigned tags are justified by the code's functionality.
-        - **Clarity**: Make sure all crucial technical details are captured without unnecessary verbosity.
+        Before finalizing your response:
+        - Verify that every `node_id` from the input is present in the output.
+        - Ensure each docstring is clear, comprehensive, and technically accurate.
+        - Confirm that the assigned tags are justified by the code's functionality.
+        - Make sure all crucial technical details are captured without unnecessary verbosity.
 
-        Refine your output as needed to ensure high-quality, precise documentation. Your job depends on it.
-
-        **Format Instructions**:
+        Refine your output as needed to ensure high-quality, precise documentation that accurately represents the code's structure and functionality.
 
         {format_instructions}
         Ensure that the response is a valid DocstringResponse object. Every entry in the response must contain the key "docstring".
@@ -573,7 +572,7 @@ class InferenceService:
         end_time = time.time()
 
         logger.info(
-            f"Parsing project {repo_id}: Start Time: {start_time}, End Time: {end_time}, Total Time Taken: {end_time - start_time} seconds"
+            f"Parsing project {repo_id}: Inference request completed. Total Time Taken: {end_time - start_time} seconds"
         )
         return result
 
