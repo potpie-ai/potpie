@@ -59,10 +59,10 @@ class ToolService:
                 self.db, self.user_id
             ),
             "get_code_graph_from_node_id": GetCodeGraphFromNodeIdTool(
-                self.db
+                self.db, self.user_id
             ),
             "get_code_graph_from_node_name": GetCodeGraphFromNodeNameTool(
-                self.db
+                self.db, self.user_id
             ),
             "change_detection": ChangeDetectionTool(
                 self.db, self.user_id
