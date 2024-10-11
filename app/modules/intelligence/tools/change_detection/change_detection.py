@@ -43,6 +43,10 @@ class ChangeDetectionResponse(BaseModel):
 
 
 class ChangeDetectionTool:
+
+    name = "change_detection"
+    description = "Retrieves the changes in the current branch compared to the default branch."
+
     def __init__(self, sql_db, user_id):
         self.sql_db = sql_db
         self.user_id = user_id
