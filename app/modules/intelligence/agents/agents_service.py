@@ -1,15 +1,19 @@
 from typing import List
 
-from app.modules.intelligence.agents.agents_schema import AgentInfo
+from sqlalchemy.orm import Session
+from uuid6 import uuid7
+
+from app.modules.intelligence.agents.agents_schema import Agent, AgentInfo
+from app.modules.intelligence.agents.custom_agents.custom_agents_model import (
+    CustomAgent,
+)
+from app.modules.intelligence.prompts.prompt_service import PromptService
 
 
 class AgentsService:
-    def __init__(self, db):
+    def __init__(self, db: Session):
         self.db = db
-
-    @classmethod
-    def create(cls, db):
-        return cls(db)
+        self.prompt_service = PromptService(db)
 
     async def list_available_agents(self) -> List[AgentInfo]:
         return [
@@ -49,3 +53,25 @@ class AgentsService:
                 else citation
             )
         return cleaned_citations
+
+    async def create_custom_agent(
+        self,
+        user_id: str,
+        role: str,
+        goal: str,
+        backstory: str,
+        tasks: List[dict],
+    ) -> Agent:
+        agent_id = str(uuid7())
+        custom_agent = CustomAgent(
+            id=agent_id,
+            user_id=user_id,
+            role=role,
+            goal=goal,
+            backstory=backstory,
+            tasks=tasks,
+        )
+        self.db.add(custom_agent)
+        self.db.commit()
+        self.db.refresh(custom_agent)
+        return Agent(**custom_agent.__dict__)
