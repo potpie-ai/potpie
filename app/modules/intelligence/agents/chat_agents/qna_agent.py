@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from functools import lru_cache
 from typing import AsyncGenerator, Dict, List
 
@@ -88,6 +89,7 @@ class QNAAgent:
         conversation_id: str,
         node_ids: List[NodeContext],
     ) -> AsyncGenerator[str, None]:
+        start_time = time.time()  # Start the timer
         try:
             if not self.chain:
                 self.chain = await self._create_chain()
@@ -102,11 +104,16 @@ class QNAAgent:
                 for msg in history
             ]
 
+            classification_start_time = time.time()  # Start timer for classification
             classification = await self._classify_query(query, validated_history)
+            classification_duration = time.time() - classification_start_time  # Calculate duration
+            logger.info(f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
+                         f"Duration of classify method call: {classification_duration:.2f}s")
 
             tool_results = []
             citations = []
             if classification == ClassificationResult.AGENT_REQUIRED:
+                rag_start_time = time.time()  # Start timer for RAG agent
                 rag_result = await kickoff_rag_crew(
                     query,
                     project_id,
@@ -120,52 +127,82 @@ class QNAAgent:
                     self.mini_llm,
                     user_id,
                 )
+                rag_duration = time.time() - rag_start_time  # Calculate duration
+                logger.info(f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
+                             f"Duration of RAG agent: {rag_duration:.2f}s")
+
                 if rag_result.pydantic:
                     citations = rag_result.pydantic.citations
                     response = rag_result.pydantic.response
-                    result = [node.model_dump() for node in response]
+                    result = [node for node in response]
                 else:
                     citations = []
                     result = rag_result.raw
                 tool_results = [SystemMessage(content=f"RAG Agent result: {result}")]
+                # Timing for adding message chunk
+                add_chunk_start_time = time.time()  # Start timer for adding message chunk
                 self.history_manager.add_message_chunk(
                     conversation_id,
                     tool_results[0].content,
                     MessageType.AI_GENERATED,
                     citations=citations,
                 )
+                add_chunk_duration = time.time() - add_chunk_start_time  # Calculate duration
+                logger.info(f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
+                             f"Duration of adding message chunk: {add_chunk_duration:.2f}s")
+
+                # Timing for flushing message buffer
+                flush_buffer_start_time = time.time()  # Start timer for flushing message buffer
                 self.history_manager.flush_message_buffer(
-                    conversation_id, MessageType.SYSTEM_GENERATED
+                    conversation_id, MessageType.AI_GENERATED
                 )
+                flush_buffer_duration = time.time() - flush_buffer_start_time  # Calculate duration
+                logger.info(f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
+                             f"Duration of flushing message buffer: {flush_buffer_duration:.2f}s")
+                yield json.dumps({"citations": citations, "message": result})
 
-            inputs = {
-                "history": validated_history[-10:],
-                "tool_results": tool_results,
-                "input": query,
-            }
+            if classification != ClassificationResult.AGENT_REQUIRED:
+                inputs = {
+                    "history": validated_history[-10:],
+                    "tool_results": tool_results,
+                    "input": query,
+                }
 
-            logger.debug(f"Inputs to LLM: {inputs}")
-            citations = self.agents_service.format_citations(citations)
-            full_response = ""
-            async for chunk in self.chain.astream(inputs):
-                content = chunk.content if hasattr(chunk, "content") else str(chunk)
-                full_response += content
-                self.history_manager.add_message_chunk(
-                    conversation_id,
-                    content,
-                    MessageType.AI_GENERATED,
-                    citations=citations,
-                )
-                yield json.dumps(
-                    {
-                        "citations": citations,
+                logger.debug(f"Inputs to LLM: {inputs}")
+                citations = self.agents_service.format_citations(citations)
+                full_response = ""
+                add_stream_chunk_start_time = time.time()  # Start timer for adding message chunk
+
+                async for chunk in self.chain.astream(inputs):
+                    content = chunk.content if hasattr(chunk, "content") else str(chunk)
+                    full_response += content
+
+                    self.history_manager.add_message_chunk(
+                        conversation_id,
+                        content,
+                        MessageType.AI_GENERATED,
+                        citations=citations,
+                    )
+                    yield json.dumps(
+                        {
+                            "citations": citations,
                         "message": content,
                     }
                 )
+                add_stream_chunk_duration = time.time() - add_stream_chunk_start_time  # Calculate duration
+                logger.info(f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
+                            f"Duration of adding message chunk during streaming: {add_stream_chunk_duration:.2f}s")
+        
+                
+                flush_stream_buffer_start_time = time.time()  # Start timer for flushing message buffer after streaming
+                self.history_manager.flush_message_buffer(
+                    conversation_id, MessageType.AI_GENERATED
+                )
+                flush_stream_buffer_duration = time.time() - flush_stream_buffer_start_time  # Calculate duration
+                logger.info(f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
+                            f"Duration of flushing message buffer after streaming: {flush_stream_buffer_duration:.2f}s")
+                
 
-            self.history_manager.flush_message_buffer(
-                conversation_id, MessageType.AI_GENERATED
-            )
 
         except Exception as e:
             logger.error(f"Error during QNAAgent run: {str(e)}", exc_info=True)

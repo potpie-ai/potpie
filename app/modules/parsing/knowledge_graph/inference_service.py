@@ -79,7 +79,7 @@ class InferenceService:
         return len(encoding.encode(string))
 
     def fetch_graph(self, repo_id: str) -> List[Dict]:
-        batch_size = 400  # Define the batch size
+        batch_size = 100  # Define the batch size
         all_nodes = []
         with self.driver.session() as session:
             offset = 0
@@ -650,7 +650,7 @@ class InferenceService:
 
         with self.driver.session() as session:
             if node_ids:
-                # Part 1: Fetch neighboring nodes
+                # Fetch context node IDs
                 result_neighbors = session.run(
                     """
                     MATCH (n:NODE)
@@ -658,43 +658,34 @@ class InferenceService:
                     CALL {
                         WITH n
                         MATCH (n)-[*1..4]-(neighbor:NODE)
-                        RETURN COLLECT(DISTINCT neighbor) AS neighbors
+                        RETURN COLLECT(DISTINCT neighbor.node_id) AS neighbor_ids
                     }
-                    RETURN COLLECT(DISTINCT n) + REDUCE(acc = [], neighbors IN COLLECT(neighbors) | acc + neighbors) AS context_nodes
+                    RETURN COLLECT(DISTINCT n.node_id) + REDUCE(acc = [], neighbor_ids IN COLLECT(neighbor_ids) | acc + neighbor_ids) AS context_node_ids
                     """,
                     project_id=project_id,
                     node_ids=node_ids,
                 )
-                context_nodes = result_neighbors.single()["context_nodes"]
+                context_node_ids = result_neighbors.single()["context_node_ids"]
 
-                context_node_data = [
-                    {
-                        "node_id": node["node_id"],
-                        "embedding": node["embedding"],
-                        "docstring": node.get("docstring", ""),
-                        "file_path": node.get("file_path", ""),
-                        "start_line": node.get("start_line", -1),
-                        "end_line": node.get("end_line", -1),
-                    }
-                    for node in context_nodes
-                ]
-
+                # Use vector index and filter by context_node_ids
                 result = session.run(
                     """
-                    UNWIND $context_node_data AS context_node
-                    WITH context_node,
-                         vector.similarity.cosine(context_node.embedding, $embedding) AS similarity
+                    CALL db.index.vector.queryNodes('docstring_embedding', $initial_k, $embedding)
+                    YIELD node, score
+                    WHERE node.repoId = $project_id AND node.node_id IN $context_node_ids
+                    RETURN node.node_id AS node_id,
+                        node.docstring AS docstring,
+                        node.file_path AS file_path,
+                        node.start_line AS start_line,
+                        node.end_line AS end_line,
+                        score AS similarity
                     ORDER BY similarity DESC
                     LIMIT $top_k
-                    RETURN context_node.node_id AS node_id,
-                           context_node.docstring AS docstring,
-                           context_node.file_path AS file_path,
-                           context_node.start_line AS start_line,
-                           context_node.end_line AS end_line,
-                           similarity
                     """,
-                    context_node_data=context_node_data,
+                    project_id=project_id,
                     embedding=embedding,
+                    context_node_ids=context_node_ids,
+                    initial_k=top_k * 10,  # Adjust as needed
                     top_k=top_k,
                 )
             else:
@@ -704,11 +695,11 @@ class InferenceService:
                     YIELD node, score
                     WHERE node.repoId = $project_id
                     RETURN node.node_id AS node_id,
-                           node.docstring AS docstring,
-                           node.file_path AS file_path,
-                           node.start_line AS start_line,
-                           node.end_line AS end_line,
-                           score AS similarity
+                        node.docstring AS docstring,
+                        node.file_path AS file_path,
+                        node.start_line AS start_line,
+                        node.end_line AS end_line,
+                        score AS similarity
                     """,
                     project_id=project_id,
                     embedding=embedding,
