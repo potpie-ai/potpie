@@ -103,6 +103,19 @@ class ProjectService:
             return project
         else:
             return None
+    async def get_global_project_from_db(self, repo_name: str, branch_name: str):
+            project = (
+                self.db.query(Project)
+                .filter(
+                    Project.repo_name == repo_name,
+                    Project.branch_name == branch_name,
+                )
+                .first()
+            )
+            if project:
+                return project
+            else:
+                return None  
 
     async def get_project_from_db_by_id(self, project_id: int):
         project = ProjectService.get_project_by_id(self.db, project_id)
@@ -209,3 +222,35 @@ class ProjectService:
             raise HTTPException(status_code=404, detail="Project not found.")
         self.db.delete(project)
         self.db.commit()
+
+    async def get_demo_repo_id(self, repo_name: str):
+        try:
+            # Query for the project associated with the demo repo name
+            project = (
+                self.db.query(Project)
+                .filter(Project.repo_name == repo_name)
+                .first()
+            )
+            
+            if project:
+                logger.info(f"Retrieved demo repo ID: {project.id} for repo name: {repo_name}")
+                return project.id  # Return the demo repo ID
+            else:
+                raise ProjectNotFoundError(f"No demo repository found for repo name: {repo_name}")
+
+        except SQLAlchemyError as e:
+            logger.error(
+                f"Database error in get_demo_repo_id for repo name {repo_name}: {e}",
+                exc_info=True,
+            )
+            raise ProjectServiceError(
+                f"Failed to retrieve demo repo ID for repo name {repo_name}"
+            ) from e
+        except Exception as e:
+            logger.error(
+                f"Unexpected error in get_demo_repo_id for repo name {repo_name}: {e}",
+                exc_info=True,
+            )
+            raise ProjectServiceError(
+                f"An unexpected error occurred while retrieving demo repo ID for repo name {repo_name}"
+            ) from e
