@@ -124,6 +124,7 @@ class QNAAgent:
                     ],
                     node_ids,
                     self.db,
+                    self.llm,
                     self.mini_llm,
                     user_id,
                 )
@@ -138,7 +139,7 @@ class QNAAgent:
                 else:
                     citations = []
                     result = rag_result.raw
-                tool_results = [SystemMessage(content=f"RAG Agent result: {result}")]
+                tool_results = [SystemMessage(content=result)]
                 # Timing for adding message chunk
                 add_chunk_start_time = time.time()  # Start timer for adding message chunk
                 self.history_manager.add_message_chunk(

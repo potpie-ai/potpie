@@ -1,5 +1,5 @@
 import os
-from typing import List
+from typing import Any, Dict, List
 
 from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
@@ -10,6 +10,7 @@ from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_t
     get_ask_knowledge_graph_queries_tool,
 )
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_multiple_node_ids_tool import (
+    GetCodeFromMultipleNodeIdsTool,
     get_code_from_multiple_node_ids_tool,
 )
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
@@ -37,7 +38,7 @@ class RAGResponse(BaseModel):
 
 
 class RAGAgent:
-    def __init__(self, sql_db, llm, user_id):
+    def __init__(self, sql_db, llm, mini_llm, user_id):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.max_iter = os.getenv("MAX_ITER", 5)
         self.sql_db = sql_db
@@ -53,6 +54,7 @@ class RAGAgent:
             sql_db, user_id
         )
         self.llm = llm
+        self.mini_llm = mini_llm
         self.user_id = user_id
 
     async def create_agents(self):
@@ -94,6 +96,7 @@ class RAGAgent:
         chat_history: List,
         node_ids: List[NodeContext],
         file_structure: str,
+        code_results: List[Dict[str, Any]],
         query_agent,
     ):
         if not node_ids:
@@ -107,6 +110,7 @@ class RAGAgent:
             - Project ID: {project_id}
             - User Node IDs: {[node.model_dump() for node in node_ids]}
             - File Structure: {file_structure}
+            - Code Results for user node ids: {code_results} 
 
             1. Analyze project structure:
                - Identify key directories, files, and modules
@@ -115,8 +119,8 @@ class RAGAgent:
                - Use relevant file names with "Get Code and docstring From Probable Node Name" tool
 
             2. Initial context retrieval:
-               - If node IDs provided, use "Get Code and docstring From Node ID" tool
-               - Analyze retrieved data
+               - Analyze provided Code Results for user node ids
+               - If code results are not relevant move to next step`
 
             3. Knowledge graph query (if needed):
                - Transform query for knowledge graph tool
@@ -141,6 +145,9 @@ class RAGAgent:
             8. Final review:
                - Check coherence and relevance
                - Identify areas for improvement
+               - Format the file paths as follows (only include relevant project details from file path):
+                 path: potpie/projects/dhirenmathur-gymhero-testt-WKyrZNjOflYSr9q8Jm7JcHqqwSr1/gymhero/models/training_plan.py 
+                 output: gymhero/models/training_plan.py
 
             Objective: Provide a comprehensive response with deep context and relevant file paths as citations.
 
@@ -150,13 +157,33 @@ class RAGAgent:
             - Proceed to next step if insufficient information found
             """,
             expected_output=(
-                "Curated set of responses  that provide deep context to the user's query along with relevant file paths as citations."
+                "Curated set of responses that provide deep context to the user's query along with relevant file paths as citations."
 
             ),
             agent=query_agent,
         )
 
-        return combined_task
+        respond_task = Task(
+            description=f"""You are an AI assistant with deep knowledge of the entire codebase. Act as a seasoned software architect to provide accurate, context-aware answers about code structure, functionality, and best practices. Ground responses in provided code context and tool results. Use markdown for code snippets. Be concise and avoid repetition. If unsure, state it clearly. For debugging, unit testing, or unrelated code explanations, suggest specialized agents.
+
+Analyze the input and tailor your response based on question type:
+- New questions: Provide comprehensive answers
+- Follow-ups: Build on previous explanations
+- Clarifications: Offer clear, concise explanations
+- Comments/feedback: Incorporate into your understanding
+
+Ground explanations in code context and tool results. Indicate when more information is needed. Use specific code references. Suggest best practices if applicable. Adapt to user's expertise level. Maintain a conversational tone and context from previous exchanges. Ask clarifying questions if needed. Offer follow-up suggestions to guide the conversation.
+
+Provide a comprehensive response with deep context, relevant file paths as citations, and include code snippets and docstrings where appropriate.Format it in markdown format."""
+
+            ,
+            expected_output=f"""Markdown formatted chat response to user's query"""
+            ,
+            agent=query_agent,
+            context=[combined_task],
+            llm=self.mini_llm,
+        )
+        return combined_task, respond_task
 
     async def run(
         self,
@@ -168,16 +195,20 @@ class RAGAgent:
     ) -> str:
         os.environ["OPENAI_API_KEY"] = self.openai_api_key
 
-        query_agent = await self.create_agents()
-        query_task = await self.create_tasks(
-            query, project_id, chat_history, node_ids, file_structure, query_agent
-        )
         agentops.init(os.getenv("AGENTOPS_API_KEY"), default_tags=["openai-gpt-notebook"])
-
+        code_results = []
+        if len(node_ids) > 0:
+            code_results = await GetCodeFromMultipleNodeIdsTool(
+                self.sql_db, self.user_id
+            ).run_multiple(project_id, [node.node_id for node in node_ids])
+        query_agent = await self.create_agents()
+        query_task, respond_task = await self.create_tasks(
+            query, project_id, chat_history, node_ids, file_structure, code_results, query_agent
+        )
 
         crew = Crew(
             agents=[query_agent],
-            tasks=[query_task],
+            tasks=[query_task, respond_task],
             process=Process.sequential,
             verbose=False,
         )
@@ -194,9 +225,10 @@ async def kickoff_rag_crew(
     node_ids: List[NodeContext],
     sql_db,
     llm,
+    mini_llm,
     user_id: str,
 ) -> str:
-    rag_agent = RAGAgent(sql_db, llm, user_id)
+    rag_agent = RAGAgent(sql_db, llm, mini_llm, user_id)
     file_structure = GithubService(sql_db).get_project_structure(project_id)
     result = await rag_agent.run(
         query, project_id, chat_history, node_ids, file_structure
