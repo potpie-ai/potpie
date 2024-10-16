@@ -1,9 +1,10 @@
 import os
 from typing import Any, Dict, List
 
+import agentops
 from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
-import agentops
+
 from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.github.github_service import GithubService
 from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import (
@@ -110,7 +111,7 @@ class RAGAgent:
             - Project ID: {project_id}
             - User Node IDs: {[node.model_dump() for node in node_ids]}
             - File Structure: {file_structure}
-            - Code Results for user node ids: {code_results} 
+            - Code Results for user node ids: {code_results}
 
             1. Analyze project structure:
                - Identify key directories, files, and modules
@@ -146,7 +147,7 @@ class RAGAgent:
                - Check coherence and relevance
                - Identify areas for improvement
                - Format the file paths as follows (only include relevant project details from file path):
-                 path: potpie/projects/dhirenmathur-gymhero-testt-WKyrZNjOflYSr9q8Jm7JcHqqwSr1/gymhero/models/training_plan.py 
+                 path: potpie/projects/username-reponame-branchname-userid/gymhero/models/training_plan.py
                  output: gymhero/models/training_plan.py
 
             Objective: Provide a comprehensive response with deep context and relevant file paths as citations.
@@ -158,13 +159,12 @@ class RAGAgent:
             """,
             expected_output=(
                 "Curated set of responses that provide deep context to the user's query along with relevant file paths as citations."
-
             ),
             agent=query_agent,
         )
 
         respond_task = Task(
-            description=f"""You are an AI assistant with deep knowledge of the entire codebase. Act as a seasoned software architect to provide accurate, context-aware answers about code structure, functionality, and best practices. Ground responses in provided code context and tool results. Use markdown for code snippets. Be concise and avoid repetition. If unsure, state it clearly. For debugging, unit testing, or unrelated code explanations, suggest specialized agents.
+            description="""You are an AI assistant with deep knowledge of the entire codebase. Act as a seasoned software architect to provide accurate, context-aware answers about code structure, functionality, and best practices. Ground responses in provided code context and tool results. Use markdown for code snippets. Be concise and avoid repetition. If unsure, state it clearly. For debugging, unit testing, or unrelated code explanations, suggest specialized agents.
 
 Analyze the input and tailor your response based on question type:
 - New questions: Provide comprehensive answers
@@ -174,11 +174,8 @@ Analyze the input and tailor your response based on question type:
 
 Ground explanations in code context and tool results. Indicate when more information is needed. Use specific code references. Suggest best practices if applicable. Adapt to user's expertise level. Maintain a conversational tone and context from previous exchanges. Ask clarifying questions if needed. Offer follow-up suggestions to guide the conversation.
 
-Provide a comprehensive response with deep context, relevant file paths as citations, and include code snippets and docstrings where appropriate.Format it in markdown format."""
-
-            ,
-            expected_output=f"""Markdown formatted chat response to user's query"""
-            ,
+Provide a comprehensive response with deep context, relevant file paths as citations, and include code snippets and docstrings where appropriate.Format it in markdown format.""",
+            expected_output="""Markdown formatted chat response to user's query""",
             agent=query_agent,
             context=[combined_task],
             llm=self.mini_llm,
@@ -195,7 +192,9 @@ Provide a comprehensive response with deep context, relevant file paths as citat
     ) -> str:
         os.environ["OPENAI_API_KEY"] = self.openai_api_key
 
-        agentops.init(os.getenv("AGENTOPS_API_KEY"), default_tags=["openai-gpt-notebook"])
+        agentops.init(
+            os.getenv("AGENTOPS_API_KEY"), default_tags=["openai-gpt-notebook"]
+        )
         code_results = []
         if len(node_ids) > 0:
             code_results = await GetCodeFromMultipleNodeIdsTool(
@@ -203,7 +202,13 @@ Provide a comprehensive response with deep context, relevant file paths as citat
             ).run_multiple(project_id, [node.node_id for node in node_ids])
         query_agent = await self.create_agents()
         query_task, respond_task = await self.create_tasks(
-            query, project_id, chat_history, node_ids, file_structure, code_results, query_agent
+            query,
+            project_id,
+            chat_history,
+            node_ids,
+            file_structure,
+            code_results,
+            query_agent,
         )
 
         crew = Crew(

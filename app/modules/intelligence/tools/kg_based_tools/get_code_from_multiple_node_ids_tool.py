@@ -50,25 +50,30 @@ class GetCodeFromMultipleNodeIdsTool:
                 raise ValueError(
                     f"Project with ID '{repo_id}' not found in database for user '{self.user_id}'"
                 )
-            
-            tasks = [self._retrieve_node_data(repo_id, node_id, project) for node_id in node_ids]
+
+            tasks = [
+                self._retrieve_node_data(repo_id, node_id, project)
+                for node_id in node_ids
+            ]
             completed_tasks = await asyncio.gather(*tasks)
-            
-            return {node_id: result for node_id, result in zip(node_ids, completed_tasks)}
+
+            return {
+                node_id: result for node_id, result in zip(node_ids, completed_tasks)
+            }
         except Exception as e:
             logger.error(
                 f"Unexpected error in GetCodeFromMultipleNodeIdsTool: {str(e)}"
             )
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
-    async def _retrieve_node_data(self, repo_id: str, node_id: str, project: Project) -> Dict[str, Any]:
+    async def _retrieve_node_data(
+        self, repo_id: str, node_id: str, project: Project
+    ) -> Dict[str, Any]:
         node_data = self._get_node_data(repo_id, node_id)
         if node_data:
             return self._process_result(node_data, project, node_id)
         else:
-            return {
-                "error": f"Node with ID '{node_id}' not found in repo '{repo_id}'"
-            }
+            return {"error": f"Node with ID '{node_id}' not found in repo '{repo_id}'"}
 
     def _get_node_data(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         query = """
@@ -90,7 +95,7 @@ class GetCodeFromMultipleNodeIdsTool:
         end_line = node_data["end_line"]
 
         relative_file_path = self._get_relative_file_path(file_path)
-        
+
         code_content = GithubService(self.sql_db).get_file_content(
             project.repo_name,
             relative_file_path,
