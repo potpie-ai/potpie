@@ -1,9 +1,9 @@
 from typing import Dict, Any
-from langchain.llms import BaseLLM
+
+from app.modules.intelligence.agents.custom_agents.custom_agents_model import CustomAgent
 from .custom_agent import CustomAgent as CustomAgentExecutor
-from .custom_agents_model import CustomAgent
-from app.core.database import get_db
 from app.modules.intelligence.provider.provider_service import ProviderService
+from sqlalchemy.orm import Session
 
 class CustomAgentService:
     def __init__(self, db: Session, provider_service: ProviderService):
@@ -20,11 +20,5 @@ class CustomAgentService:
         pass
 
     async def execute_custom_agent(self, agent_id: str, query: str) -> str:
-        db = next(get_db())
-        custom_agent = db.query(CustomAgent).filter(CustomAgent.id == agent_id).first()
-        
-        if not custom_agent:
-            raise ValueError(f"Custom agent with id {agent_id} not found")
-
         agent_executor = CustomAgentExecutor(self.provider_service.get_llm(), agent_id)
         return agent_executor.run(query)

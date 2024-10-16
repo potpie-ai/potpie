@@ -3,7 +3,7 @@ from typing import List
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.modules.intelligence.agents.agents_schema import Agent, AgentInfo
+from app.modules.intelligence.agents.agents_schema import AgentInfo
 from app.modules.intelligence.agents.agents_service import AgentsService
 
 
@@ -19,19 +19,3 @@ class AgentsController:
             raise HTTPException(
                 status_code=500, detail=f"Error listing agents: {str(e)}"
             )
-
-    async def create_custom_agent(
-        self,
-        user_id: str,
-        role: str,
-        goal: str,
-        backstory: str,
-        tasks: List[dict],
-    ) -> Agent:
-        return await self.service.create_custom_agent(
-            user_id=user_id,
-            role=role,
-            goal=goal,
-            backstory=backstory,
-            tasks=tasks,
-        )
