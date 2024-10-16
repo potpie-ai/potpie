@@ -4,9 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.modules.auth.auth_service import AuthService
+from app.modules.auth.auth_service import AuthService, get_current_user
 from app.modules.intelligence.agents.agents_controller import AgentsController
 from app.modules.intelligence.agents.agents_schema import Agent, AgentCreate, AgentInfo
+from app.modules.intelligence.agents.custom_agents.custom_agents_service import CustomAgentService
 
 router = APIRouter()
 
@@ -29,9 +30,9 @@ class AgentsAPI:
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
-        controller = AgentsController(db)
+        custom_agent_service = CustomAgentService(db)
         try:
-            return await controller.create_custom_agent(
+            return await custom_agent_service.create_custom_agent(
                 user_id=user_id,
                 role=request.role,
                 goal=request.goal,

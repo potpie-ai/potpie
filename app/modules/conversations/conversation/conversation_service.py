@@ -31,6 +31,7 @@ from app.modules.intelligence.memory.chat_history_service import ChatHistoryServ
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
 from app.modules.utils.posthog_helper import PostHogClient
+from app.modules.intelligence.agents.custom_agents.custom_agents_service import CustomAgentService
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ class ConversationService:
         history_manager: ChatHistoryService,
         provider_service: ProviderService,
         agent_injector_service: AgentInjectorService,
+        custom_agent_service: CustomAgentService,
     ):
         self.sql_db = db
         self.user_id = user_id
@@ -63,6 +65,7 @@ class ConversationService:
         self.history_manager = history_manager
         self.provider_service = provider_service
         self.agent_injector_service = agent_injector_service
+        self.custom_agent_service = custom_agent_service
 
     @classmethod
     def create(cls, db: Session, user_id: str):
@@ -70,6 +73,7 @@ class ConversationService:
         history_manager = ChatHistoryService(db)
         provider_service = ProviderService(db, user_id)
         agent_injector_service = AgentInjectorService(db, provider_service)
+        custom_agent_service = CustomAgentService(db)
         return cls(
             db,
             user_id,
@@ -77,6 +81,7 @@ class ConversationService:
             history_manager,
             provider_service,
             agent_injector_service,
+            custom_agent_service,
         )
 
     async def create_conversation(
@@ -374,15 +379,22 @@ class ConversationService:
             raise ConversationNotFoundError(
                 f"Conversation with id {conversation_id} not found"
             )
-        agent = self.agent_injector_service.get_agent(conversation.agent_ids[0])
-        if not agent:
-            raise ConversationServiceError(
-                f"Invalid agent_id: {conversation.agent_ids[0]}"
-            )
 
+        agent_id = conversation.agent_ids[0]
+        
         try:
+            # First, try to get the agent from the existing agent_injector_service
+            agent = self.agent_injector_service.get_agent(agent_id)
+            
+            # If not found, check if it's a custom agent
+            if not agent and self.custom_agent_service.is_custom_agent(agent_id):
+                agent = await self.custom_agent_service.get_custom_agent(agent_id)
+
+            if not agent:
+                raise ConversationServiceError(f"Invalid agent_id: {agent_id}")
+
             logger.info(
-                f"conversation_id: {conversation_id}Running agent {conversation.agent_ids[0]} with query: {query} "
+                f"conversation_id: {conversation_id} Running agent {agent_id} with query: {query}"
             )
             async for chunk in agent.run(
                 query, conversation.project_ids[0], user_id, conversation.id, node_ids
@@ -390,7 +402,7 @@ class ConversationService:
                 if chunk:
                     yield chunk
             logger.info(
-                f"Generated and streamed AI response for conversation {conversation.id} for user {user_id} using agent {conversation.agent_ids[0]}"
+                f"Generated and streamed AI response for conversation {conversation.id} for user {user_id} using agent {agent_id}"
             )
         except Exception as e:
             logger.error(

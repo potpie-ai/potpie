@@ -73,13 +73,28 @@ class AuthService:
         if os.getenv("ENV") == "development":
             return True
         else:
-            shared_key = os.environ.get("SHARED_HMAC_KEY")
+            shared_key = AuthService.get_hmac_secret_key()
             expected_signature = hmac.new(
                 key=shared_key.encode(),
                 msg=json.dumps(payload_body).encode(),
                 digestmod=hashlib.sha256,
             ).hexdigest()
             return hmac.compare_digest(hmac_signature, expected_signature)
+
+    @staticmethod
+    def verify_hmac_signature_for_get(user_id: str, hmac_signature: str) -> bool:
+        secret_key = AuthService.get_hmac_secret_key()
+        message = f"user_id={user_id}"
+        expected_signature = hmac.new(
+            secret_key.encode(),
+            message.encode(),
+            hashlib.sha256
+        ).hexdigest()
+        return hmac.compare_digest(expected_signature, hmac_signature)
+
+    @staticmethod
+    def get_hmac_secret_key() -> str:
+        return os.environ.get("SHARED_HMAC_KEY")
 
 
 auth_handler = AuthService()

@@ -1,6 +1,6 @@
 from typing import List
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -18,11 +18,10 @@ router = APIRouter()
 @router.post("/tools/run_tool", response_model=ToolResponse)
 async def run_tool(
     request: ToolRequest,
+    user_id: str,
     db: Session = Depends(get_db),
-    user=Depends(AuthService.check_auth),
     hmac_signature: str = Header(..., alias="X-HMAC-Signature"),
 ):
-    user_id = user["user_id"]
     if not AuthService.verify_hmac_signature(request.model_dump(), hmac_signature):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -44,5 +43,18 @@ async def list_tools(
     user=Depends(AuthService.check_auth),
 ):
     user_id = user["user_id"]
+    tool_service = ToolService(db, user_id)
+    return tool_service.list_tools()
+
+
+@router.get("/tools/list_tools_hmac", response_model=List[ToolInfo])
+async def list_tools_hmac(
+    user_id: str = Query(...),
+    db: Session = Depends(get_db),
+    hmac_signature: str = Header(..., alias="X-HMAC-Signature"),
+):
+    if not AuthService.verify_hmac_signature_for_get(user_id, hmac_signature):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
     tool_service = ToolService(db, user_id)
     return tool_service.list_tools()
