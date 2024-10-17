@@ -386,21 +386,21 @@ class ConversationService:
             # First, try to get the agent from the existing agent_injector_service
             agent = self.agent_injector_service.get_agent(agent_id)
             
-            # If not found, check if it's a custom agent
-            if not agent and self.custom_agent_service.is_custom_agent(agent_id):
-                agent = await self.custom_agent_service.get_custom_agent(agent_id)
+            if agent:
+                # Regular agent
+                logger.info(
+                    f"conversation_id: {conversation_id} Running agent {agent_id} with query: {query}"
+                )
+                async for chunk in agent.run(
+                    query, conversation.project_ids[0], user_id, conversation.id, node_ids
+                ):
+                    if chunk:
+                        yield chunk
+            else:
+                # Assume it's a custom agent if not found in regular agents
+                response = await self.custom_agent_service.execute_custom_agent(agent_id, query)
+                yield response
 
-            if not agent:
-                raise ConversationServiceError(f"Invalid agent_id: {agent_id}")
-
-            logger.info(
-                f"conversation_id: {conversation_id} Running agent {agent_id} with query: {query}"
-            )
-            async for chunk in agent.run(
-                query, conversation.project_ids[0], user_id, conversation.id, node_ids
-            ):
-                if chunk:
-                    yield chunk
             logger.info(
                 f"Generated and streamed AI response for conversation {conversation.id} for user {user_id} using agent {agent_id}"
             )
