@@ -25,6 +25,7 @@ from app.modules.parsing.graph_construction.parsing_router import (
 )
 from app.modules.projects.projects_router import router as projects_router
 from app.modules.search.search_router import router as search_router
+from app.modules.subscription.subscription_router import router as subscription_router
 from app.modules.users.user_router import router as user_router
 from app.modules.utils.firebase_setup import FirebaseSetup
 
@@ -94,7 +95,7 @@ class MainApp:
         self.app.include_router(search_router, prefix="/api/v1", tags=["Search"])
         self.app.include_router(github_router, prefix="/api/v1", tags=["Github"])
         self.app.include_router(agent_router, prefix="/api/v1", tags=["Agents"])
-
+        self.app.include_router(subscription_router, prefix="/api/v1", tags=["Subscription"])
         self.app.include_router(provider_router, prefix="/api/v1", tags=["Providers"])
 
     def add_health_check(self):
