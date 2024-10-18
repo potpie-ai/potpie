@@ -80,7 +80,7 @@ class CustomAgent:
             ]
 
             custom_agent_result = await self.custom_agent_service.execute_custom_agent(
-                self.agent_id, query, project_id, user_id, conversation_id, node_ids
+                self.agent_id, query, node_ids
             )
 
             tool_results = [

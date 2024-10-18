@@ -12,18 +12,12 @@ class CustomAgentService:
         self, 
         agent_id: str, 
         query: str, 
-        project_id: str, 
-        user_id: str, 
-        conversation_id: str, 
         node_ids: List[NodeContext]
     ) -> Dict[str, str]:
         deployment_url = f"{self.base_url}/deployment/{agent_id}/query"
         
         payload = {
             "query": query,
-            "project_id": project_id,
-            "user_id": user_id,
-            "conversation_id": conversation_id,
             "node_ids": [node.dict() for node in node_ids]
         }
         
