@@ -1,49 +1,116 @@
-import os
-from typing import Dict, Any, AsyncGenerator
-import aiohttp
-from langchain.llms import BaseLLM
+import json
+import logging
+from functools import lru_cache
+from typing import AsyncGenerator, Dict, List
+
+from langchain.schema import HumanMessage, SystemMessage
+from langchain_core.prompts import (
+    ChatPromptTemplate,
+    HumanMessagePromptTemplate,
+    MessagesPlaceholder,
+    SystemMessagePromptTemplate,
+)
+from langchain_core.runnables import RunnableSequence
+from sqlalchemy.orm import Session
+
+from app.modules.conversations.message.message_model import MessageType
+from app.modules.conversations.message.message_schema import NodeContext
+from app.modules.intelligence.agents.custom_agents.custom_agents_service import CustomAgentService
+from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
+from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
+from app.modules.intelligence.prompts.prompt_service import PromptService
+
+logger = logging.getLogger(__name__)
 
 class CustomAgent:
-    def __init__(self, llm: BaseLLM, agent_id: str):
+    def __init__(self, llm, db: Session, agent_id: str):
         self.llm = llm
+        self.db = db
         self.agent_id = agent_id
-        self.base_url = os.getenv("CUSTOM_AGENT_BASE_URL")
+        self.history_manager = ChatHistoryService(db)
+        self.prompt_service = PromptService(db)
+        self.custom_agent_service = CustomAgentService(db)
+        self.chain = None
 
-    async def run(self, query: str, project_id: str, user_id: str, conversation_id: str, node_ids: list) -> AsyncGenerator[str, None]:
-        url = f"{self.base_url}/run"
-        
-        params = {
-            "agent_id": self.agent_id
-        }
+    @lru_cache(maxsize=2)
+    async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
+        prompts = await self.prompt_service.get_prompts_by_agent_id_and_types(
+            self.agent_id, [PromptType.SYSTEM, PromptType.HUMAN]
+        )
+        return {prompt.type: prompt for prompt in prompts}
 
-        payload = {
-            "query": query,
-            "project_id": project_id,
-            "user_id": user_id,
-            "conversation_id": conversation_id,
-            "node_ids": node_ids
-        }
+    async def _create_chain(self) -> RunnableSequence:
+        prompts = await self._get_prompts()
+        system_prompt = prompts.get(PromptType.SYSTEM)
+        human_prompt = prompts.get(PromptType.HUMAN)
 
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, params=params, json=payload) as response:
-                if response.status != 200:
-                    error_message = await response.text()
-                    raise Exception(f"Custom agent execution failed: {error_message}")
+        if not system_prompt or not human_prompt:
+            raise ValueError(f"Required prompts not found for {self.agent_id}")
 
-                async for chunk in response.content.iter_any():
-                    yield chunk.decode('utf-8')
+        prompt_template = ChatPromptTemplate(
+            messages=[
+                SystemMessagePromptTemplate.from_template(system_prompt.text),
+                MessagesPlaceholder(variable_name="history"),
+                MessagesPlaceholder(variable_name="tool_results"),
+                HumanMessagePromptTemplate.from_template(human_prompt.text),
+            ]
+        )
+        return prompt_template | self.llm
 
-    async def get_system_prompt(self) -> str:
-        url = f"{self.base_url}/system_prompt"
-        
-        params = {
-            "agent_id": self.agent_id
-        }
+    async def run(
+        self,
+        query: str,
+        project_id: str,
+        user_id: str,
+        conversation_id: str,
+        node_ids: List[NodeContext],
+    ) -> AsyncGenerator[str, None]:
+        try:
+            if not self.chain:
+                self.chain = await self._create_chain()
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params) as response:
-                if response.status != 200:
-                    error_message = await response.text()
-                    raise Exception(f"Failed to get system prompt: {error_message}")
-                
-                return await response.text()
+            history = self.history_manager.get_session_history(user_id, conversation_id)
+            validated_history = [
+                (
+                    HumanMessage(content=str(msg))
+                    if isinstance(msg, (str, int, float))
+                    else msg
+                )
+                for msg in history
+            ]
+
+            custom_agent_result = await self.custom_agent_service.execute_custom_agent(
+                self.agent_id, query, project_id, user_id, conversation_id, node_ids
+            )
+
+            tool_results = [
+                SystemMessage(content=f"Custom Agent result: {json.dumps(custom_agent_result)}")
+            ]
+
+            inputs = {
+                "history": validated_history,
+                "tool_results": tool_results,
+                "input": query,
+            }
+
+            logger.debug(f"Inputs to LLM: {inputs}")
+
+            full_response = ""
+            async for chunk in self.chain.astream(inputs):
+                content = chunk.content if hasattr(chunk, "content") else str(chunk)
+                full_response += content
+                self.history_manager.add_message_chunk(
+                    conversation_id,
+                    content,
+                    MessageType.AI_GENERATED,
+                )
+                yield json.dumps({"message": content})
+
+            logger.debug(f"Full LLM response: {full_response}")
+            self.history_manager.flush_message_buffer(
+                conversation_id, MessageType.AI_GENERATED
+            )
+
+        except Exception as e:
+            logger.error(f"Error during CustomAgent run: {str(e)}", exc_info=True)
+            yield f"An error occurred: {str(e)}"

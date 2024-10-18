@@ -31,7 +31,7 @@ from app.modules.intelligence.memory.chat_history_service import ChatHistoryServ
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
 from app.modules.utils.posthog_helper import PostHogClient
-from app.modules.intelligence.agents.custom_agents.custom_agents_service import CustomAgentService
+from app.modules.intelligence.agents.custom_agents.custom_agent import CustomAgent
 
 logger = logging.getLogger(__name__)
 
@@ -381,25 +381,23 @@ class ConversationService:
             )
 
         agent_id = conversation.agent_ids[0]
+        project_id = conversation.project_ids[0] if conversation.project_ids else None
         
         try:
             # First, try to get the agent from the existing agent_injector_service
             agent = self.agent_injector_service.get_agent(agent_id)
             
-            if agent:
-                # Regular agent
-                logger.info(
-                    f"conversation_id: {conversation_id} Running agent {agent_id} with query: {query}"
-                )
-                async for chunk in agent.run(
-                    query, conversation.project_ids[0], user_id, conversation.id, node_ids
-                ):
-                    if chunk:
-                        yield chunk
-            else:
-                # Assume it's a custom agent if not found in regular agents
-                response = await self.custom_agent_service.execute_custom_agent(agent_id, query)
-                yield response
+            if not agent:
+                # If not found, create a CustomAgent
+                agent = CustomAgent(self.llm, self.sql_db, agent_id)  # Changed here
+
+            logger.info(
+                f"conversation_id: {conversation_id} Running agent {agent_id} with query: {query}"
+            )
+            async for chunk in agent.run(
+                query, project_id, user_id, conversation.id, node_ids
+            ):
+                yield chunk
 
             logger.info(
                 f"Generated and streamed AI response for conversation {conversation.id} for user {user_id} using agent {agent_id}"
