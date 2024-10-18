@@ -27,6 +27,7 @@ from app.modules.conversations.message.message_schema import (
     NodeContext,
 )
 from app.modules.intelligence.agents.agent_injector_service import AgentInjectorService
+from app.modules.intelligence.agents.custom_agents.custom_agents_service import CustomAgentService
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
