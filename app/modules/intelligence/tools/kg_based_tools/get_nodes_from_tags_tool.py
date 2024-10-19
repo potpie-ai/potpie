@@ -8,6 +8,7 @@ from app.core.config_provider import ConfigProvider
 from app.core.database import get_db
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.projects.projects_service import ProjectService
+from app.modules.intelligence.tools.tool_schema import ToolParameter
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -71,6 +72,23 @@ class GetNodesFromTags:
         except Exception as e:
             logger.error(f"Unexpected error in GetNodesFromTags: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
+
+    @staticmethod
+    def get_parameters() -> List[ToolParameter]:
+        return [
+            ToolParameter(
+                name="repo_id",
+                type="string",
+                description="The repository ID (UUID)",
+                required=True
+            ),
+            ToolParameter(
+                name="tags",
+                type="array",
+                description="List of tags to search for nodes",
+                required=True
+            )
+        ]
 
 
 def get_nodes_from_tags_tool(sql_db, user_id) -> StructuredTool:

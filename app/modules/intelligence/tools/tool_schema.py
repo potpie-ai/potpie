@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from pydantic import BaseModel
 
@@ -12,7 +12,15 @@ class ToolResponse(BaseModel):
     results: Any
 
 
+class ToolParameter(BaseModel):
+    name: str
+    type: str
+    description: str
+    required: bool
+
+
 class ToolInfo(BaseModel):
     id: str
     name: str
     description: str
+    parameters: List[ToolParameter]

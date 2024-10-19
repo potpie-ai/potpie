@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from langchain.tools import StructuredTool
 from neo4j import GraphDatabase
@@ -12,6 +12,7 @@ from app.modules.github.github_service import GithubService
 from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
+from app.modules.intelligence.tools.tool_schema import ToolParameter
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +168,23 @@ class GetCodeFromProbableNodeNameTool:
     def __del__(self):
         if hasattr(self, "neo4j_driver"):
             self.neo4j_driver.close()
+
+    @staticmethod
+    def get_parameters() -> List[ToolParameter]:
+        return [
+            ToolParameter(
+                name="repo_id",
+                type="string",
+                description="The repository ID (UUID)",
+                required=True
+            ),
+            ToolParameter(
+                name="node_name",
+                type="string",
+                description="The probable name of the node to retrieve code from",
+                required=True
+            )
+        ]
 
 
 def get_code_from_probable_node_name_tool(

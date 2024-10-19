@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from app.modules.parsing.knowledge_graph.inference_schema import QueryResponse
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 from app.modules.projects.projects_service import ProjectService
+from app.modules.intelligence.tools.tool_schema import ToolParameter
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -125,6 +126,23 @@ class KnowledgeGraphQueryTool:
         except Exception as e:
             logger.error(f"Unexpected error in KnowledgeGraphQueryTool: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
+
+    @staticmethod
+    def get_parameters() -> List[ToolParameter]:
+        return [
+            ToolParameter(
+                name="repo_id",
+                type="string",
+                description="The repository ID (UUID)",
+                required=True
+            ),
+            ToolParameter(
+                name="query",
+                type="string",
+                description="The knowledge graph query to execute",
+                required=True
+            )
+        ]
 
 
 def get_ask_knowledge_graph_queries_tool(sql_db, user_id) -> StructuredTool:

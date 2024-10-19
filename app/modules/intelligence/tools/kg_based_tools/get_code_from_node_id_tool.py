@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from langchain.tools import StructuredTool
 from neo4j import GraphDatabase
@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.config_provider import config_provider
 from app.modules.github.github_service import GithubService
 from app.modules.projects.projects_model import Project
+from app.modules.intelligence.tools.tool_schema import ToolParameter
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,23 @@ class GetCodeFromNodeIdTool:
     def __del__(self):
         if hasattr(self, "neo4j_driver"):
             self.neo4j_driver.close()
+
+    @staticmethod
+    def get_parameters() -> List[ToolParameter]:
+        return [
+            ToolParameter(
+                name="node_id",
+                type="string",
+                description="The ID of the node to retrieve code from",
+                required=True
+            ),
+            ToolParameter(
+                name="include_imports",
+                type="boolean",
+                description="Whether to include import statements in the retrieved code",
+                required=False
+            )
+        ]
 
 
 def get_code_from_node_id_tool(sql_db: Session, user_id: str) -> StructuredTool:

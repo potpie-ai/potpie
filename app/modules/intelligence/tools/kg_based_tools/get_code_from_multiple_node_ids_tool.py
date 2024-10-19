@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.config_provider import config_provider
 from app.modules.github.github_service import GithubService
 from app.modules.projects.projects_model import Project
+from app.modules.intelligence.tools.tool_schema import ToolParameter
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,23 @@ class GetCodeFromMultipleNodeIdsTool:
     def __del__(self):
         if hasattr(self, "neo4j_driver"):
             self.neo4j_driver.close()
+
+    @staticmethod
+    def get_parameters() -> List[ToolParameter]:
+        return [
+            ToolParameter(
+                name="repo_id",
+                type="string",
+                description="The repository ID (UUID)",
+                required=True
+            ),
+            ToolParameter(
+                name="node_ids",
+                type="array",
+                description="List of node IDs to retrieve code from",
+                required=True
+            )
+        ]
 
 
 def get_code_from_multiple_node_ids_tool(

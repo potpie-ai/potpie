@@ -1,5 +1,6 @@
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List
+from app.modules.intelligence.tools.tool_schema import ToolParameter
 
 from fastapi import HTTPException
 from langchain_core.tools import StructuredTool, Tool
@@ -123,6 +124,23 @@ class GetCodeFromNodeNameTool:
 
     async def arun(self, repo_id: str, node_name: str) -> Dict[str, Any]:
         return self.run(repo_id, node_name)
+
+    @staticmethod
+    def get_parameters() -> List[ToolParameter]:
+        return [
+            ToolParameter(
+                name="repo_id",
+                type="string",
+                description="The repository ID (UUID)",
+                required=True
+            ),
+            ToolParameter(
+                name="node_name",
+                type="string",
+                description="The name of the node to retrieve code from",
+                required=True
+            )
+        ]
 
 
 def get_code_from_node_name_tool(sql_db: Session, user_id: str) -> Tool:

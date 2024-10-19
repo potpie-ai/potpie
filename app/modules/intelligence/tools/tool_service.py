@@ -29,7 +29,7 @@ from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_na
 from app.modules.intelligence.tools.change_detection.change_detection import (
     ChangeDetectionTool,
 )
-from app.modules.intelligence.tools.tool_schema import ToolInfo
+from app.modules.intelligence.tools.tool_schema import ToolInfo, ToolParameter
 
 
 class ToolService:
@@ -78,7 +78,15 @@ class ToolService:
     def list_tools(self) -> List[ToolInfo]:
         return [
             ToolInfo(
-                id=tool_id, name=tool.__class__.__name__, description=tool.description
+                id=tool_id,
+                name=tool.__class__.__name__,
+                description=tool.description,
+                parameters=self._get_tool_parameters(tool)
             )
             for tool_id, tool in self.tools.items()
         ]
+
+    def _get_tool_parameters(self, tool: Any) -> List[ToolParameter]:
+        if hasattr(tool, 'get_parameters'):
+            return tool.get_parameters()
+        return []

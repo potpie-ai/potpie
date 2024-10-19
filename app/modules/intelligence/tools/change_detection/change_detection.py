@@ -19,6 +19,7 @@ from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
+from app.modules.intelligence.tools.tool_schema import ToolParameter
 
 
 class ChangeDetectionInput(BaseModel):
@@ -272,6 +273,29 @@ class ChangeDetectionTool:
 
         # Run the coroutine using the event loop
         return loop.run_until_complete(self.get_code_changes(repo_id))
+
+    @staticmethod
+    def get_parameters() -> List[ToolParameter]:
+        return [
+            ToolParameter(
+                name="repo_id",
+                type="string",
+                description="The repository ID (UUID)",
+                required=True
+            ),
+            ToolParameter(
+                name="base_commit",
+                type="string",
+                description="The base commit SHA",
+                required=True
+            ),
+            ToolParameter(
+                name="target_commit",
+                type="string",
+                description="The target commit SHA",
+                required=True
+            )
+        ]
 
 
 def get_blast_radius_tool(user_id: str) -> Tool:

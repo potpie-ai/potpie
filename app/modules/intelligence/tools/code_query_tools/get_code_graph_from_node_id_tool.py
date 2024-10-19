@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 from app.modules.projects.projects_model import Project
+from app.modules.intelligence.tools.tool_schema import ToolParameter
 
 
 class GetCodeGraphFromNodeIdTool:
@@ -196,6 +197,29 @@ class GetCodeGraphFromNodeIdTool:
     async def arun(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         """Asynchronous version of the run method."""
         return self.run(repo_id, node_id)
+
+    @staticmethod
+    def get_parameters() -> List[ToolParameter]:
+        return [
+            ToolParameter(
+                name="repo_id",
+                type="string",
+                description="The repository ID (UUID)",
+                required=True
+            ),
+            ToolParameter(
+                name="node_id",
+                type="string",
+                description="The ID of the node to retrieve the code graph from",
+                required=True
+            ),
+            ToolParameter(
+                name="depth",
+                type="integer",
+                description="The depth of the code graph to retrieve",
+                required=False
+            )
+        ]
 
 
 def get_code_graph_from_node_id_tool(sql_db: Session, user_id: str) -> Tool:

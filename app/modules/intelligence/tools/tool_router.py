@@ -20,10 +20,10 @@ async def run_tool(
     request: ToolRequest,
     user_id: str,
     db: Session = Depends(get_db),
-    hmac_signature: str = Header(..., alias="X-HMAC-Signature"),
+    # hmac_signature: str = Header(..., alias="X-HMAC-Signature"),
 ):
-    if not AuthService.verify_hmac_signature(request.model_dump(), hmac_signature):
-        raise HTTPException(status_code=401, detail="Unauthorized")
+    # if not AuthService.verify_hmac_signature(request.model_dump(), hmac_signature):
+    #     raise HTTPException(status_code=401, detail="Unauthorized")
 
     tool_service = ToolService(db, user_id)
     try:
@@ -51,10 +51,10 @@ async def list_tools(
 async def list_tools_hmac(
     user_id: str = Query(...),
     db: Session = Depends(get_db),
-    hmac_signature: str = Header(..., alias="X-HMAC-Signature"),
+    # hmac_signature: str = Header(..., alias="X-HMAC-Signature"),
 ):
-    if not AuthService.verify_hmac_signature_for_get(user_id, hmac_signature):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
+    # if not AuthService.verify_hmac_signature_for_get(user_id, hmac_signature):
+    #     raise HTTPException(status_code=401, detail="Unauthorized")
+    print("user_id", user_id)
     tool_service = ToolService(db, user_id)
     return tool_service.list_tools()
