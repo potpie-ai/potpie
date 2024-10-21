@@ -37,7 +37,6 @@ class ParsingController:
             "langchain-ai/langchain",
             "crewAIInc/crewAI",
             "mem0ai/mem0",
-            "potpie-ai/mongo-proxy",
         ]
 
         async def handle_new_project(new_project_id: str):
