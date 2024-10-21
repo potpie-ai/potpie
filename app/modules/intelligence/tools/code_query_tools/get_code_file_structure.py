@@ -1,8 +1,10 @@
 from langchain_core.tools import StructuredTool
 from sqlalchemy.orm import Session
-
+from pydantic import BaseModel
 from app.modules.github.github_service import GithubService
 
+class RepoStructureRequest(BaseModel):
+    repo_id: str
 
 class RepoStructureService:
     def __init__(self, db: Session):
@@ -21,7 +23,8 @@ class RepoStructureService:
 def get_code_file_structure_tool(db: Session) -> StructuredTool:
     return StructuredTool(
         name="get_code_file_structure",
-        description="Get the file structure of a project",
+        description="Retrieve the hierarchical file structure of a specified repository.",
         coroutine=RepoStructureService(db).run,
         func=RepoStructureService(db).run_tool,
+        args_schema=RepoStructureRequest,
     )
