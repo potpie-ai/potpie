@@ -1,7 +1,7 @@
 import json
 import logging
 from functools import lru_cache
-from typing import AsyncGenerator, Dict, List
+from typing import AsyncGenerator, Dict, List, Any
 
 from langchain.schema import HumanMessage, SystemMessage
 from langchain_core.prompts import (
@@ -15,10 +15,10 @@ from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import NodeContext
-from app.modules.intelligence.agents.custom_agents.custom_agents_service import CustomAgentService
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,6 @@ class CustomAgent:
         self.agent_id = agent_id
         self.history_manager = ChatHistoryService(db)
         self.prompt_service = PromptService(db)
-        self.custom_agent_service = CustomAgentService(db)
         self.chain = None
 
     @lru_cache(maxsize=2)
@@ -79,7 +78,7 @@ class CustomAgent:
                 for msg in history
             ]
 
-            custom_agent_result = await self.custom_agent_service.execute_custom_agent(
+            custom_agent_result = await self.custom_agent_service.run(
                 self.agent_id, query, node_ids
             )
 
@@ -114,3 +113,18 @@ class CustomAgent:
         except Exception as e:
             logger.error(f"Error during CustomAgent run: {str(e)}", exc_info=True)
             yield f"An error occurred: {str(e)}"
+
+    async def is_valid(self) -> bool:
+        validate_url = f"{self.base_url}/deployment/{self.agent_id}/validate"
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.get(validate_url)
+            return response.status_code == 200
+
+    async def run(self, payload: Dict[str, Any]) -> str:
+        run_url = f"{self.base_url}/deployment/{self.agent_id}/run"
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.post(run_url, json=payload)
+            response.raise_for_status()
+            return response.json()["response"]
