@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from langchain.tools import StructuredTool
 from neo4j import GraphDatabase
@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.config_provider import config_provider
 from app.modules.github.github_service import GithubService
 from app.modules.projects.projects_model import Project
+from app.modules.intelligence.tools.tool_schema import ToolParameter
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ class GetCodeFromNodeIdTool:
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
 
-    def run(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+    def get_code_from_node_id(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         try:
             node_data = self._get_node_data(repo_id, node_id)
             if not node_data:
@@ -56,6 +57,12 @@ class GetCodeFromNodeIdTool:
         except Exception as e:
             logger.error(f"Unexpected error in GetCodeFromNodeIdTool: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
+
+    def run_tool(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+        return self.get_code_from_node_id(repo_id, node_id)
+
+    async def run(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+        return self.get_code_from_node_id(repo_id, node_id)
 
     def _get_node_data(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         query = """
@@ -115,11 +122,29 @@ class GetCodeFromNodeIdTool:
         if hasattr(self, "neo4j_driver"):
             self.neo4j_driver.close()
 
+    @staticmethod
+    def get_parameters() -> List[ToolParameter]:
+        return [
+            ToolParameter(
+                name="node_id",
+                type="string",
+                description="The ID of the node to retrieve code from",
+                required=True
+            ),
+            ToolParameter(
+                name="include_imports",
+                type="boolean",
+                description="Whether to include import statements in the retrieved code",
+                required=False
+            )
+        ]
+
 
 def get_code_from_node_id_tool(sql_db: Session, user_id: str) -> StructuredTool:
     tool_instance = GetCodeFromNodeIdTool(sql_db, user_id)
     return StructuredTool.from_function(
-        func=tool_instance.run,
+        coroutine=tool_instance.run,
+        func=tool_instance.run_tool,
         name="Get Code and docstring From Node ID",
         description="""Retrieves code and docstring for a specific node id in a repository given its node ID
                        Inputs for the run method:

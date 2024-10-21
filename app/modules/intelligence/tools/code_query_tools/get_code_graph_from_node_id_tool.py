@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 from app.modules.projects.projects_model import Project
+from app.modules.intelligence.tools.tool_schema import ToolParameter
 
 
 class GetCodeGraphFromNodeIdTool:
@@ -17,7 +18,7 @@ class GetCodeGraphFromNodeIdTool:
         "Retrieves a code graph for a specific node in a repository given its node ID"
     )
 
-    def __init__(self, sql_db: Session):
+    def __init__(self, sql_db: Session, user_id: str):
         """
         Initialize the tool with a SQL database session.
 
@@ -25,6 +26,7 @@ class GetCodeGraphFromNodeIdTool:
             sql_db (Session): SQLAlchemy database session.
         """
         self.sql_db = sql_db
+        self.user_id = user_id
         self.neo4j_driver = self._create_neo4j_driver()
 
     def _create_neo4j_driver(self) -> GraphDatabase.driver:
@@ -35,7 +37,7 @@ class GetCodeGraphFromNodeIdTool:
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
 
-    def run(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+    def fetch_graph_data(self, repo_id: str, node_id: str) -> Optional[Dict[str, Any]]:
         """
         Run the tool to retrieve the code graph.
 
@@ -62,9 +64,17 @@ class GetCodeGraphFromNodeIdTool:
             logging.exception(f"An unexpected error occurred: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
+    async def run(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+        return self.fetch_graph_data(repo_id, node_id)
+
+    async def run_tool(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+        return self.fetch_graph_data(repo_id, node_id)
+
     def _get_project(self, repo_id: str) -> Optional[Project]:
         """Retrieve project from the database."""
-        return self.sql_db.query(Project).filter(Project.id == repo_id).first()
+        return self.sql_db.query(Project).filter(
+            Project.id == repo_id, Project.user_id == self.user_id
+        ).first()
 
     def _get_graph_data(self, repo_id: str, node_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve graph data from Neo4j."""
@@ -188,11 +198,35 @@ class GetCodeGraphFromNodeIdTool:
         """Asynchronous version of the run method."""
         return self.run(repo_id, node_id)
 
+    @staticmethod
+    def get_parameters() -> List[ToolParameter]:
+        return [
+            ToolParameter(
+                name="repo_id",
+                type="string",
+                description="The repository ID (UUID)",
+                required=True
+            ),
+            ToolParameter(
+                name="node_id",
+                type="string",
+                description="The ID of the node to retrieve the code graph from",
+                required=True
+            ),
+            ToolParameter(
+                name="depth",
+                type="integer",
+                description="The depth of the code graph to retrieve",
+                required=False
+            )
+        ]
 
-def get_code_graph_from_node_id_tool(sql_db: Session) -> Tool:
-    tool_instance = GetCodeGraphFromNodeIdTool(sql_db)
+
+def get_code_graph_from_node_id_tool(sql_db: Session, user_id: str) -> Tool:
+    tool_instance = GetCodeGraphFromNodeIdTool(sql_db, user_id)
     return StructuredTool.from_function(
-        func=tool_instance.run,
+        coroutine=tool_instance.run,
+        func=tool_instance.run_tool,
         name="Get Code Graph From Node ID",
         description="Retrieves a code graph for a specific node in a repository given its node ID",
     )

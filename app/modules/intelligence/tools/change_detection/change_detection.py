@@ -19,10 +19,11 @@ from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
+from app.modules.intelligence.tools.tool_schema import ToolParameter
 
 
 class ChangeDetectionInput(BaseModel):
-    project_id: str = Field(
+    repo_id: str = Field(
         ..., description="The ID of the project being evaluated, this is a UUID."
     )
 
@@ -43,6 +44,10 @@ class ChangeDetectionResponse(BaseModel):
 
 
 class ChangeDetectionTool:
+
+    name = "change_detection"
+    description = "Retrieves the changes in the current branch compared to the default branch."
+
     def __init__(self, sql_db, user_id):
         self.sql_db = sql_db
         self.user_id = user_id
@@ -123,17 +128,17 @@ class ChangeDetectionTool:
         return await self._find_changed_functions(changed_files, repo_id)
 
     @staticmethod
-    def _find_inbound_neighbors(tx, node_id, project_id, with_bodies):
+    def _find_inbound_neighbors(tx, identifier_id, repo_id, with_bodies):
         query = f"""
-        MATCH (start:Function {{id: $endpoint_id, project_id: $project_id}})
+        MATCH (start:Function {{node_id: $entrypoint_id, repoId: $project_id}})
         CALL {{
             WITH start
-            MATCH (neighbor:Function {{project_id: $project_id}})-[:CALLS*]->(start)
+            MATCH (neighbor:Function {{repoId: $project_id}})-[:CALLS*]->(start)
             RETURN neighbor{', neighbor.body AS body' if with_bodies else ''}
         }}
         RETURN start, collect({{neighbor: neighbor{', body: neighbor.body' if with_bodies else ''}}}) AS neighbors
         """
-        result = tx.run(query, endpoint_id=node_id, project_id=project_id)
+        result = tx.run(query, entrypoint_id=identifier_id, project_id=repo_id)
         record = result.single()
         if not record:
             return []
@@ -149,32 +154,6 @@ class ChangeDetectionTool:
             return session.read_transaction(
                 self._traverse, identifier, project_id, neighbors_query
             )
-
-    def find_entry_points(self, identifiers, project_id):
-        all_inbound_nodes = set()
-
-        for identifier in identifiers:
-            traversal_result = self.traverse(
-                identifier=identifier,
-                project_id=project_id,
-                neighbors_fn=ChangeDetectionTool._find_inbound_neighbors,
-            )
-            for item in traversal_result:
-                if isinstance(item, dict):
-                    all_inbound_nodes.update([frozenset(item.items())])
-
-        entry_points = set()
-        for node in all_inbound_nodes:
-            node_dict = dict(node)
-            traversal_result = self.traverse(
-                identifier=node_dict["id"],
-                project_id=project_id,
-                neighbors_fn=ChangeDetectionTool._find_inbound_neighbors,
-            )
-            if len(traversal_result) == 1:
-                entry_points.add(node)
-
-        return entry_points
 
     async def get_code_changes(self, project_id):
         global patches_dict, repo
@@ -241,7 +220,7 @@ class ChangeDetectionTool:
                     # Fetch code for node ids and store in a dict
                     node_code_dict = {}
                     for node_id in node_ids:
-                        node_code = GetCodeFromNodeIdTool(
+                        node_code = await GetCodeFromNodeIdTool(
                             self.sql_db, self.user_id
                         ).run(project_id, node_id)
                         node_code_dict[node_id] = {
@@ -257,7 +236,7 @@ class ChangeDetectionTool:
 
                     changes_list = []
                     for node, entry_point in entry_points.items():
-                        entry_point_code = GetCodeFromNodeIdTool(
+                        entry_point_code = await GetCodeFromNodeIdTool(
                             self.sql_db, self.user_id
                         ).run(project_id, entry_point[0])
                         changes_list.append(
@@ -284,8 +263,39 @@ class ChangeDetectionTool:
                 if github:
                     github.close()
 
-    def get_change_context(self, project_id):
-        return asyncio.run(self.get_code_changes(project_id))
+    async def run(self, repo_id):
+        return await self.get_code_changes(repo_id)
+
+    def run_tool(self, repo_id):
+        # Create a new event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        # Run the coroutine using the event loop
+        return loop.run_until_complete(self.get_code_changes(repo_id))
+
+    @staticmethod
+    def get_parameters() -> List[ToolParameter]:
+        return [
+            ToolParameter(
+                name="repo_id",
+                type="string",
+                description="The repository ID (UUID)",
+                required=True
+            ),
+            ToolParameter(
+                name="base_commit",
+                type="string",
+                description="The base commit SHA",
+                required=True
+            ),
+            ToolParameter(
+                name="target_commit",
+                type="string",
+                description="The target commit SHA",
+                required=True
+            )
+        ]
 
 
 def get_blast_radius_tool(user_id: str) -> Tool:
@@ -294,13 +304,14 @@ def get_blast_radius_tool(user_id: str) -> Tool:
     """
     change_detection_tool = ChangeDetectionTool(next(get_db()), user_id)
     return StructuredTool.from_function(
-        func=change_detection_tool.get_change_context,
+        coroutine=change_detection_tool.run,
+        func=change_detection_tool.run_tool,
         name="Get code changes",
         description="""
     Get the changes in the codebase.
     This tool analyzes the differences between branches in a Git repository and retrieves updated function details, including their entry points and citations.
     Inputs for the get_code_changes method:
-    - project_id (str): The ID of the project being evaluated, this is a UUID.
+    - repo_id (str): The ID of the project being evaluated, this is a UUID.
     The output includes a dictionary of file patches and a list of changes with updated code and entry point code.
     """,
         args_schema=ChangeDetectionInput,

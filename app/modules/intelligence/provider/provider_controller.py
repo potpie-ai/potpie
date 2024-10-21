@@ -3,7 +3,7 @@ from typing import List
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from .provider_schema import ProviderInfo, SetProviderRequest
+from .provider_schema import GetProviderResponse, ProviderInfo, SetProviderRequest
 from .provider_service import ProviderService
 
 
@@ -32,4 +32,15 @@ class ProviderController:
         except Exception as e:
             raise HTTPException(
                 status_code=500, detail=f"Error setting AI provider: {str(e)}"
+            )
+
+    async def get_preferred_llm(self, user_id: str) -> GetProviderResponse:
+        try:
+            preferred_llm, model_type = await self.service.get_preferred_llm(user_id)
+            return GetProviderResponse(
+                preferred_llm=preferred_llm, model_type=model_type
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"Error getting preferred LLM: {str(e)}"
             )

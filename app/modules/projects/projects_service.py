@@ -147,6 +147,22 @@ class ProjectService:
         else:
             return None
 
+    def get_project_repo_details_from_db_sync(self, project_id: int, user_id: str):
+        project = (
+            self.db.query(Project)
+            .filter(Project.id == project_id, Project.user_id == user_id)
+            .first()
+        )
+        if project:
+            return {
+                "id": project.id,
+                "repo_name": project.repo_name,
+                "branch_name": project.branch_name,
+                "user_id": project.user_id,
+            }
+        else:
+            return None
+
     async def get_repo_and_branch_name(self, project_id: int):
         project = ProjectService.get_project_by_id(self.db, project_id)
         if project:

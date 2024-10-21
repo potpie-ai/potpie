@@ -27,6 +27,7 @@ from app.modules.conversations.message.message_schema import (
     NodeContext,
 )
 from app.modules.intelligence.agents.agent_injector_service import AgentInjectorService
+from app.modules.intelligence.agents.custom_agents.custom_agents_service import CustomAgentService
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
@@ -56,6 +57,7 @@ class ConversationService:
         history_manager: ChatHistoryService,
         provider_service: ProviderService,
         agent_injector_service: AgentInjectorService,
+        custom_agent_service: CustomAgentService,
     ):
         self.sql_db = db
         self.user_id = user_id
@@ -63,6 +65,7 @@ class ConversationService:
         self.history_manager = history_manager
         self.provider_service = provider_service
         self.agent_injector_service = agent_injector_service
+        self.custom_agent_service = custom_agent_service
 
     @classmethod
     def create(cls, db: Session, user_id: str):
@@ -70,16 +73,27 @@ class ConversationService:
         history_manager = ChatHistoryService(db)
         provider_service = ProviderService(db, user_id)
         agent_injector_service = AgentInjectorService(db, provider_service)
-        return cls(db, user_id, project_service, history_manager, provider_service, agent_injector_service)
+        custom_agent_service = CustomAgentService(db)
+        return cls(
+            db,
+            user_id,
+            project_service,
+            history_manager,
+            provider_service,
+            agent_injector_service,
+            custom_agent_service,
+        )
 
     async def create_conversation(
         self, conversation: CreateConversationRequest, user_id: str
     ) -> tuple[str, str]:
         try:
-            if not self.agent_injector_service.validate_agent_id(conversation.agent_ids[0]):
-                raise ConversationServiceError(
-                    f"Invalid agent_id: {conversation.agent_ids[0]}"
-                )
+            # if not self.agent_injector_service.validate_agent_id(
+            #     conversation.agent_ids[0]
+            # ):
+            #     raise ConversationServiceError(
+            #         f"Invalid agent_id: {conversation.agent_ids[0]}"
+            #     )
 
             project_name = await self.project_service.get_project_name(
                 conversation.project_ids
@@ -211,17 +225,8 @@ class ConversationService:
                         "No project associated with this conversation"
                     )
 
-                agent = self.agent_injector_service.get_agent(conversation.agent_ids[0])
-                if not agent:
-                    raise ConversationServiceError(
-                        f"Invalid agent_id: {conversation.agent_ids[0]}"
-                    )
-
-                logger.info(
-                    f"Running agent for repo_id: {repo_id} conversation_id: {conversation_id}"
-                )
-                async for chunk in agent.run(
-                    message.content, repo_id, user_id, conversation.id, message.node_ids
+                async for chunk in self._generate_and_stream_ai_response(
+                    message.content, conversation_id, user_id, message.node_ids
                 ):
                     yield chunk
         except Exception as e:
@@ -358,39 +363,31 @@ class ConversationService:
         user_id: str,
         node_ids: List[NodeContext],
     ) -> AsyncGenerator[str, None]:
-        conversation = (
-            self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
-        )
+        conversation = self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
         if not conversation:
-            raise ConversationNotFoundError(
-                f"Conversation with id {conversation_id} not found"
-            )
-        agent = self.agent_injector_service.get_agent(conversation.agent_ids[0])
-        if not agent:
-            raise ConversationServiceError(
-                f"Invalid agent_id: {conversation.agent_ids[0]}"
-            )
+            raise ConversationNotFoundError(f"Conversation with id {conversation_id} not found")
 
+        agent_id = conversation.agent_ids[0]
+        project_id = conversation.project_ids[0] if conversation.project_ids else None
+        
         try:
-            logger.info(
-                f"conversation_id: {conversation_id}Running agent {conversation.agent_ids[0]} with query: {query} "
-            )
-            async for chunk in agent.run(
-                query, conversation.project_ids[0], user_id, conversation.id, node_ids
-            ):
-                if chunk:
+            agent = self.agent_injector_service.get_agent(agent_id)
+            
+            logger.info(f"conversation_id: {conversation_id} Running agent {agent_id} with query: {query}")
+            
+            if isinstance(agent, CustomAgentService):
+                # Custom agent doesn't support streaming, so we'll yield the entire response at once
+                response = await agent.run(agent_id, query, project_id, user_id, conversation.id, node_ids)
+                yield response
+            else:
+                # For other agents that support streaming
+                async for chunk in agent.run(query, project_id, user_id, conversation.id, node_ids):
                     yield chunk
-            logger.info(
-                f"Generated and streamed AI response for conversation {conversation.id} for user {user_id} using agent {conversation.agent_ids[0]}"
-            )
+
+            logger.info(f"Generated and streamed AI response for conversation {conversation.id} for user {user_id} using agent {agent_id}")
         except Exception as e:
-            logger.error(
-                f"Failed to generate and stream AI response for conversation {conversation.id}: {e}",
-                exc_info=True,
-            )
-            raise ConversationServiceError(
-                "Failed to generate and stream AI response."
-            ) from e
+            logger.error(f"Failed to generate and stream AI response for conversation {conversation.id}: {e}", exc_info=True)
+            raise ConversationServiceError("Failed to generate and stream AI response.") from e
 
     async def delete_conversation(self, conversation_id: str, user_id: str) -> dict:
         try:
@@ -575,3 +572,4 @@ class ConversationService:
             raise ConversationServiceError(
                 "Failed to rename conversation due to an unexpected error"
             ) from e
+
