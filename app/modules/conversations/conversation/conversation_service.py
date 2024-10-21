@@ -511,6 +511,7 @@ class ConversationService:
                 self.sql_db.query(Message)
                 .filter_by(conversation_id=conversation_id)
                 .filter_by(status=MessageStatus.ACTIVE)
+                .filter(Message.type != MessageType.SYSTEM_GENERATED)
                 .order_by(Message.created_at)
                 .offset(start)
                 .limit(limit)

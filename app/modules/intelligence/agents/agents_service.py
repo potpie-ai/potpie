@@ -14,14 +14,14 @@ class AgentsService:
     async def list_available_agents(self) -> List[AgentInfo]:
         return [
             AgentInfo(
-                id="debugging_agent",
-                name="Debugging with Knowledge Graph Agent",
-                description="An agent specialized in debugging using knowledge graphs.",
-            ),
-            AgentInfo(
                 id="codebase_qna_agent",
                 name="Codebase Q&A Agent",
                 description="An agent specialized in answering questions about the codebase using the knowledge graph and code analysis tools.",
+            ),
+            AgentInfo(
+                id="debugging_agent",
+                name="Debugging with Knowledge Graph Agent",
+                description="An agent specialized in debugging using knowledge graphs.",
             ),
             AgentInfo(
                 id="unit_test_agent",
@@ -32,6 +32,11 @@ class AgentsService:
                 id="integration_test_agent",
                 name="Integration Test Agent",
                 description="An agent specialized in generating integration tests for code snippets from the knowledge graph based on given function names of entry points. Works best with Py, JS, TS",
+            ),
+            AgentInfo(
+                id="LLD_agent",
+                name="Low-Level Design Agent",
+                description="An agent specialized in generating a low-level design plan for implementing a new feature.",
             ),
             AgentInfo(
                 id="code_changes_agent",

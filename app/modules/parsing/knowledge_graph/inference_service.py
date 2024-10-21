@@ -79,7 +79,7 @@ class InferenceService:
         return len(encoding.encode(string))
 
     def fetch_graph(self, repo_id: str) -> List[Dict]:
-        batch_size = 400  # Define the batch size
+        batch_size = 100  # Define the batch size
         all_nodes = []
         with self.driver.session() as session:
             offset = 0
@@ -481,60 +481,59 @@ class InferenceService:
         2. **For Each Node**:
         Perform the following tasks for every identified `node_id` and its associated code:
 
-        1. **Docstring Generation**:
-            - **Begin with a concise, one-sentence summary of the code's purpose.**
-            - **Describe the main functionality in detail**, including the problem it solves or the task it performs.
-            - **List and explain all parameters/inputs and their types.**
-            - **Specify the return value(s) and their types.**
-            - **Mention any side effects or state changes.**
-            - **Note any exceptions that may be raised and under what conditions.**
-            - **Include relevant technical details**, such as API paths, HTTP methods, function calls, database operations, and topic names.
-            - **Provide a brief example** of how to use the code (if applicable).
-            - **Structured Sections**: Organize the docstring into the following sections where applicable:
-                * Summary: A concise, one-sentence summary of the code's purpose.
-                * Description: A detailed explanation of the main functionality, including the problem it solves or the task it performs.
-                * Parameters: List and explain all parameters/inputs with their types.
-                * Returns: Specify the return value(s) and their types.
-                * Raises: Mention any exceptions that may be raised and under what conditions.
-            - **Action-Oriented Description**: Use imperative verbs to describe the main functionality (e.g., "Creates", "Initializes").
-            - **Technical Precision**: Accurately reflect the technical actions, specifying operations and objects involved (e.g., "Creates a new MongoDB document in the specified collection", "Calls the create_user function").
-            - **Consistent Phrasing**:
-                * Classes: Begin with "Provides" or "Defines" to describe the class's role.
-                * Functions/Methods: Begin with an action verb describing what the function does.
-            - **Clear Object Reference**: Specify the objects being manipulated (e.g., "document," "collection," "client"). Specify the functions being called.
-            - **Contextual Keywords**: Incorporate relevant technical terms to provide context and enhance matching accuracy.
-            - **Avoid Redundancy and Ambiguity**: Ensure each section is unique and clearly related to its heading.
-            - **Identifier**: Include the function / class / file name in the docstring.
+        2.1 **Docstring Generation**:
+            - **Code Analysis**:
+                * Carefully analyze the provided code for node id to understand the overall structure and purpose of the code.
+                * Identify the type of code (e.g., API router, class definition, utility functions, etc.).
+                * Note any imports, dependencies, and key components used in the code.
+            - For files containing multiple API endpoints or functions:
+                * Begin with a high-level summary of the file's purpose and main components.
+                * List all API endpoints or main functions with a brief description for each.
+                * Include details about authentication, permissions, and common parameters used across endpoints.
+            - For individual functions or API endpoints:
+                * Start with a concise summary of the function's purpose.
+                * Describe the functionality in detail, including the problem it solves or the task it performs.
+                * List and explain all parameters/inputs and their types.
+                * Specify the return value(s) and their types.
+                * Mention any side effects, state changes, or interactions with external systems.
+                * Note any exceptions that may be raised and under what conditions.
+            - For classes:
+                * Provide an overview of the class's purpose and its role in the larger system.
+                * Describe key methods and attributes.
+                * Explain any inheritance or important relationships with other classes.
+            - Include relevant technical details such as:
+                * API paths and HTTP methods for endpoints
+                * Database operations and models used
+                * External services or APIs called
+                * Authentication and authorization mechanisms
 
-        2. **Classification**:
-            Classify the code snippet into one or more of the following categories. For each category, consider these guidelines:
-
-            - **API**: Does the code define any API endpoint? Look for route definitions, HTTP GET/POST/PUT/DELETE/PATCH methods.
-            - **WEBSOCKET**: Does the code implement or use WebSocket connections? Check for WebSocket-specific libraries or protocols.
-            - **PRODUCER**: Does the code generate and send messages to a queue or topic? Look for message publishing or event emission.
-            - **CONSUMER**: Does the code receive and process messages from a queue or topic? Check for message subscription or event handling.
-            - **DATABASE**: Does the code interact with a database? Look for query execution, data insertion, updates, or deletions.
-            - **SCHEMA**: Does the code define any database schema? Look for ORM models, table definitions, or schema-related code.
-            - **EXTERNAL_SERVICE**: Does the code make HTTP requests to external services? Check for HTTP client usage or request handling.
-            - **CONFIGURATION**: Does the code represent configuration settings or environment setup? Identify configuration files or scripts.
-            - **SCRIPT**: Is the code a standalone script or automation tool? Look for executable scripts or deployment commands.
-
-            ONLY use these tags and select the ones that are most relevant to the code snippet. Avoid false positives by ensuring the code clearly exhibits the behavior associated with each tag.
+        2.2 **Classification**:
+            Classify the code snippet into one or more of the following categories:
+            - API: Does the code define API endpoints? Identify HTTP methods and routes.
+            - WEBSOCKET: Does it implement WebSocket connections?
+            - PRODUCER: Does it generate and send messages to a queue or topic?
+            - CONSUMER: Does it receive and process messages from a queue or topic?
+            - DATABASE: Does it interact with a database? Identify query operations.
+            - SCHEMA: Does it define database schemas or models?
+            - EXTERNAL_SERVICE: Does it make requests to external services?
+            - CONFIGURATION: Does it handle configuration settings?
+            - SCRIPT: Is it a standalone script or automation tool?
+            - AUTH: Does it handle authentication or authorization?
+            - MIDDLEWARE: Does it implement middleware functionality?
+            - UTILITY: Does it provide utility functions used across the application?
 
         3. **Output Compilation**:
         - Collect the generated docstrings and classifications for each `node_id`.
         - Ensure that the output includes an entry for every `node_id` provided in the `code_snippets`.
 
         4. **Review and Verification**:
-        Before finalizing your response, perform the following checks:
-        - **Completeness**: Verify that every `node_id` from the input is present in the output.
-        - **Accuracy**: Ensure that each docstring is clear, comprehensive, and technically accurate.
-        - **Justification**: Confirm that the assigned tags are justified by the code's functionality.
-        - **Clarity**: Make sure all crucial technical details are captured without unnecessary verbosity.
+        Before finalizing your response:
+        - Verify that every `node_id` from the input is present in the output.
+        - Ensure each docstring is clear, comprehensive, and technically accurate.
+        - Confirm that the assigned tags are justified by the code's functionality.
+        - Make sure all crucial technical details are captured without unnecessary verbosity.
 
-        Refine your output as needed to ensure high-quality, precise documentation. Your job depends on it.
-
-        **Format Instructions**:
+        Refine your output as needed to ensure high-quality, precise documentation that accurately represents the code's structure and functionality.
 
         {format_instructions}
         Ensure that the response is a valid DocstringResponse object. Every entry in the response must contain the key "docstring".
@@ -573,7 +572,7 @@ class InferenceService:
         end_time = time.time()
 
         logger.info(
-            f"Parsing project {repo_id}: Start Time: {start_time}, End Time: {end_time}, Total Time Taken: {end_time - start_time} seconds"
+            f"Parsing project {repo_id}: Inference request completed. Total Time Taken: {end_time - start_time} seconds"
         )
         return result
 
@@ -651,7 +650,7 @@ class InferenceService:
 
         with self.driver.session() as session:
             if node_ids:
-                # Part 1: Fetch neighboring nodes
+                # Fetch context node IDs
                 result_neighbors = session.run(
                     """
                     MATCH (n:NODE)
@@ -659,43 +658,34 @@ class InferenceService:
                     CALL {
                         WITH n
                         MATCH (n)-[*1..4]-(neighbor:NODE)
-                        RETURN COLLECT(DISTINCT neighbor) AS neighbors
+                        RETURN COLLECT(DISTINCT neighbor.node_id) AS neighbor_ids
                     }
-                    RETURN COLLECT(DISTINCT n) + REDUCE(acc = [], neighbors IN COLLECT(neighbors) | acc + neighbors) AS context_nodes
+                    RETURN COLLECT(DISTINCT n.node_id) + REDUCE(acc = [], neighbor_ids IN COLLECT(neighbor_ids) | acc + neighbor_ids) AS context_node_ids
                     """,
                     project_id=project_id,
                     node_ids=node_ids,
                 )
-                context_nodes = result_neighbors.single()["context_nodes"]
+                context_node_ids = result_neighbors.single()["context_node_ids"]
 
-                context_node_data = [
-                    {
-                        "node_id": node["node_id"],
-                        "embedding": node["embedding"],
-                        "docstring": node.get("docstring", ""),
-                        "file_path": node.get("file_path", ""),
-                        "start_line": node.get("start_line", -1),
-                        "end_line": node.get("end_line", -1),
-                    }
-                    for node in context_nodes
-                ]
-
+                # Use vector index and filter by context_node_ids
                 result = session.run(
                     """
-                    UNWIND $context_node_data AS context_node
-                    WITH context_node,
-                         vector.similarity.cosine(context_node.embedding, $embedding) AS similarity
+                    CALL db.index.vector.queryNodes('docstring_embedding', $initial_k, $embedding)
+                    YIELD node, score
+                    WHERE node.repoId = $project_id AND node.node_id IN $context_node_ids
+                    RETURN node.node_id AS node_id,
+                        node.docstring AS docstring,
+                        node.file_path AS file_path,
+                        node.start_line AS start_line,
+                        node.end_line AS end_line,
+                        score AS similarity
                     ORDER BY similarity DESC
                     LIMIT $top_k
-                    RETURN context_node.node_id AS node_id,
-                           context_node.docstring AS docstring,
-                           context_node.file_path AS file_path,
-                           context_node.start_line AS start_line,
-                           context_node.end_line AS end_line,
-                           similarity
                     """,
-                    context_node_data=context_node_data,
+                    project_id=project_id,
                     embedding=embedding,
+                    context_node_ids=context_node_ids,
+                    initial_k=top_k * 10,  # Adjust as needed
                     top_k=top_k,
                 )
             else:
@@ -705,11 +695,11 @@ class InferenceService:
                     YIELD node, score
                     WHERE node.repoId = $project_id
                     RETURN node.node_id AS node_id,
-                           node.docstring AS docstring,
-                           node.file_path AS file_path,
-                           node.start_line AS start_line,
-                           node.end_line AS end_line,
-                           score AS similarity
+                        node.docstring AS docstring,
+                        node.file_path AS file_path,
+                        node.start_line AS start_line,
+                        node.end_line AS end_line,
+                        score AS similarity
                     """,
                     project_id=project_id,
                     embedding=embedding,

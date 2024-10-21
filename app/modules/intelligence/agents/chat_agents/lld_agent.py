@@ -32,7 +32,7 @@ from app.modules.intelligence.prompts.prompt_service import PromptService
 logger = logging.getLogger(__name__)
 
 
-class QNAAgent:
+class LLDAgent:
     def __init__(self, mini_llm, llm, db: Session):
         self.mini_llm = mini_llm
         self.llm = llm
@@ -68,6 +68,7 @@ class QNAAgent:
         return prompt_template | self.mini_llm
 
     async def _classify_query(self, query: str, history: List[HumanMessage]):
+        #TODO: Add LLD prompt
         prompt = ClassificationPrompts.get_classification_prompt(AgentType.QNA)
         inputs = {"query": query, "history": [msg.content for msg in history[-10:]]}
 
