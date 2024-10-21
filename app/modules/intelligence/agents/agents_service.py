@@ -34,7 +34,7 @@ class AgentsService:
                 description="An agent specialized in generating integration tests for code snippets from the knowledge graph based on given function names of entry points. Works best with Py, JS, TS",
             ),
             AgentInfo(
-                id="lld_agent",
+                id="LLD_agent",
                 name="Low-Level Design Agent",
                 description="An agent specialized in generating a low-level design plan for implementing a new feature.",
             ),

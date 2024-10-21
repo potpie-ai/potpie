@@ -48,4 +48,5 @@ class AgentInjectorService:
         return agent
 
     def validate_agent_id(self, agent_id: str) -> bool:
+        logger.info(f"Validating agent_id: {agent_id}")
         return agent_id in self.agents
