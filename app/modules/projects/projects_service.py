@@ -70,9 +70,15 @@ class ProjectService:
         message = f"Project id '{project.id}' for repo '{repo_name}' and branch '{branch_name}' registered successfully."
         logging.info(message)
         return project_id
-    
+
     async def duplicate_project(
-        self, repo_name: str, branch_name: str, user_id: str, project_id: str , properties, commit_id
+        self,
+        repo_name: str,
+        branch_name: str,
+        user_id: str,
+        project_id: str,
+        properties,
+        commit_id,
     ):
         project = Project(
             id=project_id,
@@ -120,20 +126,21 @@ class ProjectService:
             return project
         else:
             return None
+
     async def get_global_project_from_db(self, repo_name: str, branch_name: str):
-            project = (
-                self.db.query(Project)
-                .filter(
-                    Project.repo_name == repo_name,
-                    Project.branch_name == branch_name,
-                    Project.status == ProjectStatusEnum.READY.value,
-                )
-                .first()
+        project = (
+            self.db.query(Project)
+            .filter(
+                Project.repo_name == repo_name,
+                Project.branch_name == branch_name,
+                Project.status == ProjectStatusEnum.READY.value,
             )
-            if project:
-                return project
-            else:
-                return None  
+            .first()
+        )
+        if project:
+            return project
+        else:
+            return None
 
     async def get_project_from_db_by_id(self, project_id: int):
         project = ProjectService.get_project_by_id(self.db, project_id)
@@ -245,16 +252,18 @@ class ProjectService:
         try:
             # Query for the project associated with the demo repo name
             project = (
-                self.db.query(Project)
-                .filter(Project.repo_name == repo_name)
-                .first()
+                self.db.query(Project).filter(Project.repo_name == repo_name).first()
             )
-            
+
             if project:
-                logger.info(f"Retrieved demo repo ID: {project.id} for repo name: {repo_name}")
+                logger.info(
+                    f"Retrieved demo repo ID: {project.id} for repo name: {repo_name}"
+                )
                 return project.id  # Return the demo repo ID
             else:
-                raise ProjectNotFoundError(f"No demo repository found for repo name: {repo_name}")
+                raise ProjectNotFoundError(
+                    f"No demo repository found for repo name: {repo_name}"
+                )
 
         except SQLAlchemyError as e:
             logger.error(

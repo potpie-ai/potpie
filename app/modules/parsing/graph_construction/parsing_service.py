@@ -227,14 +227,19 @@ class ParsingService:
                 while True:
                     nodes_query = """
                     MATCH (n:NODE {repoId: $old_repo_id})
-                    RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path, 
+                    RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path,
                            n.start_line AS start_line, n.end_line AS end_line, n.name AS name,
-                           COALESCE(n.docstring, '') AS docstring, 
+                           COALESCE(n.docstring, '') AS docstring,
                            COALESCE(n.embedding, []) AS embedding,
                            labels(n) AS labels
                     SKIP $offset LIMIT $limit
                     """
-                    nodes_result = session.run(nodes_query, old_repo_id=old_repo_id, offset=offset, limit=node_batch_size)
+                    nodes_result = session.run(
+                        nodes_query,
+                        old_repo_id=old_repo_id,
+                        offset=offset,
+                        limit=node_batch_size,
+                    )
                     nodes = [dict(record) for record in nodes_result]
 
                     if not nodes:
@@ -268,7 +273,12 @@ class ParsingService:
                     RETURN n.node_id AS start_node_id, type(r) AS relationship_type, m.node_id AS end_node_id
                     SKIP $offset LIMIT $limit
                     """
-                    relationships_result = session.run(relationships_query, old_repo_id=old_repo_id, offset=offset, limit=relationship_batch_size)
+                    relationships_result = session.run(
+                        relationships_query,
+                        old_repo_id=old_repo_id,
+                        offset=offset,
+                        limit=relationship_batch_size,
+                    )
                     relationships = [dict(record) for record in relationships_result]
 
                     if not relationships:
@@ -281,10 +291,16 @@ class ParsingService:
                     CALL apoc.create.relationship(a, relationship.relationship_type, {}, b) YIELD rel
                     RETURN rel
                     """
-                    session.run(relationship_query, new_repo_id=new_repo_id, batch=relationships)
+                    session.run(
+                        relationship_query, new_repo_id=new_repo_id, batch=relationships
+                    )
                     offset += relationship_batch_size
 
-            logger.info(f"Successfully duplicated graph from {old_repo_id} to {new_repo_id}")
+            logger.info(
+                f"Successfully duplicated graph from {old_repo_id} to {new_repo_id}"
+            )
 
         except Exception as e:
-            logger.error(f"Error duplicating graph from {old_repo_id} to {new_repo_id}: {e}")
+            logger.error(
+                f"Error duplicating graph from {old_repo_id} to {new_repo_id}: {e}"
+            )

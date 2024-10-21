@@ -8,12 +8,12 @@ from uuid6 import uuid7
 from app.celery.tasks.parsing_tasks import process_parsing
 from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
+from app.modules.parsing.graph_construction.parsing_service import ParsingService
 from app.modules.parsing.graph_construction.parsing_validator import (
     validate_parsing_input,
 )
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
-from app.modules.parsing.graph_construction.parsing_service import ParsingService
 from app.modules.utils.posthog_helper import PostHogClient
 
 logger = logging.getLogger(__name__)
@@ -68,9 +68,8 @@ class ParsingController:
                 },
             )
             return response
-        
-        try:
 
+        try:
             project = await project_manager.get_project_from_db(
                 repo_name, repo_details.branch_name, user_id
             )
@@ -86,7 +85,9 @@ class ParsingController:
                 if not is_latest or project_status != ProjectStatusEnum.READY.value:
                     cleanup_graph = True
 
-                    logger.info(f"Submitting parsing task for existing project {project_id}")
+                    logger.info(
+                        f"Submitting parsing task for existing project {project_id}"
+                    )
                     process_parsing.delay(
                         repo_details.model_dump(),
                         user_id,
@@ -108,25 +109,37 @@ class ParsingController:
                 return response
             else:
                 if repo_details.repo_name in demo_repos:
-                    existing_project = await project_manager.get_global_project_from_db(repo_name, repo_details.branch_name)
-                    
+                    existing_project = await project_manager.get_global_project_from_db(
+                        repo_name, repo_details.branch_name
+                    )
+
                     new_project_id = str(uuid7())
 
                     if existing_project:
-                            
                         # Register the new project with status SUBMITTED
                         await project_manager.duplicate_project(
-                            repo_name, repo_details.branch_name, user_id, new_project_id, existing_project.properties, existing_project.commit_id
+                            repo_name,
+                            repo_details.branch_name,
+                            user_id,
+                            new_project_id,
+                            existing_project.properties,
+                            existing_project.commit_id,
                         )
-                        await project_manager.update_project_status(new_project_id, ProjectStatusEnum.SUBMITTED)
+                        await project_manager.update_project_status(
+                            new_project_id, ProjectStatusEnum.SUBMITTED
+                        )
 
                         old_repo_id = await project_manager.get_demo_repo_id(repo_name)
 
                         # Duplicate the graph under the new repo ID
-                        await parsing_service.duplicate_graph(old_repo_id, new_project_id)
+                        await parsing_service.duplicate_graph(
+                            old_repo_id, new_project_id
+                        )
 
                         # Update the project status to READY after copying
-                        await project_manager.update_project_status(new_project_id, ProjectStatusEnum.READY)
+                        await project_manager.update_project_status(
+                            new_project_id, ProjectStatusEnum.READY
+                        )
 
                         return {
                             "project_id": new_project_id,
@@ -138,10 +151,10 @@ class ParsingController:
                 else:
                     return await handle_new_project(new_project_id)
 
-
         except Exception as e:
             logger.error(f"Error in parse_directory: {e}")
             raise HTTPException(status_code=500, detail="Internal server error")
+
     @staticmethod
     async def fetch_parsing_status(
         project_id: str, db: AsyncSession, user: Dict[str, Any]

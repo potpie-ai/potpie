@@ -718,4 +718,3 @@ class InferenceService:
 
             # Ensure all fields are included in the final output
             return [dict(record) for record in result]
-    

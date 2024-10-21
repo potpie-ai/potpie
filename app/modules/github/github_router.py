@@ -1,6 +1,7 @@
 from fastapi import Depends, Query
 from sqlalchemy.orm import Session
 
+from app.core.config_provider import config_provider
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
 from app.modules.utils.APIRouter import APIRouter
@@ -12,7 +13,10 @@ router = APIRouter()
 
 @router.get("/github/user-repos")
 def get_user_repos(user=Depends(AuthService.check_auth), db: Session = Depends(get_db)):
-    return GithubController(db).get_user_repos(user=user)
+    user_repo_list = GithubController(db).get_user_repos(user=user)
+    user_repo_list["repositories"].extend(config_provider.get_demo_repo_list())
+    user_repo_list["repositories"] = list(reversed(user_repo_list["repositories"]))
+    return user_repo_list
 
 
 @router.get("/github/get-branch-list")
