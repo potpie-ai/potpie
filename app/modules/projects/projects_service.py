@@ -70,6 +70,23 @@ class ProjectService:
         message = f"Project id '{project.id}' for repo '{repo_name}' and branch '{branch_name}' registered successfully."
         logging.info(message)
         return project_id
+    
+    async def duplicate_project(
+        self, repo_name: str, branch_name: str, user_id: str, project_id: str , properties, commit_id
+    ):
+        project = Project(
+            id=project_id,
+            repo_name=repo_name,
+            branch_name=branch_name,
+            user_id=user_id,
+            properties=properties,
+            commit_id=commit_id,
+            status=ProjectStatusEnum.SUBMITTED.value,
+        )
+        project = ProjectService.create_project(self.db, project)
+        message = f"Project id '{project.id}' for repo '{repo_name}' and branch '{branch_name}' registered successfully."
+        logging.info(message)
+        return project_id
 
     async def list_projects(self, user_id: str):
         projects = ProjectService.get_projects_by_user_id(self.db, user_id)
@@ -109,6 +126,7 @@ class ProjectService:
                 .filter(
                     Project.repo_name == repo_name,
                     Project.branch_name == branch_name,
+                    Project.status == ProjectStatusEnum.READY.value,
                 )
                 .first()
             )

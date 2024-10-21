@@ -33,10 +33,13 @@ class ParsingController:
         repo_name = repo_details.repo_name or repo_details.repo_path.split("/")[-1]
 
         demo_repos = [
-            "GodReaper/mongo-proxy12",
-            "GodReaper/RAG-Chatbot-Backend-with-Flask",
-            "GodReaper/PDFGenie2.0",
+            "Portkey-AI/gateway",
+            "langchain-ai/langchain",
+            "crewAIInc/crewAI",
+            "mem0ai/mem0",
+            "potpie-ai/mongo-proxy",
         ]
+
         async def handle_new_project(new_project_id: str):
             response = {
                 "project_id": new_project_id,
@@ -66,38 +69,8 @@ class ParsingController:
                 },
             )
             return response
-
+        
         try:
-            if repo_details.repo_name in demo_repos:
-                existing_project = await project_manager.get_global_project_from_db(repo_name, repo_details.branch_name)
-                new_project_id = str(uuid7())
-
-                if existing_project:
-                    logger.info(f"Creating new project for demo repo: {new_project_id}")
-
-                    # Register the new project with status SUBMITTED
-                    await project_manager.register_project(
-                        repo_name, repo_details.branch_name, user_id, new_project_id
-                    )
-                    await project_manager.update_project_status(new_project_id, ProjectStatusEnum.SUBMITTED)
-
-                    old_repo_id = await project_manager.get_demo_repo_id(repo_name)
-
-                    # Duplicate the graph under the new repo ID
-                    await parsing_service.duplicate_graph(old_repo_id, new_project_id)
-
-                    # Update the project status to READY after copying
-                    await project_manager.update_project_status(new_project_id, ProjectStatusEnum.READY)
-
-                    return {
-                        "project_id": new_project_id,
-                        "status": ProjectStatusEnum.READY.value,
-                    }
-
-                else:
-                    return await handle_new_project(new_project_id)
-
-
 
             project = await project_manager.get_project_from_db(
                 repo_name, repo_details.branch_name, user_id
@@ -135,9 +108,37 @@ class ParsingController:
                     )
                 return response
             else:
+                if repo_details.repo_name in demo_repos:
+                    existing_project = await project_manager.get_global_project_from_db(repo_name, repo_details.branch_name)
+                    
+                    new_project_id = str(uuid7())
 
-                new_project_id = str(uuid7())
-                return await handle_new_project(new_project_id)
+                    if existing_project:
+                            
+                        # Register the new project with status SUBMITTED
+                        await project_manager.duplicate_project(
+                            repo_name, repo_details.branch_name, user_id, new_project_id, existing_project.properties, existing_project.commit_id
+                        )
+                        await project_manager.update_project_status(new_project_id, ProjectStatusEnum.SUBMITTED)
+
+                        old_repo_id = await project_manager.get_demo_repo_id(repo_name)
+
+                        # Duplicate the graph under the new repo ID
+                        await parsing_service.duplicate_graph(old_repo_id, new_project_id)
+
+                        # Update the project status to READY after copying
+                        await project_manager.update_project_status(new_project_id, ProjectStatusEnum.READY)
+
+                        return {
+                            "project_id": new_project_id,
+                            "status": ProjectStatusEnum.READY.value,
+                        }
+                    else:
+                        return await handle_new_project(new_project_id)
+
+                else:
+                    return await handle_new_project(new_project_id)
+
 
         except Exception as e:
             logger.error(f"Error in parse_directory: {e}")
