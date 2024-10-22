@@ -268,9 +268,14 @@ class GithubService:
     async def get_branch_list(self, repo_name: str):
         try:
             github, repo = self.get_repo(repo_name)
+            default_branch = repo.default_branch
             branches = repo.get_branches()
-            branch_list = [branch.name for branch in branches]
-            return {"branches": branch_list}
+            branch_list = [
+                branch.name
+                for branch in branches
+                if branch.name != default_branch
+            ]
+            return {"branches": [default_branch] + branch_list}
         except HTTPException as he:
             raise he
         except Exception as e:
