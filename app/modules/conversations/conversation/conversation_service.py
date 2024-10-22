@@ -205,7 +205,7 @@ class ConversationService:
         try:
             access_level = await self.check_conversation_access(conversation_id, self.user_email)
             if access_level == ConversationAccessType.READ:
-                raise HTTPException(status_code=403, detail="Read Only.")
+                raise HTTPException(status_code=404, detail="Read Only.")
             self.history_manager.add_message_chunk(
                 conversation_id, message.content, message_type, user_id
             )
@@ -432,7 +432,7 @@ class ConversationService:
         try:
             access_level = await self.check_conversation_access(conversation_id, self.user_email)
             if access_level == ConversationAccessType.READ:
-                raise HTTPException(status_code=403, detail="Access denied.")
+                raise HTTPException(status_code=404, detail="Access denied.")
             # Use a nested transaction if one is already in progress
             with self.sql_db.begin_nested():
                 # Delete related messages first
