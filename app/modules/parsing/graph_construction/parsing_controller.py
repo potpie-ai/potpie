@@ -39,36 +39,6 @@ class ParsingController:
             "mem0ai/mem0",
         ]
 
-        async def handle_new_project(new_project_id: str):
-            response = {
-                "project_id": new_project_id,
-                "status": ProjectStatusEnum.SUBMITTED.value,
-            }
-
-            logger.info(f"Submitting parsing task for new project {new_project_id}")
-
-            await project_manager.register_project(
-                repo_name, repo_details.branch_name, user_id, new_project_id
-            )
-
-            process_parsing.delay(
-                repo_details.model_dump(),
-                user_id,
-                user_email,
-                new_project_id,
-                False,
-            )
-            PostHogClient().send_event(
-                user_id,
-                "repo_parsed_event",
-                {
-                    "repo_name": repo_details.repo_name,
-                    "branch": repo_details.branch_name,
-                    "project_id": new_project_id,
-                },
-            )
-            return response
-
         try:
             project = await project_manager.get_project_from_db(
                 repo_name, repo_details.branch_name, user_id
@@ -146,14 +116,46 @@ class ParsingController:
                             "status": ProjectStatusEnum.READY.value,
                         }
                     else:
-                        return await handle_new_project(new_project_id)
+                        return await ParsingController.handle_new_project(repo_details, user_id, user_email, new_project_id, project_manager)
 
                 else:
-                    return await handle_new_project(new_project_id)
+                    new_project_id = str(uuid7())
+                    return await ParsingController.handle_new_project(repo_details, user_id, user_email, new_project_id, project_manager)
 
         except Exception as e:
             logger.error(f"Error in parse_directory: {e}")
             raise HTTPException(status_code=500, detail="Internal server error")
+        
+    @staticmethod
+    async def handle_new_project( repo_details: ParsingRequest, user_id: str, user_email: str, new_project_id: str, project_manager: ProjectService):
+            response = {
+                "project_id": new_project_id,
+                "status": ProjectStatusEnum.SUBMITTED.value,
+            }
+
+            logger.info(f"Submitting parsing task for new project {new_project_id}")
+
+            await project_manager.register_project(
+                repo_details.repo_name, repo_details.branch_name, user_id, new_project_id
+            )
+
+            process_parsing.delay(
+                repo_details.model_dump(),
+                user_id,
+                user_email,
+                new_project_id,
+                False,
+            )
+            PostHogClient().send_event(
+                user_id,
+                "repo_parsed_event",
+                {
+                    "repo_name": repo_details.repo_name,
+                    "branch": repo_details.branch_name,
+                    "project_id": new_project_id,
+                },
+            )
+            return response
 
     @staticmethod
     async def fetch_parsing_status(
