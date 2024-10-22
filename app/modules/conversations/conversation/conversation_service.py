@@ -496,7 +496,7 @@ class ConversationService:
         try:
             access_type = await self.check_conversation_access(conversation_id, self.user_email)
             if access_type == ConversationAccessType.NOT_FOUND:
-                raise HTTPException(status_code=403, detail="Not Found")
+                raise HTTPException(status_code=404, detail="Not Found")
         
             conversation = (
                 self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
@@ -536,7 +536,7 @@ class ConversationService:
         try:
             access_level = await self.check_conversation_access(conversation_id, self.user_email)
             if access_level == ConversationAccessType.NOT_FOUND:
-                raise HTTPException(status_code=403, detail="Not Found.")
+                raise HTTPException(status_code=404, detail="Not Found.")
             conversation = (
                 self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
             )
