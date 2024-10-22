@@ -1,6 +1,7 @@
 import json
 import logging
 from functools import lru_cache
+import time
 from typing import AsyncGenerator, Dict, List
 
 from langchain.schema import HumanMessage, SystemMessage
@@ -16,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import NodeContext
-from app.modules.intelligence.agents.agentic_tools.rag_agent import kickoff_rag_crew
+from app.modules.intelligence.agents.agentic_tools.debug_rag_agent import kickoff_debug_crew
 from app.modules.intelligence.agents.agents_service import AgentsService
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.classification_prompts import (
@@ -90,6 +91,8 @@ class DebuggingAgent:
         logs: str = "",
         stacktrace: str = "",
     ) -> AsyncGenerator[str, None]:
+        start_time = time.time()  # Start the timer
+
         try:
             if not self.chain:
                 self.chain = await self._create_chain()
@@ -109,7 +112,7 @@ class DebuggingAgent:
             tool_results = []
             citations = []
             if classification == ClassificationResult.AGENT_REQUIRED:
-                rag_result = await kickoff_rag_crew(
+                rag_result = await kickoff_debug_crew(
                     query,
                     project_id,
                     [
@@ -119,6 +122,7 @@ class DebuggingAgent:
                     ],
                     node_ids,
                     self.db,
+                    self.llm,
                     self.mini_llm,
                     user_id,
                 )
@@ -130,7 +134,39 @@ class DebuggingAgent:
                     result = rag_result.raw
                     citations = []
 
-                tool_results = [SystemMessage(content=f"RAG Agent result: {result}")]
+                tool_results = [SystemMessage(content=result)]
+                add_chunk_start_time = (
+                    time.time()
+                )  # Start timer for adding message chunk
+                self.history_manager.add_message_chunk(
+                    conversation_id,
+                    tool_results[0].content,
+                    MessageType.AI_GENERATED,
+                    citations=citations,
+                )
+                add_chunk_duration = (
+                    time.time() - add_chunk_start_time
+                )  # Calculate duration
+                logger.info(
+                    f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
+                    f"Duration of adding message chunk: {add_chunk_duration:.2f}s"
+                )
+
+                # Timing for flushing message buffer
+                flush_buffer_start_time = (
+                    time.time()
+                )  # Start timer for flushing message buffer
+                self.history_manager.flush_message_buffer(
+                    conversation_id, MessageType.AI_GENERATED
+                )
+                flush_buffer_duration = (
+                    time.time() - flush_buffer_start_time
+                )  # Calculate duration
+                logger.info(
+                    f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
+                    f"Duration of flushing message buffer: {flush_buffer_duration:.2f}s"
+                )
+                yield json.dumps({"citations": citations, "message": result})
 
             full_query = f"Query: {query}\nProject ID: {project_id}\nLogs: {logs}\nStacktrace: {stacktrace}"
             inputs = {

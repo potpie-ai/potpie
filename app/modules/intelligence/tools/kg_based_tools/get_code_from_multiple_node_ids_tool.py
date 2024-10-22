@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any, Dict, List
 
@@ -36,7 +37,10 @@ class GetCodeFromMultipleNodeIdsTool:
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
 
-    def run_multiple(self, repo_id: str, node_ids: List[str]) -> Dict[str, Any]:
+    def run(self, repo_id: str, node_ids: List[str]) -> Dict[str, Any]:
+        return asyncio.run(self.run_multiple(repo_id, node_ids))
+
+    async def run_multiple(self, repo_id: str, node_ids: List[str]) -> Dict[str, Any]:
         try:
             project = self._get_project(repo_id)
             if not project:
@@ -46,22 +50,30 @@ class GetCodeFromMultipleNodeIdsTool:
                 raise ValueError(
                     f"Project with ID '{repo_id}' not found in database for user '{self.user_id}'"
                 )
-            results = {}
-            for node_id in node_ids:
-                node_data = self._get_node_data(repo_id, node_id)
-                if node_data:
-                    results[node_id] = self._process_result(node_data, project, node_id)
-                else:
-                    results[node_id] = {
-                        "error": f"Node with ID '{node_id}' not found in repo '{repo_id}'"
-                    }
 
-            return results
+            tasks = [
+                self._retrieve_node_data(repo_id, node_id, project)
+                for node_id in node_ids
+            ]
+            completed_tasks = await asyncio.gather(*tasks)
+
+            return {
+                node_id: result for node_id, result in zip(node_ids, completed_tasks)
+            }
         except Exception as e:
             logger.error(
                 f"Unexpected error in GetCodeFromMultipleNodeIdsTool: {str(e)}"
             )
             return {"error": f"An unexpected error occurred: {str(e)}"}
+
+    async def _retrieve_node_data(
+        self, repo_id: str, node_id: str, project: Project
+    ) -> Dict[str, Any]:
+        node_data = self._get_node_data(repo_id, node_id)
+        if node_data:
+            return self._process_result(node_data, project, node_id)
+        else:
+            return {"error": f"Node with ID '{node_id}' not found in repo '{repo_id}'"}
 
     def _get_node_data(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         query = """
@@ -83,16 +95,14 @@ class GetCodeFromMultipleNodeIdsTool:
         end_line = node_data["end_line"]
 
         relative_file_path = self._get_relative_file_path(file_path)
-        if node_data.get("code", None):
-            code_content = node_data["code"]
-        else:
-            code_content = GithubService(self.sql_db).get_file_content(
-                project.repo_name,
-                relative_file_path,
-                start_line,
-                end_line,
-                project.branch_name,
-            )
+
+        code_content = GithubService(self.sql_db).get_file_content(
+            project.repo_name,
+            relative_file_path,
+            start_line,
+            end_line,
+            project.branch_name,
+        )
 
         docstring = None
         if node_data.get("docstring", None):
@@ -127,7 +137,7 @@ def get_code_from_multiple_node_ids_tool(
 ) -> StructuredTool:
     tool_instance = GetCodeFromMultipleNodeIdsTool(sql_db, user_id)
     return StructuredTool.from_function(
-        func=tool_instance.run_multiple,
+        func=tool_instance.run,
         name="Get Code and docstring From Multiple Node IDs",
         description="""Retrieves code and docstring for multiple node ids in a repository given their node IDs
                 Inputs for the run_multiple method:

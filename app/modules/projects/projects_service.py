@@ -71,6 +71,29 @@ class ProjectService:
         logging.info(message)
         return project_id
 
+    async def duplicate_project(
+        self,
+        repo_name: str,
+        branch_name: str,
+        user_id: str,
+        project_id: str,
+        properties,
+        commit_id,
+    ):
+        project = Project(
+            id=project_id,
+            repo_name=repo_name,
+            branch_name=branch_name,
+            user_id=user_id,
+            properties=properties,
+            commit_id=commit_id,
+            status=ProjectStatusEnum.SUBMITTED.value,
+        )
+        project = ProjectService.create_project(self.db, project)
+        message = f"Project id '{project.id}' for repo '{repo_name}' and branch '{branch_name}' registered successfully."
+        logging.info(message)
+        return project_id
+
     async def list_projects(self, user_id: str):
         projects = ProjectService.get_projects_by_user_id(self.db, user_id)
         project_list = []
@@ -96,6 +119,21 @@ class ProjectService:
                 Project.repo_name == repo_name,
                 Project.user_id == user_id,
                 Project.branch_name == branch_name,
+            )
+            .first()
+        )
+        if project:
+            return project
+        else:
+            return None
+
+    async def get_global_project_from_db(self, repo_name: str, branch_name: str):
+        project = (
+            self.db.query(Project)
+            .filter(
+                Project.repo_name == repo_name,
+                Project.branch_name == branch_name,
+                Project.status == ProjectStatusEnum.READY.value,
             )
             .first()
         )
@@ -199,7 +237,7 @@ class ProjectService:
 
         return None
 
-    def delete_project(self, project_id: str):
+    async def delete_project(self, project_id: str):
         project = (
             self.db.query(Project)
             .filter(cast(Project.id, String) == str(project_id))
@@ -209,3 +247,37 @@ class ProjectService:
             raise HTTPException(status_code=404, detail="Project not found.")
         self.db.delete(project)
         self.db.commit()
+
+    async def get_demo_repo_id(self, repo_name: str):
+        try:
+            # Query for the project associated with the demo repo name
+            project = (
+                self.db.query(Project).filter(Project.repo_name == repo_name).first()
+            )
+
+            if project:
+                logger.info(
+                    f"Retrieved demo repo ID: {project.id} for repo name: {repo_name}"
+                )
+                return project.id  # Return the demo repo ID
+            else:
+                raise ProjectNotFoundError(
+                    f"No demo repository found for repo name: {repo_name}"
+                )
+
+        except SQLAlchemyError as e:
+            logger.error(
+                f"Database error in get_demo_repo_id for repo name {repo_name}: {e}",
+                exc_info=True,
+            )
+            raise ProjectServiceError(
+                f"Failed to retrieve demo repo ID for repo name {repo_name}"
+            ) from e
+        except Exception as e:
+            logger.error(
+                f"Unexpected error in get_demo_repo_id for repo name {repo_name}: {e}",
+                exc_info=True,
+            )
+            raise ProjectServiceError(
+                f"An unexpected error occurred while retrieving demo repo ID for repo name {repo_name}"
+            ) from e

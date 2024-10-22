@@ -106,7 +106,9 @@ class ConversationService:
         self, conversation: CreateConversationRequest, user_id: str
     ) -> tuple[str, str]:
         try:
-            if not self.agent_injector_service.validate_agent_id(conversation.agent_ids[0]):
+            if not self.agent_injector_service.validate_agent_id(
+                conversation.agent_ids[0]
+            ):
                 raise ConversationServiceError(
                     f"Invalid agent_id: {conversation.agent_ids[0]}"
                 )
@@ -549,6 +551,7 @@ class ConversationService:
                 self.sql_db.query(Message)
                 .filter_by(conversation_id=conversation_id)
                 .filter_by(status=MessageStatus.ACTIVE)
+                .filter(Message.type != MessageType.SYSTEM_GENERATED)
                 .order_by(Message.created_at)
                 .offset(start)
                 .limit(limit)
