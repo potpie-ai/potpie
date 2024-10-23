@@ -52,7 +52,11 @@ class ConversationNotFoundError(ConversationServiceError):
 class MessageNotFoundError(ConversationServiceError):
     """Raised when a message is not found."""
 
+class AccessTypeNotFoundError(ConversationServiceError):
+    """Raised when an access type is not found."""
 
+class AccessTypeReadError(ConversationServiceError):
+    """Raised when an access type is read-only."""
 class ConversationService:
     def __init__(
         self,
@@ -207,7 +211,7 @@ class ConversationService:
         try:
             access_level = await self.check_conversation_access(conversation_id, self.user_email)
             if access_level == ConversationAccessType.READ:
-                raise HTTPException(status_code=404, detail="Read Only.")
+                raise AccessTypeReadError("Access denied.")
             self.history_manager.add_message_chunk(
                 conversation_id, message.content, message_type, user_id
             )
@@ -259,6 +263,9 @@ class ConversationService:
                     message.content, repo_id, user_id, conversation.id, message.node_ids
                 ):
                     yield chunk
+        
+        except AccessTypeReadError as e:
+            raise
         except Exception as e:
             logger.error(
                 f"Error in store_message for conversation {conversation_id}: {e}",
@@ -324,7 +331,7 @@ class ConversationService:
         try:
             access_level = await self.check_conversation_access(conversation_id, self.user_email)
             if access_level == ConversationAccessType.READ:
-                raise HTTPException(status_code=403, detail="Read Only.")
+                raise AccessTypeReadError("Access denied.")
             last_human_message = await self._get_last_human_message(conversation_id)
             if not last_human_message:
                 raise MessageNotFoundError("No human message found to regenerate from")
@@ -342,6 +349,8 @@ class ConversationService:
                 last_human_message.content, conversation_id, user_id, node_ids
             ):
                 yield chunk
+        except AccessTypeReadError as e:
+            raise
         except MessageNotFoundError as e:
             logger.warning(
                 f"No message to regenerate in conversation {conversation_id}: {e}"
@@ -434,7 +443,7 @@ class ConversationService:
         try:
             access_level = await self.check_conversation_access(conversation_id, self.user_email)
             if access_level == ConversationAccessType.READ:
-                raise HTTPException(status_code=404, detail="Access denied.")
+                raise AccessTypeReadError("Access denied.")
             # Use a nested transaction if one is already in progress
             with self.sql_db.begin_nested():
                 # Delete related messages first
@@ -477,6 +486,8 @@ class ConversationService:
             logger.warning(str(e))
             self.sql_db.rollback()
             raise
+        except AccessTypeReadError as e:
+            raise
 
         except SQLAlchemyError as e:
             logger.error(f"Database error in delete_conversation: {e}", exc_info=True)
@@ -498,7 +509,7 @@ class ConversationService:
         try:
             access_type = await self.check_conversation_access(conversation_id, self.user_email)
             if access_type == ConversationAccessType.NOT_FOUND:
-                raise HTTPException(status_code=404, detail="Not Found")
+                raise AccessTypeNotFoundError("Access type not found")
         
             conversation = (
                 self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
@@ -526,6 +537,8 @@ class ConversationService:
         except ConversationNotFoundError as e:
             logger.warning(str(e))
             raise
+        except AccessTypeNotFoundError as e:
+            raise
         except Exception as e:
             logger.error(f"Error in get_conversation_info: {e}", exc_info=True)
             raise ConversationServiceError(
@@ -538,7 +551,7 @@ class ConversationService:
         try:
             access_level = await self.check_conversation_access(conversation_id, self.user_email)
             if access_level == ConversationAccessType.NOT_FOUND:
-                raise HTTPException(status_code=404, detail="Not Found.")
+                raise AccessTypeNotFoundError("Access denied.")
             conversation = (
                 self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
             )
@@ -576,6 +589,8 @@ class ConversationService:
         except ConversationNotFoundError as e:
             logger.warning(str(e))
             raise
+        except AccessTypeNotFoundError as e:
+            raise
         except Exception as e:
             logger.error(f"Error in get_conversation_messages: {e}", exc_info=True)
             raise ConversationServiceError(
@@ -592,7 +607,7 @@ class ConversationService:
         try:
             access_level = await self.check_conversation_access(conversation_id, self.user_email)
             if access_level == ConversationAccessType.READ:
-                raise HTTPException(status_code=403, detail="Read Only.")
+                raise AccessTypeReadError("Access denied.")
             conversation = (
                 self.sql_db.query(Conversation)
                 .filter_by(id=conversation_id, user_id=user_id)
@@ -621,7 +636,8 @@ class ConversationService:
             raise ConversationServiceError(
                 "Failed to rename conversation due to a database error"
             ) from e
-
+        except AccessTypeReadError as e:
+            raise
         except Exception as e:
             logger.error(f"Unexpected error in rename_conversation: {e}", exc_info=True)
             self.sql_db.rollback()
