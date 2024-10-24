@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.github.github_service import GithubService
+from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import (
     get_ask_knowledge_graph_queries_tool,
 )
@@ -59,6 +60,8 @@ class RAGAgent:
         self.user_id = user_id
 
     async def create_agents(self):
+        provider_service = ProviderService(self.sql_db, self.user_id)
+        crewai_llm = provider_service.create_llm_for_agent(self.llm)
         query_agent = Agent(
             role="Context curation agent",
             goal=(
@@ -83,7 +86,7 @@ class RAGAgent:
             ],
             allow_delegation=False,
             verbose=True,
-            llm=self.llm,
+            llm=crewai_llm,
             max_iter=self.max_iter,
         )
 

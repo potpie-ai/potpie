@@ -4,7 +4,7 @@ from typing import List
 from langchain_anthropic import ChatAnthropic
 from langchain_openai.chat_models import ChatOpenAI
 from portkey_ai import PORTKEY_GATEWAY_URL, createHeaders
-
+from crewai import LLM
 from app.modules.key_management.secret_manager import SecretManager
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.posthog_helper import PostHogClient
@@ -38,6 +38,7 @@ class ProviderService:
         ]
 
     async def set_global_ai_provider(self, user_id: str, provider: str):
+        provider = provider.lower()
         preferences = self.db.query(UserPreferences).filter_by(user_id=user_id).first()
         if not preferences:
             preferences = UserPreferences(user_id=user_id, preferences={})
@@ -46,6 +47,10 @@ class ProviderService:
             user_id, "provider_change_event", {"provider": provider}
         )
         preferences.preferences["llm_provider"] = provider
+        self.db.query(UserPreferences).filter_by(user_id=user_id).update({
+        "preferences": preferences.preferences  # Update the entire preferences
+        })
+        
         self.db.commit()
 
         return {"message": f"AI provider set to {provider}"}
@@ -209,3 +214,32 @@ class ProviderService:
             return "Anthropic"
         else:
             return "Unknown"
+
+    def create_llm_for_agent(self, langchain_llm): #return 1 param for minillm or llm boolean
+        """Creates a CrewAI LLM object based on the provided Langchain LLM instance."""
+        # Extract the model name from the Langchain LLM
+        if isinstance(langchain_llm, ChatOpenAI):
+            model_name = "gpt-4o" if "gpt-4o" in langchain_llm.model_name else "gpt-4o-mini"
+            print(model_name)
+        elif isinstance(langchain_llm, ChatAnthropic):
+            model_name = "claude-3-sonnet-20240229"  # Default model name; adjust as necessary
+            print(model_name)
+        else:
+            raise ValueError("Unsupported LLM type.")
+
+
+    # Create the CrewAI LLM object based on the model name
+        if isinstance(langchain_llm, ChatOpenAI):
+            return LLM(
+                model=model_name,
+                api_key=os.getenv("OPENAI_API_KEY"),
+                base_url=PORTKEY_GATEWAY_URL,
+            )
+        elif isinstance(langchain_llm, ChatAnthropic):
+            return LLM(
+                model=model_name,
+                api_key=os.getenv("ANTHROPIC_API_KEY"),
+                base_url="https://api.anthropic.com",
+            )
+        else:
+            raise ValueError("Invalid LLM provider selected.")

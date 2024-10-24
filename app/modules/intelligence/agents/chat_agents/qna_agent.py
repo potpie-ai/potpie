@@ -59,7 +59,7 @@ class QNAAgent:
 
         prompt_template = ChatPromptTemplate(
             messages=[
-                SystemMessagePromptTemplate.from_template(system_prompt.text),
+                SystemMessage(content=system_prompt.text),
                 MessagesPlaceholder(variable_name="history"),
                 MessagesPlaceholder(variable_name="tool_results"),
                 HumanMessagePromptTemplate.from_template(human_prompt.text),
