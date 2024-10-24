@@ -507,10 +507,6 @@ class ConversationService:
         self, conversation_id: str, user_id: str
     ) -> ConversationInfoResponse:
         try:
-            access_type = await self.check_conversation_access(conversation_id, self.user_email)
-            if access_type == ConversationAccessType.NOT_FOUND:
-                raise AccessTypeNotFoundError("Access type not found")
-        
             conversation = (
                 self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
             )
@@ -518,6 +514,12 @@ class ConversationService:
                 raise ConversationNotFoundError(
                     f"Conversation with id {conversation_id} not found"
                 )
+            access_type = await self.check_conversation_access(conversation_id, self.user_email)
+       
+            if access_type == ConversationAccessType.NOT_FOUND:
+                raise AccessTypeNotFoundError("Access type not found")
+        
+         
             total_messages = (
                 self.sql_db.query(Message)
                 .filter_by(conversation_id=conversation_id, status=MessageStatus.ACTIVE)
