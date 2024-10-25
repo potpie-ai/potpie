@@ -4,6 +4,15 @@ Potpie deeply understands your codebase by breaking down your code into its cons
 
 Potpie also provides purpose built agents that are expert on your codebase to perform engineering tasks for you, and also provides the platform for you to build your own custom agents using tools that interface with the knowledge graph.
 
+---
+## Table of Contents
+
+- [What Makes Potpie Agents Unique?](#what-makes-potpie-agents-unique)
+- [Potpie's Tooling System](#potpie's-tooling-system)
+- [The Power of Custom Agents](#the-power-of-custom-agents-coming-soon)
+- [Contributing](#contributing)
+- [License](#license)
+
 
 ## What Makes Potpie Agents Unique?
 
@@ -20,7 +29,7 @@ Potpie's agents work by leveraging tools that interact with the knowledge graph.
 
 ---
 
-### Potpie's Tooling System
+## Potpie's Tooling System
 
 Potpie provides a set of tools that agents can use to interact with the knowledge graph and the underlying infrastructure. These tools are vital for creating custom agents and for performing highly contextual tasks with precision.
 
@@ -60,10 +69,28 @@ Potpie’s cloud platform supports **Custom Agents**, enabling you to create age
 
 ---
 
-### Why Potpie?
+## Contributing
 
-Imagine a development environment where mundane tasks like code reviews, debugging, and documentation generation are handled automatically, leaving you to focus on the creative aspects of building software. Potpie agents not only provide real-time assistance but also evolve alongside your project, continuously learning and improving.
+We welcome contributions from the community. Contributions can be of the form: 
+1. Documentation : Help improve our docs! If you fixed a problem, chances are others faced it too.
+2. Code : Help us make improvements to existing features and build new features for Potpie. 
+3. Tests :  Help us make Potpie resilient by contributing tests.
 
-This is the future of software development—a future where developers and intelligent agents work side-by-side to build more reliable, maintainable, and innovative codebases.
+To contribute:
+1. Fork the repository.
+2. Create a new branch (`git checkout -b feature-branch`).
+3. Commit your changes (`git commit -am 'Add new feature'`).
+4. Push to the branch (`git push origin feature-branch`).
+5. Open a Pull Request.
 
-Start building with Potpie today!
+Refer to the [Contributing Guide](./contributing.md) for more details.
+
+## License
+
+This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.
+
+## 💪 Thanks To All Contributors
+
+Thanks a lot for spending your time helping build Potpie. Keep rocking 🥂
+
+<img src="https://contributors-img.web.app/image?repo=potpie-ai/potpie" alt="Contributors"/>
