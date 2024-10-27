@@ -41,7 +41,7 @@ class AgentInjectorService:
                 mini_llm, reasoning_llm, self.sql_db
             ),
             "LLD_agent": LLDAgent(mini_llm, reasoning_llm, self.sql_db),
-        }}
+        }
 
     def get_agent(self, agent_id: str) -> Any:
         if agent_id in self.agents:
