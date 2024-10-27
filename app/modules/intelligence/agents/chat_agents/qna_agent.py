@@ -27,7 +27,9 @@ from app.modules.intelligence.prompts.classification_prompts import (
 )
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.tools.agentic_tools.rag_agentic_tool import kickoff_rag_crew
+from app.modules.intelligence.tools.agentic_tools.rag_agentic_tool import (
+    kickoff_rag_crew,
+)
 
 logger = logging.getLogger(__name__)
 

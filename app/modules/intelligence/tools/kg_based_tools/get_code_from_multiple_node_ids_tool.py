@@ -146,7 +146,7 @@ class GetCodeFromMultipleNodeIdsTool:
                 type="array",
                 description="List of node IDs to retrieve code from",
                 required=True,
-            )
+            ),
         ]
 
 

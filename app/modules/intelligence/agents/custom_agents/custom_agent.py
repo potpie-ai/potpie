@@ -1,13 +1,11 @@
 import json
 import logging
 from functools import lru_cache
-from typing import AsyncGenerator, Dict, List, Any
+from typing import AsyncGenerator, Dict, List
 
-import httpx
 from langchain.schema import HumanMessage, SystemMessage
 from langchain_core.prompts import (
     ChatPromptTemplate,
-    HumanMessagePromptTemplate,
     MessagesPlaceholder,
     SystemMessagePromptTemplate,
 )
@@ -16,12 +14,15 @@ from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import NodeContext
+from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
+    CustomAgentsService,
+)
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.agents.custom_agents.custom_agents_service import CustomAgentsService
 
 logger = logging.getLogger(__name__)
+
 
 class CustomAgent:
     def __init__(self, llm, db: Session, agent_id: str):
@@ -70,7 +71,11 @@ class CustomAgent:
 
             history = self.history_manager.get_session_history(user_id, conversation_id)
             validated_history = [
-                HumanMessage(content=str(msg)) if isinstance(msg, (str, int, float)) else msg
+                (
+                    HumanMessage(content=str(msg))
+                    if isinstance(msg, (str, int, float))
+                    else msg
+                )
                 for msg in history
             ]
             custom_agent_result = await self.custom_agents_service.run_agent(
@@ -78,7 +83,9 @@ class CustomAgent:
             )
 
             tool_results = [
-                SystemMessage(content=f"Custom Agent result: {json.dumps(custom_agent_result)}")
+                SystemMessage(
+                    content=f"Custom Agent result: {json.dumps(custom_agent_result)}"
+                )
             ]
 
             inputs = {

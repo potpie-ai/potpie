@@ -41,7 +41,9 @@ class GetCodeFromProbableNodeNameTool:
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
 
-    async def run(self, project_id: str, probable_node_names: List[str]) -> List[Dict[str, Any]]:
+    async def run(
+        self, project_id: str, probable_node_names: List[str]
+    ) -> List[Dict[str, Any]]:
         """Main entry point for the tool"""
         project = await ProjectService(self.sql_db).get_project_repo_details_from_db(
             project_id, self.user_id
@@ -50,7 +52,7 @@ class GetCodeFromProbableNodeNameTool:
             raise ValueError(
                 f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
             )
-        
+
         tasks = [
             self._process_probable_node_name(project_id, name)
             for name in probable_node_names
@@ -198,5 +200,5 @@ def get_parameters() -> List[ToolParameter]:
             type="array",
             description="List of probable node names in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path'",
             required=True,
-        )
+        ),
     ]

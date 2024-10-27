@@ -134,7 +134,7 @@ class GetCodeFromNodeIdTool:
                 type="string",
                 description="The node ID to retrieve code from",
                 required=True,
-            )
+            ),
         ]
 
 

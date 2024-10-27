@@ -147,7 +147,7 @@ class KnowledgeGraphQueryTool:
                 type="array",
                 description="Optional list of node IDs to query",
                 required=False,
-            )
+            ),
         ]
 
 

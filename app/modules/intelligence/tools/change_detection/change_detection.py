@@ -179,7 +179,6 @@ class ChangeDetectionTool:
 
         try:
             repo = github.get_repo(repo_name)
-            repo_details = repo
             default_branch = repo.default_branch
         except Exception:
             raise HTTPException(status_code=400, detail="Repository not found")
@@ -232,8 +231,6 @@ class ChangeDetectionTool:
                     entry_points = InferenceService(
                         self.sql_db, "dummy"
                     ).get_entry_points_for_nodes(node_ids, project_id)
-
-                    changes = []
 
                     changes_list = []
                     for node, entry_point in entry_points.items():
