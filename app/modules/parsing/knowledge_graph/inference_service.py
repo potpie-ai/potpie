@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import re
 from typing import Dict, List, Optional
 
@@ -33,6 +34,7 @@ class InferenceService:
         self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
         self.search_service = SearchService(db)
         self.project_manager = ProjectService(db)
+        self.parallel_requests = int(os.getenv("PARALLEL_REQUESTS", 50))
 
     def close(self):
         self.driver.close()
@@ -252,7 +254,7 @@ class InferenceService:
             entry_points_neighbors, docstring_lookup
         )
 
-        semaphore = asyncio.Semaphore(10)  # Limit to 10 concurrent tasks
+        semaphore = asyncio.Semaphore(self.parallel_requests)  # Limit to 10 concurrent tasks
 
         async def process_batch(batch):
             async with semaphore:
@@ -442,7 +444,7 @@ class InferenceService:
         batches = self.batch_nodes(nodes)
         all_docstrings = {"docstrings": []}
 
-        semaphore = asyncio.Semaphore(10)  # Limit to 10 concurrent tasks
+        semaphore = asyncio.Semaphore(self.parallel_requests)  # Limit to 10 concurrent tasks
 
         async def process_batch(batch):
             async with semaphore:
