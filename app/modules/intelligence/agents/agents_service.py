@@ -1,11 +1,10 @@
-import os
-import aiohttp
-import hmac
 import hashlib
+import hmac
+import os
 from typing import List
 
+import aiohttp
 from sqlalchemy.orm import Session
-from uuid6 import uuid7
 
 from app.modules.intelligence.agents.agents_schema import AgentInfo
 from app.modules.intelligence.prompts.prompt_service import PromptService
@@ -18,7 +17,9 @@ class AgentsService:
         self.base_url = os.getenv("POTPIE_PLUS_BASE_URL")
         self.hmac_secret = os.getenv("POTPIE_PLUS_HMAC_SECRET")
 
-    async def list_available_agents(self, current_user: dict, list_system_agents: bool) -> List[AgentInfo]:
+    async def list_available_agents(
+        self, current_user: dict, list_system_agents: bool
+    ) -> List[AgentInfo]:
         system_agents = [
             AgentInfo(
                 id="codebase_qna_agent",
@@ -53,23 +54,20 @@ class AgentsService:
         ]
 
         custom_agents = await self.fetch_custom_agents(current_user)
-        
+
         if list_system_agents:
             return system_agents + custom_agents
         else:
             return custom_agents
-    
-        
+
     async def fetch_custom_agents(self, current_user: dict) -> List[AgentInfo]:
         custom_agents = []
         skip = 0
         limit = 10
-        print("current_user",current_user)
-        user_id = current_user['user_id']
+        print("current_user", current_user)
+        user_id = current_user["user_id"]
         hmac_signature = self.generate_hmac_signature(f"user_id={user_id}")
-        headers = {
-            "X-HMAC-Signature": hmac_signature
-        }
+        headers = {"X-HMAC-Signature": hmac_signature}
 
         async with aiohttp.ClientSession(headers=headers) as session:
             while True:
@@ -80,14 +78,16 @@ class AgentsService:
                     data = await response.json()
                     if not data:
                         break
-                    
+
                     for agent in data:
-                        custom_agents.append(AgentInfo(
-                            id=agent["id"],
-                            name=agent["role"],
-                            description=agent["goal"]
-                        ))
-                    
+                        custom_agents.append(
+                            AgentInfo(
+                                id=agent["id"],
+                                name=agent["role"],
+                                description=agent["goal"],
+                            )
+                        )
+
                     skip += limit
                     if len(data) < limit:
                         break
@@ -95,17 +95,14 @@ class AgentsService:
         return custom_agents
 
     def generate_hmac_signature(self, message: str) -> str:
-        secret_key = '1234'
+        secret_key = "1234"
         return hmac.new(
-            secret_key.encode(),
-            message.encode(),
-            hashlib.sha256
+            secret_key.encode(), message.encode(), hashlib.sha256
         ).hexdigest()
 
-
     def generate_hmac_token(self, user_id: str) -> str:
-        message = user_id.encode('utf-8')
-        signature = hmac.new(self.hmac_secret.encode('utf-8'), message, hashlib.sha256)
+        message = user_id.encode("utf-8")
+        signature = hmac.new(self.hmac_secret.encode("utf-8"), message, hashlib.sha256)
         return f"{user_id}:{signature.hexdigest()}"
 
     def format_citations(self, citations: List[str]) -> List[str]:

@@ -1,8 +1,9 @@
 import json
 import logging
 from functools import lru_cache
-from typing import AsyncGenerator, Dict, List, Any
+from typing import Any, AsyncGenerator, Dict, List
 
+import httpx
 from langchain.schema import HumanMessage, SystemMessage
 from langchain_core.prompts import (
     ChatPromptTemplate,
@@ -18,9 +19,9 @@ from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
-import httpx
 
 logger = logging.getLogger(__name__)
+
 
 class CustomAgent:
     def __init__(self, llm, db: Session, agent_id: str):
@@ -83,7 +84,9 @@ class CustomAgent:
             )
 
             tool_results = [
-                SystemMessage(content=f"Custom Agent result: {json.dumps(custom_agent_result)}")
+                SystemMessage(
+                    content=f"Custom Agent result: {json.dumps(custom_agent_result)}"
+                )
             ]
 
             inputs = {
@@ -116,14 +119,14 @@ class CustomAgent:
 
     async def is_valid(self) -> bool:
         validate_url = f"{self.base_url}/deployment/{self.agent_id}/validate"
-        
+
         async with httpx.AsyncClient() as client:
             response = await client.get(validate_url)
             return response.status_code == 200
 
     async def run(self, payload: Dict[str, Any]) -> str:
         run_url = f"{self.base_url}/deployment/{self.agent_id}/run"
-        
+
         async with httpx.AsyncClient() as client:
             response = await client.post(run_url, json=payload)
             response.raise_for_status()

@@ -10,12 +10,13 @@ from app.modules.intelligence.agents.chat_agents.debugging_agent import Debuggin
 from app.modules.intelligence.agents.chat_agents.integration_test_agent import (
     IntegrationTestAgent,
 )
-
 from app.modules.intelligence.agents.chat_agents.lld_agent import LLDAgent
 from app.modules.intelligence.agents.chat_agents.qna_agent import QNAAgent
 from app.modules.intelligence.agents.chat_agents.unit_test_agent import UnitTestAgent
+from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
+    CustomAgentService,
+)
 from app.modules.intelligence.provider.provider_service import ProviderService
-from app.modules.intelligence.agents.custom_agents.custom_agents_service import CustomAgentService
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,9 @@ class AgentInjectorService:
             return self.custom_agent_service
 
     def validate_agent_id(self, agent_id: str) -> bool:
-        return agent_id in self.agents or self.custom_agent_service.is_valid_agent(agent_id)
+        return agent_id in self.agents or self.custom_agent_service.is_valid_agent(
+            agent_id
+        )
 
     def get_agent(self, agent_id: str) -> Any:
         agent = self.agents.get(agent_id)
@@ -58,6 +61,3 @@ class AgentInjectorService:
             logger.error(f"Invalid agent_id: {agent_id}")
             raise ValueError(f"Invalid agent_id: {agent_id}")
         return agent
-
-
-

@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 from app.modules.github.github_service import GithubService
-from app.modules.projects.projects_model import Project
 from app.modules.intelligence.tools.tool_schema import ToolParameter
+from app.modules.projects.projects_model import Project
 
 logger = logging.getLogger(__name__)
 
@@ -127,14 +127,14 @@ class GetCodeFromNodeIdTool:
                 name="node_id",
                 type="string",
                 description="The ID of the node to retrieve code from",
-                required=True
+                required=True,
             ),
             ToolParameter(
                 name="include_imports",
                 type="boolean",
                 description="Whether to include import statements in the retrieved code",
-                required=False
-            )
+                required=False,
+            ),
         ]
 
 

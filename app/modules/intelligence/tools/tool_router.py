@@ -1,6 +1,6 @@
 from typing import List
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -53,23 +53,23 @@ async def list_tools_hmac(
     db: Session = Depends(get_db),
     # hmac_signature: str = Header(..., alias="X-HMAC-Signature"),
 ):
-    print(f"[DEBUG] Received request to list_tools_hmac endpoint")
+    print("[DEBUG] Received request to list_tools_hmac endpoint")
     print(f"[DEBUG] User ID: {user_id}")
-    
+
     # Uncomment and modify this section when you re-enable HMAC verification
     # print(f"[DEBUG] HMAC Signature: {hmac_signature}")
     # if not AuthService.verify_hmac_signature_for_get(user_id, hmac_signature):
     #     print(f"[DEBUG] HMAC verification failed for user_id: {user_id}")
     #     raise HTTPException(status_code=401, detail="Unauthorized")
     # print(f"[DEBUG] HMAC verification successful for user_id: {user_id}")
-    
+
     print(f"[DEBUG] Creating ToolService instance for user_id: {user_id}")
     tool_service = ToolService(db, user_id)
-    
-    print(f"[DEBUG] Calling list_tools() method")
+
+    print("[DEBUG] Calling list_tools() method")
     tools = tool_service.list_tools()
-    
+
     print(f"[DEBUG] Number of tools retrieved: {len(tools)}")
     print(f"[DEBUG] Returning tools: {tools}")
-    
+
     return tools

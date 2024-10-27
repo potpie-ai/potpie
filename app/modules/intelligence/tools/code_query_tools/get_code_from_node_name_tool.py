@@ -1,6 +1,5 @@
 import logging
 from typing import Any, Dict, List
-from app.modules.intelligence.tools.tool_schema import ToolParameter
 
 from fastapi import HTTPException
 from langchain_core.tools import StructuredTool, Tool
@@ -9,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 from app.modules.github.github_service import GithubService
+from app.modules.intelligence.tools.tool_schema import ToolParameter
 from app.modules.projects.projects_model import Project
 
 logger = logging.getLogger(__name__)
@@ -132,14 +132,14 @@ class GetCodeFromNodeNameTool:
                 name="repo_id",
                 type="string",
                 description="The repository ID (UUID)",
-                required=True
+                required=True,
             ),
             ToolParameter(
                 name="node_name",
                 type="string",
                 description="The name of the node to retrieve code from",
-                required=True
-            )
+                required=True,
+            ),
         ]
 
 

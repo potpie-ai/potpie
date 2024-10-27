@@ -15,11 +15,11 @@ from app.modules.intelligence.tools.code_query_tools.get_code_from_node_name_too
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     GetCodeFromNodeIdTool,
 )
+from app.modules.intelligence.tools.tool_schema import ToolParameter
 from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
-from app.modules.intelligence.tools.tool_schema import ToolParameter
 
 
 class ChangeDetectionInput(BaseModel):
@@ -44,9 +44,10 @@ class ChangeDetectionResponse(BaseModel):
 
 
 class ChangeDetectionTool:
-
     name = "change_detection"
-    description = "Retrieves the changes in the current branch compared to the default branch."
+    description = (
+        "Retrieves the changes in the current branch compared to the default branch."
+    )
 
     def __init__(self, sql_db, user_id):
         self.sql_db = sql_db
@@ -281,20 +282,20 @@ class ChangeDetectionTool:
                 name="repo_id",
                 type="string",
                 description="The repository ID (UUID)",
-                required=True
+                required=True,
             ),
             ToolParameter(
                 name="base_commit",
                 type="string",
                 description="The base commit SHA",
-                required=True
+                required=True,
             ),
             ToolParameter(
                 name="target_commit",
                 type="string",
                 description="The target commit SHA",
-                required=True
-            )
+                required=True,
+            ),
         ]
 
 

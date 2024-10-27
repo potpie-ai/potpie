@@ -6,8 +6,8 @@ from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
-from app.modules.projects.projects_model import Project
 from app.modules.intelligence.tools.tool_schema import ToolParameter
+from app.modules.projects.projects_model import Project
 
 logger = logging.getLogger(__name__)
 
@@ -80,9 +80,11 @@ class GetCodeGraphFromNodeNameTool:
 
     def _get_project(self, repo_id: str) -> Optional[Project]:
         """Retrieve project from the database."""
-        return self.sql_db.query(Project).filter(
-            Project.id == repo_id, Project.user_id == self.user_id
-        ).first()
+        return (
+            self.sql_db.query(Project)
+            .filter(Project.id == repo_id, Project.user_id == self.user_id)
+            .first()
+        )
 
     def _get_node_id(self, repo_id: str, node_name: str) -> Optional[str]:
         """Retrieve node ID from Neo4j."""
@@ -227,20 +229,20 @@ class GetCodeGraphFromNodeNameTool:
                 name="repo_id",
                 type="string",
                 description="The repository ID (UUID)",
-                required=True
+                required=True,
             ),
             ToolParameter(
                 name="node_name",
                 type="string",
                 description="The name of the node to retrieve the code graph from",
-                required=True
+                required=True,
             ),
             ToolParameter(
                 name="depth",
                 type="integer",
                 description="The depth of the code graph to retrieve",
-                required=False
-            )
+                required=False,
+            ),
         ]
 
 

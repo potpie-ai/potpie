@@ -57,12 +57,12 @@ Follow the project’s installation and setup instructions in the [README.md](./
 
 To ensure consistency and quality in the codebase, please adhere to the following workflow:
 
-1. **Create a Branch**: 
+1. **Create a Branch**:
    - Branches should be named according to the feature or bug fix. For example:
      ```bash
      git checkout -b feature/your-feature-name
      ```
-   
+
 2. **Make Changes**: Write clear, concise code and ensure that you follow any established coding conventions.
 
 

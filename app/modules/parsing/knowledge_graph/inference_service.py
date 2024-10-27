@@ -572,9 +572,11 @@ class InferenceService:
         try:
             result = await chain.ainvoke({"code_snippets": code_snippets})
         except Exception as e:
-            logger.error(f"Parsing project {repo_id}: Inference request failed. Error: {str(e)}")
+            logger.error(
+                f"Parsing project {repo_id}: Inference request failed. Error: {str(e)}"
+            )
             result = ""
-        
+
         end_time = time.time()
 
         logger.info(

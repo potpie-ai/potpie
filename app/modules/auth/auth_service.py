@@ -86,9 +86,7 @@ class AuthService:
         secret_key = AuthService.get_hmac_secret_key()
         message = f"user_id={user_id}"
         expected_signature = hmac.new(
-            secret_key.encode(),
-            message.encode(),
-            hashlib.sha256
+            secret_key.encode(), message.encode(), hashlib.sha256
         ).hexdigest()
         return hmac.compare_digest(expected_signature, hmac_signature)
 

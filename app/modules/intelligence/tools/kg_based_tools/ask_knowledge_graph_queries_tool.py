@@ -6,10 +6,10 @@ from typing import Any, Dict, List
 from langchain.tools import StructuredTool
 from pydantic import BaseModel, Field
 
+from app.modules.intelligence.tools.tool_schema import ToolParameter
 from app.modules.parsing.knowledge_graph.inference_schema import QueryResponse
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 from app.modules.projects.projects_service import ProjectService
-from app.modules.intelligence.tools.tool_schema import ToolParameter
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -134,14 +134,14 @@ class KnowledgeGraphQueryTool:
                 name="repo_id",
                 type="string",
                 description="The repository ID (UUID)",
-                required=True
+                required=True,
             ),
             ToolParameter(
                 name="query",
                 type="string",
                 description="The knowledge graph query to execute",
-                required=True
-            )
+                required=True,
+            ),
         ]
 
 

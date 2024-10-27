@@ -28,7 +28,9 @@ from app.modules.conversations.message.message_schema import (
     NodeContext,
 )
 from app.modules.intelligence.agents.agent_injector_service import AgentInjectorService
-from app.modules.intelligence.agents.custom_agents.custom_agents_service import CustomAgentService
+from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
+    CustomAgentService,
+)
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
@@ -96,7 +98,6 @@ class ConversationService:
             agent_injector_service,
             custom_agent_service,
         )
- 
 
     async def check_conversation_access(
         self, conversation_id: str, user_email: str
@@ -425,31 +426,48 @@ class ConversationService:
         user_id: str,
         node_ids: List[NodeContext],
     ) -> AsyncGenerator[str, None]:
-        conversation = self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
+        conversation = (
+            self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
+        )
         if not conversation:
-            raise ConversationNotFoundError(f"Conversation with id {conversation_id} not found")
+            raise ConversationNotFoundError(
+                f"Conversation with id {conversation_id} not found"
+            )
 
         agent_id = conversation.agent_ids[0]
         project_id = conversation.project_ids[0] if conversation.project_ids else None
-        
+
         try:
             agent = self.agent_injector_service.get_agent(agent_id)
-            
-            logger.info(f"conversation_id: {conversation_id} Running agent {agent_id} with query: {query}")
-            
+
+            logger.info(
+                f"conversation_id: {conversation_id} Running agent {agent_id} with query: {query}"
+            )
+
             if isinstance(agent, CustomAgentService):
                 # Custom agent doesn't support streaming, so we'll yield the entire response at once
-                response = await agent.run(agent_id, query, project_id, user_id, conversation.id, node_ids)
+                response = await agent.run(
+                    agent_id, query, project_id, user_id, conversation.id, node_ids
+                )
                 yield response
             else:
                 # For other agents that support streaming
-                async for chunk in agent.run(query, project_id, user_id, conversation.id, node_ids):
+                async for chunk in agent.run(
+                    query, project_id, user_id, conversation.id, node_ids
+                ):
                     yield chunk
 
-            logger.info(f"Generated and streamed AI response for conversation {conversation.id} for user {user_id} using agent {agent_id}")
+            logger.info(
+                f"Generated and streamed AI response for conversation {conversation.id} for user {user_id} using agent {agent_id}"
+            )
         except Exception as e:
-            logger.error(f"Failed to generate and stream AI response for conversation {conversation.id}: {e}", exc_info=True)
-            raise ConversationServiceError("Failed to generate and stream AI response.") from e
+            logger.error(
+                f"Failed to generate and stream AI response for conversation {conversation.id}: {e}",
+                exc_info=True,
+            )
+            raise ConversationServiceError(
+                "Failed to generate and stream AI response."
+            ) from e
 
     async def delete_conversation(self, conversation_id: str, user_id: str) -> dict:
         try:
@@ -665,4 +683,3 @@ class ConversationService:
             raise ConversationServiceError(
                 "Failed to rename conversation due to an unexpected error"
             ) from e
-

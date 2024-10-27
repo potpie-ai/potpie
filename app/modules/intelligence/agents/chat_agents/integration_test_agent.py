@@ -16,9 +16,6 @@ from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import NodeContext
-from app.modules.intelligence.agents.agentic_tools.integration_test_agent import (
-    kickoff_integration_test_crew,
-)
 from app.modules.intelligence.agents.agents_service import AgentsService
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.classification_prompts import (
@@ -29,6 +26,9 @@ from app.modules.intelligence.prompts.classification_prompts import (
 )
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.tools.agentic_tools.integration_test_agentic_tool import (
+    kickoff_integration_test_crew,
+)
 
 logger = logging.getLogger(__name__)
 

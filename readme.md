@@ -18,14 +18,14 @@ Potpie also provides purpose built agents that are expert on your codebase to pe
 
 Potpie offers a suite of specialized agents that empower developers by automating and optimizing key aspects of software development:
 
-- **Debugging Agent**: Automatically analyzes stacktraces and provides debugging steps specific to your codebase.  
-- **Codebase Q&A Agent**: Answers questions about your codebase and explains functions, features, and architecture.  
-- **Code Changes Agent**: Analyzes code changes, identifies affected APIs, and suggests improvements before merging.  
-- **Integration Test Agent**: Generates integration test plans and code for flows to ensure components work together properly.  
-- **Unit Test Agent**: Automatically creates unit test plan and code for individual functions to enhance test coverage.  
+- **Debugging Agent**: Automatically analyzes stacktraces and provides debugging steps specific to your codebase.
+- **Codebase Q&A Agent**: Answers questions about your codebase and explains functions, features, and architecture.
+- **Code Changes Agent**: Analyzes code changes, identifies affected APIs, and suggests improvements before merging.
+- **Integration Test Agent**: Generates integration test plans and code for flows to ensure components work together properly.
+- **Unit Test Agent**: Automatically creates unit test plan and code for individual functions to enhance test coverage.
 - **LLD Agent**: Creates a low level design for implementing a new feature by providing functional requirements to this agent.
 
-Potpie's agents work by leveraging tools that interact with the knowledge graph. The knowledge graph is a meticulously constructed graph of the codebase tracking relationships between functions, files, classes of the codebase, stored in neo4j. We generate inferences for each node and embed and store it in the graph to perform similarity search for the user query. Other tools look up project structure, fetch code from github, fetch code flow from graph etc 
+Potpie's agents work by leveraging tools that interact with the knowledge graph. The knowledge graph is a meticulously constructed graph of the codebase tracking relationships between functions, files, classes of the codebase, stored in neo4j. We generate inferences for each node and embed and store it in the graph to perform similarity search for the user query. Other tools look up project structure, fetch code from github, fetch code flow from graph etc
 
 ---
 
@@ -49,10 +49,10 @@ These tools are the foundation for the custom agents you create, allowing them t
 ## The Power of Custom Agents [Coming Soon]
 
 Potpie doesn’t stop at pre-built agents. With **Custom Agents**, developers can design personalized tools that handle repeatable tasks with precision. Whether it's generating boilerplate code, identifying security vulnerabilities, or suggesting optimizations, Potpie’s custom agents are flexible and built to adapt to your unique project requirements.
- 
+
 ### Custom Agents for Advanced Workflows
 
-Potpie’s cloud platform supports **Custom Agents**, enabling you to create agents that automate specific, repeatable tasks tailored to your project's unique requirements. 
+Potpie’s cloud platform supports **Custom Agents**, enabling you to create agents that automate specific, repeatable tasks tailored to your project's unique requirements.
 
 #### Key Components of Custom Agents
 - **System Instructions**: Guidelines that define the agent's task, its goal, and the expected output.
@@ -71,9 +71,9 @@ Potpie’s cloud platform supports **Custom Agents**, enabling you to create age
 
 ## Contributing
 
-We welcome contributions from the community. Contributions can be of the form: 
+We welcome contributions from the community. Contributions can be of the form:
 1. Documentation : Help improve our docs! If you fixed a problem, chances are others faced it too.
-2. Code : Help us make improvements to existing features and build new features for Potpie. 
+2. Code : Help us make improvements to existing features and build new features for Potpie.
 3. Tests :  Help us make Potpie resilient by contributing tests.
 
 To contribute:

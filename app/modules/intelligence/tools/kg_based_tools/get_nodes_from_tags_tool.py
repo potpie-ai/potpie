@@ -6,9 +6,9 @@ from pydantic import BaseModel, Field
 
 from app.core.config_provider import ConfigProvider
 from app.core.database import get_db
+from app.modules.intelligence.tools.tool_schema import ToolParameter
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.projects.projects_service import ProjectService
-from app.modules.intelligence.tools.tool_schema import ToolParameter
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -80,14 +80,14 @@ class GetNodesFromTags:
                 name="repo_id",
                 type="string",
                 description="The repository ID (UUID)",
-                required=True
+                required=True,
             ),
             ToolParameter(
                 name="tags",
                 type="array",
                 description="List of tags to search for nodes",
-                required=True
-            )
+                required=True,
+            ),
         ]
 
 
