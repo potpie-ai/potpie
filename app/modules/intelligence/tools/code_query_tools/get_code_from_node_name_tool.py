@@ -139,7 +139,7 @@ class GetCodeFromNodeNameTool:
                 type="string",
                 description="The name of the node to retrieve code from",
                 required=True,
-            ),
+            )
         ]
 
 

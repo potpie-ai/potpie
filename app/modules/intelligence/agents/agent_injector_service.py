@@ -13,9 +13,9 @@ from app.modules.intelligence.agents.chat_agents.integration_test_agent import (
 from app.modules.intelligence.agents.chat_agents.lld_agent import LLDAgent
 from app.modules.intelligence.agents.chat_agents.qna_agent import QNAAgent
 from app.modules.intelligence.agents.chat_agents.unit_test_agent import UnitTestAgent
-from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
-    CustomAgentService,
-)
+
+from app.modules.intelligence.agents.custom_agents.custom_agent import CustomAgent
+from app.modules.intelligence.agents.custom_agents.custom_agents_service import CustomAgentsService
 from app.modules.intelligence.provider.provider_service import ProviderService
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ class AgentInjectorService:
     def __init__(self, db: Session, provider_service: ProviderService):
         self.sql_db = db
         self.provider_service = provider_service
-        self.custom_agent_service = CustomAgentService(db)
+        self.custom_agent_service = CustomAgentsService()
         self.agents = self._initialize_agents()
 
     def _initialize_agents(self) -> Dict[str, Any]:
@@ -48,16 +48,11 @@ class AgentInjectorService:
         if agent_id in self.agents:
             return self.agents[agent_id]
         else:
-            return self.custom_agent_service
+            reasoning_llm = self.provider_service.get_large_llm()
+            return CustomAgent(llm=reasoning_llm,db=self.sql_db, agent_id=agent_id)
 
     def validate_agent_id(self, agent_id: str) -> bool:
-        return agent_id in self.agents or self.custom_agent_service.is_valid_agent(
+        return agent_id in self.agents or self.custom_agent_service.validate_agent(
             agent_id
         )
 
-    def get_agent(self, agent_id: str) -> Any:
-        agent = self.agents.get(agent_id)
-        if not agent:
-            logger.error(f"Invalid agent_id: {agent_id}")
-            raise ValueError(f"Invalid agent_id: {agent_id}")
-        return agent

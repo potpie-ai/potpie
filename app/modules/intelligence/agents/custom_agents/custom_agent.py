@@ -41,19 +41,17 @@ class CustomAgent:
         return {prompt.type: prompt for prompt in prompts}
 
     async def _create_chain(self) -> RunnableSequence:
-        prompts = await self._get_prompts()
-        system_prompt = prompts.get(PromptType.SYSTEM)
-        human_prompt = prompts.get(PromptType.HUMAN)
+        # prompts = await self._get_prompts()
+        system_prompt = "You are an AI assistant with comprehensive knowledge of the entire codebase. Your role is to provide accurate, context-aware answers to questions about the code structure, functionality, and best practices. Follow these guidelines:\n                        1. Persona: Embody a seasoned software architect with deep understanding of complex systems.\n\n                        2. Context Awareness:\n                        - Always ground your responses in the provided code context and tool results.\n                        - If the context is insufficient, acknowledge this limitation.\n\n                        3. Reasoning Process:\n                        - For each query, follow this thought process:\n                            a) Analyze the question and its intent\n                            b) Review the provided code context and tool results\n                            c) Formulate a comprehensive answer\n                            d) Reflect on your answer for accuracy and completeness\n\n                        4. Response Structure:\n                        - Provide detailed explanations, referencing unmodified specific code snippets when relevant\n                        - Use markdown formatting for code and structural clarity\n                        - Try to be concise and avoid repeating yourself.\n                        - Aways provide a technical response in the same language as the codebase.\n\n                        5. Honesty and Transparency:\n                        - If you're unsure or lack information, clearly state this\n                        - Do not invent or assume code structures that aren't explicitly provided\n\n                        6. Continuous Improvement:\n                        - After each response, reflect on how you could improve future answers\n\n                        7. Handling Off-Topic Requests:\n                        If asked about debugging, unit testing, or code explanation unrelated to recent changes, suggest: 'That's an interesting question! For in-depth assistance with [debugging/unit testing/code explanation], I'd recommend connecting with our specialized [DEBUGGING_AGENT/UNIT_TEST_AGENT/QNA_AGENT]. They're equipped with the latest tools for that specific task. Would you like me to summarize your request for them?'\n\n                        Remember, your primary goal is to help users understand and navigate the codebase effectively, always prioritizing accuracy over speculation."
 
-        if not system_prompt or not human_prompt:
+        if not system_prompt:
             raise ValueError(f"Required prompts not found for {self.agent_id}")
 
         prompt_template = ChatPromptTemplate(
             messages=[
-                SystemMessagePromptTemplate.from_template(system_prompt.text),
+                SystemMessagePromptTemplate.from_template(system_prompt),
                 MessagesPlaceholder(variable_name="history"),
                 MessagesPlaceholder(variable_name="tool_results"),
-                HumanMessagePromptTemplate.from_template(human_prompt.text),
             ]
         )
         return prompt_template | self.llm
@@ -75,9 +73,8 @@ class CustomAgent:
                 HumanMessage(content=str(msg)) if isinstance(msg, (str, int, float)) else msg
                 for msg in history
             ]
-
             custom_agent_result = await self.custom_agents_service.run_agent(
-                self.agent_id, query, project_id, user_id, node_ids
+                self.agent_id, query, conversation_id, user_id, node_ids
             )
 
             tool_results = [

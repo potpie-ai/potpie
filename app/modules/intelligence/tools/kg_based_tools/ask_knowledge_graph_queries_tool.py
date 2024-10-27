@@ -131,17 +131,23 @@ class KnowledgeGraphQueryTool:
     def get_parameters() -> List[ToolParameter]:
         return [
             ToolParameter(
-                name="repo_id",
-                type="string",
-                description="The repository ID (UUID)",
+                name="queries",
+                type="array",
+                description="A list of natural language questions to ask the knowledge graph",
                 required=True,
             ),
             ToolParameter(
-                name="query",
+                name="repo_id",
                 type="string",
-                description="The knowledge graph query to execute",
+                description="The project ID metadata for the project being evaluated",
                 required=True,
             ),
+            ToolParameter(
+                name="node_ids",
+                type="array",
+                description="Optional list of node IDs to query",
+                required=False,
+            )
         ]
 
 

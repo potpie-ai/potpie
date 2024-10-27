@@ -29,7 +29,7 @@ from app.modules.conversations.message.message_schema import (
 )
 from app.modules.intelligence.agents.agent_injector_service import AgentInjectorService
 from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
-    CustomAgentService,
+    CustomAgentsService,
 )
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import ProviderService
@@ -70,7 +70,7 @@ class ConversationService:
         history_manager: ChatHistoryService,
         provider_service: ProviderService,
         agent_injector_service: AgentInjectorService,
-        custom_agent_service: CustomAgentService,
+        custom_agent_service: CustomAgentsService,
     ):
         self.sql_db = db
         self.user_id = user_id
@@ -87,7 +87,7 @@ class ConversationService:
         history_manager = ChatHistoryService(db)
         provider_service = ProviderService(db, user_id)
         agent_injector_service = AgentInjectorService(db, provider_service)
-        custom_agent_service = CustomAgentService(db)
+        custom_agent_service = CustomAgentsService()
         return cls(
             db,
             user_id,
@@ -444,7 +444,7 @@ class ConversationService:
                 f"conversation_id: {conversation_id} Running agent {agent_id} with query: {query}"
             )
 
-            if isinstance(agent, CustomAgentService):
+            if isinstance(agent, CustomAgentsService):
                 # Custom agent doesn't support streaming, so we'll yield the entire response at once
                 response = await agent.run(
                     agent_id, query, project_id, user_id, conversation.id, node_ids

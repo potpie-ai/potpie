@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 from app.modules.github.github_service import GithubService
+from app.modules.intelligence.tools.tool_schema import ToolParameter
 from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
@@ -185,3 +186,21 @@ def get_code_from_probable_node_name_tool(
                 - probable_node_names (List[str]): A list of probable node names in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path'. This CANNOT be a UUID.""",
         args_schema=GetCodeFromProbableNodeNameInput,
     )
+
+
+@staticmethod
+def get_parameters() -> List[ToolParameter]:
+    return [
+        ToolParameter(
+            name="repo_id",
+            type="string",
+            description="The project ID, this is a UUID",
+            required=True,
+        ),
+        ToolParameter(
+            name="probable_node_names",
+            type="array",
+            description="List of probable node names in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path'",
+            required=True,
+        )
+    ]

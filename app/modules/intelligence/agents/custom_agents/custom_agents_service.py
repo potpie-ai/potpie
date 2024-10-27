@@ -8,29 +8,36 @@ logger = logging.getLogger(__name__)
 
 class CustomAgentsService:
     def __init__(self):
-        self.base_url = "https://your-custom-agent-service-url.com"  # Replace with actual URL
+        self.base_url = "http://localhost:8000"  # Replace with actual URL
 
     async def run_agent(
         self,
         agent_id: str,
         query: str,
-        project_id: str,
+        conversation_id: str,
         user_id: str,
-        node_ids: List[NodeContext],
+        node_ids: List[NodeContext] = None,
     ) -> Dict[str, Any]:
-        run_url = f"{self.base_url}/api/v1/agents/{agent_id}/run"
+        run_url = f"{self.base_url}/custom-agents/agents/{agent_id}/query"
         payload = {
-            "query": query,
-            "project_id": project_id,
             "user_id": user_id,
-            "node_ids": [node.dict() for node in node_ids],
+            "query": query,
+            "conversation_id": conversation_id,
         }
+        
+        if node_ids:
+            payload["node_ids"] = [node.dict() for node in node_ids]
 
-        async with httpx.AsyncClient() as client:
+        # Set a reasonable timeout of 10 minutes to avoid indefinite waits
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout=600.0)) as client:
             try:
                 response = await client.post(run_url, json=payload)
+                print("response from agent service", response.json())
                 response.raise_for_status()
                 return response.json()
+            except httpx.TimeoutException as e:
+                logger.error(f"Request timed out after 10 minutes while running agent {agent_id}: {e}")
+                raise
             except httpx.HTTPStatusError as e:
                 logger.error(f"HTTP error occurred while running agent {agent_id}: {e}")
                 raise

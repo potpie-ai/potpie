@@ -124,17 +124,17 @@ class GetCodeFromNodeIdTool:
     def get_parameters() -> List[ToolParameter]:
         return [
             ToolParameter(
-                name="node_id",
+                name="repo_id",
                 type="string",
-                description="The ID of the node to retrieve code from",
+                description="The repository ID, this is a UUID",
                 required=True,
             ),
             ToolParameter(
-                name="include_imports",
-                type="boolean",
-                description="Whether to include import statements in the retrieved code",
-                required=False,
-            ),
+                name="node_id",
+                type="string",
+                description="The node ID to retrieve code from",
+                required=True,
+            )
         ]
 
 

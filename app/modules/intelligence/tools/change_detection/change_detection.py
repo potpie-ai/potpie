@@ -283,19 +283,7 @@ class ChangeDetectionTool:
                 type="string",
                 description="The repository ID (UUID)",
                 required=True,
-            ),
-            ToolParameter(
-                name="base_commit",
-                type="string",
-                description="The base commit SHA",
-                required=True,
-            ),
-            ToolParameter(
-                name="target_commit",
-                type="string",
-                description="The target commit SHA",
-                required=True,
-            ),
+            )
         ]
 
 
