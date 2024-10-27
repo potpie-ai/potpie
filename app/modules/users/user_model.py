@@ -3,7 +3,11 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 from app.core.base_model import Base
+from app.modules.conversations.conversation.conversation_model import (  # noqa
+    Conversation,
+)
 from app.modules.intelligence.prompts.prompt_model import Prompt  # noqa
+from app.modules.projects.projects_model import Project  # noqa
 from app.modules.users.user_preferences_model import UserPreferences  # noqa
 
 

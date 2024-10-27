@@ -12,15 +12,14 @@ from app.modules.github.github_service import GithubService
 from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
-from app.modules.intelligence.tools.tool_schema import ToolParameter
 
 logger = logging.getLogger(__name__)
 
 
 class GetCodeFromProbableNodeNameInput(BaseModel):
-    repo_id: str = Field(description="The project ID, this is a UUID")
-    probable_node_name: str = Field(
-        description="A probable node name in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path'"
+    project_id: str = Field(description="The project ID, this is a UUID")
+    probable_node_names: List[str] = Field(
+        description="List of probable node names in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path'"
     )
 
 
@@ -41,9 +40,9 @@ class GetCodeFromProbableNodeNameTool:
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
 
-    async def find_node_from_probable_name(
+    async def process_probable_node_name(
         self, project_id: str, probable_node_name: str
-    ) -> Dict[str, Any]:
+    ):
         try:
             node_id_query = " ".join(
                 probable_node_name.replace("/", " ").replace(":", " ").split()
@@ -60,14 +59,42 @@ class GetCodeFromProbableNodeNameTool:
                     "error": f"Node with name '{probable_node_name}' not found in project '{project_id}'"
                 }
 
-            return self.fetch(project_id, node_id)
+            return await self.arun(project_id, node_id)
         except Exception as e:
             logger.error(
                 f"Unexpected error in GetCodeFromProbableNodeNameTool: {str(e)}"
             )
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
-    def fetch(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+    async def find_node_from_probable_name(
+        self, project_id: str, probable_node_names: List[str]
+    ) -> List[Dict[str, Any]]:
+        tasks = [
+            self.process_probable_node_name(project_id, name)
+            for name in probable_node_names
+        ]
+        return await asyncio.gather(*tasks)
+
+    def get_code_from_probable_node_name(
+        self, project_id: str, probable_node_names: List[str]
+    ) -> List[Dict[str, Any]]:
+        project = asyncio.run(
+            ProjectService(self.sql_db).get_project_repo_details_from_db(
+                project_id, self.user_id
+            )
+        )
+        if not project:
+            raise ValueError(
+                f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
+            )
+        return asyncio.run(
+            self.find_node_from_probable_name(project_id, probable_node_names)
+        )
+
+    async def arun(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+        return self.run(repo_id, node_id)
+
+    def run(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         try:
             node_data = self._get_node_data(repo_id, node_id)
             if not node_data:
@@ -87,29 +114,6 @@ class GetCodeFromProbableNodeNameTool:
                 f"Unexpected error in GetCodeFromProbableNodeNameTool: {str(e)}"
             )
             return {"error": f"An unexpected error occurred: {str(e)}"}
-
-    async def get_code_from_probable_node_name(
-        self, project_id: str, probable_node_name: str
-    ) -> Dict[str, Any]:
-        project = await ProjectService(self.sql_db).get_project_repo_details_from_db(
-            project_id, self.user_id
-        )
-        if not project:
-            raise ValueError(
-                f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
-            )
-        return await self.find_node_from_probable_name(project_id, probable_node_name)
-
-    async def run(self, repo_id: str, probable_node_name: str) -> Dict[str, Any]:
-        return await self.get_code_from_probable_node_name(repo_id, probable_node_name)
-
-    def run_tool(self, repo_id: str, probable_node_name: str) -> Dict[str, Any]:
-        # Create a new event loop
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        # Run the coroutine using the event loop
-        return loop.run_until_complete(self.run(repo_id, probable_node_name))
 
     def _get_node_data(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         query = """
@@ -131,16 +135,14 @@ class GetCodeFromProbableNodeNameTool:
         end_line = node_data["end_line"]
 
         relative_file_path = self._get_relative_file_path(file_path)
-        if node_data.get("code", None):
-            code_content = node_data["code"]
-        else:
-            code_content = GithubService(self.sql_db).get_file_content(
-                project.repo_name,
-                relative_file_path,
-                start_line,
-                end_line,
-                project.branch_name,
-            )
+
+        code_content = GithubService(self.sql_db).get_file_content(
+            project.repo_name,
+            relative_file_path,
+            start_line,
+            end_line,
+            project.branch_name,
+        )
 
         docstring = None
         if node_data.get("docstring", None):
@@ -169,35 +171,17 @@ class GetCodeFromProbableNodeNameTool:
         if hasattr(self, "neo4j_driver"):
             self.neo4j_driver.close()
 
-    @staticmethod
-    def get_parameters() -> List[ToolParameter]:
-        return [
-            ToolParameter(
-                name="repo_id",
-                type="string",
-                description="The repository ID (UUID)",
-                required=True
-            ),
-            ToolParameter(
-                name="node_name",
-                type="string",
-                description="The probable name of the node to retrieve code from",
-                required=True
-            )
-        ]
-
 
 def get_code_from_probable_node_name_tool(
     sql_db: Session, user_id: str
 ) -> StructuredTool:
     tool_instance = GetCodeFromProbableNodeNameTool(sql_db, user_id)
     return StructuredTool.from_function(
-        coroutine=tool_instance.run,
-        func=tool_instance.run_tool,
+        func=tool_instance.get_code_from_probable_node_name,
         name="Get Code and docstring From Probable Node Name",
         description="""Retrieves code and docstring for the closest node name in a repository. Node names are in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path',
                 Useful to extract code for a function or file mentioned in a stacktrace or error message. Inputs for the get_code_from_probable_node_name method:
                 - project_id (str): The project ID to retrieve code and docstring for, this is ALWAYS a UUID.
-                - probable_node_name (str): A probable node name in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path'. This CANNOT be a UUID.""",
+                - probable_node_names (List[str]): A list of probable node names in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path'. This CANNOT be a UUID.""",
         args_schema=GetCodeFromProbableNodeNameInput,
     )

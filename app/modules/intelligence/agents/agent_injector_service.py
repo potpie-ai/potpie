@@ -10,6 +10,8 @@ from app.modules.intelligence.agents.chat_agents.debugging_agent import Debuggin
 from app.modules.intelligence.agents.chat_agents.integration_test_agent import (
     IntegrationTestAgent,
 )
+
+from app.modules.intelligence.agents.chat_agents.lld_agent import LLDAgent
 from app.modules.intelligence.agents.chat_agents.qna_agent import QNAAgent
 from app.modules.intelligence.agents.chat_agents.unit_test_agent import UnitTestAgent
 from app.modules.intelligence.provider.provider_service import ProviderService
@@ -38,7 +40,8 @@ class AgentInjectorService:
             "code_changes_agent": CodeChangesAgent(
                 mini_llm, reasoning_llm, self.sql_db
             ),
-        }
+            "LLD_agent": LLDAgent(mini_llm, reasoning_llm, self.sql_db),
+        }}
 
     def get_agent(self, agent_id: str) -> Any:
         if agent_id in self.agents:
@@ -48,3 +51,13 @@ class AgentInjectorService:
 
     def validate_agent_id(self, agent_id: str) -> bool:
         return agent_id in self.agents or self.custom_agent_service.is_valid_agent(agent_id)
+
+    def get_agent(self, agent_id: str) -> Any:
+        agent = self.agents.get(agent_id)
+        if not agent:
+            logger.error(f"Invalid agent_id: {agent_id}")
+            raise ValueError(f"Invalid agent_id: {agent_id}")
+        return agent
+
+
+

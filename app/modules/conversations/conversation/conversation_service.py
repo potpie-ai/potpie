@@ -13,6 +13,7 @@ from app.modules.conversations.conversation.conversation_model import (
     ConversationStatus,
 )
 from app.modules.conversations.conversation.conversation_schema import (
+    ConversationAccessType,
     ConversationInfoResponse,
     CreateConversationRequest,
 )
@@ -31,6 +32,7 @@ from app.modules.intelligence.agents.custom_agents.custom_agents_service import 
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
+from app.modules.users.user_service import UserService
 from app.modules.utils.posthog_helper import PostHogClient
 
 logger = logging.getLogger(__name__)
@@ -48,11 +50,20 @@ class MessageNotFoundError(ConversationServiceError):
     """Raised when a message is not found."""
 
 
+class AccessTypeNotFoundError(ConversationServiceError):
+    """Raised when an access type is not found."""
+
+
+class AccessTypeReadError(ConversationServiceError):
+    """Raised when an access type is read-only."""
+
+
 class ConversationService:
     def __init__(
         self,
         db: Session,
         user_id: str,
+        user_email: str,
         project_service: ProjectService,
         history_manager: ChatHistoryService,
         provider_service: ProviderService,
@@ -61,6 +72,7 @@ class ConversationService:
     ):
         self.sql_db = db
         self.user_id = user_id
+        self.user_email = user_email
         self.project_service = project_service
         self.history_manager = history_manager
         self.provider_service = provider_service
@@ -68,7 +80,7 @@ class ConversationService:
         self.custom_agent_service = custom_agent_service
 
     @classmethod
-    def create(cls, db: Session, user_id: str):
+    def create(cls, db: Session, user_id: str, user_email: str):
         project_service = ProjectService(db)
         history_manager = ChatHistoryService(db)
         provider_service = ProviderService(db, user_id)
@@ -77,12 +89,41 @@ class ConversationService:
         return cls(
             db,
             user_id,
+            user_email,
             project_service,
             history_manager,
             provider_service,
             agent_injector_service,
             custom_agent_service,
         )
+ 
+
+    async def check_conversation_access(
+        self, conversation_id: str, user_email: str
+    ) -> str:
+        user_service = UserService(self.sql_db)
+        user_id = user_service.get_user_id_by_email(user_email)
+
+        # Retrieve the conversation
+        conversation = (
+            self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
+        )
+        if not conversation:
+            return (
+                ConversationAccessType.NOT_FOUND
+            )  # Return 'not found' if conversation doesn't exist
+
+        if user_id == conversation.user_id:  # Check if the user is the creator
+            return ConversationAccessType.WRITE  # Creator can write
+        # Check if the conversation is shared
+        if conversation.shared_with_emails:
+            shared_user_ids = user_service.get_user_ids_by_emails(
+                conversation.shared_with_emails
+            )
+            # Check if the current user ID is in the shared user IDs
+            if user_id in shared_user_ids:
+                return ConversationAccessType.READ  # Shared user can only read
+        return ConversationAccessType.NOT_FOUND
 
     async def create_conversation(
         self, conversation: CreateConversationRequest, user_id: str
@@ -94,6 +135,12 @@ class ConversationService:
             #     raise ConversationServiceError(
             #         f"Invalid agent_id: {conversation.agent_ids[0]}"
             #     )
+            if not self.agent_injector_service.validate_agent_id(
+                conversation.agent_ids[0]
+            ):
+                raise ConversationServiceError(
+                    f"Invalid agent_id: {conversation.agent_ids[0]}"
+                )
 
             project_name = await self.project_service.get_project_name(
                 conversation.project_ids
@@ -187,6 +234,11 @@ class ConversationService:
         user_id: str,
     ) -> AsyncGenerator[str, None]:
         try:
+            access_level = await self.check_conversation_access(
+                conversation_id, self.user_email
+            )
+            if access_level == ConversationAccessType.READ:
+                raise AccessTypeReadError("Access denied.")
             self.history_manager.add_message_chunk(
                 conversation_id, message.content, message_type, user_id
             )
@@ -229,6 +281,9 @@ class ConversationService:
                     message.content, conversation_id, user_id, message.node_ids
                 ):
                     yield chunk
+
+        except AccessTypeReadError:
+            raise
         except Exception as e:
             logger.error(
                 f"Error in store_message for conversation {conversation_id}: {e}",
@@ -292,6 +347,11 @@ class ConversationService:
         self, conversation_id: str, user_id: str, node_ids: List[NodeContext] = []
     ) -> AsyncGenerator[str, None]:
         try:
+            access_level = await self.check_conversation_access(
+                conversation_id, self.user_email
+            )
+            if access_level == ConversationAccessType.READ:
+                raise AccessTypeReadError("Access denied.")
             last_human_message = await self._get_last_human_message(conversation_id)
             if not last_human_message:
                 raise MessageNotFoundError("No human message found to regenerate from")
@@ -309,6 +369,8 @@ class ConversationService:
                 last_human_message.content, conversation_id, user_id, node_ids
             ):
                 yield chunk
+        except AccessTypeReadError:
+            raise
         except MessageNotFoundError as e:
             logger.warning(
                 f"No message to regenerate in conversation {conversation_id}: {e}"
@@ -391,6 +453,11 @@ class ConversationService:
 
     async def delete_conversation(self, conversation_id: str, user_id: str) -> dict:
         try:
+            access_level = await self.check_conversation_access(
+                conversation_id, self.user_email
+            )
+            if access_level == ConversationAccessType.READ:
+                raise AccessTypeReadError("Access denied.")
             # Use a nested transaction if one is already in progress
             with self.sql_db.begin_nested():
                 # Delete related messages first
@@ -433,6 +500,8 @@ class ConversationService:
             logger.warning(str(e))
             self.sql_db.rollback()
             raise
+        except AccessTypeReadError:
+            raise
 
         except SQLAlchemyError as e:
             logger.error(f"Database error in delete_conversation: {e}", exc_info=True)
@@ -459,6 +528,13 @@ class ConversationService:
                 raise ConversationNotFoundError(
                     f"Conversation with id {conversation_id} not found"
                 )
+            access_type = await self.check_conversation_access(
+                conversation_id, self.user_email
+            )
+
+            if access_type == ConversationAccessType.NOT_FOUND:
+                raise AccessTypeNotFoundError("Access type not found")
+
             total_messages = (
                 self.sql_db.query(Message)
                 .filter_by(conversation_id=conversation_id, status=MessageStatus.ACTIVE)
@@ -473,9 +549,12 @@ class ConversationService:
                 updated_at=conversation.updated_at,
                 total_messages=total_messages,
                 agent_ids=conversation.agent_ids,
+                access_type=access_type,
             )
         except ConversationNotFoundError as e:
             logger.warning(str(e))
+            raise
+        except AccessTypeNotFoundError:
             raise
         except Exception as e:
             logger.error(f"Error in get_conversation_info: {e}", exc_info=True)
@@ -487,6 +566,11 @@ class ConversationService:
         self, conversation_id: str, start: int, limit: int, user_id: str
     ) -> List[MessageResponse]:
         try:
+            access_level = await self.check_conversation_access(
+                conversation_id, self.user_email
+            )
+            if access_level == ConversationAccessType.NOT_FOUND:
+                raise AccessTypeNotFoundError("Access denied.")
             conversation = (
                 self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
             )
@@ -499,6 +583,7 @@ class ConversationService:
                 self.sql_db.query(Message)
                 .filter_by(conversation_id=conversation_id)
                 .filter_by(status=MessageStatus.ACTIVE)
+                .filter(Message.type != MessageType.SYSTEM_GENERATED)
                 .order_by(Message.created_at)
                 .offset(start)
                 .limit(limit)
@@ -523,6 +608,8 @@ class ConversationService:
         except ConversationNotFoundError as e:
             logger.warning(str(e))
             raise
+        except AccessTypeNotFoundError:
+            raise
         except Exception as e:
             logger.error(f"Error in get_conversation_messages: {e}", exc_info=True)
             raise ConversationServiceError(
@@ -537,6 +624,11 @@ class ConversationService:
         self, conversation_id: str, new_title: str, user_id: str
     ) -> dict:
         try:
+            access_level = await self.check_conversation_access(
+                conversation_id, self.user_email
+            )
+            if access_level == ConversationAccessType.READ:
+                raise AccessTypeReadError("Access denied.")
             conversation = (
                 self.sql_db.query(Conversation)
                 .filter_by(id=conversation_id, user_id=user_id)
@@ -565,7 +657,8 @@ class ConversationService:
             raise ConversationServiceError(
                 "Failed to rename conversation due to a database error"
             ) from e
-
+        except AccessTypeReadError:
+            raise
         except Exception as e:
             logger.error(f"Unexpected error in rename_conversation: {e}", exc_info=True)
             self.sql_db.rollback()

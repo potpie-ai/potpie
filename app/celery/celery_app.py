@@ -49,10 +49,11 @@ def configure_celery(queue_prefix: str):
                 "queue": f"{queue_prefix}_process_repository"
             },
         },
-        # Add these new configurations
         worker_prefetch_multiplier=1,
         task_acks_late=True,
         task_track_started=True,
+        # Add the task_time_limit configuration
+        task_time_limit=2700,  # 45 minutes in seconds
     )
 
 

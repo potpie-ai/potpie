@@ -20,12 +20,12 @@ class ProjectController:
             raise HTTPException(status_code=500, detail=str(e))
 
     @staticmethod
-    def delete_project(
+    async def delete_project(
         project_id: str, user=Depends(AuthService.check_auth), db=Depends(get_db)
     ):
         project_service = ProjectService(db)
         try:
-            project_service.delete_project(project_id)
+            await project_service.delete_project(project_id)
             return JSONResponse(
                 status_code=200,
                 content={"message": "Project deleted successfully.", "id": project_id},

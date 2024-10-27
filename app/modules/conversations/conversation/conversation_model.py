@@ -39,7 +39,7 @@ class Conversation(Base):
         onupdate=func.now(),
         nullable=False,
     )
-
+    shared_with_emails = Column(ARRAY(String), nullable=True)
     # Relationships
     user = relationship("User", back_populates="conversations")
     messages = relationship(

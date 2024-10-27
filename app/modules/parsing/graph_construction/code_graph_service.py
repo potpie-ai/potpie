@@ -152,8 +152,12 @@ class CodeGraphService:
 
 class SimpleIO:
     def read_text(self, fname):
-        with open(fname, "r") as f:
-            return f.read()
+        try:
+            with open(fname, "r", encoding="utf-8") as f:
+                return f.read()
+        except UnicodeDecodeError:
+            logging.warning(f"Could not read {fname} as UTF-8. Skipping this file.")
+            return ""
 
     def tool_error(self, message):
         logging.error(f"Error: {message}")
