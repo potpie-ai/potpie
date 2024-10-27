@@ -1,7 +1,7 @@
 import json
 import logging
 from functools import lru_cache
-from typing import Any, AsyncGenerator, Dict, List
+from typing import AsyncGenerator, Dict, List, Any
 
 import httpx
 from langchain.schema import HumanMessage, SystemMessage
@@ -19,9 +19,9 @@ from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.agents.custom_agents.custom_agents_service import CustomAgentsService
 
 logger = logging.getLogger(__name__)
-
 
 class CustomAgent:
     def __init__(self, llm, db: Session, agent_id: str):
@@ -30,6 +30,7 @@ class CustomAgent:
         self.agent_id = agent_id
         self.history_manager = ChatHistoryService(db)
         self.prompt_service = PromptService(db)
+        self.custom_agents_service = CustomAgentsService()
         self.chain = None
 
     @lru_cache(maxsize=2)
@@ -71,22 +72,16 @@ class CustomAgent:
 
             history = self.history_manager.get_session_history(user_id, conversation_id)
             validated_history = [
-                (
-                    HumanMessage(content=str(msg))
-                    if isinstance(msg, (str, int, float))
-                    else msg
-                )
+                HumanMessage(content=str(msg)) if isinstance(msg, (str, int, float)) else msg
                 for msg in history
             ]
 
-            custom_agent_result = await self.custom_agent_service.run(
-                self.agent_id, query, node_ids
+            custom_agent_result = await self.custom_agents_service.run_agent(
+                self.agent_id, query, project_id, user_id, node_ids
             )
 
             tool_results = [
-                SystemMessage(
-                    content=f"Custom Agent result: {json.dumps(custom_agent_result)}"
-                )
+                SystemMessage(content=f"Custom Agent result: {json.dumps(custom_agent_result)}")
             ]
 
             inputs = {
@@ -118,16 +113,4 @@ class CustomAgent:
             yield f"An error occurred: {str(e)}"
 
     async def is_valid(self) -> bool:
-        validate_url = f"{self.base_url}/deployment/{self.agent_id}/validate"
-
-        async with httpx.AsyncClient() as client:
-            response = await client.get(validate_url)
-            return response.status_code == 200
-
-    async def run(self, payload: Dict[str, Any]) -> str:
-        run_url = f"{self.base_url}/deployment/{self.agent_id}/run"
-
-        async with httpx.AsyncClient() as client:
-            response = await client.post(run_url, json=payload)
-            response.raise_for_status()
-            return response.json()["response"]
+        return await self.custom_agents_service.validate_agent(self.agent_id)

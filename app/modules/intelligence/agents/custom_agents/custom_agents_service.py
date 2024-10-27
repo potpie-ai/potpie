@@ -1,59 +1,51 @@
-from typing import List, Union
-
-from sqlalchemy.orm import Session
+import httpx
+import logging
+from typing import Dict, Any, List
 
 from app.modules.conversations.message.message_schema import NodeContext
 
+logger = logging.getLogger(__name__)
 
-class CustomAgentService:
-    def __init__(self, db: Session):
-        self.db = db
-        self.base_url = "http://localhost:8080"
+class CustomAgentsService:
+    def __init__(self):
+        self.base_url = "https://your-custom-agent-service-url.com"  # Replace with actual URL
 
-    async def run(
+    async def run_agent(
         self,
         agent_id: str,
         query: str,
         project_id: str,
         user_id: str,
-        conversation_id: str,
-        node_ids: Union[List[NodeContext], List[str]],
-    ) -> str:
-        # Import CustomAgent here to avoid circular import
-        from app.modules.intelligence.agents.custom_agents.custom_agent import (
-            CustomAgent,
-        )
-
-        custom_agent = CustomAgent(agent_id)
-
-        # Convert node_ids to a list of dictionaries or strings
-        node_ids_payload = [
-            node.dict() if isinstance(node, NodeContext) else node for node in node_ids
-        ]
-
+        node_ids: List[NodeContext],
+    ) -> Dict[str, Any]:
+        run_url = f"{self.base_url}/api/v1/agents/{agent_id}/run"
         payload = {
             "query": query,
             "project_id": project_id,
             "user_id": user_id,
-            "conversation_id": conversation_id,
-            "node_ids": node_ids_payload,
+            "node_ids": [node.dict() for node in node_ids],
         }
 
-        return await custom_agent.run(payload)
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(run_url, json=payload)
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPStatusError as e:
+                logger.error(f"HTTP error occurred while running agent {agent_id}: {e}")
+                raise
+            except Exception as e:
+                logger.error(f"Unexpected error occurred while running agent {agent_id}: {e}")
+                raise
 
-    # async def get_system_prompt(self, agent_id: str) -> str:
-    #     system_prompt_url = f"{self.base_url}/deployment/{agent_id}/system_prompt"
+    async def validate_agent(self, agent_id: str) -> bool:
+        return True
+        # validate_url = f"{self.base_url}/api/v1/agents/{agent_id}/validate"
 
-    #     async with httpx.AsyncClient() as client:
-    #         response = await client.get(system_prompt_url)
-    #         response.raise_for_status()
-    #         return response.text
-
-    async def is_valid_agent(self, agent_id: str) -> bool:
-        # Import CustomAgent here to avoid circular import
-        from app.modules.intelligence.agents.custom_agents.custom_agent import (
-            CustomAgent,
-        )
-
-        custom_agent = CustomAgent(agent_id)
-        return await custom_agent.is_valid()
+        # async with httpx.AsyncClient() as client:
+        #     try:
+        #         response = await client.get(validate_url)
+        #         return response.status_code == 200
+        #     except Exception as e:
+        #         logger.error(f"Error validating agent {agent_id}: {e}")
+        #         return False
