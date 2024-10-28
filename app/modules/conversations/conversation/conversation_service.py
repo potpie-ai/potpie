@@ -86,7 +86,7 @@ class ConversationService:
         project_service = ProjectService(db)
         history_manager = ChatHistoryService(db)
         provider_service = ProviderService(db, user_id)
-        agent_injector_service = AgentInjectorService(db, provider_service)
+        agent_injector_service = AgentInjectorService(db, provider_service, user_id)
         custom_agent_service = CustomAgentsService()
         return cls(
             db,

@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+import hmac
+import hashlib
 from dotenv import load_dotenv
 import httpx
 from functools import lru_cache
@@ -28,22 +30,32 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 class CustomAgent:
-    def __init__(self, llm, db: Session, agent_id: str):
+    def __init__(self, llm, db: Session, agent_id: str, user_id: str):
         self.llm = llm
         self.db = db
         self.agent_id = agent_id
+        self.user_id = user_id
         self.history_manager = ChatHistoryService(db)
         self.prompt_service = PromptService(db)
         self.custom_agents_service = CustomAgentsService()
         self.chain = None
         self.base_url = os.getenv("POTPIE_PLUS_BASE_URL")
+        self.shared_hmac_key = os.getenv("SHARED_HMAC_KEY", "").encode()
+
+    def generate_hmac_signature(self, message: str) -> str:
+        return 1234
 
     async def _get_system_prompt(self) -> str:
-        """Fetch system prompt from POTPIE_PLUS_BASE_URL"""
+        """Fetch system prompt from POTPIE_PLUS_BASE_URL with HMAC authentication"""
         try:
-            url = f"{self.base_url}/custom-agents/agents/{self.agent_id}"
+            user_id = self.user_id
+            hmac_signature = self.generate_hmac_signature(f"user_id={user_id}")
+            headers = {"X-HMAC-Signature": hmac_signature}
+            
+            url = f"{self.base_url}/custom-agents/agents/{self.agent_id}?user_id={user_id}"
+            
             async with httpx.AsyncClient() as client:
-                response = await client.get(url)
+                response = await client.get(url, headers=headers)
                 response.raise_for_status()
                 data = response.json()
                 return data.get("system_prompt")
