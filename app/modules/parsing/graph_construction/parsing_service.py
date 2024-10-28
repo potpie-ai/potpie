@@ -218,6 +218,7 @@ class ParsingService:
             )
 
     async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
+        await self.search_service.clone_search_indices(old_repo_id, new_repo_id)
         node_batch_size = 3000  # Fixed batch size for nodes
         relationship_batch_size = 3000  # Fixed batch size for relationships
         try:
