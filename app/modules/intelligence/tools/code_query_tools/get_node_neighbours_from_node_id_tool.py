@@ -68,7 +68,7 @@ class GetNodeNeighboursFromNodeIdTool:
         Returns:
             Dict[str, Any]: Neighbor data or error message.
         """
-        return await self.run_tool(project_id, node_ids)
+        return self.run_tool(project_id, node_ids)
 
     def _get_neighbors(
         self, project_id: str, node_ids: List[str]
