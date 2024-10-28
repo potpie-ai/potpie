@@ -254,7 +254,9 @@ class InferenceService:
             entry_points_neighbors, docstring_lookup
         )
 
-        semaphore = asyncio.Semaphore(self.parallel_requests)  # Limit to 10 concurrent tasks
+        semaphore = asyncio.Semaphore(
+            self.parallel_requests
+        )  # Limit to 10 concurrent tasks
 
         async def process_batch(batch):
             async with semaphore:
@@ -444,7 +446,9 @@ class InferenceService:
         batches = self.batch_nodes(nodes)
         all_docstrings = {"docstrings": []}
 
-        semaphore = asyncio.Semaphore(self.parallel_requests)  # Limit to 10 concurrent tasks
+        semaphore = asyncio.Semaphore(
+            self.parallel_requests
+        )  # Limit to 10 concurrent tasks
 
         async def process_batch(batch):
             async with semaphore:
@@ -570,9 +574,11 @@ class InferenceService:
         try:
             result = await chain.ainvoke({"code_snippets": code_snippets})
         except Exception as e:
-            logger.error(f"Parsing project {repo_id}: Inference request failed. Error: {str(e)}")
+            logger.error(
+                f"Parsing project {repo_id}: Inference request failed. Error: {str(e)}"
+            )
             result = ""
-        
+
         end_time = time.time()
 
         logger.info(
