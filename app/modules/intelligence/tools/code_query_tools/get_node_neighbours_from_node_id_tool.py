@@ -6,7 +6,6 @@ from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
-from app.modules.projects.projects_model import Project
 
 
 class GetNodeNeighboursFromNodeIdTool:
@@ -49,13 +48,15 @@ class GetNodeNeighboursFromNodeIdTool:
         try:
             result_neighbors = self._get_neighbors(project_id, node_ids)
             if not result_neighbors:
-                return {"error": f"No neighbors found for node IDs in project '{project_id}'"}
+                return {
+                    "error": f"No neighbors found for node IDs in project '{project_id}'"
+                }
 
             return {"neighbors": result_neighbors}
         except Exception as e:
             logging.exception(f"An unexpected error occurred: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
-        
+
     async def run(self, project_id: str, node_ids: List[str]) -> Dict[str, Any]:
         """
         Run the tool to retrieve neighbors of the specified nodes.
@@ -70,17 +71,21 @@ class GetNodeNeighboursFromNodeIdTool:
         try:
             result_neighbors = self._get_neighbors(project_id, node_ids)
             if not result_neighbors:
-                return {"error": f"No neighbors found for node IDs in project '{project_id}'"}
+                return {
+                    "error": f"No neighbors found for node IDs in project '{project_id}'"
+                }
 
             return {"neighbors": result_neighbors}
         except Exception as e:
             logging.exception(f"An unexpected error occurred: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
-    def _get_neighbors(self, project_id: str, node_ids: List[str]) -> Optional[List[Dict[str, Any]]]:
+    def _get_neighbors(
+        self, project_id: str, node_ids: List[str]
+    ) -> Optional[List[Dict[str, Any]]]:
         """
         Retrieve neighbors from Neo4j within 2 hops in either direction.
-        
+
         Returns a list of dictionaries containing node_id, name and docstring for each neighbor.
         """
         query = """
@@ -112,6 +117,7 @@ class GetNodeNeighboursFromNodeIdTool:
         """Ensure Neo4j driver is closed when the object is destroyed."""
         if hasattr(self, "neo4j_driver"):
             self.neo4j_driver.close()
+
 
 def get_node_neighbours_from_node_id_tool(sql_db: Session) -> Tool:
     tool_instance = GetNodeNeighboursFromNodeIdTool(sql_db)
