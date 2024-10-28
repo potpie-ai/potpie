@@ -38,16 +38,32 @@ class ProviderService:
         ]
 
     async def set_global_ai_provider(self, user_id: str, provider: str):
+        provider = provider.lower()
+        # First check if preferences exist
         preferences = self.db.query(UserPreferences).filter_by(user_id=user_id).first()
+        
         if not preferences:
-            preferences = UserPreferences(user_id=user_id, preferences={})
+            # Create new preferences if they don't exist
+            preferences = UserPreferences(user_id=user_id, preferences={"llm_provider": provider})
             self.db.add(preferences)
+        else:
+            # Initialize preferences dict if None
+            if preferences.preferences is None:
+                preferences.preferences = {}
+                
+            # Update the provider in preferences
+            preferences.preferences["llm_provider"] = provider
+            
+            # Explicit update query
+            self.db.query(UserPreferences).filter_by(user_id=user_id).update(
+                {"preferences": preferences.preferences}
+            )
+        
         PostHogClient().send_event(
             user_id, "provider_change_event", {"provider": provider}
         )
-        preferences.preferences["llm_provider"] = provider
+        
         self.db.commit()
-
         return {"message": f"AI provider set to {provider}"}
 
     def get_large_llm(self):

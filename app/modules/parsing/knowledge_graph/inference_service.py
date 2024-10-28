@@ -189,7 +189,7 @@ class InferenceService:
             }
 
     def batch_nodes(
-        self, nodes: List[Dict], max_tokens: int = 32000, model: str = "gpt-4"
+        self, nodes: List[Dict], max_tokens: int = 16000, model: str = "gpt-4"
     ) -> List[List[DocstringRequest]]:
         batches = []
         current_batch = []
@@ -294,7 +294,7 @@ class InferenceService:
         self,
         entry_points_neighbors: Dict[str, List[str]],
         docstring_lookup: Dict[str, str],
-        max_tokens: int = 32000,
+        max_tokens: int = 16000,
         model: str = "gpt-4",
     ) -> List[List[Dict[str, str]]]:
         batches = []
