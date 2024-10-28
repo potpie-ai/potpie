@@ -7,6 +7,9 @@ from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.github.github_service import GithubService
+from app.modules.intelligence.tools.code_query_tools.get_node_neighbours_from_node_id_tool import (
+    get_node_neighbours_from_node_id_tool,
+)
 from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import (
     get_ask_knowledge_graph_queries_tool,
 )
@@ -54,6 +57,9 @@ class RAGAgent:
         self.ask_knowledge_graph_queries = get_ask_knowledge_graph_queries_tool(
             sql_db, user_id
         )
+        self.get_node_neighbours_from_node_id = get_node_neighbours_from_node_id_tool(
+            sql_db
+        )
         self.llm = llm
         self.mini_llm = mini_llm
         self.user_id = user_id
@@ -80,6 +86,7 @@ class RAGAgent:
                 self.ask_knowledge_graph_queries,
                 self.get_code_from_multiple_node_ids,
                 self.get_code_from_probable_node_name,
+                self.get_node_neighbours_from_node_id,
             ],
             allow_delegation=False,
             verbose=True,

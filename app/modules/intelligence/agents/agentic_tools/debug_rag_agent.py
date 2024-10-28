@@ -23,7 +23,9 @@ from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_n
 from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool import (
     get_nodes_from_tags_tool,
 )
-
+from app.modules.intelligence.tools.code_query_tools.get_node_neighbours_from_node_id_tool import (
+    get_node_neighbours_from_node_id_tool,
+)
 
 class NodeResponse(BaseModel):
     node_name: str = Field(..., description="The node name of the response")
@@ -54,6 +56,9 @@ class DebugAgent:
         self.ask_knowledge_graph_queries = get_ask_knowledge_graph_queries_tool(
             sql_db, user_id
         )
+        self.get_node_neighbours_from_node_id = get_node_neighbours_from_node_id_tool(
+            sql_db
+        )
         self.llm = llm
         self.mini_llm = mini_llm
         self.user_id = user_id
@@ -80,6 +85,7 @@ class DebugAgent:
                 self.ask_knowledge_graph_queries,
                 self.get_code_from_multiple_node_ids,
                 self.get_code_from_probable_node_name,
+                self.get_node_neighbours_from_node_id,
             ],
             allow_delegation=False,
             verbose=True,
