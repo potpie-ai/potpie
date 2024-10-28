@@ -20,8 +20,8 @@ pipeline {
                     // Determine environment based on branch
                     def branch = env.GIT_BRANCH
 
-                    if (branch == "origin/dir-restruct") {
-                        env.ENVIRONMENT = 'dir-restruct'
+                    if (branch == "origin/support-for-custom-agent-in-conv") {
+                        env.ENVIRONMENT = 'support-for-custom-agent-in-conv'
                     } else if (branch == "origin/main") {
                         env.ENVIRONMENT = 'main'
                     } else {
