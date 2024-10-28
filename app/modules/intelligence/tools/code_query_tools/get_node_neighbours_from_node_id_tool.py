@@ -56,7 +56,7 @@ class GetNodeNeighboursFromNodeIdTool:
         except Exception as e:
             logging.exception(f"An unexpected error occurred: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
-
+        
     async def run(self, project_id: str, node_ids: List[str]) -> Dict[str, Any]:
         """
         Run the tool to retrieve neighbors of the specified nodes.
@@ -68,17 +68,7 @@ class GetNodeNeighboursFromNodeIdTool:
         Returns:
             Dict[str, Any]: Neighbor data or error message.
         """
-        try:
-            result_neighbors = self._get_neighbors(project_id, node_ids)
-            if not result_neighbors:
-                return {
-                    "error": f"No neighbors found for node IDs in project '{project_id}'"
-                }
-
-            return {"neighbors": result_neighbors}
-        except Exception as e:
-            logging.exception(f"An unexpected error occurred: {str(e)}")
-            return {"error": f"An unexpected error occurred: {str(e)}"}
+        return await self.run_tool(project_id, node_ids)
 
     def _get_neighbors(
         self, project_id: str, node_ids: List[str]
