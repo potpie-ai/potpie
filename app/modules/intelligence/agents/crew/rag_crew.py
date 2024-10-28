@@ -169,7 +169,6 @@ class RAGCrew:
                 "Markdown formatted chat response to user's query grounded in provided code context and tool results"
             ),
             agent=query_agent,
-            output_pydantic=RAGResponse,
             async_execution=True,
         )
 
