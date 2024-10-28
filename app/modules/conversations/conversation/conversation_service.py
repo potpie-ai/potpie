@@ -14,7 +14,7 @@ from uuid6 import uuid7
 from app.modules.conversations.conversation.conversation_model import (
     Conversation,
     ConversationStatus,
-    
+    Visibility
 )
 from app.modules.conversations.conversation.conversation_schema import (
     ConversationInfoResponse,
@@ -93,7 +93,7 @@ class ConversationService:
         if not conversation:
             return ConversationAccessType.NOT_FOUND  # Return 'not found' if conversation doesn't exist
         
-        if conversation.is_public:
+        if conversation.visibility == Visibility.PUBLIC:
             return ConversationAccessType.READ
         
         if user_id == conversation.user_id:  # Check if the user is the creator

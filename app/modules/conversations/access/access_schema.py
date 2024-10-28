@@ -1,11 +1,11 @@
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
-
+from app.modules.conversations.conversation.conversation_model import Visibility
 
 class ShareChatRequest(BaseModel):
     conversation_id: str  
     recipientEmails: Optional[List[EmailStr]]=None
-    share_with_link: bool = False
+    visibility: Visibility
 
 
 class ShareChatResponse(BaseModel):
