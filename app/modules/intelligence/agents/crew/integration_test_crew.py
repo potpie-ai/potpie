@@ -191,7 +191,7 @@ async def kickoff_integration_test_crew(
 ) -> Dict[str, str]:
     if not node_ids:
         raise HTTPException(status_code=400, detail="No node IDs provided")
-    graph = await GetCodeGraphFromNodeIdTool(sql_db, user_id).run(
+    graph = GetCodeGraphFromNodeIdTool(sql_db, user_id).run(
         project_id, node_ids[0].node_id
     )
 
