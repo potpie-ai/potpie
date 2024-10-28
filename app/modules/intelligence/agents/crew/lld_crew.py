@@ -46,7 +46,7 @@ class LowLevelDesignPlan(BaseModel):
     )
 
 
-class LowLevelDesignAgenticTool:
+class LowLevelDesignCrew:
     def __init__(self, sql_db, llm, user_id):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.max_iter = int(os.getenv("MAX_ITER", 10))
@@ -148,6 +148,7 @@ class LowLevelDesignAgenticTool:
             agent=design_planner,
             context=[analyze_codebase_task],
             expected_output="Low-level design plan for implementing the new feature",
+            async_execution=True,
         )
 
         return [analyze_codebase_task, create_design_plan_task]
@@ -180,6 +181,6 @@ async def create_low_level_design(
     llm,
     user_id: str,
 ) -> LowLevelDesignPlan:
-    design_agent = LowLevelDesignAgenticTool(sql_db, llm, user_id)
+    design_agent = LowLevelDesignCrew(sql_db, llm, user_id)
     result = await design_agent.run(functional_requirements, project_id)
     return result

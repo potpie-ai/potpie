@@ -17,7 +17,7 @@ from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_n
 )
 
 
-class IntegrationTestAgenticTool:
+class IntegrationTestCrew:
     def __init__(self, sql_db, llm, user_id):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.user_id = user_id
@@ -213,7 +213,7 @@ async def kickoff_integration_test_crew(
         return node_contexts
 
     node_contexts = extract_unique_node_contexts(graph["graph"]["root_node"])
-    integration_test_agent = IntegrationTestAgenticTool(sql_db, llm, user_id)
+    integration_test_agent = IntegrationTestCrew(sql_db, llm, user_id)
     result = await integration_test_agent.run(
         project_id, node_contexts, query, graph, history
     )

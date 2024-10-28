@@ -14,9 +14,6 @@ from app.modules.intelligence.tools.kg_based_tools.get_code_from_multiple_node_i
     GetCodeFromMultipleNodeIdsTool,
     get_code_from_multiple_node_ids_tool,
 )
-from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
-    get_code_from_node_id_tool,
-)
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_name_tool import (
     get_code_from_probable_node_name_tool,
 )
@@ -38,12 +35,11 @@ class RAGResponse(BaseModel):
     response: List[NodeResponse]
 
 
-class DebugRAGAgenticTool:
+class RAGCrew:
     def __init__(self, sql_db, llm, mini_llm, user_id):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.max_iter = os.getenv("MAX_ITER", 5)
         self.sql_db = sql_db
-        self.get_code_from_node_id = get_code_from_node_id_tool(sql_db, user_id)
         self.get_code_from_multiple_node_ids = get_code_from_multiple_node_ids_tool(
             sql_db, user_id
         )
@@ -173,6 +169,8 @@ class DebugRAGAgenticTool:
                 "Markdown formatted chat response to user's query grounded in provided code context and tool results"
             ),
             agent=query_agent,
+            output_pydantic=RAGResponse,
+            async_execution=True,
         )
 
         return combined_task
@@ -218,7 +216,7 @@ class DebugRAGAgenticTool:
         return result
 
 
-async def kickoff_debug_rag_crew(
+async def kickoff_rag_crew(
     query: str,
     project_id: str,
     chat_history: List,
@@ -228,9 +226,9 @@ async def kickoff_debug_rag_crew(
     mini_llm,
     user_id: str,
 ) -> str:
-    debug_agent = DebugRAGAgenticTool(sql_db, llm, mini_llm, user_id)
+    rag_agent = RAGCrew(sql_db, llm, mini_llm, user_id)
     file_structure = GithubService(sql_db).get_project_structure(project_id)
-    result = await debug_agent.run(
+    result = await rag_agent.run(
         query, project_id, chat_history, node_ids, file_structure
     )
     return result
