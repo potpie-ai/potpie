@@ -1,9 +1,12 @@
-from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError 
 from typing import List
 from uuid6 import uuid7 
 from app.modules.conversations.conversation.conversation_model import Conversation, Visibility
 
+
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.modules.conversations.conversation.conversation_model import Conversation
 
 
 class ShareChatServiceError(Exception):

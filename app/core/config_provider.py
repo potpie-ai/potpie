@@ -46,14 +46,6 @@ class ConfigProvider:
                 "url": "https://github.com/crewAIInc/crewAI",
                 "owner": "crewAIInc",
             },
-            {
-                "id": "demo1",
-                "name": "langchain",
-                "full_name": "langchain-ai/langchain",
-                "private": False,
-                "url": "https://github.com/langchain-ai/langchain",
-                "owner": "langchain-ai",
-            },
         ]
 
     def get_redis_url(self):
@@ -67,7 +59,6 @@ class ConfigProvider:
         else:
             redis_url = f"redis://{redishost}:{redisport}/0"
         return redis_url
-
 
 
 config_provider = ConfigProvider()

@@ -12,7 +12,9 @@ router = APIRouter()
 
 
 @router.get("/github/user-repos")
-async def get_user_repos(user=Depends(AuthService.check_auth), db: Session = Depends(get_db)):
+async def get_user_repos(
+    user=Depends(AuthService.check_auth), db: Session = Depends(get_db)
+):
     user_repo_list = await GithubController(db).get_user_repos(user=user)
     user_repo_list["repositories"].extend(config_provider.get_demo_repo_list())
     user_repo_list["repositories"] = list(reversed(user_repo_list["repositories"]))

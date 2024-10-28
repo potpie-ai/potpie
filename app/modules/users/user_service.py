@@ -131,7 +131,7 @@ class UserService:
         except Exception as e:
             logger.error(f"Error fetching user ID by email {email}: {e}")
             return None
-        
+
     def get_user_ids_by_emails(self, emails: List[str]) -> List[str]:
         try:
             users = self.db.query(User).filter(User.email.in_(emails)).all()
@@ -144,4 +144,3 @@ class UserService:
         except Exception as e:
             logger.error(f"Error fetching user ID by emails {emails}: {e}")
             return None
-

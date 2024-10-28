@@ -7,6 +7,9 @@ from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.github.github_service import GithubService
+from app.modules.intelligence.tools.code_query_tools.get_node_neighbours_from_node_id_tool import (
+    get_node_neighbours_from_node_id_tool,
+)
 from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import (
     get_ask_knowledge_graph_queries_tool,
 )
@@ -54,6 +57,9 @@ class RAGAgent:
         self.ask_knowledge_graph_queries = get_ask_knowledge_graph_queries_tool(
             sql_db, user_id
         )
+        self.get_node_neighbours_from_node_id = get_node_neighbours_from_node_id_tool(
+            sql_db
+        )
         self.llm = llm
         self.mini_llm = mini_llm
         self.user_id = user_id
@@ -80,6 +86,7 @@ class RAGAgent:
                 self.ask_knowledge_graph_queries,
                 self.get_code_from_multiple_node_ids,
                 self.get_code_from_probable_node_name,
+                self.get_node_neighbours_from_node_id,
             ],
             allow_delegation=False,
             verbose=True,
@@ -164,7 +171,7 @@ class RAGAgent:
             - Clarifications: Offer clear, concise explanations
             - Comments/feedback: Incorporate into your understanding
 
-            Indicate when more information is needed. Use specific code references. Adapt to user's expertise level. Maintain a conversational tone and context from previous exchanges. 
+            Indicate when more information is needed. Use specific code references. Adapt to user's expertise level. Maintain a conversational tone and context from previous exchanges.
             Ask clarifying questions if needed. Offer follow-up suggestions to guide the conversation.
 
             Provide a comprehensive response with deep context, relevant file paths, include relevant code snippets wherever possible. Format it in markdown format.
@@ -176,7 +183,6 @@ class RAGAgent:
         )
 
         return combined_task
-
 
     async def run(
         self,

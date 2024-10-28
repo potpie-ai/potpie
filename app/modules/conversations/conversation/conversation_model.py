@@ -10,7 +10,6 @@ from app.core.base_model import Base
 from app.modules.conversations.message.message_model import Message  # noqa
 
 
-
 class ConversationStatus(enum.Enum):
     ACTIVE = "active"
     ARCHIVED = "archived"

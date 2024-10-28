@@ -6,6 +6,14 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
+from app.modules.conversations.access.access_schema import (
+    ShareChatRequest,
+    ShareChatResponse,
+)
+from app.modules.conversations.access.access_service import (
+    ShareChatService,
+    ShareChatServiceError,
+)
 from app.modules.conversations.conversation.conversation_controller import (
     ConversationController,
 )
@@ -17,8 +25,6 @@ from .conversation.conversation_schema import (
     RenameConversationRequest,
 )
 from .message.message_schema import MessageRequest, MessageResponse, RegenerateRequest
-from app.modules.conversations.access.access_service import ShareChatService, ShareChatServiceError
-from app.modules.conversations.access.access_schema import ShareChatRequest, ShareChatResponse, SharedChatResponse
 
 router = APIRouter()
 
@@ -146,6 +152,7 @@ class ConversationAPI:
         controller = ConversationController(db, user_id, user_email)
         return await controller.rename_conversation(conversation_id, request.title)
 
+
 @router.post("/conversations/share", response_model=ShareChatResponse, status_code=201)
 async def share_chat(
     request: ShareChatRequest,
@@ -155,9 +162,7 @@ async def share_chat(
     try:
         shared_conversation = await service.share_chat(request.conversation_id, request.recipientEmails, request.visibility)
         return ShareChatResponse(
-            message="Chat shared successfully!",
-            sharedID=shared_conversation
+            message="Chat shared successfully!", sharedID=shared_conversation
         )
     except ShareChatServiceError as e:
         raise HTTPException(status_code=400, detail=str(e))
-

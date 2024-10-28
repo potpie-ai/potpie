@@ -1,7 +1,7 @@
 import json
 import logging
-from functools import lru_cache
 import time
+from functools import lru_cache
 from typing import AsyncGenerator, Dict, List
 
 from langchain.schema import HumanMessage, SystemMessage
@@ -17,7 +17,9 @@ from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import NodeContext
-from app.modules.intelligence.agents.agentic_tools.debug_rag_agent import kickoff_debug_crew
+from app.modules.intelligence.agents.agentic_tools.debug_rag_agent import (
+    kickoff_debug_crew,
+)
 from app.modules.intelligence.agents.agents_service import AgentsService
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.classification_prompts import (

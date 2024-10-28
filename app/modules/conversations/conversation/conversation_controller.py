@@ -7,14 +7,13 @@ from app.modules.conversations.conversation.conversation_schema import (
     ConversationInfoResponse,
     CreateConversationRequest,
     CreateConversationResponse,
-    ConversationAccessType
 )
 from app.modules.conversations.conversation.conversation_service import (
+    AccessTypeNotFoundError,
+    AccessTypeReadError,
     ConversationNotFoundError,
     ConversationService,
     ConversationServiceError,
-    AccessTypeNotFoundError,
-    AccessTypeReadError,
 )
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import (

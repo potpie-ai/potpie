@@ -97,6 +97,7 @@ class ParseHelper:
             "mov",
             "wmv",
             "flv",
+            "ipynb",
         ]
         include_extensions = [
             "py",

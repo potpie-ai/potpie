@@ -540,7 +540,6 @@ class RepoMap:
 
             for file in files:
                 file_count += 1
-                logging.info(f"Processing file number: {file_count}")
 
                 file_path = os.path.join(root, file)
                 rel_path = os.path.relpath(file_path, repo_dir)

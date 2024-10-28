@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import re
 from typing import Dict, List, Optional
 
@@ -33,6 +34,7 @@ class InferenceService:
         self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
         self.search_service = SearchService(db)
         self.project_manager = ProjectService(db)
+        self.parallel_requests = int(os.getenv("PARALLEL_REQUESTS", 50))
 
     def close(self):
         self.driver.close()
@@ -76,7 +78,7 @@ class InferenceService:
         except KeyError:
             logger.warning("Warning: model not found. Using cl100k_base encoding.")
             encoding = tiktoken.get_encoding("cl100k_base")
-        return len(encoding.encode(string))
+        return len(encoding.encode(string, disallowed_special=set()))
 
     def fetch_graph(self, repo_id: str) -> List[Dict]:
         batch_size = 100  # Define the batch size
@@ -187,7 +189,7 @@ class InferenceService:
             }
 
     def batch_nodes(
-        self, nodes: List[Dict], max_tokens: int = 32000, model: str = "gpt-4"
+        self, nodes: List[Dict], max_tokens: int = 16000, model: str = "gpt-4"
     ) -> List[List[DocstringRequest]]:
         batches = []
         current_batch = []
@@ -252,7 +254,7 @@ class InferenceService:
             entry_points_neighbors, docstring_lookup
         )
 
-        semaphore = asyncio.Semaphore(10)  # Limit to 10 concurrent tasks
+        semaphore = asyncio.Semaphore(self.parallel_requests)
 
         async def process_batch(batch):
             async with semaphore:
@@ -292,7 +294,7 @@ class InferenceService:
         self,
         entry_points_neighbors: Dict[str, List[str]],
         docstring_lookup: Dict[str, str],
-        max_tokens: int = 32000,
+        max_tokens: int = 16000,
         model: str = "gpt-4",
     ) -> List[List[Dict[str, str]]]:
         batches = []
@@ -442,7 +444,7 @@ class InferenceService:
         batches = self.batch_nodes(nodes)
         all_docstrings = {"docstrings": []}
 
-        semaphore = asyncio.Semaphore(10)  # Limit to 10 concurrent tasks
+        semaphore = asyncio.Semaphore(self.parallel_requests)
 
         async def process_batch(batch):
             async with semaphore:
@@ -563,12 +565,16 @@ class InferenceService:
 
         start_time = time.time()
         logger.info(f"Parsing project {repo_id}: Starting the inference process...")
-        total_word_count = len(base_prompt.split()) + sum(
-            len(request.text.split()) for request in batch
-        )
 
         chain = chat_prompt | self.llm | output_parser
-        result = await chain.ainvoke({"code_snippets": code_snippets})
+        try:
+            result = await chain.ainvoke({"code_snippets": code_snippets})
+        except Exception as e:
+            logger.error(
+                f"Parsing project {repo_id}: Inference request failed. Error: {str(e)}"
+            )
+            result = ""
+
         end_time = time.time()
 
         logger.info(

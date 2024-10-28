@@ -1,10 +1,13 @@
 from langchain_core.tools import StructuredTool
-from sqlalchemy.orm import Session
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
 from app.modules.github.github_service import GithubService
+
 
 class RepoStructureRequest(BaseModel):
     repo_id: str
+
 
 class RepoStructureService:
     def __init__(self, db: Session):

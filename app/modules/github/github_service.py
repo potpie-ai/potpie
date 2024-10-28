@@ -60,7 +60,7 @@ class GithubService:
         }
         response = requests.get(url, headers=headers)
         if response.status_code != 200:
-            logger.error(
+            logger.info(
                 f"Failed to get installation ID for {repo_name}. Status code: {response.status_code}, Response: {response.text}"
             )
             raise HTTPException(
@@ -271,9 +271,7 @@ class GithubService:
             default_branch = repo.default_branch
             branches = repo.get_branches()
             branch_list = [
-                branch.name
-                for branch in branches
-                if branch.name != default_branch
+                branch.name for branch in branches if branch.name != default_branch
             ]
             return {"branches": [default_branch] + branch_list}
         except HTTPException as he:
