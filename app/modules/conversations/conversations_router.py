@@ -153,7 +153,7 @@ async def share_chat(
 ):
     service = ShareChatService(db)
     try:
-        shared_conversation = await service.share_chat(request.conversation_id, request.recipientEmails)
+        shared_conversation = await service.share_chat(request.conversation_id, request.recipientEmails, request.share_with_link)
         return ShareChatResponse(
             message="Chat shared successfully!",
             sharedID=shared_conversation

@@ -14,10 +14,15 @@ class ShareChatService:
     def __init__(self, db: Session):
         self.db = db
 
-    async def share_chat(self, conversation_id: str, recipient_emails: List[str]) -> str:
+    async def share_chat(self, conversation_id: str, recipient_emails: List[str] = None, share_with_link: bool = False) -> str:
         chat = self.db.query(Conversation).filter_by(id=conversation_id).first()
         if not chat:
             raise ShareChatServiceError("Chat not found.")
+        
+        if share_with_link:
+            chat.is_public = True
+            self.db.commit()
+            return conversation_id
         
         existing_emails = chat.shared_with_emails or []
         existing_emails_set = set(existing_emails)
