@@ -2,17 +2,20 @@ import logging
 import os
 from typing import Any, Dict, List
 
-from dotenv import load_dotenv
 import httpx
+from dotenv import load_dotenv
 
 from app.modules.conversations.message.message_schema import NodeContext
 
 logger = logging.getLogger(__name__)
 
 load_dotenv()
+
+
 class CustomAgentsService:
     def __init__(self):
         self.base_url = os.getenv("POTPIE_PLUS_BASE_URL")
+
     async def run_agent(
         self,
         agent_id: str,

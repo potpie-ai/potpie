@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class AgentInjectorService:
-    def __init__(self, db: Session, provider_service: ProviderService,user_id:str):
+    def __init__(self, db: Session, provider_service: ProviderService, user_id: str):
         self.sql_db = db
         self.provider_service = provider_service
         self.custom_agent_service = CustomAgentsService()
@@ -51,7 +51,12 @@ class AgentInjectorService:
             return self.agents[agent_id]
         else:
             reasoning_llm = self.provider_service.get_large_llm()
-            return CustomAgent(llm=reasoning_llm, db=self.sql_db, agent_id=agent_id, user_id=self.user_id)
+            return CustomAgent(
+                llm=reasoning_llm,
+                db=self.sql_db,
+                agent_id=agent_id,
+                user_id=self.user_id,
+            )
 
     def validate_agent_id(self, agent_id: str) -> bool:
         return agent_id in self.agents or self.custom_agent_service.validate_agent(

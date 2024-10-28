@@ -1,13 +1,10 @@
 import json
 import logging
 import os
-import hmac
-import hashlib
-from dotenv import load_dotenv
-import httpx
-from functools import lru_cache
-from typing import AsyncGenerator, Dict, List
+from typing import AsyncGenerator, List
 
+import httpx
+from dotenv import load_dotenv
 from langchain.schema import HumanMessage, SystemMessage
 from langchain_core.prompts import (
     ChatPromptTemplate,
@@ -23,12 +20,13 @@ from app.modules.intelligence.agents.custom_agents.custom_agents_service import 
     CustomAgentsService,
 )
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
-from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
 
 logger = logging.getLogger(__name__)
 
 load_dotenv()
+
+
 class CustomAgent:
     def __init__(self, llm, db: Session, agent_id: str, user_id: str):
         self.llm = llm
@@ -51,9 +49,9 @@ class CustomAgent:
             user_id = self.user_id
             hmac_signature = self.generate_hmac_signature(f"user_id={user_id}")
             headers = {"X-HMAC-Signature": hmac_signature}
-            
+
             url = f"{self.base_url}/custom-agents/agents/{self.agent_id}?user_id={user_id}"
-            
+
             async with httpx.AsyncClient() as client:
                 response = await client.get(url, headers=headers)
                 response.raise_for_status()
