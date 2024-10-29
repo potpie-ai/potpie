@@ -81,7 +81,7 @@ class InferenceService:
         return len(encoding.encode(string, disallowed_special=set()))
 
     def fetch_graph(self, repo_id: str) -> List[Dict]:
-        batch_size = 500 
+        batch_size = 500
         all_nodes = []
         with self.driver.session() as session:
             offset = 0
