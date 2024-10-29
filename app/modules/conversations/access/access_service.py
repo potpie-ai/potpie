@@ -53,3 +53,9 @@ class ShareChatService:
                 return conversation_id
         return conversation_id
 
+    async def get_shared_emails(self, conversation_id: str) -> List[str]:
+        chat = self.db.query(Conversation).filter_by(id=conversation_id).first()
+        if not chat:
+            raise ShareChatServiceError("Chat not found.")
+        
+        return chat.shared_with_emails or []

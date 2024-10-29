@@ -166,3 +166,15 @@ async def share_chat(
         )
     except ShareChatServiceError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/conversations/{conversation_id}/shared-emails", response_model=List[str])
+async def get_shared_emails(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+):
+    service = ShareChatService(db)
+    try:
+        shared_emails = await service.get_shared_emails(conversation_id)
+        return shared_emails
+    except ShareChatServiceError as e:
+        raise HTTPException(status_code=404, detail=str(e))
