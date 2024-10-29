@@ -34,6 +34,7 @@ class GetCodeFromNodeIdTool:
             neo4j_config["uri"],
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
+
     async def arun(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         """Asynchronous version of the run method."""
         return self.run(repo_id, node_id)

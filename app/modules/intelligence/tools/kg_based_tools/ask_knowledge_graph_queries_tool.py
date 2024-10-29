@@ -59,7 +59,7 @@ class KnowledgeGraphQueryTool:
                 required=False,
             ),
         ]
-    
+
     async def ask_multiple_knowledge_graph_queries(
         self, queries: List[QueryRequest]
     ) -> Dict[str, str]:
@@ -86,13 +86,13 @@ class KnowledgeGraphQueryTool:
         results = await asyncio.gather(*tasks)
 
         return results
-    
+
     async def arun(
-              self, queries: List[str], project_id: str, node_ids: List[str] = []
+        self, queries: List[str], project_id: str, node_ids: List[str] = []
     ) -> Dict[str, str]:
         """Asynchronous version of the run method."""
         return self.run(queries=queries, project_id=project_id, node_ids=node_ids)
-    
+
     def run(
         self, queries: List[str], project_id: str, node_ids: List[str] = []
     ) -> Dict[str, str]:

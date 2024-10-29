@@ -68,18 +68,19 @@ class GetNodesFromTags:
     def get_parameters() -> List[ToolParameter]:
         return [
             ToolParameter(
-                name="project_id",
-                type="string",
-                description="The project ID or repository ID (UUID)",
-                required=True,
-            ),
-            ToolParameter(
                 name="tags",
                 type="array",
                 description="List of tags to search for nodes",
                 required=True,
             ),
+            ToolParameter(
+                name="project_id",
+                type="string",
+                description="The project ID or repository ID (UUID)",
+                required=True,
+            ),
         ]
+
 
 def get_nodes_from_tags_tool(sql_db, user_id) -> StructuredTool:
     return StructuredTool.from_function(

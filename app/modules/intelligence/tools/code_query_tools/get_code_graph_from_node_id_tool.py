@@ -188,7 +188,7 @@ class GetCodeGraphFromNodeIdTool:
     async def arun(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         """Asynchronous version of the run method."""
         return self.run(repo_id, node_id)
-    
+
     @staticmethod
     def get_parameters() -> List[ToolParameter]:
         return [

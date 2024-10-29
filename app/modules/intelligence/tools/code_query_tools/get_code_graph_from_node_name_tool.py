@@ -190,7 +190,7 @@ class GetCodeGraphFromNodeNameTool:
     async def arun(self, repo_id: str, node_name: str) -> Dict[str, Any]:
         """Asynchronous version of the run method."""
         return self.run(repo_id, node_name)
-    
+
     @staticmethod
     def get_parameters() -> List[ToolParameter]:
         return [
@@ -205,8 +205,9 @@ class GetCodeGraphFromNodeNameTool:
                 type="string",
                 description="The name of the node to retrieve the code graph from",
                 required=True,
-            )
+            ),
         ]
+
 
 def get_code_graph_from_node_name_tool(sql_db: Session) -> Tool:
     tool_instance = GetCodeGraphFromNodeNameTool(sql_db)
