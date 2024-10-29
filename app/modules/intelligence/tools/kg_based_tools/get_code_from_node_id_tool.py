@@ -34,8 +34,11 @@ class GetCodeFromNodeIdTool:
             neo4j_config["uri"],
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
+    async def arun(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+        """Asynchronous version of the run method."""
+        return self.run(repo_id, node_id)
 
-    def get_code_from_node_id(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+    def run(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         try:
             node_data = self._get_node_data(repo_id, node_id)
             if not node_data:
@@ -57,12 +60,6 @@ class GetCodeFromNodeIdTool:
         except Exception as e:
             logger.error(f"Unexpected error in GetCodeFromNodeIdTool: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
-
-    def run_tool(self, repo_id: str, node_id: str) -> Dict[str, Any]:
-        return self.get_code_from_node_id(repo_id, node_id)
-
-    async def run(self, repo_id: str, node_id: str) -> Dict[str, Any]:
-        return self.get_code_from_node_id(repo_id, node_id)
 
     def _get_node_data(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         query = """
@@ -126,7 +123,7 @@ class GetCodeFromNodeIdTool:
             ToolParameter(
                 name="repo_id",
                 type="string",
-                description="The repository ID, this is a UUID",
+                description="The repository ID or the project ID,  this is a UUID",
                 required=True,
             ),
             ToolParameter(
@@ -141,8 +138,8 @@ class GetCodeFromNodeIdTool:
 def get_code_from_node_id_tool(sql_db: Session, user_id: str) -> StructuredTool:
     tool_instance = GetCodeFromNodeIdTool(sql_db, user_id)
     return StructuredTool.from_function(
-        coroutine=tool_instance.run,
-        func=tool_instance.run_tool,
+        func=tool_instance.run,
+        coroutine=tool_instance.arun,
         name="Get Code and docstring From Node ID",
         description="""Retrieves code and docstring for a specific node id in a repository given its node ID
                        Inputs for the run method:
