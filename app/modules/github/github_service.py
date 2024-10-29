@@ -41,7 +41,6 @@ class GithubService:
         self.redis = Redis.from_url(config_provider.get_redis_url())
 
     def get_github_repo_details(self, repo_name: str) -> Tuple[Github, Dict, str]:
-        logger.info(f"Getting GitHub repo details for: {repo_name}")
         private_key = (
             "-----BEGIN RSA PRIVATE KEY-----\n"
             + config_provider.get_github_key()
@@ -60,14 +59,10 @@ class GithubService:
         }
         response = requests.get(url, headers=headers)
         if response.status_code != 200:
-            logger.info(
-                f"Failed to get installation ID for {repo_name}. Status code: {response.status_code}, Response: {response.text}"
-            )
             raise HTTPException(
                 status_code=400, detail=f"Failed to get installation ID for {repo_name}"
             )
 
-        logger.info(f"Successfully got installation ID for {repo_name}")
         app_auth = auth.get_installation_auth(response.json()["id"])
         github = Github(auth=app_auth)
 
@@ -157,11 +152,9 @@ class GithubService:
 
     async def get_repos_for_user(self, user_id: str):
         try:
-            logger.info(f"Getting repositories for user: {user_id}")
             user = self.db.query(User).filter(User.uid == user_id).first()
             if user is None:
                 raise HTTPException(status_code=404, detail="User not found")
-            logger.info(f"User found: {user}")
 
             firebase_uid = user.uid  # Assuming `uid` is the Firebase UID
             github_username = user.provider_username
@@ -222,10 +215,6 @@ class GithubService:
                     user_installations.append(installation)
                 elif account_type == "Organization" and account_login in org_logins:
                     user_installations.append(installation)
-
-            logger.info(
-                f"Filtered installations: {[inst['id'] for inst in user_installations]}"
-            )
 
             repos = []
             for installation in user_installations:
@@ -293,15 +282,11 @@ class GithubService:
         return Github(token)
 
     def get_repo(self, repo_name: str) -> Tuple[Github, Any]:
-        logger.info(f"Attempting to access repo: {repo_name}")
         try:
             # Try authenticated access first
-            logger.info(f"Trying authenticated access for repo: {repo_name}")
             github, _, _ = self.get_github_repo_details(repo_name)
             repo = github.get_repo(repo_name)
-            logger.info(
-                f"Successfully accessed repo {repo_name} with authenticated access"
-            )
+
             return github, repo
         except Exception as private_error:
             logger.info(
@@ -309,12 +294,8 @@ class GithubService:
             )
             # If authenticated access fails, try public access
             try:
-                logger.info(f"Trying public access for repo: {repo_name}")
                 github = self.get_public_github_instance()
                 repo = github.get_repo(repo_name)
-                logger.info(
-                    f"Successfully accessed repo {repo_name} with public access"
-                )
                 return github, repo
             except Exception as public_error:
                 logger.error(

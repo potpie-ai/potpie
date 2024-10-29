@@ -81,7 +81,7 @@ class InferenceService:
         return len(encoding.encode(string, disallowed_special=set()))
 
     def fetch_graph(self, repo_id: str) -> List[Dict]:
-        batch_size = 100  # Define the batch size
+        batch_size = 500 
         all_nodes = []
         with self.driver.session() as session:
             offset = 0
@@ -99,6 +99,7 @@ class InferenceService:
                     break
                 all_nodes.extend(batch)
                 offset += batch_size
+        logger.info(f"DEBUGNEO4J: Fetched {len(all_nodes)} nodes for repo {repo_id}")
         return all_nodes
 
     def get_entry_points(self, repo_id: str) -> List[str]:
@@ -432,15 +433,15 @@ class InferenceService:
             f"DEBUGNEO4J: After get entry points, Repo ID: {repo_id}, Entry points: {len(entry_points)}"
         )
         self.log_graph_stats(repo_id)
-        entry_points_neighbors = {}
-        for entry_point in entry_points:
-            neighbors = self.get_neighbours(entry_point, repo_id)
-            entry_points_neighbors[entry_point] = neighbors
+        # entry_points_neighbors = {}
+        # for entry_point in entry_points:
+        #     neighbors = self.get_neighbours(entry_point, repo_id)
+        #     entry_points_neighbors[entry_point] = neighbors
 
-        logger.info(
-            f"DEBUGNEO4J: After get neighbours, Repo ID: {repo_id}, Entry points neighbors: {len(entry_points_neighbors)}"
-        )
-        self.log_graph_stats(repo_id)
+        # logger.info(
+        #     f"DEBUGNEO4J: After get neighbours, Repo ID: {repo_id}, Entry points neighbors: {len(entry_points_neighbors)}"
+        # )
+        # self.log_graph_stats(repo_id)
         batches = self.batch_nodes(nodes)
         all_docstrings = {"docstrings": []}
 
@@ -464,10 +465,10 @@ class InferenceService:
                 all_docstrings["docstrings"] + result.docstrings
             )
 
-        updated_docstrings = await self.generate_docstrings_for_entry_points(
-            all_docstrings, entry_points_neighbors
-        )
-
+        # updated_docstrings = await self.generate_docstrings_for_entry_points(
+        #     all_docstrings, entry_points_neighbors
+        # )
+        updated_docstrings = all_docstrings
         return updated_docstrings
 
     async def generate_response(

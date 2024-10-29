@@ -42,6 +42,12 @@ class ParsingController:
             project = await project_manager.get_project_from_db(
                 repo_name, repo_details.branch_name, user_id
             )
+            duplicate_project = True
+            if project and project.repo_name in demo_repos:
+                if project.status == ProjectStatusEnum.READY.value:
+                    duplicate_project = False
+                project = None  # Reset project to None if it's a demo repo so that we don't parse it again
+
 
             if project:
                 project_id = project.id
@@ -85,30 +91,30 @@ class ParsingController:
                     new_project_id = str(uuid7())
 
                     if existing_project:
-                        # Register the new project with status SUBMITTED
-                        await project_manager.duplicate_project(
-                            repo_name,
-                            repo_details.branch_name,
-                            user_id,
-                            new_project_id,
-                            existing_project.properties,
-                            existing_project.commit_id,
-                        )
-                        await project_manager.update_project_status(
-                            new_project_id, ProjectStatusEnum.SUBMITTED
-                        )
+                        if duplicate_project:
+                            await project_manager.duplicate_project(
+                                    repo_name,
+                                    repo_details.branch_name,
+                                    user_id,
+                                    new_project_id,
+                                    existing_project.properties,
+                                    existing_project.commit_id,
+                            )
+                            await project_manager.update_project_status(
+                                new_project_id, ProjectStatusEnum.SUBMITTED
+                            )
 
-                        old_repo_id = await project_manager.get_demo_repo_id(repo_name)
+                            old_repo_id = await project_manager.get_demo_repo_id(repo_name)
 
-                        # Duplicate the graph under the new repo ID
-                        await parsing_service.duplicate_graph(
-                            old_repo_id, new_project_id
-                        )
+                            # Duplicate the graph under the new repo ID
+                            await parsing_service.duplicate_graph(
+                                old_repo_id, new_project_id
+                            )
 
-                        # Update the project status to READY after copying
-                        await project_manager.update_project_status(
-                            new_project_id, ProjectStatusEnum.READY
-                        )
+                            # Update the project status to READY after copying
+                            await project_manager.update_project_status(
+                                new_project_id, ProjectStatusEnum.READY
+                            )
 
                         return {
                             "project_id": new_project_id,
