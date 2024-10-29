@@ -139,7 +139,8 @@ class ChangeDetectionTool:
         }}
         RETURN start, collect({{neighbor: neighbor{', body: neighbor.body' if with_bodies else ''}}}) AS neighbors
         """
-        result = tx.run(query, endpoint_id=node_id, project_id=project_id)
+        endpoint_id = node_id
+        result = tx.run(query, endpoint_id ,project_id)
         record = result.single()
         if not record:
             return []

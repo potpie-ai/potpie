@@ -40,7 +40,7 @@ class GetCodeFromMultipleNodeIdsTool:
 
     def arun(self, repo_id: str, node_ids: List[str]) -> Dict[str, Any]:
         """Asynchronous version of the run method."""
-        return self.run(self.run_multiple(repo_id, node_ids))
+        return self.run(repo_id, node_ids)
 
     def run(self, repo_id: str, node_ids: List[str]) -> Dict[str, Any]:
         return asyncio.run(self.run_multiple(repo_id, node_ids))
