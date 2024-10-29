@@ -53,10 +53,10 @@ class ToolService:
             "get_nodes_from_tags": GetNodesFromTags(self.db, self.user_id),
             "get_code_from_node_name": GetCodeFromNodeNameTool(self.db, self.user_id),
             "get_code_graph_from_node_id": GetCodeGraphFromNodeIdTool(
-                self.db, self.user_id
+                self.db
             ),
             "get_code_graph_from_node_name": GetCodeGraphFromNodeNameTool(
-                self.db, self.user_id
+                self.db
             ),
             "change_detection": ChangeDetectionTool(self.db, self.user_id),
         }
