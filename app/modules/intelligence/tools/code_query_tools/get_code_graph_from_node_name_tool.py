@@ -9,8 +9,6 @@ from app.core.config_provider import config_provider
 from app.modules.intelligence.tools.tool_schema import ToolParameter
 from app.modules.projects.projects_model import Project
 
-logger = logging.getLogger(__name__)
-
 
 class GetCodeGraphFromNodeNameTool:
     """Tool for retrieving a code graph for a specific node in a repository given its node name."""
@@ -20,7 +18,7 @@ class GetCodeGraphFromNodeNameTool:
         "Retrieves a code graph for a specific node in a repository given its node name"
     )
 
-    def __init__(self, sql_db: Session, user_id: str):
+    def __init__(self, sql_db: Session):
         """
         Initialize the tool with a SQL database session.
 
@@ -28,7 +26,6 @@ class GetCodeGraphFromNodeNameTool:
             sql_db (Session): SQLAlchemy database session.
         """
         self.sql_db = sql_db
-        self.user_id = user_id
         self.neo4j_driver = self._create_neo4j_driver()
 
     def _create_neo4j_driver(self) -> GraphDatabase.driver:
@@ -39,7 +36,7 @@ class GetCodeGraphFromNodeNameTool:
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
 
-    def fetch_graph_data(self, repo_id: str, node_name: str) -> Dict[str, Any]:
+    def run(self, repo_id: str, node_name: str) -> Dict[str, Any]:
         """
         Run the tool to retrieve the code graph.
 
@@ -55,54 +52,26 @@ class GetCodeGraphFromNodeNameTool:
             if not project:
                 return {"error": f"Project with ID '{repo_id}' not found in database"}
 
-            node_id = self._get_node_id(repo_id, node_name)
-            if not node_id:
-                return {
-                    "error": f"No node found with name '{node_name}' in repo '{repo_id}'"
-                }
-
-            graph_data = self._get_graph_data(repo_id, node_id)
+            graph_data = self._get_graph_data(repo_id, node_name)
             if not graph_data:
                 return {
-                    "error": f"No graph data found for node '{node_name}' in repo '{repo_id}'"
+                    "error": f"No graph data found for node name '{node_name}' in repo '{repo_id}'"
                 }
 
             return self._process_graph_data(graph_data, project)
         except Exception as e:
-            logger.error(f"An unexpected error occurred: {str(e)}")
+            logging.exception(f"An unexpected error occurred: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
-
-    async def run(self, repo_id: str, node_name: str) -> Dict[str, Any]:
-        return self.fetch_graph_data(repo_id, node_name)
-
-    def run_tool(self, repo_id: str, node_name: str) -> Dict[str, Any]:
-        return self.fetch_graph_data(repo_id, node_name)
 
     def _get_project(self, repo_id: str) -> Optional[Project]:
         """Retrieve project from the database."""
-        return (
-            self.sql_db.query(Project)
-            .filter(Project.id == repo_id, Project.user_id == self.user_id)
-            .first()
-        )
+        return self.sql_db.query(Project).filter(Project.id == repo_id).first()
 
-    def _get_node_id(self, repo_id: str, node_name: str) -> Optional[str]:
-        """Retrieve node ID from Neo4j."""
-        query = """
-        MATCH (start:NODE {repoId: $repo_id})
-        WHERE toLower(start.name) = toLower($node_name)
-        RETURN start.node_id AS node_id
-        """
-        with self.neo4j_driver.session() as session:
-            result = session.run(query, node_name=node_name, repo_id=repo_id)
-            node_id = result.single().get("node_id")
-            return node_id
-
-    def _get_graph_data(self, repo_id: str, node_id: str) -> Optional[Dict[str, Any]]:
+    def _get_graph_data(self, repo_id: str, node_name: str) -> Optional[Dict[str, Any]]:
         """Retrieve graph data from Neo4j."""
         query = """
         MATCH (start:NODE {repoId: $repo_id})
-        WHERE start.node_id = $node_id
+        WHERE toLower(start.name) = toLower($node_name)
         CALL apoc.path.subgraphAll(start, {
             relationshipFilter: "CONTAINS|CALLS|FUNCTION_DEFINITION|IMPORTS|INSTANTIATES|CLASS_DEFINITION>",
             maxLevel: 10
@@ -131,7 +100,7 @@ class GetCodeGraphFromNodeNameTool:
         } as node_data
         """
         with self.neo4j_driver.session() as session:
-            result = session.run(query, node_id=node_id, repo_id=repo_id)
+            result = session.run(query, node_name=node_name, repo_id=repo_id)
             nodes = [record["node_data"] for record in result]
             if not nodes:
                 return None
@@ -221,14 +190,14 @@ class GetCodeGraphFromNodeNameTool:
     async def arun(self, repo_id: str, node_name: str) -> Dict[str, Any]:
         """Asynchronous version of the run method."""
         return self.run(repo_id, node_name)
-
+    
     @staticmethod
     def get_parameters() -> List[ToolParameter]:
         return [
             ToolParameter(
                 name="repo_id",
                 type="string",
-                description="The repository ID (UUID)",
+                description="The repository ID or the project ID (UUID)",
                 required=True,
             ),
             ToolParameter(
@@ -236,21 +205,14 @@ class GetCodeGraphFromNodeNameTool:
                 type="string",
                 description="The name of the node to retrieve the code graph from",
                 required=True,
-            ),
-            ToolParameter(
-                name="depth",
-                type="integer",
-                description="The depth of the code graph to retrieve",
-                required=False,
-            ),
+            )
         ]
 
-
-def get_code_graph_from_node_name_tool(sql_db: Session, user_id: str) -> Tool:
-    tool_instance = GetCodeGraphFromNodeNameTool(sql_db, user_id)
+def get_code_graph_from_node_name_tool(sql_db: Session) -> Tool:
+    tool_instance = GetCodeGraphFromNodeNameTool(sql_db)
     return StructuredTool.from_function(
-        coroutine=tool_instance.run,
-        func=tool_instance.run_tool,
+        coroutine=tool_instance.arun,
+        func=tool_instance.run,
         name="Get Code Graph From Node Name",
         description="Retrieves a code graph for a specific node in a repository given its node name",
     )
