@@ -43,10 +43,11 @@ class ParsingController:
                 repo_name, repo_details.branch_name, user_id
             )
             duplicate_project = True
+            demo_project = False
             if project and project.repo_name in demo_repos:
                 if project.status == ProjectStatusEnum.READY.value:
                     duplicate_project = False
-                project = None  # Reset project to None if it's a demo repo so that we don't parse it again
+                    demo_project = True
 
             if project:
                 project_id = project.id
@@ -54,7 +55,7 @@ class ParsingController:
                 response = {"project_id": project_id, "status": project_status}
 
                 # Check commit status
-                is_latest = await parse_helper.check_commit_status(project_id)
+                is_latest = await parse_helper.check_commit_status(project_id) if not demo_project else True
 
                 if not is_latest or project_status != ProjectStatusEnum.READY.value:
                     cleanup_graph = True
