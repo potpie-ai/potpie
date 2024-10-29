@@ -1,7 +1,6 @@
 import asyncio
-import logging
 import os
-from typing import Any, Dict, List
+from typing import Dict, List
 
 from langchain.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -10,9 +9,6 @@ from app.modules.intelligence.tools.tool_schema import ToolParameter
 from app.modules.parsing.knowledge_graph.inference_schema import QueryResponse
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 from app.modules.projects.projects_service import ProjectService
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 
 class QueryRequest(BaseModel):
@@ -35,17 +31,35 @@ class MultipleKnowledgeGraphQueriesInput(BaseModel):
 
 
 class KnowledgeGraphQueryTool:
-    name = "ask_knowledge_graph_queries"
-    description = (
-        "Query the code knowledge graph using multiple natural language questions"
-    )
-
     def __init__(self, sql_db, user_id):
         self.kg_query_url = os.getenv("KNOWLEDGE_GRAPH_URL")
         self.headers = {"Content-Type": "application/json"}
         self.user_id = user_id
         self.sql_db = sql_db
 
+    @staticmethod
+    def get_parameters() -> List[ToolParameter]:
+        return [
+            ToolParameter(
+                name="queries",
+                type="array",
+                description="A list of natural language questions to ask the knowledge graph",
+                required=True,
+            ),
+            ToolParameter(
+                name="project_id",
+                type="string",
+                description="The project ID metadata for the project being evaluated",
+                required=True,
+            ),
+            ToolParameter(
+                name="node_ids",
+                type="array",
+                description="Optional list of node IDs to query",
+                required=False,
+            ),
+        ]
+    
     async def ask_multiple_knowledge_graph_queries(
         self, queries: List[QueryRequest]
     ) -> Dict[str, str]:
@@ -63,7 +77,7 @@ class KnowledgeGraphQueryTool:
                     file_path=result.get("file_path"),
                     start_line=result.get("start_line") or 0,
                     end_line=result.get("end_line") or 0,
-                    similarity=result.get("similarity") or 0,
+                    similarity=result.get("similarity"),
                 )
                 for result in results
             ]
@@ -72,20 +86,14 @@ class KnowledgeGraphQueryTool:
         results = await asyncio.gather(*tasks)
 
         return results
-
-    def run_tool(
-        self, queries: List[str], project_id: str, node_ids: List[str] = []
+    
+    async def arun(
+              self, queries: List[str], project_id: str, node_ids: List[str] = []
     ) -> Dict[str, str]:
-        # Create a new event loop
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        # Run the coroutine using the event loop
-        return loop.run_until_complete(
-            self.ask_knowledge_graph_query(queries, project_id, node_ids)
-        )
-
-    async def ask_knowledge_graph_query(
+        """Asynchronous version of the run method."""
+        return self.run(queries=queries, project_id=project_id, node_ids=node_ids)
+    
+    def run(
         self, queries: List[str], project_id: str, node_ids: List[str] = []
     ) -> Dict[str, str]:
         """
@@ -102,10 +110,11 @@ class KnowledgeGraphQueryTool:
         Returns:
         - Dict[str, str]: A dictionary where keys are the original queries and values are the corresponding responses.
         """
-        project = await ProjectService(self.sql_db).get_project_repo_details_from_db(
-            project_id, self.user_id
+        project = asyncio.run(
+            ProjectService(self.sql_db).get_project_repo_details_from_db(
+                project_id, self.user_id
+            )
         )
-
         if not project:
             raise ValueError(
                 f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
@@ -115,46 +124,13 @@ class KnowledgeGraphQueryTool:
             QueryRequest(query=query, project_id=project_id, node_ids=node_ids)
             for query in queries
         ]
-        return await self.ask_multiple_knowledge_graph_queries(query_list)
-
-    async def run(
-        self, queries: List[str], repo_id: str, node_ids: List[str] = []
-    ) -> Dict[str, Any]:
-        try:
-            results = await self.ask_knowledge_graph_query(queries, repo_id, node_ids)
-            return results
-        except Exception as e:
-            logger.error(f"Unexpected error in KnowledgeGraphQueryTool: {str(e)}")
-            return {"error": f"An unexpected error occurred: {str(e)}"}
-
-    @staticmethod
-    def get_parameters() -> List[ToolParameter]:
-        return [
-            ToolParameter(
-                name="queries",
-                type="array",
-                description="A list of natural language questions to ask the knowledge graph",
-                required=True,
-            ),
-            ToolParameter(
-                name="repo_id",
-                type="string",
-                description="The project ID metadata for the project being evaluated",
-                required=True,
-            ),
-            ToolParameter(
-                name="node_ids",
-                type="array",
-                description="Optional list of node IDs to query",
-                required=False,
-            ),
-        ]
+        return asyncio.run(self.ask_multiple_knowledge_graph_queries(query_list))
 
 
 def get_ask_knowledge_graph_queries_tool(sql_db, user_id) -> StructuredTool:
     return StructuredTool.from_function(
-        coroutine=KnowledgeGraphQueryTool(sql_db, user_id).run,
-        func=KnowledgeGraphQueryTool(sql_db, user_id).run_tool,
+        func=KnowledgeGraphQueryTool(sql_db, user_id).run,
+        coroutine=KnowledgeGraphQueryTool(sql_db, user_id).arun,
         name="Ask Knowledge Graph Queries",
         description="""
     Query the code knowledge graph using multiple natural language questions.
