@@ -60,7 +60,7 @@ class GetCodeFromProbableNodeNameTool:
                     "error": f"Node with name '{probable_node_name}' not found in project '{project_id}'"
                 }
 
-            return await self.arun(project_id, node_id)
+            return await self.async_run_old(project_id, node_id)
         except Exception as e:
             logger.error(
                 f"Unexpected error in GetCodeFromProbableNodeNameTool: {str(e)}"
@@ -76,7 +76,12 @@ class GetCodeFromProbableNodeNameTool:
         ]
         return await asyncio.gather(*tasks)
 
-    def get_code_from_probable_node_name(
+    async def arun(
+        self, project_id: str, probable_node_names: List[str]
+    ) -> List[Dict[str, Any]]:
+        return await self.run(project_id, probable_node_names)
+
+    def run(
         self, project_id: str, probable_node_names: List[str]
     ) -> List[Dict[str, Any]]:
         project = asyncio.run(
@@ -92,10 +97,10 @@ class GetCodeFromProbableNodeNameTool:
             self.find_node_from_probable_name(project_id, probable_node_names)
         )
 
-    async def arun(self, repo_id: str, node_id: str) -> Dict[str, Any]:
-        return self.run(repo_id, node_id)
+    async def async_code_from_node(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+        return self.code_from_node(repo_id, node_id)
 
-    def run(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+    def code_from_node(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         try:
             node_data = self._get_node_data(repo_id, node_id)
             if not node_data:
@@ -109,7 +114,7 @@ class GetCodeFromProbableNodeNameTool:
                 logger.error(f"Project with ID '{repo_id}' not found in database")
                 return {"error": f"Project with ID '{repo_id}' not found in database"}
 
-            return self._process_result(node_data, project, node_id)
+            return self.get_relevant_code_details_from_node(node_data, project, node_id)
         except Exception as e:
             logger.error(
                 f"Unexpected error in GetCodeFromProbableNodeNameTool: {str(e)}"
@@ -128,7 +133,7 @@ class GetCodeFromProbableNodeNameTool:
     def _get_project(self, repo_id: str) -> Project:
         return self.sql_db.query(Project).filter(Project.id == repo_id).first()
 
-    def _process_result(
+    def get_relevant_code_details_from_node(
         self, node_data: Dict[str, Any], project: Project, node_id: str
     ) -> Dict[str, Any]:
         file_path = node_data["file_path"]
@@ -195,7 +200,8 @@ def get_code_from_probable_node_name_tool(
 ) -> StructuredTool:
     tool_instance = GetCodeFromProbableNodeNameTool(sql_db, user_id)
     return StructuredTool.from_function(
-        func=tool_instance.get_code_from_probable_node_name,
+        func=tool_instance.run,
+        coroutine=tool_instance.arun,
         name="Get Code and docstring From Probable Node Name",
         description="""Retrieves code and docstring for the closest node name in a repository. Node names are in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path',
                 Useful to extract code for a function or file mentioned in a stacktrace or error message. Inputs for the get_code_from_probable_node_name method:
