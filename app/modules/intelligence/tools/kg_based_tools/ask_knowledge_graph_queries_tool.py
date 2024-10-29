@@ -31,6 +31,10 @@ class MultipleKnowledgeGraphQueriesInput(BaseModel):
 
 
 class KnowledgeGraphQueryTool:
+    name = "ask_knowledge_graph_queries"
+    description = (
+        "Query the code knowledge graph using multiple natural language questions"
+    )
     def __init__(self, sql_db, user_id):
         self.kg_query_url = os.getenv("KNOWLEDGE_GRAPH_URL")
         self.headers = {"Content-Type": "application/json"}

@@ -19,6 +19,8 @@ class GetNodesFromTagsInput(BaseModel):
 
 
 class GetNodesFromTags:
+    name = "get_nodes_from_tags"
+    description = "Get nodes from the knowledge graph based on the provided tags"
     def __init__(self, sql_db, user_id):
         self.sql_db = sql_db
         self.user_id = user_id
