@@ -1,9 +1,9 @@
+import hashlib
+import hmac
 import json
 import logging
 import os
 from typing import AsyncGenerator, List
-import hmac
-import hashlib
 
 import httpx
 from dotenv import load_dotenv
@@ -40,10 +40,12 @@ class CustomAgent:
         self.custom_agents_service = CustomAgentsService()
         self.chain = None
         self.base_url = os.getenv("POTPIE_PLUS_BASE_URL")
-        self.shared_hmac_key = os.getenv("SHARED_HMAC_KEY", "").encode('utf-8')
+        self.shared_hmac_key = os.getenv("SHARED_HMAC_KEY", "").encode("utf-8")
 
     def generate_hmac_signature(self, message: str) -> str:
-        hmac_obj = hmac.new(self.shared_hmac_key, message.encode('utf-8'), hashlib.sha256)
+        hmac_obj = hmac.new(
+            self.shared_hmac_key, message.encode("utf-8"), hashlib.sha256
+        )
         return hmac_obj.hexdigest()
 
     async def _get_system_prompt(self) -> str:

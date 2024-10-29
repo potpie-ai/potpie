@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.tools.change_detection.change_detection import (
     ChangeDetectionResponse,
-    get_blast_radius_tool,
+    get_change_detection_tool,
 )
 from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import (
     get_ask_knowledge_graph_queries_tool,
@@ -103,7 +103,7 @@ class BlastRadiusCrew:
             expected_output=f"Comprehensive impact analysis of the code changes on the codebase and answers to the users query about them. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model : {self.BlastRadiusAgentResponse.model_json_schema()}",
             agent=blast_radius_agent,
             tools=[
-                get_blast_radius_tool(self.user_id),
+                get_change_detection_tool(self.user_id),
                 self.get_nodes_from_tags,
                 self.ask_knowledge_graph_queries,
             ],

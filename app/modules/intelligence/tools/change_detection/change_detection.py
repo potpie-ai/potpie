@@ -290,7 +290,6 @@ class ChangeDetectionTool:
                 if github:
                     github.close()
 
-
     @staticmethod
     def get_parameters() -> List[ToolParameter]:
         return [
@@ -302,15 +301,14 @@ class ChangeDetectionTool:
             ),
         ]
 
-
     async def run(self, project_id):
         return asyncio.run(self.get_code_changes(project_id))
-    
+
     def run_tool(self, project_id: str) -> str:
         return self.get_code_changes(project_id)
 
 
-def get_blast_radius_tool(user_id: str) -> Tool:
+def get_change_detection_tool(user_id: str) -> Tool:
     """
     Get a list of LangChain Tool objects for use in agents.
     """
