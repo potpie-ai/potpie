@@ -225,7 +225,7 @@ class DebugRAGCrew:
         return result
 
 
-async def kickoff_debug_crew(
+async def kickoff_debug_rag_crew(
     query: str,
     project_id: str,
     chat_history: List,
