@@ -75,27 +75,18 @@ class GetCodeFromProbableNodeNameTool:
             for name in probable_node_names
         ]
         return await asyncio.gather(*tasks)
+        
 
     async def arun(
         self, project_id: str, probable_node_names: List[str]
     ) -> List[Dict[str, Any]]:
-        return await self.run(project_id, probable_node_names)
-
-    def run(
-        self, project_id: str, probable_node_names: List[str]
-    ) -> List[Dict[str, Any]]:
-        project = asyncio.run(
-            ProjectService(self.sql_db).get_project_repo_details_from_db(
-                project_id, self.user_id
-            )
-        )
+        project = await ProjectService(self.sql_db).get_project_repo_details_from_db(
+                project_id, self.user_id)
         if not project:
             raise ValueError(
                 f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
             )
-        return asyncio.run(
-            self.find_node_from_probable_name(project_id, probable_node_names)
-        )
+        return await self.find_node_from_probable_name(project_id, probable_node_names)
 
     async def async_code_from_node(self, repo_id: str, node_id: str) -> Dict[str, Any]:
         return self.code_from_node(repo_id, node_id)
@@ -200,7 +191,6 @@ def get_code_from_probable_node_name_tool(
 ) -> StructuredTool:
     tool_instance = GetCodeFromProbableNodeNameTool(sql_db, user_id)
     return StructuredTool.from_function(
-        func=tool_instance.run,
         coroutine=tool_instance.arun,
         name="Get Code and docstring From Probable Node Name",
         description="""Retrieves code and docstring for the closest node name in a repository. Node names are in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path',

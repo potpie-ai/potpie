@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any, Dict, List
 
@@ -36,10 +37,7 @@ class GetCodeFromNodeIdTool:
         )
 
     async def arun(self, repo_id: str, node_id: str) -> Dict[str, Any]:
-        """Asynchronous version of the run method."""
-        return self.run(repo_id, node_id)
-
-    def run(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+        """Synchronous version that handles the core logic"""
         try:
             node_data = self._get_node_data(repo_id, node_id)
             if not node_data:
@@ -139,7 +137,6 @@ class GetCodeFromNodeIdTool:
 def get_code_from_node_id_tool(sql_db: Session, user_id: str) -> StructuredTool:
     tool_instance = GetCodeFromNodeIdTool(sql_db, user_id)
     return StructuredTool.from_function(
-        func=tool_instance.run,
         coroutine=tool_instance.arun,
         name="Get Code and docstring From Node ID",
         description="""Retrieves code and docstring for a specific node id in a repository given its node ID

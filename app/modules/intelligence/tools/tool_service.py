@@ -65,7 +65,12 @@ class ToolService:
         tool = self.tools.get(tool_id)
         if not tool:
             raise ValueError(f"Invalid tool_id: {tool_id}")
-        return await tool.run(**params)
+        
+        # If the tool has an arun method, use it
+        if hasattr(tool, 'arun'):
+            return await tool.arun(**params)
+        else:
+            raise ValueError(f"Tool {tool.__class__.__name__} has no arun method")
 
     def list_tools(self) -> List[ToolInfo]:
         return [

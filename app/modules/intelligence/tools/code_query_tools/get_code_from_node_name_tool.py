@@ -34,12 +34,10 @@ class GetCodeFromNodeNameTool:
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
 
-    def run(self, repo_id: str, node_name: str) -> Dict[str, Any]:
-        project = asyncio.run(
-            ProjectService(self.sql_db).get_project_repo_details_from_db(
-                repo_id, self.user_id
-            )
-        )
+    async def arun(self, repo_id: str, node_name: str) -> Dict[str, Any]:
+        project = await ProjectService(self.sql_db).get_project_repo_details_from_db(
+                repo_id, self.user_id)
+        
         if not project:
             raise ValueError(
                 f"Project with ID '{repo_id}' not found in database for user '{self.user_id}'"
@@ -126,9 +124,6 @@ class GetCodeFromNodeNameTool:
         if hasattr(self, "neo4j_driver"):
             self.neo4j_driver.close()
 
-    async def arun(self, repo_id: str, node_name: str) -> Dict[str, Any]:
-        return self.run(repo_id, node_name)
-
     @staticmethod
     def get_parameters() -> List[ToolParameter]:
         return [
@@ -151,7 +146,6 @@ def get_code_from_node_name_tool(sql_db: Session, user_id: str) -> Tool:
     tool_instance = GetCodeFromNodeNameTool(sql_db, user_id)
     return StructuredTool.from_function(
         coroutine=tool_instance.arun,
-        func=tool_instance.run,
         name="Get Code From Node Name",
         description="Retrieves code for a specific node in a repository given its node name",
     )

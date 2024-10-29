@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 from langchain_core.tools import StructuredTool, Tool
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
+import asyncio
 
 from app.core.config_provider import config_provider
 
@@ -34,7 +35,7 @@ class GetNodeNeighboursFromNodeIdTool:
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
 
-    def run_tool(self, project_id: str, node_ids: List[str]) -> Dict[str, Any]:
+    async def arun(self, project_id: str, node_ids: List[str]) -> Dict[str, Any]:
         """
         Run the tool to retrieve neighbors of the specified nodes.
 
@@ -56,20 +57,7 @@ class GetNodeNeighboursFromNodeIdTool:
         except Exception as e:
             logging.exception(f"An unexpected error occurred: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
-
-    async def run(self, project_id: str, node_ids: List[str]) -> Dict[str, Any]:
-        """
-        Run the tool to retrieve neighbors of the specified nodes.
-
-        Args:
-            project_id (str): Project ID.
-            node_ids (List[str]): List of node IDs to retrieve neighbors for. Should contain atleast one node ID.
-
-        Returns:
-            Dict[str, Any]: Neighbor data or error message.
-        """
-        return self.run_tool(project_id, node_ids)
-
+        
     def _get_neighbors(
         self, project_id: str, node_ids: List[str]
     ) -> Optional[List[Dict[str, Any]]]:
@@ -112,8 +100,7 @@ class GetNodeNeighboursFromNodeIdTool:
 def get_node_neighbours_from_node_id_tool(sql_db: Session) -> Tool:
     tool_instance = GetNodeNeighboursFromNodeIdTool(sql_db)
     return StructuredTool.from_function(
-        coroutine=tool_instance.run,
-        func=tool_instance.run_tool,
+        coroutine=tool_instance.arun,
         name="Get Node Neighbours From Node ID",
         description="Retrieves inbound and outbound neighbors of a specific node in a repository given its node ID. This is helpful to find which functions are called by a specific function and which functions are calling the specific function. Works best with Pythoon, JS and TS code.",
     )

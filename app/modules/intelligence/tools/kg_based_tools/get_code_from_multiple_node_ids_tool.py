@@ -38,12 +38,8 @@ class GetCodeFromMultipleNodeIdsTool:
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
 
-    def arun(self, repo_id: str, node_ids: List[str]) -> Dict[str, Any]:
-        """Asynchronous version of the run method."""
-        return self.run(repo_id, node_ids)
-
-    def run(self, repo_id: str, node_ids: List[str]) -> Dict[str, Any]:
-        return asyncio.run(self.run_multiple(repo_id, node_ids))
+    async def arun(self, repo_id: str, node_ids: List[str]) -> Dict[str, Any]:
+        return await self.run_multiple(repo_id, node_ids)
 
     async def run_multiple(self, repo_id: str, node_ids: List[str]) -> Dict[str, Any]:
         try:
@@ -159,7 +155,6 @@ def get_code_from_multiple_node_ids_tool(
 ) -> StructuredTool:
     tool_instance = GetCodeFromMultipleNodeIdsTool(sql_db, user_id)
     return StructuredTool.from_function(
-        func=tool_instance.run,
         coroutine=tool_instance.arun,
         name="Get Code and docstring From Multiple Node IDs",
         description="""Retrieves code and docstring for multiple node ids in a repository given their node IDs

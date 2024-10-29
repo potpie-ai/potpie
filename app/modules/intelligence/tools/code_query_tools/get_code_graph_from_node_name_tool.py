@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -36,7 +37,7 @@ class GetCodeGraphFromNodeNameTool:
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
 
-    def run(self, repo_id: str, node_name: str) -> Dict[str, Any]:
+    async def arun(self, repo_id: str, node_name: str) -> Dict[str, Any]:
         """
         Run the tool to retrieve the code graph.
 
@@ -187,10 +188,6 @@ class GetCodeGraphFromNodeNameTool:
         if hasattr(self, "neo4j_driver"):
             self.neo4j_driver.close()
 
-    async def arun(self, repo_id: str, node_name: str) -> Dict[str, Any]:
-        """Asynchronous version of the run method."""
-        return self.run(repo_id, node_name)
-
     @staticmethod
     def get_parameters() -> List[ToolParameter]:
         return [
@@ -213,7 +210,6 @@ def get_code_graph_from_node_name_tool(sql_db: Session) -> Tool:
     tool_instance = GetCodeGraphFromNodeNameTool(sql_db)
     return StructuredTool.from_function(
         coroutine=tool_instance.arun,
-        func=tool_instance.run,
         name="Get Code Graph From Node Name",
         description="Retrieves a code graph for a specific node in a repository given its node name",
     )

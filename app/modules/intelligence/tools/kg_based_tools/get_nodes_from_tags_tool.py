@@ -26,10 +26,6 @@ class GetNodesFromTags:
         self.user_id = user_id
 
     async def arun(self, tags: List[str], project_id: str) -> str:
-        """Asynchronous version of the run method."""
-        return self.run(tags, project_id)
-
-    def run(self, tags: List[str], project_id: str) -> str:
         """
         Get nodes from the knowledge graph based on the provided tags.
         Inputs for the fetch_nodes method:
@@ -43,11 +39,8 @@ class GetNodesFromTags:
            * EXTERNAL_SERVICE: Does the code make HTTP requests to external services? Check for HTTP client usage or request handling.
         - project_id (str): The ID of the project being evaluated, this is a UUID.
         """
-        project = asyncio.run(
-            ProjectService(self.sql_db).get_project_repo_details_from_db(
-                project_id, self.user_id
-            )
-        )
+        project = await ProjectService(self.sql_db).get_project_repo_details_from_db(
+                project_id, self.user_id)
         if not project:
             raise ValueError(
                 f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
@@ -86,7 +79,6 @@ class GetNodesFromTags:
 
 def get_nodes_from_tags_tool(sql_db, user_id) -> StructuredTool:
     return StructuredTool.from_function(
-        func=GetNodesFromTags(sql_db, user_id).run,
         coroutine=GetNodesFromTags(sql_db, user_id).arun,
         name="Get Nodes from Tags",
         description="""
