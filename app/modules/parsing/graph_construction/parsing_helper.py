@@ -97,6 +97,7 @@ class ParseHelper:
             "mov",
             "wmv",
             "flv",
+            "ipynb",
         ]
         include_extensions = [
             "py",
@@ -151,10 +152,13 @@ class ParseHelper:
             return e
 
         tarball_path = os.path.join(
-            target_dir, f"{repo.full_name.replace('/', '-')}-{branch}.tar.gz"
+            target_dir,
+            f"{repo.full_name.replace('/', '-')}-{branch.replace('/', '-')}.tar.gz",
         )
+
         final_dir = os.path.join(
-            target_dir, f"{repo.full_name.replace('/', '-')}-{branch}-{user_id}"
+            target_dir,
+            f"{repo.full_name.replace('/', '-')}-{branch.replace('/', '-')}-{user_id}",
         )
 
         try:

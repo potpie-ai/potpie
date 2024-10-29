@@ -53,7 +53,7 @@ def configure_celery(queue_prefix: str):
         task_acks_late=True,
         task_track_started=True,
         # Add the task_time_limit configuration
-        task_time_limit=2700,  # 45 minutes in seconds
+        task_time_limit=5400,  # 90 minutes in seconds
     )
 
 

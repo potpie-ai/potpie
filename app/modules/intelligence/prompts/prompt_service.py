@@ -294,9 +294,6 @@ class PromptService:
                     )
                 else:
                     prompt_to_return = existing_prompt
-                    logger.info(
-                        "Existing prompt is kept as it is. No changes detected."
-                    )
             else:
                 # Create new prompt
                 new_prompt = Prompt(

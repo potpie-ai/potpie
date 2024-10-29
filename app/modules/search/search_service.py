@@ -10,18 +10,6 @@ class SearchService:
     def __init__(self, db: Session):
         self.db = db
 
-    async def create_search_index(self, project_id: str, node: Dict):
-        # Create index entry for the node
-        self.db.add(
-            SearchIndex(
-                project_id=project_id,
-                node_id=node["node_id"],
-                name=node.get("name", ""),
-                file_path=node.get("file_path", ""),
-                content=f"{node.get('name', '')} {node.get('file_path', '')}",
-            )
-        )
-
     async def commit_indices(self):
         self.db.commit()
 
@@ -125,3 +113,29 @@ class SearchService:
     async def bulk_create_search_indices(self, nodes: List[Dict]):
         # Create index entries for all nodes in bulk
         self.db.bulk_insert_mappings(SearchIndex, nodes)
+
+    async def clone_search_indices(self, input_project_id: str, output_project_id: str):
+        """Clone all search indices from input project to output project."""
+        # Query all search indices for the input project
+        source_indices = (
+            self.db.query(SearchIndex)
+            .filter(SearchIndex.project_id == input_project_id)
+            .all()
+        )
+
+        # Prepare bulk insert data
+        cloned_indices = [
+            {
+                "project_id": output_project_id,
+                "node_id": index.node_id,
+                "name": index.name,
+                "file_path": index.file_path,
+                "content": index.content,
+            }
+            for index in source_indices
+        ]
+
+        # Bulk insert the cloned indices if there are any
+        if cloned_indices:
+            self.db.bulk_insert_mappings(SearchIndex, cloned_indices)
+            await self.commit_indices()
