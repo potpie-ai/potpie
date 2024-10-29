@@ -7,12 +7,18 @@ from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.github.github_service import GithubService
+from app.modules.intelligence.tools.code_query_tools.get_node_neighbours_from_node_id_tool import (
+    get_node_neighbours_from_node_id_tool,
+)
 from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import (
     get_ask_knowledge_graph_queries_tool,
 )
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_multiple_node_ids_tool import (
     GetCodeFromMultipleNodeIdsTool,
     get_code_from_multiple_node_ids_tool,
+)
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
+    get_code_from_node_id_tool,
 )
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_name_tool import (
     get_code_from_probable_node_name_tool,
@@ -35,11 +41,12 @@ class RAGResponse(BaseModel):
     response: List[NodeResponse]
 
 
-class RAGCrew:
+class RAGAgent:
     def __init__(self, sql_db, llm, mini_llm, user_id):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.max_iter = os.getenv("MAX_ITER", 5)
         self.sql_db = sql_db
+        self.get_code_from_node_id = get_code_from_node_id_tool(sql_db, user_id)
         self.get_code_from_multiple_node_ids = get_code_from_multiple_node_ids_tool(
             sql_db, user_id
         )
@@ -49,6 +56,9 @@ class RAGCrew:
         self.get_nodes_from_tags = get_nodes_from_tags_tool(sql_db, user_id)
         self.ask_knowledge_graph_queries = get_ask_knowledge_graph_queries_tool(
             sql_db, user_id
+        )
+        self.get_node_neighbours_from_node_id = get_node_neighbours_from_node_id_tool(
+            sql_db
         )
         self.llm = llm
         self.mini_llm = mini_llm
@@ -76,6 +86,7 @@ class RAGCrew:
                 self.ask_knowledge_graph_queries,
                 self.get_code_from_multiple_node_ids,
                 self.get_code_from_probable_node_name,
+                self.get_node_neighbours_from_node_id,
             ],
             allow_delegation=False,
             verbose=True,
@@ -169,7 +180,6 @@ class RAGCrew:
                 "Markdown formatted chat response to user's query grounded in provided code context and tool results"
             ),
             agent=query_agent,
-            async_execution=True,
         )
 
         return combined_task
@@ -225,7 +235,7 @@ async def kickoff_rag_crew(
     mini_llm,
     user_id: str,
 ) -> str:
-    rag_agent = RAGCrew(sql_db, llm, mini_llm, user_id)
+    rag_agent = RAGAgent(sql_db, llm, mini_llm, user_id)
     file_structure = GithubService(sql_db).get_project_structure(project_id)
     result = await rag_agent.run(
         query, project_id, chat_history, node_ids, file_structure

@@ -8,6 +8,9 @@ from pydantic import BaseModel, Field
 from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
     get_code_file_structure_tool,
 )
+from app.modules.intelligence.tools.code_query_tools.get_node_neighbours_from_node_id_tool import (
+    get_node_neighbours_from_node_id_tool,
+)
 from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import (
     get_ask_knowledge_graph_queries_tool,
 )
@@ -46,7 +49,7 @@ class LowLevelDesignPlan(BaseModel):
     )
 
 
-class LowLevelDesignCrew:
+class LowLevelDesignAgent:
     def __init__(self, sql_db, llm, user_id):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.max_iter = int(os.getenv("MAX_ITER", 10))
@@ -64,6 +67,9 @@ class LowLevelDesignCrew:
             sql_db, user_id
         )
         self.get_code_file_structure = get_code_file_structure_tool(sql_db)
+        self.get_node_neighbours_from_node_id = get_node_neighbours_from_node_id_tool(
+            sql_db
+        )
 
     async def create_agents(self):
         codebase_analyst = Agent(
@@ -96,6 +102,7 @@ class LowLevelDesignCrew:
                 self.get_code_from_node_id,
                 self.get_code_from_probable_node_name,
                 self.get_code_file_structure,
+                self.get_node_neighbours_from_node_id,
             ],
             allow_delegation=True,
             verbose=True,
@@ -148,7 +155,6 @@ class LowLevelDesignCrew:
             agent=design_planner,
             context=[analyze_codebase_task],
             expected_output="Low-level design plan for implementing the new feature",
-            async_execution=True,
         )
 
         return [analyze_codebase_task, create_design_plan_task]
@@ -181,6 +187,6 @@ async def create_low_level_design(
     llm,
     user_id: str,
 ) -> LowLevelDesignPlan:
-    design_agent = LowLevelDesignCrew(sql_db, llm, user_id)
+    design_agent = LowLevelDesignAgent(sql_db, llm, user_id)
     result = await design_agent.run(functional_requirements, project_id)
     return result

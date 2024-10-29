@@ -7,6 +7,9 @@ from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.github.github_service import GithubService
+from app.modules.intelligence.tools.code_query_tools.get_node_neighbours_from_node_id_tool import (
+    get_node_neighbours_from_node_id_tool,
+)
 from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import (
     get_ask_knowledge_graph_queries_tool,
 )
@@ -38,7 +41,7 @@ class RAGResponse(BaseModel):
     response: List[NodeResponse]
 
 
-class DebugRAGCrew:
+class DebugAgent:
     def __init__(self, sql_db, llm, mini_llm, user_id):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.max_iter = os.getenv("MAX_ITER", 5)
@@ -53,6 +56,9 @@ class DebugRAGCrew:
         self.get_nodes_from_tags = get_nodes_from_tags_tool(sql_db, user_id)
         self.ask_knowledge_graph_queries = get_ask_knowledge_graph_queries_tool(
             sql_db, user_id
+        )
+        self.get_node_neighbours_from_node_id = get_node_neighbours_from_node_id_tool(
+            sql_db
         )
         self.llm = llm
         self.mini_llm = mini_llm
@@ -80,6 +86,7 @@ class DebugRAGCrew:
                 self.ask_knowledge_graph_queries,
                 self.get_code_from_multiple_node_ids,
                 self.get_code_from_probable_node_name,
+                self.get_node_neighbours_from_node_id,
             ],
             allow_delegation=False,
             verbose=True,
@@ -173,7 +180,6 @@ class DebugRAGCrew:
                 "Markdown formatted chat response to user's query grounded in provided code context and tool results"
             ),
             agent=query_agent,
-            async_execution=True,
         )
 
         return combined_task
@@ -219,7 +225,7 @@ class DebugRAGCrew:
         return result
 
 
-async def kickoff_debug_rag_crew(
+async def kickoff_debug_crew(
     query: str,
     project_id: str,
     chat_history: List,
@@ -229,7 +235,7 @@ async def kickoff_debug_rag_crew(
     mini_llm,
     user_id: str,
 ) -> str:
-    debug_agent = DebugRAGCrew(sql_db, llm, mini_llm, user_id)
+    debug_agent = DebugAgent(sql_db, llm, mini_llm, user_id)
     file_structure = GithubService(sql_db).get_project_structure(project_id)
     result = await debug_agent.run(
         query, project_id, chat_history, node_ids, file_structure
