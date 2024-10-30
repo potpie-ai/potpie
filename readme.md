@@ -68,6 +68,39 @@ Potpie’s cloud platform supports **Custom Agents**, enabling you to create age
 
 
 ---
+## Make Potpie Your Own
+
+Potpie is designed to be flexible and customizable. Here are key areas to personalize your own deployment:
+
+### 1. System Prompts Configuration
+
+Modify the system prompts to align with your organization's tone and terminology. 
+
+**Edit Prompt Text**: In `app/modules/intelligence/prompts/system_prompt_setup.py`, update the `system_prompts` lists to change the text for each agent.
+
+### 2. Add New Agents
+**Add New Agents**: Create new agents by referring existing agents in the `app/modules/intelligence/agents/chat_agents` and `app/modules/intelligence/agents/agentic_tools` directory.
+
+### 3. Agent Behavior Customization
+
+Adjust existing agent behaviors to suit your operational needs.
+
+**Modify Guidelines**: Change the guidelines within each agent's prompt to emphasize specific aspects of your codebase. You can do this by editing the prompts in the crewai agents in the `app/modules/intelligence/agents` directory.
+
+
+### 4. Tool Integration
+
+Customize which tools are available to each agent based on your requirements.
+
+**Edit existing tools**: Edit tools for your usecase by refactoring the existing tools in the `app/modules/intelligence/tools` directory.
+
+**Add New Tools**: Add new tools by referring existing tools in the `app/modules/intelligence/tools` directory.
+
+
+By customizing system prompts, agent behaviors, and tool integrations you can tailor Potpie to effectively meet your organization's unique needs and enhance your software development processes.
+
+
+---
 
 ## Contributing
 
@@ -79,7 +112,7 @@ We welcome contributions from the community. Contributions can be of the form:
 To contribute:
 1. Fork the repository.
 2. Create a new branch (`git checkout -b feature-branch`).
-3. Commit your changes (`git commit -am 'Add new feature'`).
+3. Stage your changes (`git add <file>`), then commit them (`git commit -m 'Add new feature'`).
 4. Push to the branch (`git push origin feature-branch`).
 5. Open a Pull Request.
 

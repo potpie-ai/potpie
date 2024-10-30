@@ -46,6 +46,14 @@ class ConfigProvider:
                 "url": "https://github.com/crewAIInc/crewAI",
                 "owner": "crewAIInc",
             },
+            {
+                "id": "demo1",
+                "name": "agentops",
+                "full_name": "AgentOps-AI/agentops",
+                "private": False,
+                "url": "https://github.com/AgentOps-AI/agentops",
+                "owner": "AgentOps-AI",
+            },
         ]
 
     def get_redis_url(self):

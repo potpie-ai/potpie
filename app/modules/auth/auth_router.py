@@ -5,14 +5,16 @@ from datetime import datetime
 import requests
 from dotenv import load_dotenv
 from fastapi import Depends, Request
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.modules.auth.auth_schema import LoginRequest
 from app.modules.users.user_schema import CreateUser
 from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.utils.posthog_helper import PostHogClient
+from app.modules.auth.auth_service import auth_handler
 
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", None)
 
@@ -27,6 +29,20 @@ async def send_slack_message(message: str):
 
 
 class AuthAPI:
+
+    @auth_router.post("/login")
+    async def login(login_request: LoginRequest):
+        email, password = login_request.email, login_request.password
+
+        try:
+            res = auth_handler.login(email=email, password=password)
+            id_token = res.get("idToken")
+            return JSONResponse(content={"token": id_token}, status_code=200)
+        except Exception as e:
+            return JSONResponse(
+                content={"error": f"ERROR: {str(e)}"}, status_code=400
+            )
+    
     @auth_router.post("/signup")
     async def signup(request: Request, db: Session = Depends(get_db)):
         body = json.loads(await request.body())

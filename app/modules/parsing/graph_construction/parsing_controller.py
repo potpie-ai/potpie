@@ -36,6 +36,7 @@ class ParsingController:
             "Portkey-AI/gateway",
             "crewAIInc/crewAI",
             "mem0ai/mem0",
+            "AgentOps-AI/agentops",
         ]
 
         try:

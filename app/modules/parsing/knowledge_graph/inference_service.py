@@ -461,9 +461,14 @@ class InferenceService:
         results = await asyncio.gather(*tasks)
 
         for result in results:
-            all_docstrings["docstrings"] = (
-                all_docstrings["docstrings"] + result.docstrings
+            if isinstance(result, DocstringResponse):
+                all_docstrings["docstrings"] = (
+                    all_docstrings["docstrings"] + result.docstrings
             )
+            else:
+                logger.error(
+                    f"Project {repo_id}: Invalid response from during inference. Manually verify the project completion."
+                )
 
         # updated_docstrings = await self.generate_docstrings_for_entry_points(
         #     all_docstrings, entry_points_neighbors
