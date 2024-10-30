@@ -60,7 +60,6 @@ class ToolService:
             ),
             "change_detection": ChangeDetectionTool(self.db, self.user_id),
         }
-
     async def run_tool(self, tool_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
         tool = self.tools.get(tool_id)
         if not tool:
@@ -68,7 +67,18 @@ class ToolService:
         
         # If the tool has an arun method, use it
         if hasattr(tool, 'arun'):
-            return await tool.arun(**params)
+            # Get the expected parameters from the tool's get_parameters method
+            expected_params = {}
+            if hasattr(tool, 'get_parameters'):
+                expected_params = {param.name for param in tool.get_parameters()}
+            
+            # Filter out unexpected parameters
+            filtered_params = {
+                key: value for key, value in params.items() 
+                if not expected_params or key in expected_params
+            }
+            
+            return await tool.arun(**filtered_params)
         else:
             raise ValueError(f"Tool {tool.__class__.__name__} has no arun method")
 
