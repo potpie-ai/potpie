@@ -171,6 +171,7 @@ async def share_chat(
 async def get_shared_emails(
     conversation_id: str,
     db: Session = Depends(get_db),
+    user=Depends(AuthService.check_auth),
 ):
     service = ShareChatService(db)
     try:

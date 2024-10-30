@@ -1,7 +1,7 @@
 from typing import List
 from uuid6 import uuid7 
 from app.modules.conversations.conversation.conversation_model import Conversation, Visibility
-
+from fastapi import HTTPException
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -54,8 +54,12 @@ class ShareChatService:
         return conversation_id
 
     async def get_shared_emails(self, conversation_id: str) -> List[str]:
-        chat = self.db.query(Conversation).filter_by(id=conversation_id).first()
-        if not chat:
-            raise ShareChatServiceError("Chat not found.")
+        try:
+            chat = self.db.query(Conversation).filter_by(id=conversation_id).first()
+            if not chat:
+                raise ShareChatServiceError("Chat not found.")
+            
+            return chat.shared_with_emails or []
         
-        return chat.shared_with_emails or []
+        except Exception as e:
+            raise HTTPException(status_code=401, detail=str(e))
