@@ -99,7 +99,7 @@ Customize which tools are available to each agent based on your requirements.
 
 By customizing system prompts, agent behaviors, and tool integrations you can tailor Potpie to effectively meet your organization's unique needs and enhance your software development processes.
 
-
+[Setup Instructions to get started with potpie](./setup.md)
 ---
 
 ## Contributing
