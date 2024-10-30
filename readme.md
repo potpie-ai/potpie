@@ -88,7 +88,7 @@ Adjust existing agent behaviors to suit your operational needs.
 **Modify Guidelines**: Change the guidelines within each agent's prompt to emphasize specific aspects of your codebase. You can do this by editing the prompts in the crewai agents in the `app/modules/intelligence/agents` directory.
 
 
-## 4. Tool Integration
+### 4. Tool Integration
 
 Customize which tools are available to each agent based on your requirements.
 
