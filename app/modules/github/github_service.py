@@ -269,11 +269,21 @@ class GithubService:
         ]
         user_repo_response = await self.get_repos_for_user(user_id)
         user_repos = user_repo_response["repositories"]
-        combined_repos = {
-            "repositories": project_list + user_repos
-        }
-        combined_repos["repositories"] = list(reversed(combined_repos["repositories"]))
-        return combined_repos
+
+        seen_full_names = set()
+        combined_repos = []
+
+        for project in project_list:
+            if project["full_name"] not in seen_full_names:
+                combined_repos.append(project)
+                seen_full_names.add(project["full_name"])
+
+        for user_repo in user_repos:
+            if user_repo["full_name"] not in seen_full_names:
+                combined_repos.append(user_repo)
+                seen_full_names.add(user_repo["full_name"])
+        combined_repos = list(reversed(combined_repos))
+        return {"repositories": combined_repos}
     async def get_branch_list(self, repo_name: str):
         try:
             github, repo = self.get_repo(repo_name)
