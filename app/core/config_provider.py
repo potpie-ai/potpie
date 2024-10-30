@@ -53,7 +53,7 @@ class ConfigProvider:
                 "private": False,
                 "url": "https://github.com/AgentOps-AI/agentops",
                 "owner": "AgentOps-AI",
-            }
+            },
         ]
 
     def get_redis_url(self):
