@@ -12,6 +12,7 @@ from redis import Redis
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
+from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_service import ProjectService
 from app.modules.users.user_model import User
 
@@ -255,34 +256,31 @@ class GithubService:
                 status_code=500, detail=f"Failed to fetch repositories: {str(e)}"
             )
     async def get_combined_user_repos(self, user_id: str):
-        parsed_repos = await self.project_manager.list_projects(user_id)
+        projects = self.db.query(Project).filter(Project.user_id == user_id).all()
         project_list = [
             {
-                "id": project["id"],
-                "name": project["repo_name"].split('/')[-1],
-                "full_name": project["repo_name"],
+                "id": project.id,
+                "name": project.repo_name.split('/')[-1],
+                "full_name": project.repo_name,
                 "private": False,
-                "url": f"https://github.com/{project['repo_name']}",
-                "owner": project["repo_name"].split('/')[0]
+                "url": f"https://github.com/{project.repo_name}",
+                "owner": project.repo_name.split('/')[0]
             }
-            for project in parsed_repos
-        ]
+            for project in projects
+        ] if projects is not None else []
         user_repo_response = await self.get_repos_for_user(user_id)
         user_repos = user_repo_response["repositories"]
-
-        seen_full_names = set()
-        combined_repos = []
-
-        for project in project_list:
-            if project["full_name"] not in seen_full_names:
-                combined_repos.append(project)
-                seen_full_names.add(project["full_name"])
-
-        for user_repo in user_repos:
-            if user_repo["full_name"] not in seen_full_names:
-                combined_repos.append(user_repo)
-                seen_full_names.add(user_repo["full_name"])
-        combined_repos = list(reversed(combined_repos))
+        db_project_full_names = {project["full_name"] for project in project_list}
+        
+        filtered_user_repos = [
+        {
+            **user_repo,  
+            "private": True  
+        }
+        for user_repo in user_repos
+        if user_repo["full_name"] not in db_project_full_names  # Only include unique user repos
+    ]
+        combined_repos = list(reversed(project_list + filtered_user_repos))
         return {"repositories": combined_repos}
     async def get_branch_list(self, repo_name: str):
         try:
