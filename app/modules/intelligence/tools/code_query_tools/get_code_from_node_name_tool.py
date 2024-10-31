@@ -34,49 +34,51 @@ class GetCodeFromNodeNameTool:
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
 
-    async def arun(self, repo_id: str, node_name: str) -> Dict[str, Any]:
+
+    
+    async def arun(self, project_id: str, node_name: str) -> Dict[str, Any]:
         project = await ProjectService(self.sql_db).get_project_repo_details_from_db(
-                repo_id, self.user_id)
+                project_id, self.user_id)
         
         if not project:
             raise ValueError(
-                f"Project with ID '{repo_id}' not found in database for user '{self.user_id}'"
+                f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
             )
 
         try:
-            node_data = self.get_node_data(repo_id, node_name)
+            node_data = self.get_node_data(project_id, node_name)
             if not node_data:
                 logger.error(
-                    f"Node with name '{node_name}' not found in repo '{repo_id}'"
+                    f"Node with name '{node_name}' not found in repo '{project_id}'"
                 )
                 return {
-                    "error": f"Node with name '{node_name}' not found in repo '{repo_id}'"
+                    "error": f"Node with name '{node_name}' not found in repo '{project_id}'"
                 }
 
-            project = self._get_project(repo_id)
+            project = self._get_project(project_id)
             if not project:
-                logger.error(f"Project with ID '{repo_id}' not found in database")
-                return {"error": f"Project with ID '{repo_id}' not found in database"}
+                logger.error(f"Project with ID '{project_id}' not found in database")
+                return {"error": f"Project with ID '{project_id}' not found in database"}
 
             return self._process_result(node_data, project, node_name)
         except Exception as e:
             logger.error(
-                f"Project: {repo_id} Unexpected error in GetCodeFromNodeNameTool: {str(e)}"
+                f"Project: {project_id} Unexpected error in GetCodeFromNodeNameTool: {str(e)}"
             )
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
-    def get_node_data(self, repo_id: str, node_name: str) -> Dict[str, Any]:
+    def get_node_data(self, project_id: str, node_name: str) -> Dict[str, Any]:
         query = """
-        MATCH (n:NODE {repoId: $repo_id})
+        MATCH (n:NODE {repoId: $project_id})
         WHERE toLower(n.name) = toLower($node_name)
         RETURN n.file_path AS file, n.start_line AS start_line, n.end_line AS end_line, n.node_id AS node_id
         """
         with self.neo4j_driver.session() as session:
-            result = session.run(query, node_name=node_name, repo_id=repo_id)
+            result = session.run(query, node_name=node_name, repo_id=project_id)
             return result.single()
 
-    def _get_project(self, repo_id: str) -> Project:
-        return self.sql_db.query(Project).filter(Project.id == repo_id).first()
+    def _get_project(self, project_id: str) -> Project:
+        return self.sql_db.query(Project).filter(Project.id == project_id).first()
 
     def _process_result(
         self, node_data: Dict[str, Any], project: Project, node_name: str
@@ -128,7 +130,7 @@ class GetCodeFromNodeNameTool:
     def get_parameters() -> List[ToolParameter]:
         return [
             ToolParameter(
-                name="repo_id",
+                name="project_id",
                 type="string",
                 description="The repository ID (UUID)",
                 required=True,
@@ -146,6 +148,7 @@ def get_code_from_node_name_tool(sql_db: Session, user_id: str) -> Tool:
     tool_instance = GetCodeFromNodeNameTool(sql_db, user_id)
     return StructuredTool.from_function(
         coroutine=tool_instance.arun,
+        func=tool_instance.run,
         name="Get Code From Node Name",
         description="Retrieves code for a specific node in a repository given its node name",
     )

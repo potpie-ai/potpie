@@ -270,10 +270,10 @@ class ConversationService:
                     )
                     await self._update_conversation_title(conversation_id, new_title)
 
-                repo_id = (
+                project_id = (
                     conversation.project_ids[0] if conversation.project_ids else None
                 )
-                if not repo_id:
+                if not project_id:
                     raise ConversationServiceError(
                         "No project associated with this conversation"
                     )
