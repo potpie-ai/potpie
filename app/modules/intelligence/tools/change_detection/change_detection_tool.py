@@ -301,9 +301,12 @@ class ChangeDetectionTool:
                 required=True,
             ),
         ]
-
+    
     async def arun(self, project_id: str) -> str:
         return await self.get_code_changes(project_id)
+    
+    def run(self, project_id: str) -> str:
+        return asyncio.run(self.get_code_changes(project_id))
 
 def get_change_detection_tool(user_id: str) -> Tool:
     """
@@ -312,6 +315,7 @@ def get_change_detection_tool(user_id: str) -> Tool:
     change_detection_tool = ChangeDetectionTool(next(get_db()), user_id)
     return StructuredTool.from_function(
         coroutine=change_detection_tool.arun,
+        func=change_detection_tool.run,
         name="Get code changes",
         description="""
             Get the changes in the codebase.

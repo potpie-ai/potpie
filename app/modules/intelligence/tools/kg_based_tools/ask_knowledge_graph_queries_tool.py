@@ -90,8 +90,13 @@ class KnowledgeGraphQueryTool:
         results = await asyncio.gather(*tasks)
 
         return results
-             
+
     async def arun(
+        self, queries: List[str], project_id: str, node_ids: List[str] = []
+    ) -> Dict[str, str]:
+        return await asyncio.to_thread(self.run, queries, project_id, node_ids) 
+
+    def run(
         self, queries: List[str], project_id: str, node_ids: List[str] = []
     ) -> Dict[str, str]:
         """
@@ -108,8 +113,8 @@ class KnowledgeGraphQueryTool:
         Returns:
         - Dict[str, str]: A dictionary where keys are the original queries and values are the corresponding responses.
         """
-        project = await ProjectService(self.sql_db).get_project_repo_details_from_db(
-                project_id, self.user_id )
+        project = asyncio.run( ProjectService(self.sql_db).get_project_repo_details_from_db(
+                project_id, self.user_id ))
         if not project:
             raise ValueError(
                 f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
@@ -119,12 +124,13 @@ class KnowledgeGraphQueryTool:
             QueryRequest(query=query, project_id=project_id, node_ids=node_ids)
             for query in queries
         ]
-        return await self.ask_multiple_knowledge_graph_queries(query_list)
+        return asyncio.run( self.ask_multiple_knowledge_graph_queries(query_list))
 
 
 def get_ask_knowledge_graph_queries_tool(sql_db, user_id) -> StructuredTool:
     return StructuredTool.from_function(
         coroutine=KnowledgeGraphQueryTool(sql_db, user_id).arun,
+        func=KnowledgeGraphQueryTool(sql_db, user_id).run,
         name="Ask Knowledge Graph Queries",
         description="""
     Query the code knowledge graph using multiple natural language questions.

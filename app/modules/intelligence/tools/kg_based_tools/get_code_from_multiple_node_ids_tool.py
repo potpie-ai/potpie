@@ -39,7 +39,10 @@ class GetCodeFromMultipleNodeIdsTool:
         )
 
     async def arun(self, project_id: str, node_ids: List[str]) -> Dict[str, Any]:
-        return await self.run_multiple(project_id, node_ids)
+        return await asyncio.to_thread(self.run, project_id, node_ids)
+
+    def run(self, project_id: str, node_ids: List[str]) -> Dict[str, Any]:
+        return asyncio.run( self.run_multiple(project_id, node_ids))
 
     async def run_multiple(self, project_id: str, node_ids: List[str]) -> Dict[str, Any]:
         try:
@@ -156,6 +159,7 @@ def get_code_from_multiple_node_ids_tool(
     tool_instance = GetCodeFromMultipleNodeIdsTool(sql_db, user_id)
     return StructuredTool.from_function(
         coroutine=tool_instance.arun,
+        func=tool_instance.run,
         name="Get Code and docstring From Multiple Node IDs",
         description="""Retrieves code and docstring for multiple node ids in a repository given their node IDs
                 Inputs for the run_multiple method:

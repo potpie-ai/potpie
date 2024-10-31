@@ -37,7 +37,11 @@ class GetCodeGraphFromNodeNameTool:
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
 
+
     async def arun(self, project_id: str, node_name: str) -> Dict[str, Any]:
+        return await asyncio.to_thread(self.run, project_id, node_name)
+
+    def run(self, project_id: str, node_name: str) -> Dict[str, Any]:
         """
         Run the tool to retrieve the code graph.
 
@@ -210,6 +214,7 @@ def get_code_graph_from_node_name_tool(sql_db: Session) -> Tool:
     tool_instance = GetCodeGraphFromNodeNameTool(sql_db)
     return StructuredTool.from_function(
         coroutine=tool_instance.arun,
+        func=tool_instance.run,
         name="Get Code Graph From Node Name",
         description="Retrieves a code graph for a specific node in a repository given its node name",
     )

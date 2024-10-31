@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 import asyncio
 
 from app.core.config_provider import config_provider
+from app.modules.intelligence.tools.tool_schema import ToolParameter
 
 
 class GetNodeNeighboursFromNodeIdTool:
@@ -35,7 +36,11 @@ class GetNodeNeighboursFromNodeIdTool:
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
 
+
     async def arun(self, project_id: str, node_ids: List[str]) -> Dict[str, Any]:
+        return await asyncio.to_thread(self.run, project_id, node_ids)
+
+    def run(self, project_id: str, node_ids: List[str]) -> Dict[str, Any]:
         """
         Run the tool to retrieve neighbors of the specified nodes.
 
@@ -96,11 +101,29 @@ class GetNodeNeighboursFromNodeIdTool:
         if hasattr(self, "neo4j_driver"):
             self.neo4j_driver.close()
 
+    @staticmethod
+    def get_parameters() -> List[ToolParameter]:
+        return [
+            ToolParameter(
+                name="project_id",
+                type="string",
+                description="The repository ID, this is a UUID",
+                required=True,
+            ),
+            ToolParameter(
+                name="node_ids",
+                type="array",
+                description="List of node IDs to retrieve code from",
+                required=True,
+            ),
+        ]
+
 
 def get_node_neighbours_from_node_id_tool(sql_db: Session) -> Tool:
     tool_instance = GetNodeNeighboursFromNodeIdTool(sql_db)
     return StructuredTool.from_function(
         coroutine=tool_instance.arun,
+        func=tool_instance.run,
         name="Get Node Neighbours From Node ID",
         description="Retrieves inbound and outbound neighbors of a specific node in a repository given its node ID. This is helpful to find which functions are called by a specific function and which functions are calling the specific function. Works best with Pythoon, JS and TS code.",
     )

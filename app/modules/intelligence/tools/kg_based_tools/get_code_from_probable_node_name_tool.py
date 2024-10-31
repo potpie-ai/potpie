@@ -76,13 +76,15 @@ class GetCodeFromProbableNodeNameTool:
         ]
         return await asyncio.gather(*tasks)
     
-    
     async def arun(self, project_id: str, probable_node_names: List[str]) -> List[Dict[str, Any]]:
-        return await asyncio.to_thread(
+        return await asyncio.to_thread(self.run, project_id, probable_node_names)
+
+    def run(self, project_id: str, probable_node_names: List[str]) -> List[Dict[str, Any]]:
+        return asyncio.run( asyncio.to_thread(
             self.get_code_from_probable_node_name,
             project_id,
             probable_node_names
-        )
+        ))
 
     
     def get_code_from_probable_node_name(
@@ -102,9 +104,9 @@ class GetCodeFromProbableNodeNameTool:
         )
 
     async def execute(self, project_id: str, node_id: str) -> Dict[str, Any]:
-        return self.run(project_id, node_id)
+        return self.internal_run(project_id, node_id)
 
-    def run(self, project_id: str, node_id: str) -> Dict[str, Any]:
+    def internal_run(self, project_id: str, node_id: str) -> Dict[str, Any]:
         try:
             node_data = self._get_node_data(project_id, node_id)
             if not node_data:
@@ -204,6 +206,7 @@ def get_code_from_probable_node_name_tool(
     tool_instance = GetCodeFromProbableNodeNameTool(sql_db, user_id)
     return StructuredTool.from_function(
         coroutine=tool_instance.arun,
+        func=tool_instance.run,
         name="Get Code and docstring From Probable Node Name",
         description="""Retrieves code and docstring for the closest node name in a repository. Node names are in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path',
                 Useful to extract code for a function or file mentioned in a stacktrace or error message. Inputs for the get_code_from_probable_node_name method:

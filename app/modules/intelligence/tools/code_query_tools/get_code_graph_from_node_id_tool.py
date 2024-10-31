@@ -38,6 +38,9 @@ class GetCodeGraphFromNodeIdTool:
         )
 
     async def arun(self, project_id: str, node_id: str) -> Dict[str, Any]:
+        return await asyncio.to_thread(self.run, project_id, node_id)
+
+    def run(self, project_id: str, node_id: str) -> Dict[str, Any]:
         """
         Run the tool to retrieve the code graph.
 
@@ -208,6 +211,7 @@ def get_code_graph_from_node_id_tool(sql_db: Session) -> Tool:
     tool_instance = GetCodeGraphFromNodeIdTool(sql_db)
     return StructuredTool.from_function(
         coroutine=tool_instance.arun,
+        func=tool_instance.run,
         name="Get Code Graph From Node ID",
         description="Retrieves a code graph for a specific node in a repository given its node ID",
     )

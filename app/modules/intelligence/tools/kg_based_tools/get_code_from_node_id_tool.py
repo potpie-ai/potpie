@@ -35,8 +35,11 @@ class GetCodeFromNodeIdTool:
             neo4j_config["uri"],
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
-
+    
     async def arun(self, project_id: str, node_id: str) -> Dict[str, Any]:
+        return await asyncio.to_thread(self.run, project_id, node_id)
+
+    def run(self, project_id: str, node_id: str) -> Dict[str, Any]:
         """Synchronous version that handles the core logic"""
         try:
             node_data = self._get_node_data(project_id, node_id)
@@ -138,6 +141,7 @@ def get_code_from_node_id_tool(sql_db: Session, user_id: str) -> StructuredTool:
     tool_instance = GetCodeFromNodeIdTool(sql_db, user_id)
     return StructuredTool.from_function(
         coroutine=tool_instance.arun,
+        func=tool_instance.run,
         name="Get Code and docstring From Node ID",
         description="""Retrieves code and docstring for a specific node id in a repository given its node ID
                        Inputs for the run method:

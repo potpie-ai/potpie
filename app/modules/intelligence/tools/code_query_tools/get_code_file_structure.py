@@ -1,16 +1,22 @@
+from typing import List
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import asyncio
 
 from app.modules.github.github_service import GithubService
+from app.modules.intelligence.tools.tool_schema import ToolParameter
 
 
-class RepoStructureRequest(BaseModel):
+class GetCodeFileStructureToolRequest(BaseModel):
     project_id: str
 
 
-class RepoStructureService:
+class GetCodeFileStructureTool:
+    name = "get_code_file_structure"
+    description = (
+        "Retrieve the hierarchical file structure of a specified repository."
+    )
     def __init__(self, db: Session):
         self.github_service = GithubService(db)
 
@@ -22,13 +28,24 @@ class RepoStructureService:
     
     def run(self, project_id: str) -> str:
         return self.fetch_repo_structure(project_id)
+    
+    @staticmethod
+    def get_parameters() -> List[ToolParameter]:
+        return [
+            ToolParameter(
+                name="project_id",
+                type="string",
+                description="The repository ID (UUID)",
+                required=True,
+            )
+        ]
 
 
 def get_code_file_structure_tool(db: Session) -> StructuredTool:
     return StructuredTool(
         name="get_code_file_structure",
         description="Retrieve the hierarchical file structure of a specified repository.",
-        coroutine=RepoStructureService(db).arun,
-        func=RepoStructureService(db).run,
-        args_schema=RepoStructureRequest,
+        coroutine=GetCodeFileStructureTool(db).arun,
+        func=GetCodeFileStructureTool(db).run,
+        args_schema=GetCodeFileStructureToolRequest,
     )

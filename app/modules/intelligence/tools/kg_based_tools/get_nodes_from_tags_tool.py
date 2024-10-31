@@ -26,6 +26,9 @@ class GetNodesFromTags:
         self.user_id = user_id
 
     async def arun(self, tags: List[str], project_id: str) -> str:
+        return await asyncio.to_thread(self.run, tags, project_id)
+
+    def run(self, tags: List[str], project_id: str) -> str:
         """
         Get nodes from the knowledge graph based on the provided tags.
         Inputs for the fetch_nodes method:
@@ -39,8 +42,8 @@ class GetNodesFromTags:
            * EXTERNAL_SERVICE: Does the code make HTTP requests to external services? Check for HTTP client usage or request handling.
         - project_id (str): The ID of the project being evaluated, this is a UUID.
         """
-        project = await ProjectService(self.sql_db).get_project_repo_details_from_db(
-                project_id, self.user_id)
+        project = asyncio.run(ProjectService(self.sql_db).get_project_repo_details_from_db(
+                project_id, self.user_id))
         if not project:
             raise ValueError(
                 f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
@@ -65,7 +68,7 @@ class GetNodesFromTags:
             ToolParameter(
                 name="tags",
                 type="array",
-                description="List of tags to search for nodes",
+                description="A list of tags to filter nodes. Valid tags are: API, WEBSOCKET, PRODUCER, CONSUMER, DATABASE, SCHEMA, EXTERNAL_SERVICE, CONFIGURATION, SCRIPT",
                 required=True,
             ),
             ToolParameter(
@@ -80,6 +83,7 @@ class GetNodesFromTags:
 def get_nodes_from_tags_tool(sql_db, user_id) -> StructuredTool:
     return StructuredTool.from_function(
         coroutine=GetNodesFromTags(sql_db, user_id).arun,
+        func=GetNodesFromTags(sql_db, user_id).run,
         name="Get Nodes from Tags",
         description="""
         Fetch nodes from the knowledge graph based on specified tags. Use this tool to retrieve nodes of specific types for a project.

@@ -34,11 +34,15 @@ class GetCodeFromNodeNameTool:
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
 
-
-    
     async def arun(self, project_id: str, node_name: str) -> Dict[str, Any]:
-        project = await ProjectService(self.sql_db).get_project_repo_details_from_db(
-                project_id, self.user_id)
+        return await asyncio.to_thread(self.run, project_id, node_name)
+    
+    def run(self, project_id: str, node_name: str) -> Dict[str, Any]:
+        project = asyncio.run(
+            ProjectService(self.sql_db).get_project_repo_details_from_db(
+                project_id, self.user_id
+            )
+        )
         
         if not project:
             raise ValueError(
