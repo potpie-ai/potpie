@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
 from app.modules.conversations.access.access_schema import (
+    RemoveAccessRequest,
     ShareChatRequest,
     ShareChatResponse,
 )
@@ -157,14 +158,52 @@ class ConversationAPI:
 async def share_chat(
     request: ShareChatRequest,
     db: Session = Depends(get_db),
+    user=Depends(AuthService.check_auth),
 ):
+    user_id = user["user_id"]
     service = ShareChatService(db)
     try:
         shared_conversation = await service.share_chat(
-            request.conversation_id, request.recipientEmails
+            request.conversation_id,
+            user_id,
+            request.recipientEmails,
+            request.visibility,
         )
         return ShareChatResponse(
             message="Chat shared successfully!", sharedID=shared_conversation
         )
+    except ShareChatServiceError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/conversations/{conversation_id}/shared-emails", response_model=List[str])
+async def get_shared_emails(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(AuthService.check_auth),
+):
+    user_id = user["user_id"]
+    service = ShareChatService(db)
+    shared_emails = await service.get_shared_emails(conversation_id, user_id)
+    return shared_emails
+
+
+@router.delete("/conversations/{conversation_id}/access")
+async def remove_access(
+    conversation_id: str,
+    request: RemoveAccessRequest,
+    user: str = Depends(AuthService.check_auth),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Remove access for specified emails from a conversation."""
+    share_service = ShareChatService(db)
+    current_user_id = user["user_id"]
+    try:
+        await share_service.remove_access(
+            conversation_id=conversation_id,
+            user_id=current_user_id,
+            emails_to_remove=request.emails,
+        )
+        return {"message": "Access removed successfully"}
     except ShareChatServiceError as e:
         raise HTTPException(status_code=400, detail=str(e))

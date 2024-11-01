@@ -255,6 +255,7 @@ class GithubService:
             raise HTTPException(
                 status_code=500, detail=f"Failed to fetch repositories: {str(e)}"
             )
+
     async def get_combined_user_repos(self, user_id: str):
         subquery = (
         self.db.query(Project.repo_name, func.min(Project.id).label("min_id"))
@@ -292,6 +293,7 @@ class GithubService:
     ]
         combined_repos = list(reversed(project_list + filtered_user_repos))
         return {"repositories": combined_repos}
+
     async def get_branch_list(self, repo_name: str):
         try:
             github, repo = self.get_repo(repo_name)
