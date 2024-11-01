@@ -10,7 +10,7 @@ from github import Github
 from github.Auth import AppAuth
 from redis import Redis
 from sqlalchemy.orm import Session
-
+from sqlalchemy import distinct, func
 from app.core.config_provider import config_provider
 from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_service import ProjectService
@@ -256,7 +256,17 @@ class GithubService:
                 status_code=500, detail=f"Failed to fetch repositories: {str(e)}"
             )
     async def get_combined_user_repos(self, user_id: str):
-        projects = self.db.query(Project).filter(Project.user_id == user_id).all()
+        subquery = (
+        self.db.query(Project.repo_name, func.min(Project.id).label("min_id"))
+        .filter(Project.user_id == user_id)
+        .group_by(Project.repo_name)
+        .subquery()
+    )
+        projects = (
+        self.db.query(Project)
+        .join(subquery, (Project.repo_name == subquery.c.repo_name) & (Project.id == subquery.c.min_id))
+        .all()
+    )
         project_list = [
             {
                 "id": project.id,
