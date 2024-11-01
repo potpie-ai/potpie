@@ -16,3 +16,6 @@ class ShareChatResponse(BaseModel):
 
 class SharedChatResponse(BaseModel):
     chat: dict
+
+class RemoveAccessRequest(BaseModel):
+    emails: List[EmailStr]
