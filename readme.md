@@ -10,6 +10,8 @@ Potpie also provides purpose built agents that are expert on your codebase to pe
 - [What Makes Potpie Agents Unique?](#what-makes-potpie-agents-unique)
 - [Potpie's Tooling System](#potpie's-tooling-system)
 - [The Power of Custom Agents](#the-power-of-custom-agents-coming-soon)
+- [Getting Started](#getting-started)
+- [Make Potpie Your Own](#make-potpie-your-own)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -66,6 +68,10 @@ Potpie’s cloud platform supports **Custom Agents**, enabling you to create age
 - Identifying and reporting security vulnerabilities in the codebase.
 - Automatically generating unit tests based on existing code logic.
 
+---
+## Getting Started
+
+Refer to the [Getting Started Guide](./GETTING_STARTED.md) for detailed instructions on setting up Potpie and making your first agent work for you!
 
 ---
 ## Make Potpie Your Own
