@@ -157,10 +157,12 @@ class ConversationAPI:
 async def share_chat(
     request: ShareChatRequest,
     db: Session = Depends(get_db),
+    user=Depends(AuthService.check_auth),
 ):
+    user_id = user["user_id"]
     service = ShareChatService(db)
     try:
-        shared_conversation = await service.share_chat(request.conversation_id, request.recipientEmails, request.visibility)
+        shared_conversation = await service.share_chat(request.conversation_id, user_id, request.recipientEmails, request.visibility)
         return ShareChatResponse(
             message="Chat shared successfully!", sharedID=shared_conversation
         )
@@ -173,9 +175,7 @@ async def get_shared_emails(
     db: Session = Depends(get_db),
     user=Depends(AuthService.check_auth),
 ):
+    user_id = user["user_id"]
     service = ShareChatService(db)
-    try:
-        shared_emails = await service.get_shared_emails(conversation_id)
-        return shared_emails
-    except ShareChatServiceError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    shared_emails = await service.get_shared_emails(conversation_id, user_id)
+    return shared_emails

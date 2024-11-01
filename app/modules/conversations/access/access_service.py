@@ -17,10 +17,10 @@ class ShareChatService:
     def __init__(self, db: Session):
         self.db = db
 
-    async def share_chat(self, conversation_id: str, recipient_emails: List[str] = None, visibility: Visibility = Visibility.PRIVATE) -> str:
-        chat = self.db.query(Conversation).filter_by(id=conversation_id).first()
+    async def share_chat(self, conversation_id: str, user_id: str, recipient_emails: List[str] = None, visibility: Visibility = Visibility.PRIVATE) -> str:
+        chat = self.db.query(Conversation).filter_by(id=conversation_id, user_id=user_id).first()
         if not chat:
-            raise ShareChatServiceError("Chat not found.")
+            raise HTTPException(404,"Chat does not exist or you are not authorized to access it.")
         
         if visibility == Visibility.PUBLIC:
             chat.visibility = Visibility.PUBLIC
@@ -42,7 +42,7 @@ class ShareChatService:
                     try:
                         updated_emails = existing_emails + list(to_share)
                         self.db.query(Conversation).filter_by(id=conversation_id).update(
-                        {Conversation.shared_with_emails: updated_emails},
+                        {Conversation.shared_with_emails: updated_emails, Conversation.visibility: visibility},
                         synchronize_session=False  
                         )
                         self.db.commit()        
@@ -51,15 +51,19 @@ class ShareChatService:
                         raise ShareChatServiceError("Failed to update shared chat due to a database integrity error.") from e
                 self.db.commit()
                 return conversation_id
+            else:
+                    self.db.query(Conversation).filter_by(id=conversation_id).update(
+                        {Conversation.visibility: visibility},
+                        synchronize_session=False  
+                        )
+                    self.db.commit()  
+
         return conversation_id
 
-    async def get_shared_emails(self, conversation_id: str) -> List[str]:
-        try:
-            chat = self.db.query(Conversation).filter_by(id=conversation_id).first()
-            if not chat:
-                raise ShareChatServiceError("Chat not found.")
-            
-            return chat.shared_with_emails or []
+    async def get_shared_emails(self, conversation_id: str, user_id: str) -> List[str]:
         
-        except Exception as e:
-            raise HTTPException(status_code=401, detail=str(e))
+        chat = self.db.query(Conversation).filter_by(id=conversation_id, user_id=user_id).first()
+        if not chat:
+            raise HTTPException(404,"Chat does not exist or you are not authorized to access it.")
+        
+        return chat.shared_with_emails or []
