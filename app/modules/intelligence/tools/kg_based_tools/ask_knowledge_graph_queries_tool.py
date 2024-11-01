@@ -31,10 +31,21 @@ class MultipleKnowledgeGraphQueriesInput(BaseModel):
 
 
 class KnowledgeGraphQueryTool:
-    name = "ask_knowledge_graph_queries"
-    description = (
-        "Query the code knowledge graph using multiple natural language questions"
-    )
+    name="Ask Knowledge Graph Queries",
+    description="""
+    Query the code knowledge graph using multiple natural language questions.
+    The knowledge graph contains information about every function, class, and file in the codebase.
+    This tool allows asking multiple questions about the codebase in a single operation.
+
+    Inputs:
+    - queries (List[str]): A list of natural language questions to ask the knowledge graph. Each question should be
+    clear and concise, related to the codebase, such as "What does the XYZ class do?" or "How is the ABC function used?"
+    - project_id (str): The ID of the project being evaluated, this is a UUID.
+    - node_ids (List[str]): A list of node ids to query, this is an optional parameter that can be used to query a specific node. use this only when you are sure that the answer to the question is related to that node.
+
+    Use this tool when you need to ask multiple related questions about the codebase at once.
+    Do not use this to query code directly.""",
+    
     def __init__(self, sql_db, user_id):
         self.kg_query_url = os.getenv("KNOWLEDGE_GRAPH_URL")
         self.headers = {"Content-Type": "application/json"}

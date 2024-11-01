@@ -21,8 +21,11 @@ class GetCodeFromNodeIdInput(BaseModel):
 
 
 class GetCodeFromNodeIdTool:
-    name = "get_code_from_node_id"
-    description = "Retrieves code and docstring for a specific node id in a repository given its node ID"
+    name="Get Code and docstring From Node ID",
+    description="""Retrieves code and docstring for a specific node id in a repository given its node ID
+                       Inputs for the run method:
+                       - project_id (str): The repository ID to retrieve code and docstring for, this is a UUID.
+                       - node_id (str): The node ID to retrieve code and docstring for, this is a UUID.""",
 
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db

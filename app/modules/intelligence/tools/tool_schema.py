@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple, Union
 
 from pydantic import BaseModel
 
@@ -22,5 +22,5 @@ class ToolParameter(BaseModel):
 class ToolInfo(BaseModel):
     id: str
     name: str
-    description: str
+    description: Union[str, tuple]
     parameters: List[ToolParameter]

@@ -21,10 +21,11 @@ class GetCodeFromMultipleNodeIdsInput(BaseModel):
 
 
 class GetCodeFromMultipleNodeIdsTool:
-    name = "get_code_from_multiple_node_ids"
-    description = (
-        "Retrieves code for multiple node ids in a repository given their node IDs"
-    )
+    name="Get Code and docstring From Multiple Node IDs",
+    description="""Retrieves code and docstring for multiple node ids in a repository given their node IDs
+                Inputs for the run_multiple method:
+                - project_id (str): The repository ID to retrieve code and docstring for, this is a UUID.
+                - node_ids (List[str]): A list of node IDs to retrieve code and docstring for, this is a UUID.""",
 
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db

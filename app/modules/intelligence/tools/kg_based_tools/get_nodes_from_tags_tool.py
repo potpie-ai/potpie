@@ -19,8 +19,22 @@ class GetNodesFromTagsInput(BaseModel):
 
 
 class GetNodesFromTags:
-    name = "get_nodes_from_tags"
-    description = "Get nodes from the knowledge graph based on the provided tags"
+    name="Get Nodes from Tags",
+    description="""
+        Fetch nodes from the knowledge graph based on specified tags. Use this tool to retrieve nodes of specific types for a project.
+
+        Input:
+        - tags (List[str]): A list of tags to filter nodes. Valid tags are:
+        API, WEBSOCKET, PRODUCER, CONSUMER, DATABASE, SCHEMA, EXTERNAL_SERVICE, CONFIGURATION, SCRIPT
+        - project_id (str): The UUID of the project being evaluated
+
+        Usage guidelines:
+        1. Use for broad queries requiring ALL nodes of specific types.
+        2. Limit to 1-2 tags per query for best results.
+        3. Returns file paths, docstrings, text, node IDs, and names.
+        4. List cannot be empty.
+
+        Example: To find all API endpoints, use tags=['API']""",
     def __init__(self, sql_db, user_id):
         self.sql_db = sql_db
         self.user_id = user_id
