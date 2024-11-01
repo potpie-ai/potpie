@@ -24,10 +24,7 @@ def upgrade() -> None:
     op.add_column(
         "conversations",
         sa.Column(
-            "visibility",
-            sa.Enum("PRIVATE", "PUBLIC", name="visibility"),
-            nullable=False,
-            server_default="PRIVATE",
+            "visibility", sa.Enum("PRIVATE", "PUBLIC", name="visibility"), nullable=True
         ),
     )
 
