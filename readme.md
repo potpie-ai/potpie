@@ -80,7 +80,7 @@ Potpie is designed to be flexible and customizable. Here are key areas to person
 
 ### 1. System Prompts Configuration
 
-Modify the system prompts to align with your organization's tone and terminology. 
+Modify the system prompts to align with your organization's tone and terminology.
 
 **Edit Prompt Text**: In `app/modules/intelligence/prompts/system_prompt_setup.py`, update the `system_prompts` lists to change the text for each agent.
 

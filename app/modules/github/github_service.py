@@ -254,24 +254,23 @@ class GithubService:
             raise HTTPException(
                 status_code=500, detail=f"Failed to fetch repositories: {str(e)}"
             )
+
     async def get_combined_user_repos(self, user_id: str):
         parsed_repos = await self.project_manager.list_projects(user_id)
         project_list = [
             {
                 "id": project["id"],
-                "name": project["repo_name"].split('/')[-1],
+                "name": project["repo_name"].split("/")[-1],
                 "full_name": project["repo_name"],
                 "private": False,
                 "url": f"https://github.com/{project['repo_name']}",
-                "owner": project["repo_name"].split('/')[0]
+                "owner": project["repo_name"].split("/")[0],
             }
             for project in parsed_repos
         ]
         user_repo_response = await self.get_repos_for_user(user_id)
         user_repos = user_repo_response["repositories"]
-        combined_repos = {
-            "repositories": project_list + user_repos
-        }
+        combined_repos = {"repositories": project_list + user_repos}
         combined_repos["repositories"] = list(reversed(combined_repos["repositories"]))
         return combined_repos
 
