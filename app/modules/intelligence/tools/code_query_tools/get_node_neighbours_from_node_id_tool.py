@@ -1,10 +1,10 @@
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
 from langchain_core.tools import StructuredTool, Tool
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
-import asyncio
 
 from app.core.config_provider import config_provider
 from app.modules.intelligence.tools.tool_schema import ToolParameter
@@ -36,7 +36,6 @@ class GetNodeNeighboursFromNodeIdTool:
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
 
-
     async def arun(self, project_id: str, node_ids: List[str]) -> Dict[str, Any]:
         return await asyncio.to_thread(self.run, project_id, node_ids)
 
@@ -62,7 +61,7 @@ class GetNodeNeighboursFromNodeIdTool:
         except Exception as e:
             logging.exception(f"An unexpected error occurred: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
-        
+
     def _get_neighbors(
         self, project_id: str, node_ids: List[str]
     ) -> Optional[List[Dict[str, Any]]]:

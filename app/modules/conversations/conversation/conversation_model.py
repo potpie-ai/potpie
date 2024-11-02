@@ -2,7 +2,7 @@ import enum
 
 from sqlalchemy import ARRAY, TIMESTAMP, Column
 from sqlalchemy import Enum as SQLAEnum
-from sqlalchemy import ForeignKey, String, func, Boolean
+from sqlalchemy import ForeignKey, String, func
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import relationship
 
@@ -15,9 +15,11 @@ class ConversationStatus(enum.Enum):
     ARCHIVED = "archived"
     DELETED = "deleted"
 
+
 class Visibility(enum.Enum):
     PRIVATE = "private"
     PUBLIC = "public"
+
 
 class Conversation(Base):
     __tablename__ = "conversations"
@@ -43,7 +45,9 @@ class Conversation(Base):
         nullable=False,
     )
     shared_with_emails = Column(ARRAY(String), nullable=True)
-    visibility = Column(SQLAEnum(Visibility), default=Visibility.PRIVATE, nullable=False)
+    visibility = Column(
+        SQLAEnum(Visibility), default=Visibility.PRIVATE, nullable=False
+    )
     # Relationships
     user = relationship("User", back_populates="conversations")
     messages = relationship(

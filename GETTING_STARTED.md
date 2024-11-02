@@ -113,7 +113,7 @@ curl -X 'POST' \
 ```
 ## Step 6: Send Messages in a Conversation
 
-This API returns a stream response for the 
+This API returns a stream response for the
 ```bash
 curl -X 'POST' \
   'http://localhost:8001/api/v1/conversations/1234/message/' \

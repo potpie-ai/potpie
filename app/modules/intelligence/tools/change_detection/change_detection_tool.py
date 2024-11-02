@@ -44,14 +44,16 @@ class ChangeDetectionResponse(BaseModel):
 
 
 class ChangeDetectionTool:
-    name="Get code changes",
-    description="""
+    name = ("Get code changes",)
+    description = (
+        """
             Get the changes in the codebase.
             This tool analyzes the differences between branches in a Git repository and retrieves updated function details, including their entry points and citations.
             Inputs for the get_code_changes method:
             - project_id (str): The ID of the project being evaluated, this is a UUID.
             The output includes a dictionary of file patches and a list of changes with updated code and entry point code.
             """,
+    )
 
     def __init__(self, sql_db, user_id):
         self.sql_db = sql_db
@@ -144,7 +146,7 @@ class ChangeDetectionTool:
         RETURN start, collect({{neighbor: neighbor{', body: neighbor.body' if with_bodies else ''}}}) AS neighbors
         """
         endpoint_id = node_id
-        result = tx.run(query, endpoint_id ,project_id)
+        result = tx.run(query, endpoint_id, project_id)
         record = result.single()
         if not record:
             return []
@@ -305,12 +307,13 @@ class ChangeDetectionTool:
                 required=True,
             ),
         ]
-    
+
     async def arun(self, project_id: str) -> str:
         return await self.get_code_changes(project_id)
-    
+
     def run(self, project_id: str) -> str:
         return asyncio.run(self.get_code_changes(project_id))
+
 
 def get_change_detection_tool(user_id: str) -> Tool:
     """

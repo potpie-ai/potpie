@@ -36,14 +36,14 @@ class GetCodeFromNodeNameTool:
 
     async def arun(self, project_id: str, node_name: str) -> Dict[str, Any]:
         return await asyncio.to_thread(self.run, project_id, node_name)
-    
+
     def run(self, project_id: str, node_name: str) -> Dict[str, Any]:
         project = asyncio.run(
             ProjectService(self.sql_db).get_project_repo_details_from_db(
                 project_id, self.user_id
             )
         )
-        
+
         if not project:
             raise ValueError(
                 f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
@@ -62,7 +62,9 @@ class GetCodeFromNodeNameTool:
             project = self._get_project(project_id)
             if not project:
                 logger.error(f"Project with ID '{project_id}' not found in database")
-                return {"error": f"Project with ID '{project_id}' not found in database"}
+                return {
+                    "error": f"Project with ID '{project_id}' not found in database"
+                }
 
             return self._process_result(node_data, project, node_name)
         except Exception as e:

@@ -19,8 +19,9 @@ class GetNodesFromTagsInput(BaseModel):
 
 
 class GetNodesFromTags:
-    name="Get Nodes from Tags",
-    description="""
+    name = ("Get Nodes from Tags",)
+    description = (
+        """
         Fetch nodes from the knowledge graph based on specified tags. Use this tool to retrieve nodes of specific types for a project.
 
         Input:
@@ -35,6 +36,8 @@ class GetNodesFromTags:
         4. List cannot be empty.
 
         Example: To find all API endpoints, use tags=['API']""",
+    )
+
     def __init__(self, sql_db, user_id):
         self.sql_db = sql_db
         self.user_id = user_id
@@ -56,8 +59,11 @@ class GetNodesFromTags:
            * EXTERNAL_SERVICE: Does the code make HTTP requests to external services? Check for HTTP client usage or request handling.
         - project_id (str): The ID of the project being evaluated, this is a UUID.
         """
-        project = asyncio.run(ProjectService(self.sql_db).get_project_repo_details_from_db(
-                project_id, self.user_id))
+        project = asyncio.run(
+            ProjectService(self.sql_db).get_project_repo_details_from_db(
+                project_id, self.user_id
+            )
+        )
         if not project:
             raise ValueError(
                 f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"

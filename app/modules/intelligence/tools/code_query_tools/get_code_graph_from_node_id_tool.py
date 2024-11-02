@@ -54,7 +54,9 @@ class GetCodeGraphFromNodeIdTool:
         try:
             project = self._get_project(project_id)
             if not project:
-                return {"error": f"Project with ID '{project_id}' not found in database"}
+                return {
+                    "error": f"Project with ID '{project_id}' not found in database"
+                }
 
             graph_data = self._get_graph_data(project_id, node_id)
             if not graph_data:
@@ -71,7 +73,9 @@ class GetCodeGraphFromNodeIdTool:
         """Retrieve project from the database."""
         return self.sql_db.query(Project).filter(Project.id == project_id).first()
 
-    def _get_graph_data(self, project_id: str, node_id: str) -> Optional[Dict[str, Any]]:
+    def _get_graph_data(
+        self, project_id: str, node_id: str
+    ) -> Optional[Dict[str, Any]]:
         """Retrieve graph data from Neo4j."""
         query = """
         MATCH (start:NODE {node_id: $node_id, repoId: $project_id})

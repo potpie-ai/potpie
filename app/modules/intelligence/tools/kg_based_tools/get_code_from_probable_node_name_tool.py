@@ -25,11 +25,13 @@ class GetCodeFromProbableNodeNameInput(BaseModel):
 
 
 class GetCodeFromProbableNodeNameTool:
-    name="Get Code and docstring From Probable Node Name",
-    description="""Retrieves code and docstring for the closest node name in a repository. Node names are in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path',
+    name = ("Get Code and docstring From Probable Node Name",)
+    description = (
+        """Retrieves code and docstring for the closest node name in a repository. Node names are in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path',
                 Useful to extract code for a function or file mentioned in a stacktrace or error message. Inputs for the get_code_from_probable_node_name method:
                 - project_id (str): The project ID to retrieve code and docstring for, this is ALWAYS a UUID.
                 - probable_node_names (List[str]): A list of probable node names in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path'. This CANNOT be a UUID.""",
+    )
 
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db
@@ -78,18 +80,21 @@ class GetCodeFromProbableNodeNameTool:
             for name in probable_node_names
         ]
         return await asyncio.gather(*tasks)
-    
-    async def arun(self, project_id: str, probable_node_names: List[str]) -> List[Dict[str, Any]]:
+
+    async def arun(
+        self, project_id: str, probable_node_names: List[str]
+    ) -> List[Dict[str, Any]]:
         return await asyncio.to_thread(self.run, project_id, probable_node_names)
 
-    def run(self, project_id: str, probable_node_names: List[str]) -> List[Dict[str, Any]]:
-        return asyncio.run( asyncio.to_thread(
-            self.get_code_from_probable_node_name,
-            project_id,
-            probable_node_names
-        ))
+    def run(
+        self, project_id: str, probable_node_names: List[str]
+    ) -> List[Dict[str, Any]]:
+        return asyncio.run(
+            asyncio.to_thread(
+                self.get_code_from_probable_node_name, project_id, probable_node_names
+            )
+        )
 
-    
     def get_code_from_probable_node_name(
         self, project_id: str, probable_node_names: List[str]
     ) -> List[Dict[str, Any]]:
@@ -113,7 +118,9 @@ class GetCodeFromProbableNodeNameTool:
         try:
             node_data = self._get_node_data(project_id, node_id)
             if not node_data:
-                logger.error(f"Node with ID '{node_id}' not found in repo '{project_id}'")
+                logger.error(
+                    f"Node with ID '{node_id}' not found in repo '{project_id}'"
+                )
                 return {
                     "error": f"Node with ID '{node_id}' not found in repo '{project_id}'"
                 }
@@ -121,7 +128,9 @@ class GetCodeFromProbableNodeNameTool:
             project = self._get_project(project_id)
             if not project:
                 logger.error(f"Project with ID '{project_id}' not found in database")
-                return {"error": f"Project with ID '{project_id}' not found in database"}
+                return {
+                    "error": f"Project with ID '{project_id}' not found in database"
+                }
 
             return self._process_result(node_data, project, node_id)
         except Exception as e:
@@ -202,6 +211,7 @@ class GetCodeFromProbableNodeNameTool:
                 required=True,
             ),
         ]
+
 
 def get_code_from_probable_node_name_tool(
     sql_db: Session, user_id: str

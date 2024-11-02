@@ -21,11 +21,13 @@ class GetCodeFromMultipleNodeIdsInput(BaseModel):
 
 
 class GetCodeFromMultipleNodeIdsTool:
-    name="Get Code and docstring From Multiple Node IDs",
-    description="""Retrieves code and docstring for multiple node ids in a repository given their node IDs
+    name = ("Get Code and docstring From Multiple Node IDs",)
+    description = (
+        """Retrieves code and docstring for multiple node ids in a repository given their node IDs
                 Inputs for the run_multiple method:
                 - project_id (str): The repository ID to retrieve code and docstring for, this is a UUID.
                 - node_ids (List[str]): A list of node IDs to retrieve code and docstring for, this is a UUID.""",
+    )
 
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db
@@ -43,14 +45,18 @@ class GetCodeFromMultipleNodeIdsTool:
         return await asyncio.to_thread(self.run, project_id, node_ids)
 
     def run(self, project_id: str, node_ids: List[str]) -> Dict[str, Any]:
-        return asyncio.run( self.run_multiple(project_id, node_ids))
+        return asyncio.run(self.run_multiple(project_id, node_ids))
 
-    async def run_multiple(self, project_id: str, node_ids: List[str]) -> Dict[str, Any]:
+    async def run_multiple(
+        self, project_id: str, node_ids: List[str]
+    ) -> Dict[str, Any]:
         try:
             project = self._get_project(project_id)
             if not project:
                 logger.error(f"Project with ID '{project_id}' not found in database")
-                return {"error": f"Project with ID '{project_id}' not found in database"}
+                return {
+                    "error": f"Project with ID '{project_id}' not found in database"
+                }
             if project.user_id != self.user_id:
                 raise ValueError(
                     f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
@@ -78,7 +84,9 @@ class GetCodeFromMultipleNodeIdsTool:
         if node_data:
             return self._process_result(node_data, project, node_id)
         else:
-            return {"error": f"Node with ID '{node_id}' not found in repo '{project_id}'"}
+            return {
+                "error": f"Node with ID '{node_id}' not found in repo '{project_id}'"
+            }
 
     def _get_node_data(self, project_id: str, node_id: str) -> Dict[str, Any]:
         query = """

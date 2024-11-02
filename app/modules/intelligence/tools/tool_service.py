@@ -5,6 +5,9 @@ from sqlalchemy.orm import Session
 from app.modules.intelligence.tools.change_detection.change_detection_tool import (
     ChangeDetectionTool,
 )
+from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
+    GetCodeFileStructureTool,
+)
 from app.modules.intelligence.tools.code_query_tools.get_code_from_node_name_tool import (
     GetCodeFromNodeNameTool,
 )
@@ -14,7 +17,9 @@ from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id
 from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_name_tool import (
     GetCodeGraphFromNodeNameTool,
 )
-from app.modules.intelligence.tools.code_query_tools.get_node_neighbours_from_node_id_tool import GetNodeNeighboursFromNodeIdTool
+from app.modules.intelligence.tools.code_query_tools.get_node_neighbours_from_node_id_tool import (
+    GetNodeNeighboursFromNodeIdTool,
+)
 from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import (
     KnowledgeGraphQueryTool,
 )
@@ -29,9 +34,6 @@ from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_n
 )
 from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool import (
     GetNodesFromTags,
-)
-from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
-    GetCodeFileStructureTool,
 )
 from app.modules.intelligence.tools.tool_schema import ToolInfo, ToolParameter
 
@@ -56,35 +58,34 @@ class ToolService:
             ),
             "get_nodes_from_tags": GetNodesFromTags(self.db, self.user_id),
             "get_code_from_node_name": GetCodeFromNodeNameTool(self.db, self.user_id),
-            "get_code_graph_from_node_id": GetCodeGraphFromNodeIdTool(
-                self.db
-            ),
-            "get_code_graph_from_node_name": GetCodeGraphFromNodeNameTool(
-                self.db
-            ),
+            "get_code_graph_from_node_id": GetCodeGraphFromNodeIdTool(self.db),
+            "get_code_graph_from_node_name": GetCodeGraphFromNodeNameTool(self.db),
             "change_detection": ChangeDetectionTool(self.db, self.user_id),
             "get_code_file_structure": GetCodeFileStructureTool(self.db),
-            "get_node_neighbours_from_node_id": GetNodeNeighboursFromNodeIdTool(self.db),
+            "get_node_neighbours_from_node_id": GetNodeNeighboursFromNodeIdTool(
+                self.db
+            ),
         }
-    
+
     async def run_tool(self, tool_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
         tool = self.tools.get(tool_id)
         if not tool:
             raise ValueError(f"Invalid tool_id: {tool_id}")
-        
+
         # If the tool has an arun method, use it
-        if hasattr(tool, 'arun'):
+        if hasattr(tool, "arun"):
             # Get the expected parameters from the tool's get_parameters method
             expected_params = {}
-            if hasattr(tool, 'get_parameters'):
+            if hasattr(tool, "get_parameters"):
                 expected_params = {param.name for param in tool.get_parameters()}
-            
+
             # Filter out unexpected parameters
             filtered_params = {
-                key: value for key, value in params.items() 
+                key: value
+                for key, value in params.items()
                 if not expected_params or key in expected_params
             }
-            
+
             return await tool.arun(**filtered_params)
         else:
             raise ValueError(f"Tool {tool.__class__.__name__} has no arun method")

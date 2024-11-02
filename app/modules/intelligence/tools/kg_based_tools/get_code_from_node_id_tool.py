@@ -21,11 +21,13 @@ class GetCodeFromNodeIdInput(BaseModel):
 
 
 class GetCodeFromNodeIdTool:
-    name="Get Code and docstring From Node ID",
-    description="""Retrieves code and docstring for a specific node id in a repository given its node ID
+    name = ("Get Code and docstring From Node ID",)
+    description = (
+        """Retrieves code and docstring for a specific node id in a repository given its node ID
                        Inputs for the run method:
                        - project_id (str): The repository ID to retrieve code and docstring for, this is a UUID.
                        - node_id (str): The node ID to retrieve code and docstring for, this is a UUID.""",
+    )
 
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db
@@ -38,7 +40,7 @@ class GetCodeFromNodeIdTool:
             neo4j_config["uri"],
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
-    
+
     async def arun(self, project_id: str, node_id: str) -> Dict[str, Any]:
         return await asyncio.to_thread(self.run, project_id, node_id)
 
@@ -47,7 +49,9 @@ class GetCodeFromNodeIdTool:
         try:
             node_data = self._get_node_data(project_id, node_id)
             if not node_data:
-                logger.error(f"Node with ID '{node_id}' not found in repo '{project_id}'")
+                logger.error(
+                    f"Node with ID '{node_id}' not found in repo '{project_id}'"
+                )
                 return {
                     "error": f"Node with ID '{node_id}' not found in repo '{project_id}'"
                 }
@@ -55,7 +59,9 @@ class GetCodeFromNodeIdTool:
             project = self._get_project(project_id)
             if not project:
                 logger.error(f"Project with ID '{project_id}' not found in database")
-                return {"error": f"Project with ID '{project_id}' not found in database"}
+                return {
+                    "error": f"Project with ID '{project_id}' not found in database"
+                }
             if project.user_id != self.user_id:
                 raise ValueError(
                     f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
