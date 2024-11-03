@@ -109,23 +109,6 @@ class GetNodeNeighboursFromNodeIdTool:
         if hasattr(self, "neo4j_driver"):
             self.neo4j_driver.close()
 
-    @staticmethod
-    def get_parameters() -> List[ToolParameter]:
-        return [
-            ToolParameter(
-                name="project_id",
-                type="string",
-                description="The repository ID, this is a UUID",
-                required=True,
-            ),
-            ToolParameter(
-                name="node_ids",
-                type="array",
-                description="List of node IDs to retrieve code from",
-                required=True,
-            ),
-        ]
-
 
 def get_node_neighbours_from_node_id_tool(sql_db: Session) -> Tool:
     tool_instance = GetNodeNeighboursFromNodeIdTool(sql_db)

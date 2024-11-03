@@ -79,15 +79,17 @@ class GetCodeFromNodeIdTool:
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
     def _get_node_data(self, project_id: str, node_id: str) -> Dict[str, Any]:
+        print(f"Getting node data for project_id: {project_id} and node_id: {node_id}")
         query = """
         MATCH (n:NODE {node_id: $node_id, repoId: $project_id})
         RETURN n.file_path AS file_path, n.start_line AS start_line, n.end_line AS end_line, n.text as code, n.docstring as docstring
         """
         with self.neo4j_driver.session() as session:
-            result = session.run(query, node_id=node_id, repo_id=project_id)
+            result = session.run(query, node_id=node_id, project_id=project_id)
             return result.single()
 
     def _get_project(self, project_id: str) -> Project:
+        print(f"Getting project for project_id: {project_id}")
         return self.sql_db.query(Project).filter(Project.id == project_id).first()
 
     def _process_result(
@@ -133,24 +135,6 @@ class GetCodeFromNodeIdTool:
     def __del__(self):
         if hasattr(self, "neo4j_driver"):
             self.neo4j_driver.close()
-
-    @staticmethod
-    def get_parameters() -> List[ToolParameter]:
-        return [
-            ToolParameter(
-                name="project_id",
-                type="string",
-                description="The repository ID or the project ID,  this is a UUID",
-                required=True,
-            ),
-            ToolParameter(
-                name="node_id",
-                type="string",
-                description="The node ID to retrieve code from",
-                required=True,
-            ),
-        ]
-
 
 def get_code_from_node_id_tool(sql_db: Session, user_id: str) -> StructuredTool:
     tool_instance = GetCodeFromNodeIdTool(sql_db, user_id)

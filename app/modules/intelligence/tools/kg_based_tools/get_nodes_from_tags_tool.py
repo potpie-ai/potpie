@@ -87,23 +87,6 @@ class GetNodesFromTags:
         ).query_graph(query)
         return nodes
 
-    @staticmethod
-    def get_parameters() -> List[ToolParameter]:
-        return [
-            ToolParameter(
-                name="tags",
-                type="array",
-                description="A list of tags to filter nodes. Valid tags are: API, WEBSOCKET, PRODUCER, CONSUMER, DATABASE, SCHEMA, EXTERNAL_SERVICE, CONFIGURATION, SCRIPT",
-                required=True,
-            ),
-            ToolParameter(
-                name="project_id",
-                type="string",
-                description="The project ID or repository ID (UUID)",
-                required=True,
-            ),
-        ]
-
 
 def get_nodes_from_tags_tool(sql_db, user_id) -> StructuredTool:
     return StructuredTool.from_function(

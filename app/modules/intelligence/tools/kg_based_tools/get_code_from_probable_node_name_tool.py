@@ -204,24 +204,6 @@ class GetCodeFromProbableNodeNameTool:
         if hasattr(self, "neo4j_driver"):
             self.neo4j_driver.close()
 
-    @staticmethod
-    def get_parameters() -> List[ToolParameter]:
-        return [
-            ToolParameter(
-                name="project_id",
-                type="string",
-                description="The project ID, this is a UUID",
-                required=True,
-            ),
-            ToolParameter(
-                name="probable_node_names",
-                type="array",
-                description="List of probable node names in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path'",
-                required=True,
-            ),
-        ]
-
-
 def get_code_from_probable_node_name_tool(
     sql_db: Session, user_id: str
 ) -> StructuredTool:

@@ -89,7 +89,7 @@ class GetCodeFromNodeNameTool:
         RETURN n.file_path AS file, n.start_line AS start_line, n.end_line AS end_line, n.node_id AS node_id
         """
         with self.neo4j_driver.session() as session:
-            result = session.run(query, node_name=node_name, repo_id=project_id)
+            result = session.run(query, node_name=node_name, project_id=project_id)
             return result.single()
 
     def _get_project(self, project_id: str) -> Project:
@@ -140,24 +140,6 @@ class GetCodeFromNodeNameTool:
     def __del__(self):
         if hasattr(self, "neo4j_driver"):
             self.neo4j_driver.close()
-
-    @staticmethod
-    def get_parameters() -> List[ToolParameter]:
-        return [
-            ToolParameter(
-                name="project_id",
-                type="string",
-                description="The repository ID (UUID)",
-                required=True,
-            ),
-            ToolParameter(
-                name="node_name",
-                type="string",
-                description="The name of the node to retrieve code from",
-                required=True,
-            ),
-        ]
-
 
 def get_code_from_node_name_tool(sql_db: Session, user_id: str) -> Tool:
     tool_instance = GetCodeFromNodeNameTool(sql_db, user_id)

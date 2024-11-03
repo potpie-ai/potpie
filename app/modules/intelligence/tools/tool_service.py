@@ -74,19 +74,7 @@ class ToolService:
 
         # If the tool has an arun method, use it
         if hasattr(tool, "arun"):
-            # Get the expected parameters from the tool's get_parameters method
-            expected_params = {}
-            if hasattr(tool, "get_parameters"):
-                expected_params = {param.name for param in tool.get_parameters()}
-
-            # Filter out unexpected parameters
-            filtered_params = {
-                key: value
-                for key, value in params.items()
-                if not expected_params or key in expected_params
-            }
-
-            return await tool.arun(**filtered_params)
+            return await tool.arun(**params)
         else:
             raise ValueError(f"Tool {tool.__class__.__name__} has no arun method")
 
@@ -96,12 +84,7 @@ class ToolService:
                 id=tool_id,
                 name=tool.__class__.__name__,
                 description=tool.description,
-                parameters=self._get_tool_parameters(tool),
+                # parameters=self._get_tool_parameters(tool),
             )
             for tool_id, tool in self.tools.items()
         ]
-
-    def _get_tool_parameters(self, tool: Any) -> List[ToolParameter]:
-        if hasattr(tool, "get_parameters"):
-            return tool.get_parameters()
-        return []

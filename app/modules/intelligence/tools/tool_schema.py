@@ -23,4 +23,4 @@ class ToolInfo(BaseModel):
     id: str
     name: str
     description: Union[str, tuple]
-    parameters: List[ToolParameter]
+    # parameters: List[ToolParameter]

@@ -300,17 +300,6 @@ class ChangeDetectionTool:
                 if github:
                     github.close()
 
-    @staticmethod
-    def get_parameters() -> List[ToolParameter]:
-        return [
-            ToolParameter(
-                name="project_id",
-                type="string",
-                description="The repository ID or the project ID (UUID)",
-                required=True,
-            ),
-        ]
-
     async def arun(self, project_id: str) -> str:
         return await self.get_code_changes(project_id)
 

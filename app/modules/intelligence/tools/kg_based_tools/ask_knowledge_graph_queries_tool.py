@@ -57,28 +57,6 @@ class KnowledgeGraphQueryTool:
         self.user_id = user_id
         self.sql_db = sql_db
 
-    @staticmethod
-    def get_parameters() -> List[ToolParameter]:
-        return [
-            ToolParameter(
-                name="queries",
-                type="array",
-                description="A list of natural language questions to ask the knowledge graph",
-                required=True,
-            ),
-            ToolParameter(
-                name="project_id",
-                type="string",
-                description="The project ID metadata for the project being evaluated",
-                required=True,
-            ),
-            ToolParameter(
-                name="node_ids",
-                type="array",
-                description="Optional list of node IDs to query",
-                required=False,
-            ),
-        ]
 
     async def ask_multiple_knowledge_graph_queries(
         self, queries: List[QueryRequest]

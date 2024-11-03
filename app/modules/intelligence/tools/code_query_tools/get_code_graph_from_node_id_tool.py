@@ -121,7 +121,7 @@ class GetCodeGraphFromNodeIdTool:
         } as node_data
         """
         with self.neo4j_driver.session() as session:
-            result = session.run(query, node_id=node_id, repo_id=project_id)
+            result = session.run(query, node_id=node_id, project_id=project_id)
             nodes = [record["node_data"] for record in result]
             if not nodes:
                 return None
@@ -207,23 +207,6 @@ class GetCodeGraphFromNodeIdTool:
         """Ensure Neo4j driver is closed when the object is destroyed."""
         if hasattr(self, "neo4j_driver"):
             self.neo4j_driver.close()
-
-    @staticmethod
-    def get_parameters() -> List[ToolParameter]:
-        return [
-            ToolParameter(
-                name="project_id",
-                type="string",
-                description="The repository ID (UUID)",
-                required=True,
-            ),
-            ToolParameter(
-                name="node_id",
-                type="string",
-                description="The ID of the node to retrieve the code graph from",
-                required=True,
-            ),
-        ]
 
 
 def get_code_graph_from_node_id_tool(sql_db: Session) -> Tool:
