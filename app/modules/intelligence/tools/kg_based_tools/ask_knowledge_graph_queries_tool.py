@@ -31,22 +31,25 @@ class MultipleKnowledgeGraphQueriesInput(BaseModel):
 
 
 class KnowledgeGraphQueryTool:
-    name = ("Ask Knowledge Graph Queries",)
-    description = (
-        """
-    Query the code knowledge graph using multiple natural language questions.
+    name = "Ask Knowledge Graph Queries"
+    description = """Query the code knowledge graph using natural language questions.
     The knowledge graph contains information about every function, class, and file in the codebase.
     This tool allows asking multiple questions about the codebase in a single operation.
+      Use this tool when you need to ask multiple related questions about the codebase at once.
+    Do not use this to query code directly. The inputs structure is as foillowing
+        :param queries: array, list of natural language questions to ask about the codebase.
+        :param project_id: string, the project ID (UUID).
+        :param node_ids: array, optional list of node IDs to query (use when answer relates to specific nodes).
 
-    Inputs:
-    - queries (List[str]): A list of natural language questions to ask the knowledge graph. Each question should be
-    clear and concise, related to the codebase, such as "What does the XYZ class do?" or "How is the ABC function used?"
-    - project_id (str): The ID of the project being evaluated, this is a UUID.
-    - node_ids (List[str]): A list of node ids to query, this is an optional parameter that can be used to query a specific node. use this only when you are sure that the answer to the question is related to that node.
-
-    Use this tool when you need to ask multiple related questions about the codebase at once.
-    Do not use this to query code directly.""",
-    )
+            example:
+            {
+                "queries": ["What does the UserService class do?", "How is authentication implemented?"],
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                "node_ids": ["123e4567-e89b-12d3-a456-426614174000"]
+            }
+            
+        Returns list of query responses with relevant code information.
+        """
 
     def __init__(self, sql_db, user_id):
         self.kg_query_url = os.getenv("KNOWLEDGE_GRAPH_URL")

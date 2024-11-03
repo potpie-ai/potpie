@@ -44,16 +44,19 @@ class ChangeDetectionResponse(BaseModel):
 
 
 class ChangeDetectionTool:
-    name = ("Get code changes",)
-    description = (
+    name = "Get code changes"
+    description = """Analyzes differences between branches in a Git repository and retrieves updated function details.
+        :param project_id: string, the ID of the project being evaluated (UUID).
+
+            example:
+            {
+                "project_id": "550e8400-e29b-41d4-a716-446655440000"
+            }
+
+        Returns dictionary containing:
+        - patches: Dict[str, str] - file patches
+        - changes: List[ChangeDetail] - list of changes with updated and entry point code
         """
-            Get the changes in the codebase.
-            This tool analyzes the differences between branches in a Git repository and retrieves updated function details, including their entry points and citations.
-            Inputs for the get_code_changes method:
-            - project_id (str): The ID of the project being evaluated, this is a UUID.
-            The output includes a dictionary of file patches and a list of changes with updated code and entry point code.
-            """,
-    )
 
     def __init__(self, sql_db, user_id):
         self.sql_db = sql_db

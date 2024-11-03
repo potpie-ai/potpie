@@ -15,9 +15,24 @@ class GetCodeGraphFromNodeNameTool:
     """Tool for retrieving a code graph for a specific node in a repository given its node name."""
 
     name = "get_code_graph_from_node_name"
-    description = (
-        "Retrieves a code graph for a specific node in a repository given its node name"
-    )
+    description = """Retrieves a code graph showing relationships between nodes starting from a node with the given name.
+        :param project_id: string, the repository ID (UUID).
+        :param node_name: string, the name of the node in format 'file_path:function_name' or 'file_path:class_name'.
+
+            example:
+            {
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                "node_name": "src/services/UserService.ts:authenticateUser"
+            }
+            
+        Returns dictionary containing:
+        - graph: {
+            name: string - name of the graph
+            repo_name: string - repository name
+            branch_name: string - branch name
+            root_node: object - hierarchical structure of nodes with relationships
+          }
+        """
 
     def __init__(self, sql_db: Session):
         """

@@ -21,13 +21,22 @@ class GetCodeFromMultipleNodeIdsInput(BaseModel):
 
 
 class GetCodeFromMultipleNodeIdsTool:
-    name = ("Get Code and docstring From Multiple Node IDs",)
-    description = (
-        """Retrieves code and docstring for multiple node ids in a repository given their node IDs
-                Inputs for the run_multiple method:
-                - project_id (str): The repository ID to retrieve code and docstring for, this is a UUID.
-                - node_ids (List[str]): A list of node IDs to retrieve code and docstring for, this is a UUID.""",
-    )
+    name = "Get Code and docstring From Multiple Node IDs"
+    description = """Retrieves code and docstring for multiple nodes in a repository.
+        :param project_id: string, the repository ID (UUID).
+        :param node_ids: array, list of node IDs to retrieve code for.
+
+            example:
+            {
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                "node_ids": [
+                    "123e4567-e89b-12d3-a456-426614174000",
+                    "987f6543-e21b-12d3-a456-426614174000"
+                ]
+            }
+            
+        Returns dictionary mapping node IDs to their code content and metadata.
+        """
 
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db

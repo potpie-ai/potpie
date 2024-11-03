@@ -25,13 +25,22 @@ class GetCodeFromProbableNodeNameInput(BaseModel):
 
 
 class GetCodeFromProbableNodeNameTool:
-    name = ("Get Code and docstring From Probable Node Name",)
-    description = (
-        """Retrieves code and docstring for the closest node name in a repository. Node names are in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path',
-                Useful to extract code for a function or file mentioned in a stacktrace or error message. Inputs for the get_code_from_probable_node_name method:
-                - project_id (str): The project ID to retrieve code and docstring for, this is ALWAYS a UUID.
-                - probable_node_names (List[str]): A list of probable node names in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path'. This CANNOT be a UUID.""",
-    )
+    name = "Get Code and docstring From Probable Node Name"
+    description = """Retrieves code for nodes matching probable names in a repository.
+        :param project_id: string, the project ID (UUID).
+        :param probable_node_names: array, list of probable node names in format 'file_path:function_name' or 'file_path:class_name'.
+
+            example:
+            {
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                "probable_node_names": [
+                    "src/services/auth.ts:validateToken",
+                    "src/models/User.ts:User"
+                ]
+            }
+            
+        Returns list of matching nodes with their code content and metadata.
+        """
 
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db
@@ -221,9 +230,20 @@ def get_code_from_probable_node_name_tool(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="Get Code and docstring From Probable Node Name",
-        description="""Retrieves code and docstring for the closest node name in a repository. Node names are in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path',
-                Useful to extract code for a function or file mentioned in a stacktrace or error message. Inputs for the get_code_from_probable_node_name method:
-                - project_id (str): The project ID to retrieve code and docstring for, this is ALWAYS a UUID.
-                - probable_node_names (List[str]): A list of probable node names in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path'. This CANNOT be a UUID.""",
+        description="""Retrieves code for nodes matching probable names in a repository.
+        :param project_id: string, the project ID (UUID).
+        :param probable_node_names: array, list of probable node names in format 'file_path:function_name' or 'file_path:class_name'.
+
+            example:
+            {
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                "probable_node_names": [
+                    "src/services/auth.ts:validateToken",
+                    "src/models/User.ts:User"
+                ]
+            }
+            
+        Returns list of matching nodes with their code content and metadata.
+        """,
         args_schema=GetCodeFromProbableNodeNameInput,
     )

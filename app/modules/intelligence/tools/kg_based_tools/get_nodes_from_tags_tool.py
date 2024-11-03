@@ -19,24 +19,29 @@ class GetNodesFromTagsInput(BaseModel):
 
 
 class GetNodesFromTags:
-    name = ("Get Nodes from Tags",)
-    description = (
-        """
-        Fetch nodes from the knowledge graph based on specified tags. Use this tool to retrieve nodes of specific types for a project.
+    name = "Get Nodes from Tags"
+    description = """Fetch nodes from the knowledge graph based on specified tags.
+        :param tags: array, list of tags to filter nodes by. Valid tags are: API, WEBSOCKET, PRODUCER, CONSUMER, DATABASE, SCHEMA, EXTERNAL_SERVICE, CONFIGURATION, SCRIPT.
+        :param project_id: string, the project ID (UUID).
 
-        Input:
-        - tags (List[str]): A list of tags to filter nodes. Valid tags are:
-        API, WEBSOCKET, PRODUCER, CONSUMER, DATABASE, SCHEMA, EXTERNAL_SERVICE, CONFIGURATION, SCRIPT
-        - project_id (str): The UUID of the project being evaluated
-
+            example:
+            {
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                "tags": ["API", "DATABASE"]
+            }
+            
+        Returns list of nodes with:
+        - file_path: string - path to the file
+        - docstring: string - documentation if available
+        - text: string - node text content
+        - node_id: string - unique identifier
+        - name: string - node name
+        
         Usage guidelines:
-        1. Use for broad queries requiring ALL nodes of specific types.
-        2. Limit to 1-2 tags per query for best results.
-        3. Returns file paths, docstrings, text, node IDs, and names.
-        4. List cannot be empty.
-
-        Example: To find all API endpoints, use tags=['API']""",
-    )
+        1. Use for broad queries requiring ALL nodes of specific types
+        2. Limit to 1-2 tags per query for best results
+        3. List cannot be empty
+        """
 
     def __init__(self, sql_db, user_id):
         self.sql_db = sql_db

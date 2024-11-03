@@ -18,9 +18,18 @@ logger = logging.getLogger(__name__)
 
 class GetCodeFromNodeNameTool:
     name = "get_code_from_node_name"
-    description = (
-        "Retrieves code for a specific node in a repository given its node name"
-    )
+    description = """Retrieves code for a specific node in a repository given its node name.
+        :param project_id: string, the repository ID (UUID).
+        :param node_name: string, the name of the node to retrieve code from.
+
+            example:
+            {
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                "node_name": "src/services/UserService.ts:authenticateUser"
+            }
+            
+        Returns dictionary containing node details including code content and file location.
+        """
 
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db

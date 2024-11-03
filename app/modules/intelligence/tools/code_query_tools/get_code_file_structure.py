@@ -14,7 +14,16 @@ class GetCodeFileStructureToolRequest(BaseModel):
 
 class GetCodeFileStructureTool:
     name = "get_code_file_structure"
-    description = "Retrieve the hierarchical file structure of a specified repository."
+    description = """Retrieve the hierarchical file structure of a specified repository.
+        :param project_id: string, the repository ID (UUID) to get the file structure for.
+
+            example:
+            {
+                "project_id": "550e8400-e29b-41d4-a716-446655440000"
+            }
+            
+        Returns string containing the hierarchical file structure.
+        """
 
     def __init__(self, db: Session):
         self.github_service = GithubService(db)
