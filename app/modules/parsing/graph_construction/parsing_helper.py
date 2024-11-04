@@ -150,15 +150,14 @@ class ParseHelper:
         except requests.exceptions.RequestException as e:
             logger.error(f"Error fetching tarball: {e}")
             return e
-
         tarball_path = os.path.join(
             target_dir,
-            f"{repo.full_name.replace('/', '-')}-{branch.replace('/', '-')}.tar.gz",
+            f"{repo.full_name.replace('/', '-').replace('.', '-')}-{branch.replace('/', '-').replace('.', '-')}.tar.gz",
         )
 
         final_dir = os.path.join(
             target_dir,
-            f"{repo.full_name.replace('/', '-')}-{branch.replace('/', '-')}-{user_id}",
+            f"{repo.full_name.replace('/', '-').replace('.', '-')}-{branch.replace('/', '-').replace('.', '-')}-{user_id}",
         )
 
         try:
@@ -171,6 +170,8 @@ class ParseHelper:
                 extracted_dir = os.path.join(temp_dir, os.listdir(temp_dir)[0])
                 for root, dirs, files in os.walk(extracted_dir):
                     for file in files:
+                        if file.startswith("."):
+                            continue
                         file_path = os.path.join(root, file)
                         if self.is_text_file(file_path):
                             try:
