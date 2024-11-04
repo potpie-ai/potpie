@@ -40,6 +40,7 @@ It provides pre-built agents that are expert on your codebase to perform common 
 - [Our Prebuilt Agents](#prebuilt-agents)
 - [Tooling](#potpies-tooling-system)
 - [Getting Started](#getting-started)
+- [Use Cases](#use-cases)
 - [Custom Agents](#custom-agents-upgrade)
 - [Make Potpie Your Own](#make-potpie-your-own)
 - [Contributing](#contributing)
@@ -182,6 +183,26 @@ curl -X 'GET' \
   messages/?start=0&limit=10' \
   -H 'accept: application/json'
 ```
+
+---
+
+## Use Cases
+
+- **Onboarding**: For developers new to a codebase, this agent can help them understand the codebase and get up to speed quickly. Ask it how to setup a new project, how to run the tests etc
+We tried to onboard ourselves with Potpie to the AgentOps codebase and it worked like a charm : Video [here](https://youtu.be/_mPixNDn2r8).
+
+- **Codebase Understanding**: This agent can answer questions about the codebase, explain functions, features, and architecture. Ask it how a feature works, what does a function do, how to change a function etc.
+We used this agent to understand the underlying root cause in CrewAI codebase when there was no answer in its docs : Video [here](https://www.linkedin.com/posts/dhirenmathur_what-do-you-do-when-youre-stuck-and-even-activity-7256704603977613312-8X8G).
+
+- **Low level design**: Before writing that first line of code, it is important to know what all would be the dependencies etc. This agent takes your functional requirements as an input and then generates a low level design for the feature. The output will consist of which files need to be changed, what all functions need to be added etc.
+We fed an open issue from the Portkey-AI/Gateway project to this agent to generate a low level design for it: Video [here](https://www.linkedin.com/posts/dhirenmathur_potpie-ai-agents-vs-llms-i-am-extremely-activity-7255607456448286720-roOC).
+
+- **Reviewing code changes**: Every commit to the codebase has the potential to be a breaking change. Use this agent to understand the functional impact of the changes in the codebase. It compares the code changes with the default branch and computes the blast radius of the changes. 
+Here we analyse a PR from the mem0 codebase and understand its blast radius : Video [here](https://www.linkedin.com/posts/dhirenmathur_prod-is-down-three-words-every-activity-7257007131613122560-o4A7).
+
+- **Debugging**: Debugging is an iterative process that usually follows a set of well known steps. This agent emulates those steps and can be used to debug issues in the codebase. It takes a stacktrace as an input and then generates a list of steps that can be used to debug the issue. 
+
+- **Unit and Integration testing**: Use the Unit Test Agent to generate unit test plans and code for individual functions to enhance test coverage, similarly use the Integration Test Agent to generate integration test plans and code for flows to ensure components work together properly. These agents are highly contextual and will use the codebase graph to gather context for generating the tests.
 
 ---
 
