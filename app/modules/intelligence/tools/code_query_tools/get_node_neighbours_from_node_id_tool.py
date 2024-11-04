@@ -56,7 +56,7 @@ class GetNodeNeighboursFromNodeIdTool:
         except Exception as e:
             logging.exception(f"An unexpected error occurred: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
-        
+
     async def run(self, project_id: str, node_ids: List[str]) -> Dict[str, Any]:
         """
         Run the tool to retrieve neighbors of the specified nodes.
