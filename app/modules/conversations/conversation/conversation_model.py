@@ -45,9 +45,7 @@ class Conversation(Base):
         nullable=False,
     )
     shared_with_emails = Column(ARRAY(String), nullable=True)
-    visibility = Column(
-        SQLAEnum(Visibility), default=Visibility.PRIVATE, nullable=True
-    )
+    visibility = Column(SQLAEnum(Visibility), default=Visibility.PRIVATE, nullable=True)
     # Relationships
     user = relationship("User", back_populates="conversations")
     messages = relationship(

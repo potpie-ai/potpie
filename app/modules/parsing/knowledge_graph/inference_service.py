@@ -428,11 +428,11 @@ class InferenceService:
         )
 
         await self.search_service.commit_indices()
-        entry_points = self.get_entry_points(repo_id)
-        logger.info(
-            f"DEBUGNEO4J: After get entry points, Repo ID: {repo_id}, Entry points: {len(entry_points)}"
-        )
-        self.log_graph_stats(repo_id)
+        # entry_points = self.get_entry_points(repo_id)
+        # logger.info(
+        #     f"DEBUGNEO4J: After get entry points, Repo ID: {repo_id}, Entry points: {len(entry_points)}"
+        # )
+        # self.log_graph_stats(repo_id)
         # entry_points_neighbors = {}
         # for entry_point in entry_points:
         #     neighbors = self.get_neighbours(entry_point, repo_id)
@@ -455,17 +455,15 @@ class InferenceService:
                         f"Parsing project {repo_id}: Invalid response from LLM. Not an instance of DocstringResponse. Retrying..."
                     )
                     response = await self.generate_response(batch, repo_id)
+                if isinstance(response, DocstringResponse):
+                    self.update_neo4j_with_docstrings(repo_id, response)
                 return response
 
         tasks = [process_batch(batch) for batch in batches]
         results = await asyncio.gather(*tasks)
 
         for result in results:
-            if isinstance(result, DocstringResponse):
-                all_docstrings["docstrings"] = (
-                    all_docstrings["docstrings"] + result.docstrings
-            )
-            else:
+            if not isinstance(result, DocstringResponse):
                 logger.error(
                     f"Project {repo_id}: Invalid response from during inference. Manually verify the project completion."
                 )
@@ -602,7 +600,7 @@ class InferenceService:
                     "tags": n.tags,
                     "embedding": self.generate_embedding(n.docstring),
                 }
-                for n in docstrings["docstrings"]
+                for n in docstrings.docstrings
             ]
             project = self.project_manager.get_project_from_db_by_id_sync(repo_id)
             repo_name = project.get("project_name")
@@ -642,14 +640,7 @@ class InferenceService:
             f"DEBUGNEO4J: After generate docstrings, Repo ID: {repo_id}, Docstrings: {len(docstrings)}"
         )
         self.log_graph_stats(repo_id)
-        self.update_neo4j_with_docstrings(repo_id, docstrings)
-        logger.info(
-            f"DEBUGNEO4J: After update neo4j with docstrings, Repo ID: {repo_id}"
-        )
-        self.log_graph_stats(repo_id)
         self.create_vector_index()
-        logger.info(f"DEBUGNEO4J: After create vector index, Repo ID: {repo_id}")
-        self.log_graph_stats(repo_id)
 
     def query_vector_index(
         self,

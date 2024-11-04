@@ -24,7 +24,7 @@ AI agents for your codebase in minutes.
   <br />
 
 
-Potpie parses and understands your codebase by building a knowledge graph out of your code’s components. 
+Potpie parses and understands your codebase by building a knowledge graph out of your code’s components.
 It provides pre-built agents that are expert on your codebase to perform common engineering tasks for you, and also provides the platform for you to build your own custom agents.
 
 <p align="center">
@@ -50,7 +50,7 @@ It provides pre-built agents that are expert on your codebase to perform common 
 
 ## What are Codebase Agents?
 
-AI agents are autonomous tools that have the ability to reason, take decisions and perform actions on their own. They are provided with 'tools' that they can use to perform tasks. Agents are iterative in nature and build on top of the results of the previous iteration in order to perform any task assigned to them. 
+AI agents are autonomous tools that have the ability to reason, take decisions and perform actions on their own. They are provided with 'tools' that they can use to perform tasks. Agents are iterative in nature and build on top of the results of the previous iteration in order to perform any task assigned to them.
 
 Software development is a similarly iterative process and agents can be used to automate and optimize key aspects of software development.
 Things that developers do daily, like dbugging, can be broken down into a series of iterative steps that can be automated by agents.
@@ -61,9 +61,9 @@ For example, debugging can be broken down into:
 4. Testing the hypothesis
 5. Repeating the above steps until the bug is fixed
 
-In order to perform these steps, an agent would need to understand the codebase, the code around the stacktrace, the flow of the code, the project structure etc. 
+In order to perform these steps, an agent would need to understand the codebase, the code around the stacktrace, the flow of the code, the project structure etc.
 
-Potpie parses your codebase and builds a graph tracking relationships between functions, files, classes, etc. We generate inferences for each node and embed and store it in the graph. This can be used to curate the correct context by performing a similarity search based on users query. The graph can also be queried to understand the code flow, it can be queried to understand the project structure etc. 
+Potpie parses your codebase and builds a graph tracking relationships between functions, files, classes, etc. We generate inferences for each node and embed and store it in the graph. This can be used to curate the correct context by performing a similarity search based on users query. The graph can also be queried to understand the code flow, it can be queried to understand the project structure etc.
 
 This allows Potpie's agents to understand the codebase and reason about the code.
 
@@ -197,10 +197,10 @@ We used the Q&A agent to understand the underlying working of a feature of the [
 - **Low level design**: Before writing that first line of code, it is important to know which files and functions need to be changed. This agent takes your functional requirements as an input and then generates a low level design for the feature. The output will consist of which files need to be changed, what all functions need to be added etc.
 We fed an open issue from the [**Portkey-AI/Gateway**](https://github.com/Portkey-AI/Gateway) project to this agent to generate a low level design for it: Video [here](https://www.linkedin.com/posts/dhirenmathur_potpie-ai-agents-vs-llms-i-am-extremely-activity-7255607456448286720-roOC).
 
-- **Reviewing code changes**: Every commit to the codebase has the potential to be a breaking change. Use this agent to understand the functional impact of the changes in the codebase. It compares the code changes with the default branch and computes the blast radius of the changes. 
+- **Reviewing code changes**: Every commit to the codebase has the potential to be a breaking change. Use this agent to understand the functional impact of the changes in the codebase. It compares the code changes with the default branch and computes the blast radius of the changes.
 Here we analyse a PR from the [**mem0ai/mem0**](https://github.com/mem0ai/mem0) codebase and understand its blast radius : Video [here](https://www.linkedin.com/posts/dhirenmathur_prod-is-down-three-words-every-activity-7257007131613122560-o4A7).
 
-- **Debugging**: Debugging is an iterative process that usually follows a set of well known steps. This agent emulates those steps and can be used to debug issues in the codebase. It takes a stacktrace as an input and then generates a list of steps that can be used to debug the issue. 
+- **Debugging**: Debugging is an iterative process that usually follows a set of well known steps. This agent emulates those steps and can be used to debug issues in the codebase. It takes a stacktrace as an input and then generates a list of steps that can be used to debug the issue.
 
 - **Unit and Integration testing**: Use the Unit Test Agent to generate unit test plans and code for individual functions to enhance test coverage, similarly use the Integration Test Agent to generate integration test plans and code for flows to ensure components work together properly. These agents are highly contextual and will use the codebase graph to gather context for generating the tests.
 
@@ -234,7 +234,7 @@ Potpie is designed to be flexible and customizable. Here are key areas to person
 
 ### 1. System Prompts Configuration
 
-Modify the system prompts to align with your organization's tone and terminology. 
+Modify the system prompts to align with your organization's tone and terminology.
 
 **Edit Prompt Text**: In `app/modules/intelligence/prompts/system_prompt_setup.py`, update the `system_prompts` lists to change the text for each agent.
 
