@@ -23,6 +23,14 @@ class ConfigProvider:
     def get_demo_repo_list(self):
         return [
             {
+                "id": "demo5",
+                "name": "cal.com",
+                "full_name": "calcom/cal.com",
+                "private": False,
+                "url": "https://github.com/calcom/cal.com",
+                "owner": "calcom",
+            },
+            {
                 "id": "demo4",
                 "name": "mem0",
                 "full_name": "mem0ai/mem0",
