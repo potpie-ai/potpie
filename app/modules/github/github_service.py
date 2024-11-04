@@ -440,3 +440,11 @@ class GithubService:
                 output.append(f"{new_prefix[:-1]}└── {child['name']}")
 
         return "\n".join(output)
+
+    async def check_public_repo(self, repo_name: str) -> bool:
+        try:
+            github = self.get_public_github_instance()
+            github.get_repo(repo_name)
+            return True
+        except Exception:
+            return False
