@@ -11,7 +11,7 @@ from uuid6 import uuid7
 from app.modules.conversations.conversation.conversation_model import (
     Conversation,
     ConversationStatus,
-    Visibility,
+    Visibility
 )
 from app.modules.conversations.conversation.conversation_schema import (
     ConversationAccessType,
@@ -104,13 +104,11 @@ class ConversationService:
             self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
         )
         if not conversation:
-            return (
-                ConversationAccessType.NOT_FOUND
-            )  # Return 'not found' if conversation doesn't exist
-
+            return ConversationAccessType.NOT_FOUND  # Return 'not found' if conversation doesn't exist
+        
         if conversation.visibility == Visibility.PUBLIC:
             return ConversationAccessType.READ
-
+        
         if user_id == conversation.user_id:  # Check if the user is the creator
             return ConversationAccessType.WRITE  # Creator can write
         # Check if the conversation is shared
