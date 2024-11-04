@@ -27,6 +27,12 @@ AI agents for your codebase in minutes.
 Potpie parses and understands your codebase by building a knowledge graph out of your code’s components. 
 It provides pre-built agents that are expert on your codebase to perform common engineering tasks for you, and also provides the platform for you to build your own custom agents.
 
+<p align="center">
+  <a href="https://app.potpie.ai">
+    <img src="https://github.com/user-attachments/assets/a808e22d-af9b-417f-a904-6410b01852e0" alt="Potpie Dashboard" />
+  </a>
+</p>
+
 ---
 ## Table of Contents
 
@@ -34,10 +40,11 @@ It provides pre-built agents that are expert on your codebase to perform common 
 - [Our Prebuilt Agents](#prebuilt-agents)
 - [Tooling](#potpies-tooling-system)
 - [Getting Started](#getting-started)
+- [Custom Agents](#custom-agents-upgrade)
 - [Make Potpie Your Own](#make-potpie-your-own)
 - [Contributing](#contributing)
 - [License](#license)
-- [💪 Thanks To All Contributors](#-thanks-to-all-contributors)
+- [Contributors](#-thanks-to-all-contributors)
 
 
 ## What are Codebase Agents?
@@ -84,10 +91,10 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
 - **get_nodes_from_tags**: Retrieves nodes tagged with specific keywords from the knowledge graph.
 - **get_code_graph_from_node_id/name**: Fetches code graph structures for a specific node ID or name.
 - **change_detection**: Detects changes in the current branch compared to the default branch.
+- **get_code_file_structure**: Retrieves the file structure of the codebase.
 
 
 These tools are the foundation for the custom agents you create, allowing them to intelligently access and manipulate your codebase efficiently.
-
 
 ---
 ## Getting Started
@@ -177,6 +184,29 @@ curl -X 'GET' \
 ```
 
 ---
+
+## Custom Agents [Upgrade]
+
+Potpie doesn’t stop at pre-built agents. With **Custom Agents**, developers can design personalized tools that handle repeatable tasks with precision. Whether it's generating boilerplate code, identifying security vulnerabilities, or suggesting optimizations, Potpie’s custom agents are flexible and built to adapt to your unique project requirements.
+
+### Custom Agents for Advanced Workflows
+
+Potpie’s cloud platform supports **Custom Agents**, enabling you to create agents that automate specific, repeatable tasks tailored to your project's unique requirements.
+
+#### Key Components of Custom Agents
+- **System Instructions**: Guidelines that define the agent's task, its goal, and the expected output.
+- **Agent Information**: Metadata such as the agent’s role, goal, and task context.
+- **Tasks**: The individual steps the agent will take to complete its job.
+- **Tools**: Functions that allow the agent to perform its tasks, such as querying the knowledge graph or retrieving code snippets.
+
+
+#### Example Use Cases:
+- Automating code optimization and offering improvement suggestions.
+- Identifying and reporting security vulnerabilities in the codebase.
+- Automatically generating unit tests based on existing code logic.
+
+---
+
 ## Make Potpie Your Own
 
 Potpie is designed to be flexible and customizable. Here are key areas to personalize your own deployment:
