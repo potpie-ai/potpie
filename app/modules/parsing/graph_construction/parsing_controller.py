@@ -1,6 +1,6 @@
 import logging
 from typing import Any, Dict
-
+from asyncio import create_task
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
@@ -15,7 +15,7 @@ from app.modules.parsing.graph_construction.parsing_validator import (
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.utils.posthog_helper import PostHogClient
-
+from app.modules.utils.email_helper import EmailHelper
 logger = logging.getLogger(__name__)
 
 
@@ -122,6 +122,8 @@ class ParsingController:
                             await project_manager.update_project_status(
                                 new_project_id, ProjectStatusEnum.READY
                             )
+                            create_task(EmailHelper().send_email(user_email, repo_name, repo_details.branch_name))
+
 
                         return {
                             "project_id": new_project_id,

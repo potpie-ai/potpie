@@ -3,7 +3,7 @@ import os
 import shutil
 import traceback
 from contextlib import contextmanager
-
+from asyncio import create_task
 from blar_graph.db_managers import Neo4jManager
 from blar_graph.graph_construction.core.graph_builder import GraphConstructor
 from fastapi import HTTPException
@@ -23,6 +23,7 @@ from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
 from app.modules.utils.posthog_helper import PostHogClient
+from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.parse_webhook_helper import ParseWebhookHelper
 from .parsing_schema import ParsingRequest
 
@@ -89,7 +90,7 @@ class ParsingService:
                 language = max(languages, key=languages.get).lower()
 
             await self.analyze_directory(
-                extracted_dir, project_id, user_id, self.db, language
+                extracted_dir, project_id, user_id, self.db, language, user_email
             )
             message = "The project has been parsed successfully"
             return {"message": message, "id": project_id}
@@ -131,11 +132,18 @@ class ParsingService:
             session.run(node_query)
 
     async def analyze_directory(
-        self, extracted_dir: str, project_id: int, user_id: str, db, language: str
+        self, extracted_dir: str, project_id: int, user_id: str, db, language: str, user_email:str
     ):
         logger.info(
             f"Parsing project {project_id}: Analyzing directory: {extracted_dir}"
         )
+        project_details = await self.project_service.get_project_from_db_by_id(project_id)
+        if project_details:
+            repo_name = project_details.get("project_name")
+            branch_name = project_details.get("branch_name")
+        else:
+            logger.error(f"Project with ID {project_id} not found.")
+            raise HTTPException(status_code=404, detail="Project not found.")
 
         if language in ["python", "javascript", "typescript"]:
             graph_manager = Neo4jManager(project_id, user_id)
@@ -163,6 +171,7 @@ class ParsingService:
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.READY
                 )
+                create_task( EmailHelper().send_email(user_email, repo_name, branch_name ))
                 PostHogClient().send_event(
                     user_id,
                     "project_status_event",
@@ -204,6 +213,7 @@ class ParsingService:
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.READY
                 )
+                create_task( EmailHelper().send_email(user_email, repo_name, branch_name ))
                 logger.info(f"DEBUGNEO4J: After update project status {project_id}")
                 self.inference_service.log_graph_stats(project_id)
             finally:
