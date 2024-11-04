@@ -539,6 +539,7 @@ class ConversationService:
                 raise ConversationNotFoundError(
                     f"Conversation with id {conversation_id} not found"
                 )
+            is_creator = conversation.user_id == user_id
             access_type = await self.check_conversation_access(
                 conversation_id, self.user_email
             )
@@ -561,6 +562,7 @@ class ConversationService:
                 total_messages=total_messages,
                 agent_ids=conversation.agent_ids,
                 access_type=access_type,
+                is_creator=is_creator,
             )
         except ConversationNotFoundError as e:
             logger.warning(str(e))

@@ -40,6 +40,7 @@ class ConversationInfoResponse(BaseModel):
     total_messages: int
     agent_ids: List[str]
     access_type: ConversationAccessType
+    is_creator: bool
 
     class Config:
         from_attributes = True
