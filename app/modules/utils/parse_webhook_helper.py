@@ -21,8 +21,8 @@ class ParseWebhookHelper:
                     headers={'Content-Type': 'application/json'}
                 )
 
-            if response.status_code != 200:
-                print(f"Failed to send message to Slack: {response.status_code} {response.text}")
+                if response.status_code != 200:
+                    print(f"Failed to send message to Slack: {response.status_code} {response.text}")
 
         except Exception as e:
             print(f"Error sending message to Slack: {e}")
