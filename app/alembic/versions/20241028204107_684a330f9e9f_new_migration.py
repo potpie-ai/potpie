@@ -27,7 +27,6 @@ def upgrade() -> None:
             "visibility", sa.Enum("PRIVATE", "PUBLIC", name="visibility"), nullable=True
         ),
     )
-
     # ### end Alembic commands ###
 
 

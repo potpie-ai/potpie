@@ -464,7 +464,7 @@ class InferenceService:
             if isinstance(result, DocstringResponse):
                 all_docstrings["docstrings"] = (
                     all_docstrings["docstrings"] + result.docstrings
-                )
+            )
             else:
                 logger.error(
                     f"Project {repo_id}: Invalid response from during inference. Manually verify the project completion."

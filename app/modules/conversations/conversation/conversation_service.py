@@ -108,6 +108,9 @@ class ConversationService:
                 ConversationAccessType.NOT_FOUND
             )  # Return 'not found' if conversation doesn't exist
 
+        if not conversation.visibility:
+            conversation.visibility = Visibility.PRIVATE
+
         if conversation.visibility == Visibility.PUBLIC:
             return ConversationAccessType.READ
 
