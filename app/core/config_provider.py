@@ -23,6 +23,14 @@ class ConfigProvider:
     def get_demo_repo_list(self):
         return [
             {
+                "id": "demo6",
+                "name": "signoz",
+                "full_name": "SigNoz/signoz",
+                "private": False,
+                "url": "https://github.com/SigNoz/signoz",
+                "owner": "SigNoz",
+            },
+            {
                 "id": "demo5",
                 "name": "cal.com",
                 "full_name": "calcom/cal.com",
