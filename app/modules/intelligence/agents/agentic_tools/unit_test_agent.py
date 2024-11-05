@@ -78,11 +78,13 @@ class UnitTestAgent:
             - If no existing test plan or unit tests are found, generate new ones based on the user's query.
 
             4. **Test Plan Generation:**
+            Generate a test plan only if a test plan is not already present in the chat history or the user asks for it again.
             - For each function/method, create a detailed test plan covering:
                 - Happy path scenarios
                 - Edge cases (e.g., empty inputs, maximum values, type mismatches)
                 - Error handling
                 - Any relevant performance or security considerations
+            - Format the test plan in two sections "Happy Path" and "Edge Cases" as neat bullet points
 
             5. **Unit Test Writing:**
             - Write complete unit tests based on the test plans.

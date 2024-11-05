@@ -428,6 +428,63 @@ class ClassificationPrompts:
 
         {format_instructions}
         """,
+        AgentType.LLD: """You are a Low Level Design (LLD) classifier. Your task is to determine if a design query can be answered using general knowledge (LLM_SUFFICIENT) or requires leveraging the knowledge graph and code-fetching capabilities (AGENT_REQUIRED).
+
+        Given:
+        - query: The user's current query
+        {query}
+        - history: A list of recent messages from the chat history
+        {history}
+
+        Classification Guidelines:
+        1. LLM_SUFFICIENT if the combined context (query + history):
+        - Discusses general design patterns or principles
+        - Requests theoretical design approaches
+        - Involves new design with no dependencies on existing code
+        - Contains all necessary context within the conversation
+
+        2. AGENT_REQUIRED if the combined context (query + history):
+        - References specific files, classes, or functions
+        - Requires understanding existing codebase structure
+        - Involves modifying or extending existing designs
+        - Uses pronouns or references to previously discussed components
+        - Needs compatibility analysis with current implementation
+
+        Process:
+        1. Review chat history for referenced components and context
+        2. Analyze if query builds upon previous design discussions
+        3. Check if codebase context would enhance the response
+        4. Classify based on the combined context of query and history
+
+        Output your response in this format:
+        {{
+            "classification": "[LLM_SUFFICIENT or AGENT_REQUIRED]"
+        }}
+
+        Examples:
+        1. History: "Let's design a new caching system"
+           Query: "What pattern should we use for cache invalidation?"
+        {{
+            "classification": "LLM_SUFFICIENT"
+        }}
+        Reason: Discusses general design patterns without specific implementation context.
+
+        2. History: "Our UserService handles authentication"
+           Query: "How should we add password reset?"
+        {{
+            "classification": "AGENT_REQUIRED"
+        }}
+        Reason: Requires understanding of existing UserService implementation.
+
+        3. History: ""
+           Query: "Design a notification system that follows our existing event handling patterns"
+        {{
+            "classification": "AGENT_REQUIRED"
+        }}
+        Reason: Requires analysis of existing event handling patterns in codebase even without specific file references.
+
+        {format_instructions}
+        """,
     }
 
     @classmethod

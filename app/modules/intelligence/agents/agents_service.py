@@ -1,3 +1,4 @@
+import os
 from typing import List
 
 from app.modules.intelligence.agents.agents_schema import AgentInfo
@@ -5,6 +6,7 @@ from app.modules.intelligence.agents.agents_schema import AgentInfo
 
 class AgentsService:
     def __init__(self, db):
+        self.project_path = os.getenv("PROJECT_PATH", "projects/")
         self.db = db
 
     @classmethod
@@ -49,8 +51,8 @@ class AgentsService:
         cleaned_citations = []
         for citation in citations:
             cleaned_citations.append(
-                citation.split("/projects/", 1)[-1].split("/", 1)[-1]
-                if "/projects/" in citation
+                citation.split(self.project_path, 1)[-1].split("/", 2)[-1]
+                if self.project_path in citation
                 else citation
             )
         return cleaned_citations

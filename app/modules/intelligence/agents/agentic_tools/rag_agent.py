@@ -162,6 +162,7 @@ class RAGAgent:
             - Prioritize "Get Code and docstring From Probable Node Name" tool for stacktraces or specific file/function mentions
             - Use available tools as directed
             - Proceed to next step if insufficient information found
+            - Use markdown for code snippets with language name in the code block like ```python or ```javascript
 
             Ground your responses in provided code context and tool results. Use markdown for code snippets. Be concise and avoid repetition. If unsure, state it clearly. For debugging, unit testing, or unrelated code explanations, suggest specialized agents.
 

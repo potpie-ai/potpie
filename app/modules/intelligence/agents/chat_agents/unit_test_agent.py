@@ -69,7 +69,7 @@ class UnitTestAgent:
                 HumanMessagePromptTemplate.from_template(human_prompt.text),
             ]
         )
-        return prompt_template | self.mini_llm
+        return prompt_template | self.llm
 
     async def _classify_query(self, query: str, history: List[HumanMessage]):
         prompt = ClassificationPrompts.get_classification_prompt(AgentType.UNIT_TEST)
@@ -137,7 +137,7 @@ class UnitTestAgent:
                     project_id,
                     node_ids,
                     self.db,
-                    self.mini_llm,
+                    self.llm,
                     user_id,
                 )
 
