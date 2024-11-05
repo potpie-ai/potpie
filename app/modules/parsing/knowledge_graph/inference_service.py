@@ -218,17 +218,22 @@ class InferenceService:
             return current_text
 
         for node in nodes:
-            # Skip nodes with None or empty text
             if not node.get("text"):
+                logger.warning(f"Node {node['node_id']} has no text. Skipping...")
                 continue
 
             updated_text = replace_referenced_text(node["text"], node_dict)
             node_tokens = self.num_tokens_from_string(updated_text, model)
+
             if node_tokens > max_tokens:
-                continue  # Skip nodes that exceed the max_tokens limit
+                logger.warning(
+                    f"Node {node['node_id']} has exceeded the max_tokens limit. Skipping..."
+                )
+                continue
 
             if current_tokens + node_tokens > max_tokens:
-                batches.append(current_batch)
+                if current_batch:  # Only append if there are items
+                    batches.append(current_batch)
                 current_batch = []
                 current_tokens = 0
 
@@ -239,6 +244,10 @@ class InferenceService:
 
         if current_batch:
             batches.append(current_batch)
+
+        total_nodes = sum(len(batch) for batch in batches)
+        logger.info(f"Batched {total_nodes} nodes into {len(batches)} batches")
+        logger.info(f"Batch sizes: {[len(batch) for batch in batches]}")
 
         return batches
 
@@ -428,11 +437,11 @@ class InferenceService:
         )
 
         await self.search_service.commit_indices()
-        entry_points = self.get_entry_points(repo_id)
-        logger.info(
-            f"DEBUGNEO4J: After get entry points, Repo ID: {repo_id}, Entry points: {len(entry_points)}"
-        )
-        self.log_graph_stats(repo_id)
+        # entry_points = self.get_entry_points(repo_id)
+        # logger.info(
+        #     f"DEBUGNEO4J: After get entry points, Repo ID: {repo_id}, Entry points: {len(entry_points)}"
+        # )
+        # self.log_graph_stats(repo_id)
         # entry_points_neighbors = {}
         # for entry_point in entry_points:
         #     neighbors = self.get_neighbours(entry_point, repo_id)
@@ -447,25 +456,24 @@ class InferenceService:
 
         semaphore = asyncio.Semaphore(self.parallel_requests)
 
-        async def process_batch(batch):
+        async def process_batch(batch, batch_index: int):
             async with semaphore:
+                logger.info(f"Processing batch {batch_index} for project {repo_id}")
                 response = await self.generate_response(batch, repo_id)
                 if not isinstance(response, DocstringResponse):
                     logger.warning(
                         f"Parsing project {repo_id}: Invalid response from LLM. Not an instance of DocstringResponse. Retrying..."
                     )
                     response = await self.generate_response(batch, repo_id)
+                else:
+                    self.update_neo4j_with_docstrings(repo_id, response)
                 return response
 
-        tasks = [process_batch(batch) for batch in batches]
+        tasks = [process_batch(batch, i) for i, batch in enumerate(batches)]
         results = await asyncio.gather(*tasks)
 
         for result in results:
-            if isinstance(result, DocstringResponse):
-                all_docstrings["docstrings"] = (
-                    all_docstrings["docstrings"] + result.docstrings
-                )
-            else:
+            if not isinstance(result, DocstringResponse):
                 logger.error(
                     f"Project {repo_id}: Invalid response from during inference. Manually verify the project completion."
                 )
@@ -480,7 +488,7 @@ class InferenceService:
         self, batch: List[DocstringRequest], repo_id: str
     ) -> str:
         base_prompt = """
-        You are a senior software engineer with expertise in code analysis and documentation. Your task is to generate detailed technical docstrings and classify code snippets. Approach this task methodically, following these steps:
+        You are a senior software engineer with expertise in code analysis and documentation. Your task is to generate concise docstrings for each code snippet and tagging it based on its purpose. Approach this task methodically, following these steps:
 
         1. **Node Identification**:
         - Carefully parse the provided `code_snippets` to identify each `node_id` and its corresponding code block.
@@ -489,46 +497,47 @@ class InferenceService:
         2. **For Each Node**:
         Perform the following tasks for every identified `node_id` and its associated code:
 
-        2.1 **Docstring Generation**:
-            - **Code Analysis**:
-                * Carefully analyze the provided code for node id to understand the overall structure and purpose of the code.
-                * Identify the type of code (e.g., API router, class definition, utility functions, etc.).
-                * Note any imports, dependencies, and key components used in the code.
-            - For files containing multiple API endpoints or functions:
-                * Begin with a high-level summary of the file's purpose and main components.
-                * List all API endpoints or main functions with a brief description for each.
-                * Include details about authentication, permissions, and common parameters used across endpoints.
-            - For individual functions or API endpoints:
-                * Start with a concise summary of the function's purpose.
-                * Describe the functionality in detail, including the problem it solves or the task it performs.
-                * List and explain all parameters/inputs and their types.
-                * Specify the return value(s) and their types.
-                * Mention any side effects, state changes, or interactions with external systems.
-                * Note any exceptions that may be raised and under what conditions.
-            - For classes:
-                * Provide an overview of the class's purpose and its role in the larger system.
-                * Describe key methods and attributes.
-                * Explain any inheritance or important relationships with other classes.
-            - Include relevant technical details such as:
-                * API paths and HTTP methods for endpoints
-                * Database operations and models used
-                * External services or APIs called
-                * Authentication and authorization mechanisms
+        You are a software engineer tasked with generating concise docstrings for each code snippet and tagging it based on its purpose.
 
-        2.2 **Classification**:
-            Classify the code snippet into one or more of the following categories:
-            - API: Does the code define API endpoints? Identify HTTP methods and routes.
-            - WEBSOCKET: Does it implement WebSocket connections?
-            - PRODUCER: Does it generate and send messages to a queue or topic?
-            - CONSUMER: Does it receive and process messages from a queue or topic?
-            - DATABASE: Does it interact with a database? Identify query operations.
-            - SCHEMA: Does it define database schemas or models?
-            - EXTERNAL_SERVICE: Does it make requests to external services?
-            - CONFIGURATION: Does it handle configuration settings?
-            - SCRIPT: Is it a standalone script or automation tool?
-            - AUTH: Does it handle authentication or authorization?
-            - MIDDLEWARE: Does it implement middleware functionality?
-            - UTILITY: Does it provide utility functions used across the application?
+        **Instructions**:
+        2.1. **Identify Code Type**:
+        - Determine whether each code snippet is primarily **backend** or **frontend**.
+        - Use common indicators:
+            - **Backend**: Handles database interactions, API endpoints, configuration, or server-side logic.
+            - **Frontend**: Contains UI components, event handling, state management, or styling.
+
+        2.2. **Summarize the Purpose**:
+        - Based on the identified type, write a brief (1-2 sentences) summary of the code’s main purpose and functionality.
+        - Focus on what the code does, its role in the system, and any critical operations it performs.
+        - If the code snippet is related to **specific roles** like authentication, database access, or UI component, state management, explicitly mention this role.
+
+
+        2.3. **Assign Tags Based on Code Type**:
+        - Use these specific tags based on whether the code is identified as backend or frontend:
+
+        **Backend Tags**:
+            - **AUTH**: Handles authentication or authorization.
+            - **DATABASE**: Interacts with databases.
+            - **API**: Defines API endpoints.
+            - **UTILITY**: Provides helper or utility functions.
+            - **PRODUCER**: Sends messages to a queue or topic.
+            - **CONSUMER**: Processes messages from a queue or topic.
+            - **EXTERNAL_SERVICE**: Integrates with external services.
+            - **CONFIGURATION**: Manages configuration settings.
+
+        **Frontend Tags**:
+            - **UI_COMPONENT**: Renders a visual component in the UI.
+            - **FORM_HANDLING**: Manages form data submission and validation.
+            - **STATE_MANAGEMENT**: Manages application or component state.
+            - **DATA_BINDING**: Binds data to UI elements.
+            - **ROUTING**: Manages frontend navigation.
+            - **EVENT_HANDLING**: Handles user interactions.
+            - **STYLING**: Applies styling or theming.
+            - **MEDIA**: Manages media, like images or video.
+            - **ANIMATION**: Defines animations in the UI.
+            - **ACCESSIBILITY**: Implements accessibility features.
+            - **DATA_FETCHING**: Fetches data for frontend use.
+
 
         3. **Output Compilation**:
         - Collect the generated docstrings and classifications for each `node_id`.
@@ -584,7 +593,7 @@ class InferenceService:
         end_time = time.time()
 
         logger.info(
-            f"Parsing project {repo_id}: Inference request completed. Total Time Taken: {end_time - start_time} seconds"
+            f"Parsing project {repo_id}: Inference request completed. Time Taken: {end_time - start_time} seconds"
         )
         return result
 
@@ -602,7 +611,7 @@ class InferenceService:
                     "tags": n.tags,
                     "embedding": self.generate_embedding(n.docstring),
                 }
-                for n in docstrings["docstrings"]
+                for n in docstrings.docstrings
             ]
             project = self.project_manager.get_project_from_db_by_id_sync(repo_id)
             repo_name = project.get("project_name")
@@ -642,14 +651,7 @@ class InferenceService:
             f"DEBUGNEO4J: After generate docstrings, Repo ID: {repo_id}, Docstrings: {len(docstrings)}"
         )
         self.log_graph_stats(repo_id)
-        self.update_neo4j_with_docstrings(repo_id, docstrings)
-        logger.info(
-            f"DEBUGNEO4J: After update neo4j with docstrings, Repo ID: {repo_id}"
-        )
-        self.log_graph_stats(repo_id)
         self.create_vector_index()
-        logger.info(f"DEBUGNEO4J: After create vector index, Repo ID: {repo_id}")
-        self.log_graph_stats(repo_id)
 
     def query_vector_index(
         self,

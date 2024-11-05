@@ -1,8 +1,7 @@
 import hashlib
 import hmac
-import os
 from typing import List
-
+import os
 import aiohttp
 from sqlalchemy.orm import Session
 
@@ -11,7 +10,9 @@ from app.modules.intelligence.prompts.prompt_service import PromptService
 
 
 class AgentsService:
-    def __init__(self, db: Session):
+
+    def __init__(self, db):
+        self.project_path = os.getenv("PROJECT_PATH", "projects/")
         self.db = db
         self.prompt_service = PromptService(db)
         self.base_url = os.getenv("POTPIE_PLUS_BASE_URL")
@@ -109,8 +110,8 @@ class AgentsService:
         cleaned_citations = []
         for citation in citations:
             cleaned_citations.append(
-                citation.split("/projects/", 1)[-1].split("/", 1)[-1]
-                if "/projects/" in citation
+                citation.split(self.project_path, 1)[-1].split("/", 2)[-1]
+                if self.project_path in citation
                 else citation
             )
         return cleaned_citations
