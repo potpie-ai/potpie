@@ -38,7 +38,6 @@ class ParsingController:
             "mem0ai/mem0",
             "AgentOps-AI/agentops",
             "calcom/cal.com",
-            "SigNoz/signoz",
         ]
 
         try:
