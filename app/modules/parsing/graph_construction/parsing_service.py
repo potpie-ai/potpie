@@ -140,9 +140,7 @@ class ParsingService:
             # self.create_neo4j_indices(graph_manager) commented since indices are created already
 
             try:
-                graph_constructor = GraphConstructor(
-                    graph_manager, user_id, skip_tests=False
-                )
+                graph_constructor = GraphConstructor(graph_manager, user_id)
                 n, r = graph_constructor.build_graph(extracted_dir)
                 graph_manager.create_nodes(n)
                 graph_manager.create_edges(r)
