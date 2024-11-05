@@ -92,7 +92,7 @@ class AuthService:
 
     @staticmethod
     def get_hmac_secret_key() -> str:
-        return os.environ.get("SHARED_HMAC_KEY")
+        return os.environ.get("POTPIE_PLUS_HMAC_KEY")
 
 
 auth_handler = AuthService()

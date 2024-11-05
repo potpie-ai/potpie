@@ -24,7 +24,11 @@ async def run_tool(
 ):
     # if not AuthService.verify_hmac_signature(request.model_dump(), hmac_signature):
     #     raise HTTPException(status_code=401, detail="Unauthorized")
-
+    # Override project_id and user_id from request params if present
+    if "project_id" in request.params:
+        request.params["project_id"] = "0192cee6-0744-790d-96b4-02940492f8f9"
+    if "user_id" in request.params:
+        request.params["user_id"] = "hfqZtKC7KBMfTZGM2amkp4UXMa73"
     tool_service = ToolService(db, user_id)
     try:
         result = await tool_service.run_tool(request.tool_id, request.params)

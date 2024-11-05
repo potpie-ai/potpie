@@ -40,11 +40,11 @@ class CustomAgent:
         self.custom_agents_service = CustomAgentsService()
         self.chain = None
         self.base_url = os.getenv("POTPIE_PLUS_BASE_URL")
-        self.shared_hmac_key = os.getenv("SHARED_HMAC_KEY", "").encode("utf-8")
+        self.potpie_plus_hmac_key = os.getenv("POTPIE_PLUS_HMAC_KEY", "").encode("utf-8")
 
     def generate_hmac_signature(self, message: str) -> str:
         hmac_obj = hmac.new(
-            self.shared_hmac_key, message.encode("utf-8"), hashlib.sha256
+            self.potpie_plus_hmac_key, message.encode("utf-8"), hashlib.sha256
         )
         return hmac_obj.hexdigest()
 
@@ -128,7 +128,7 @@ class CustomAgent:
                     content,
                     MessageType.AI_GENERATED,
                 )
-                yield json.dumps({"message": content})
+                yield json.dumps({"message": content, "citations": []})
 
             logger.debug(f"Full LLM response: {full_response}")
             self.history_manager.flush_message_buffer(
