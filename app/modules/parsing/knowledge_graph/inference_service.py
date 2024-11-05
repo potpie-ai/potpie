@@ -189,7 +189,9 @@ class InferenceService:
                 for record in result
             }
 
-    def batch_nodes(self, nodes: List[Dict], max_tokens: int = 16000, model: str = "gpt-4") -> List[List[DocstringRequest]]:
+    def batch_nodes(
+        self, nodes: List[Dict], max_tokens: int = 16000, model: str = "gpt-4"
+    ) -> List[List[DocstringRequest]]:
         batches = []
         current_batch = []
         current_tokens = 0
@@ -222,9 +224,11 @@ class InferenceService:
 
             updated_text = replace_referenced_text(node["text"], node_dict)
             node_tokens = self.num_tokens_from_string(updated_text, model)
-            
+
             if node_tokens > max_tokens:
-                logger.warning(f"Node {node['node_id']} has exceeded the max_tokens limit. Skipping...")
+                logger.warning(
+                    f"Node {node['node_id']} has exceeded the max_tokens limit. Skipping..."
+                )
                 continue
 
             if current_tokens + node_tokens > max_tokens:
@@ -233,7 +237,9 @@ class InferenceService:
                 current_batch = []
                 current_tokens = 0
 
-            current_batch.append(DocstringRequest(node_id=node["node_id"], text=updated_text))
+            current_batch.append(
+                DocstringRequest(node_id=node["node_id"], text=updated_text)
+            )
             current_tokens += node_tokens
 
         if current_batch:
@@ -449,6 +455,7 @@ class InferenceService:
         all_docstrings = {"docstrings": []}
 
         semaphore = asyncio.Semaphore(self.parallel_requests)
+
         async def process_batch(batch, batch_index: int):
             async with semaphore:
                 logger.info(f"Processing batch {batch_index} for project {repo_id}")
@@ -490,7 +497,7 @@ class InferenceService:
         2. **For Each Node**:
         Perform the following tasks for every identified `node_id` and its associated code:
 
-        You are a software engineer tasked with generating concise docstrings for each code snippet and tagging it based on its purpose. 
+        You are a software engineer tasked with generating concise docstrings for each code snippet and tagging it based on its purpose.
 
         **Instructions**:
         2.1. **Identify Code Type**:
@@ -498,7 +505,7 @@ class InferenceService:
         - Use common indicators:
             - **Backend**: Handles database interactions, API endpoints, configuration, or server-side logic.
             - **Frontend**: Contains UI components, event handling, state management, or styling.
-        
+
         2.2. **Summarize the Purpose**:
         - Based on the identified type, write a brief (1-2 sentences) summary of the code’s main purpose and functionality.
         - Focus on what the code does, its role in the system, and any critical operations it performs.

@@ -85,7 +85,7 @@ def get_nodes_from_tags_tool(sql_db, user_id) -> StructuredTool:
         Input:
         - tags (List[str]): A list of tags to filter nodes. Valid tags include:
         API, AUTH, DATABASE, UTILITY, PRODUCER, CONSUMER, EXTERNAL_SERVICE, CONFIGURATION
-        UI_COMPONENT, FORM_HANDLING, STATE_MANAGEMENT, DATA_BINDING, ROUTING, 
+        UI_COMPONENT, FORM_HANDLING, STATE_MANAGEMENT, DATA_BINDING, ROUTING,
         EVENT_HANDLING, STYLING, MEDIA, ANIMATION, ACCESSIBILITY, DATA_FETCHING
 
         - project_id (str): The UUID of the project being evaluated
