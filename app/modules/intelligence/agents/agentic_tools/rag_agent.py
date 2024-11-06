@@ -237,7 +237,7 @@ async def kickoff_rag_crew(
     user_id: str,
 ) -> str:
     rag_agent = RAGAgent(sql_db, llm, mini_llm, user_id)
-    file_structure = GithubService(sql_db).get_project_structure(project_id)
+    file_structure = await GithubService(sql_db).get_project_structure_async(project_id)
     result = await rag_agent.run(
         query, project_id, chat_history, node_ids, file_structure
     )

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import AsyncGenerator, List
@@ -28,6 +29,7 @@ from app.modules.conversations.message.message_schema import (
     MessageResponse,
     NodeContext,
 )
+from app.modules.github.github_service import GithubService
 from app.modules.intelligence.agents.agent_injector_service import AgentInjectorService
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import ProviderService
@@ -151,6 +153,12 @@ class ConversationService:
 
             conversation_id = self._create_conversation_record(
                 conversation, title, user_id
+            )
+
+            asyncio.create_task(
+                GithubService(self.sql_db).get_project_structure_async(
+                    conversation.project_ids[0]
+                )
             )
 
             await self._add_system_message(conversation_id, project_name, user_id)
