@@ -1,6 +1,8 @@
+import asyncio
 import logging
 import os
 import random
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Tuple
 
 import chardet
@@ -39,6 +41,9 @@ class GithubService:
         if not GithubService.gh_token_list:
             GithubService.initialize_tokens()
         self.redis = Redis.from_url(config_provider.get_redis_url())
+        self.max_workers = 10
+        self.max_depth = 10
+        self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
 
     def get_github_repo_details(self, repo_name: str) -> Tuple[Github, Dict, str]:
         private_key = (
@@ -326,11 +331,10 @@ class GithubService:
                     detail=f"Repository {repo_name} not found or inaccessible on GitHub",
                 )
 
-    def get_project_structure(self, project_id: str) -> str:
+    async def get_project_structure_async(self, project_id: str) -> str:
         logger.info(f"Fetching project structure for project ID: {project_id}")
 
-        # Try to get the structure from Redis cache
-        cache_key = f"project_structure:{project_id}"
+        cache_key = f"project_structure:{project_id}:depth_{self.max_depth}"
         cached_structure = self.redis.get(cache_key)
 
         if cached_structure:
@@ -339,7 +343,7 @@ class GithubService:
             )
             return cached_structure.decode("utf-8")
 
-        project = self.project_manager.get_project_from_db_by_id_sync(project_id)
+        project = await self.project_manager.get_project_from_db_by_id(project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
@@ -351,10 +355,9 @@ class GithubService:
 
         try:
             github, repo = self.get_repo(repo_name)
-            structure = self._fetch_repo_structure(repo)
+            structure = await self._fetch_repo_structure_async(repo)
             formatted_structure = self._format_tree_structure(structure)
 
-            # Cache the formatted structure in Redis
             self.redis.setex(cache_key, 3600, formatted_structure)  # Cache for 1 hour
 
             return formatted_structure
@@ -370,7 +373,16 @@ class GithubService:
                 detail=f"Failed to fetch project structure: {str(e)}",
             )
 
-    def _fetch_repo_structure(self, repo: Any, path: str = "") -> Dict[str, Any]:
+    async def _fetch_repo_structure_async(
+        self, repo: Any, path: str = "", depth: int = 0
+    ) -> Dict[str, Any]:
+        if depth >= self.max_depth:
+            return {
+                "type": "directory",
+                "name": path.split("/")[-1] or repo.name,
+                "children": [{"type": "file", "name": "...", "path": "truncated"}],
+            }
+
         structure = {
             "type": "directory",
             "name": path.split("/")[-1] or repo.name,
@@ -378,24 +390,33 @@ class GithubService:
         }
 
         try:
-            contents = repo.get_contents(path)
+            contents = await asyncio.get_event_loop().run_in_executor(
+                self.executor, repo.get_contents, path
+            )
+
+            if not isinstance(contents, list):
+                contents = [contents]
+
+            tasks = []
+            for item in contents:
+                if item.type == "dir":
+                    task = self._fetch_repo_structure_async(repo, item.path, depth + 1)
+                    tasks.append(task)
+                else:
+                    structure["children"].append(
+                        {
+                            "type": "file",
+                            "name": item.name,
+                            "path": item.path,
+                        }
+                    )
+
+            if tasks:
+                children = await asyncio.gather(*tasks)
+                structure["children"].extend(children)
+
         except Exception as e:
             logger.error(f"Error fetching contents for path {path}: {str(e)}")
-            return structure
-
-        for item in contents:
-            if item.type == "dir":
-                structure["children"].append(
-                    self._fetch_repo_structure(repo, item.path)
-                )
-            else:
-                structure["children"].append(
-                    {
-                        "type": "file",
-                        "name": item.name,
-                        "path": item.path,
-                    }
-                )
 
         return structure
 

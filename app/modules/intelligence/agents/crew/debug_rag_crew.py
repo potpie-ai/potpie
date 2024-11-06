@@ -235,8 +235,8 @@ async def kickoff_debug_rag_crew(
     mini_llm,
     user_id: str,
 ) -> str:
-    debug_agent = DebugRAGCrew(sql_db, llm, mini_llm, user_id)
-    file_structure = GithubService(sql_db).get_project_structure(project_id)
+    debug_agent = DebugAgent(sql_db, llm, mini_llm, user_id)
+    file_structure = await GithubService(sql_db).get_project_structure_async(project_id)
     result = await debug_agent.run(
         query, project_id, chat_history, node_ids, file_structure
     )
