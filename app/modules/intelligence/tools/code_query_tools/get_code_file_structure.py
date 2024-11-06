@@ -1,7 +1,8 @@
+import asyncio
+
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-import asyncio
 
 from app.modules.github.github_service import GithubService
 

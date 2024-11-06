@@ -167,7 +167,7 @@ class ParsingController:
         user_email: str,
         new_project_id: str,
         project_manager: ProjectService,
-        db: AsyncSession
+        db: AsyncSession,
     ):
         response = {
             "project_id": new_project_id,
@@ -179,7 +179,9 @@ class ParsingController:
         await project_manager.register_project(
             repo_details.repo_name, repo_details.branch_name, user_id, new_project_id
         )
-        asyncio.create_task(GithubService(db).get_project_structure_async(new_project_id))
+        asyncio.create_task(
+            GithubService(db).get_project_structure_async(new_project_id)
+        )
         process_parsing.delay(
             repo_details.model_dump(),
             user_id,

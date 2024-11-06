@@ -1,8 +1,8 @@
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 import logging
 import os
 import random
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Tuple
 
 import chardet
@@ -338,7 +338,9 @@ class GithubService:
         cached_structure = self.redis.get(cache_key)
 
         if cached_structure:
-            logger.info(f"Project structure found in cache for project ID: {project_id}")
+            logger.info(
+                f"Project structure found in cache for project ID: {project_id}"
+            )
             return cached_structure.decode("utf-8")
 
         project = await self.project_manager.get_project_from_db_by_id(project_id)
@@ -398,9 +400,7 @@ class GithubService:
             tasks = []
             for item in contents:
                 if item.type == "dir":
-                    task = self._fetch_repo_structure_async(
-                        repo, item.path, depth + 1
-                    )
+                    task = self._fetch_repo_structure_async(repo, item.path, depth + 1)
                     tasks.append(task)
                 else:
                     structure["children"].append(
