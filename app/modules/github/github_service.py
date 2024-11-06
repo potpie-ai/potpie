@@ -334,7 +334,6 @@ class GithubService:
     async def get_project_structure_async(self, project_id: str) -> str:
         logger.info(f"Fetching project structure for project ID: {project_id}")
 
-        # Try to get the structure from Redis cache with a more specific key
         cache_key = f"project_structure:{project_id}:depth_{self.max_depth}"
         cached_structure = self.redis.get(cache_key)
 
@@ -354,11 +353,9 @@ class GithubService:
 
         try:
             github, repo = self.get_repo(repo_name)
-            # Convert synchronous operations to async
             structure = await self._fetch_repo_structure_async(repo)
             formatted_structure = self._format_tree_structure(structure)
 
-            # Cache the formatted structure in Redis
             self.redis.setex(cache_key, 3600, formatted_structure)  # Cache for 1 hour
 
             return formatted_structure
@@ -391,7 +388,6 @@ class GithubService:
         }
 
         try:
-            # Convert synchronous get_contents to async using executor
             contents = await asyncio.get_event_loop().run_in_executor(
                 self.executor, repo.get_contents, path
             )
@@ -399,7 +395,6 @@ class GithubService:
             if not isinstance(contents, list):
                 contents = [contents]
 
-            # Process directories and files in parallel
             tasks = []
             for item in contents:
                 if item.type == "dir":
@@ -416,7 +411,6 @@ class GithubService:
                         }
                     )
 
-            # Wait for all directory processing tasks to complete
             if tasks:
                 children = await asyncio.gather(*tasks)
                 structure["children"].extend(children)
