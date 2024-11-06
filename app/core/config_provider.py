@@ -23,14 +23,6 @@ class ConfigProvider:
     def get_demo_repo_list(self):
         return [
             {
-                "id": "demo7",
-                "name": "langchain",
-                "full_name": "langchain-ai/langchain",
-                "private": False,
-                "url": "https://github.com/langchain-ai/langchain",
-                "owner": "langchain-ai",
-            },
-            {
                 "id": "demo6",
                 "name": "signoz",
                 "full_name": "SigNoz/signoz",
