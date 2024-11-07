@@ -26,31 +26,37 @@ class AgentsService:
                 id="codebase_qna_agent",
                 name="Codebase Q&A Agent",
                 description="An agent specialized in answering questions about the codebase using the knowledge graph and code analysis tools.",
+                status="SYSTEM",
             ),
             AgentInfo(
                 id="debugging_agent",
                 name="Debugging with Knowledge Graph Agent",
                 description="An agent specialized in debugging using knowledge graphs.",
+                status="SYSTEM",
             ),
             AgentInfo(
                 id="unit_test_agent",
                 name="Unit Test Agent",
                 description="An agent specialized in generating unit tests for code snippets for given function names",
+                status="SYSTEM",
             ),
             AgentInfo(
                 id="integration_test_agent",
                 name="Integration Test Agent",
                 description="An agent specialized in generating integration tests for code snippets from the knowledge graph based on given function names of entry points. Works best with Py, JS, TS",
+                status="SYSTEM",
             ),
             AgentInfo(
                 id="LLD_agent",
                 name="Low-Level Design Agent",
                 description="An agent specialized in generating a low-level design plan for implementing a new feature.",
+                status="SYSTEM",
             ),
             AgentInfo(
                 id="code_changes_agent",
                 name="Code Changes Agent",
                 description="An agent specialized in generating detailed analysis of code changes in your current branch compared to default branch. Works best with Py, JS, TS",
+                status="SYSTEM",
             ),
         ]
 
@@ -86,6 +92,7 @@ class AgentsService:
                                 id=agent["id"],
                                 name=agent["role"],
                                 description=agent["goal"],
+                                status=agent["deployment_status"],
                             )
                         )
 
