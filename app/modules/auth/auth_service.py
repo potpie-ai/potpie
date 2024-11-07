@@ -67,32 +67,41 @@ class AuthService:
                 )
             res.headers["WWW-Authenticate"] = 'Bearer realm="auth_required"'
             return decoded_token
-
+        
     @staticmethod
+    def generate_hmac_signature(message: str) -> str: 
+        """Generate HMAC signature for a message string"""
+        hmac_key = AuthService.get_hmac_secret_key()
+        if not hmac_key:
+            raise ValueError("HMAC secret key not configured")
+        hmac_obj = hmac.new(
+            hmac_key,
+            message.encode("utf-8"),
+            hashlib.sha256
+        )
+        return hmac_obj.hexdigest()
+
+    @staticmethod 
     def verify_hmac_signature(payload_body: dict, hmac_signature: str) -> bool:
-        if os.getenv("ENV") == "development":
-            return True
-        else:
-            shared_key = AuthService.get_hmac_secret_key()
-            expected_signature = hmac.new(
-                key=shared_key.encode(),
-                msg=json.dumps(payload_body).encode(),
-                digestmod=hashlib.sha256,
-            ).hexdigest()
-            return hmac.compare_digest(hmac_signature, expected_signature)
-
-    @staticmethod
-    def verify_hmac_signature_for_get(user_id: str, hmac_signature: str) -> bool:
-        secret_key = AuthService.get_hmac_secret_key()
-        message = f"user_id={user_id}"
+        """Verify HMAC signature matches the payload"""
+        hmac_key = AuthService.get_hmac_secret_key()
+        if not hmac_key:
+            raise ValueError("HMAC secret key not configured")
+        payload_str = json.dumps(payload_body, sort_keys=True)
         expected_signature = hmac.new(
-            secret_key.encode(), message.encode(), hashlib.sha256
+            key=hmac_key,
+            msg=payload_str.encode(),
+            digestmod=hashlib.sha256
         ).hexdigest()
-        return hmac.compare_digest(expected_signature, hmac_signature)
+        return hmac.compare_digest(hmac_signature, expected_signature)
 
     @staticmethod
-    def get_hmac_secret_key() -> str:
-        return os.environ.get("POTPIE_PLUS_HMAC_KEY")
+    def get_hmac_secret_key() -> bytes:
+        """Get HMAC secret key from environment"""
+        key = os.getenv("POTPIE_PLUS_HMAC_KEY", "")
+        if not key:
+            return b""
+        return key.encode("utf-8")
 
 
 auth_handler = AuthService()

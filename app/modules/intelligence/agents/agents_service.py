@@ -1,10 +1,8 @@
-import hashlib
-import hmac
 from typing import List
 import os
 import aiohttp
-from sqlalchemy.orm import Session
 
+from app.modules.auth.auth_service import AuthService
 from app.modules.intelligence.agents.agents_schema import AgentInfo
 from app.modules.intelligence.prompts.prompt_service import PromptService
 
@@ -16,7 +14,6 @@ class AgentsService:
         self.db = db
         self.prompt_service = PromptService(db)
         self.base_url = os.getenv("POTPIE_PLUS_BASE_URL")
-        self.hmac_secret = os.getenv("POTPIE_PLUS_HMAC_SECRET")
 
     async def list_available_agents(
         self, current_user: dict, list_system_agents: bool
@@ -71,9 +68,8 @@ class AgentsService:
         custom_agents = []
         skip = 0
         limit = 10
-        print("current_user", current_user)
         user_id = current_user["user_id"]
-        hmac_signature = self.generate_hmac_signature(f"user_id={user_id}")
+        hmac_signature = AuthService.generate_hmac_signature(f"user_id={user_id}")
         headers = {"X-HMAC-Signature": hmac_signature}
 
         async with aiohttp.ClientSession(headers=headers) as session:
@@ -102,16 +98,6 @@ class AgentsService:
 
         return custom_agents
 
-    def generate_hmac_signature(self, message: str) -> str:
-        secret_key = "1234"
-        return hmac.new(
-            secret_key.encode(), message.encode(), hashlib.sha256
-        ).hexdigest()
-
-    def generate_hmac_token(self, user_id: str) -> str:
-        message = user_id.encode("utf-8")
-        signature = hmac.new(self.hmac_secret.encode("utf-8"), message, hashlib.sha256)
-        return f"{user_id}:{signature.hexdigest()}"
 
     def format_citations(self, citations: List[str]) -> List[str]:
         cleaned_citations = []

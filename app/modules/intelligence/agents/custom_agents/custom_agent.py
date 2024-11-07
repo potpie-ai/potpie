@@ -1,5 +1,3 @@
-import hashlib
-import hmac
 import json
 import logging
 import os
@@ -16,6 +14,7 @@ from langchain_core.prompts import (
 from langchain_core.runnables import RunnableSequence
 from sqlalchemy.orm import Session
 
+from app.modules.auth.auth_service import AuthService
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
@@ -28,7 +27,6 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-
 class CustomAgent:
     def __init__(self, llm, db: Session, agent_id: str, user_id: str):
         self.llm = llm
@@ -40,19 +38,13 @@ class CustomAgent:
         self.custom_agents_service = CustomAgentsService()
         self.chain = None
         self.base_url = os.getenv("POTPIE_PLUS_BASE_URL")
-        self.potpie_plus_hmac_key = os.getenv("POTPIE_PLUS_HMAC_KEY", "").encode("utf-8")
 
-    def generate_hmac_signature(self, message: str) -> str:
-        hmac_obj = hmac.new(
-            self.potpie_plus_hmac_key, message.encode("utf-8"), hashlib.sha256
-        )
-        return hmac_obj.hexdigest()
 
     async def _get_system_prompt(self) -> str:
         """Fetch system prompt from POTPIE_PLUS_BASE_URL with HMAC authentication"""
         try:
             user_id = self.user_id
-            hmac_signature = self.generate_hmac_signature(f"user_id={user_id}")
+            hmac_signature = AuthService.generate_hmac_signature(f"user_id={user_id}")
             headers = {"X-HMAC-Signature": hmac_signature}
 
             url = f"{self.base_url}/custom-agents/agents/{self.agent_id}?user_id={user_id}"
