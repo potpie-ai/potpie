@@ -27,13 +27,28 @@ class GetNodesFromTags:
         Get nodes from the knowledge graph based on the provided tags.
         Inputs for the fetch_nodes method:
         - tags (List[str]): A list of tags to filter the nodes by.
-           * API: Does the code define any API endpoint? Look for route definitions, request handling, or API client usage.
-           * WEBSOCKET: Does the code implement or use WebSocket connections? Check for WebSocket-specific libraries or protocols.
-           * PRODUCER: Does the code generate and send messages to a queue or topic? Look for message publishing or event emission.
-           * CONSUMER: Does the code receive and process messages from a queue or topic? Check for message subscription or event handling.
-           * DATABASE: Does the code interact with a database? Look for query execution, data insertion, updates, or deletions.
-           * SCHEMA: Does the code define any database schema? Look for ORM models, table definitions, or schema-related code.
-           * EXTERNAL_SERVICE: Does the code make HTTP requests to external services? Check for HTTP client usage or request handling.
+           Backend Tags:
+           * API: Does the code define any API endpoint? Look for route definitions, request handling.
+           * AUTH: Does the code handle authentication or authorization? Check for auth middleware, token validation.
+           * DATABASE: Does the code interact with a database? Look for query execution, data operations.
+           * UTILITY: Does the code provide helper or utility functions? Check for reusable functions.
+           * PRODUCER: Does the code generate and send messages to a queue/topic? Look for message publishing.
+           * CONSUMER: Does the code receive and process messages from a queue/topic? Check for message handling.
+           * EXTERNAL_SERVICE: Does the code integrate with external services? Check for HTTP client usage.
+           * CONFIGURATION: Does the code manage configuration settings? Look for config management.
+
+           Frontend Tags:
+           * UI_COMPONENT: Does the code render visual components? Check for UI rendering logic.
+           * FORM_HANDLING: Does the code manage forms? Look for form submission and validation.
+           * STATE_MANAGEMENT: Does the code manage app/component state? Check for state logic.
+           * DATA_BINDING: Does the code bind data to UI elements? Look for data binding patterns.
+           * ROUTING: Does the code handle frontend navigation? Check for routing logic.
+           * EVENT_HANDLING: Does the code handle user interactions? Look for event handlers.
+           * STYLING: Does the code apply styling/theming? Check for style-related code.
+           * MEDIA: Does the code manage media assets? Look for image/video handling.
+           * ANIMATION: Does the code define UI animations? Check for animation logic.
+           * ACCESSIBILITY: Does the code implement a11y features? Look for accessibility code.
+           * DATA_FETCHING: Does the code fetch frontend data? Check for data retrieval logic.
         - project_id (str): The ID of the project being evaluated, this is a UUID.
         """
         project = asyncio.run(
@@ -68,8 +83,11 @@ def get_nodes_from_tags_tool(sql_db, user_id) -> StructuredTool:
         Fetch nodes from the knowledge graph based on specified tags. Use this tool to retrieve nodes of specific types for a project.
 
         Input:
-        - tags (List[str]): A list of tags to filter nodes. Valid tags are:
-        API, WEBSOCKET, PRODUCER, CONSUMER, DATABASE, SCHEMA, EXTERNAL_SERVICE, CONFIGURATION, SCRIPT
+        - tags (List[str]): A list of tags to filter nodes. Valid tags include:
+        API, AUTH, DATABASE, UTILITY, PRODUCER, CONSUMER, EXTERNAL_SERVICE, CONFIGURATION
+        UI_COMPONENT, FORM_HANDLING, STATE_MANAGEMENT, DATA_BINDING, ROUTING,
+        EVENT_HANDLING, STYLING, MEDIA, ANIMATION, ACCESSIBILITY, DATA_FETCHING
+
         - project_id (str): The UUID of the project being evaluated
 
         Usage guidelines:

@@ -162,6 +162,7 @@ class RAGAgent:
             - Prioritize "Get Code and docstring From Probable Node Name" tool for stacktraces or specific file/function mentions
             - Use available tools as directed
             - Proceed to next step if insufficient information found
+            - Use markdown for code snippets with language name in the code block like ```python or ```javascript
 
             Ground your responses in provided code context and tool results. Use markdown for code snippets. Be concise and avoid repetition. If unsure, state it clearly. For debugging, unit testing, or unrelated code explanations, suggest specialized agents.
 
@@ -236,7 +237,7 @@ async def kickoff_rag_crew(
     user_id: str,
 ) -> str:
     rag_agent = RAGAgent(sql_db, llm, mini_llm, user_id)
-    file_structure = GithubService(sql_db).get_project_structure(project_id)
+    file_structure = await GithubService(sql_db).get_project_structure_async(project_id)
     result = await rag_agent.run(
         query, project_id, chat_history, node_ids, file_structure
     )

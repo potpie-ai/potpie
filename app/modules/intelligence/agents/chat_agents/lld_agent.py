@@ -68,8 +68,7 @@ class LLDAgent:
         return prompt_template | self.mini_llm
 
     async def _classify_query(self, query: str, history: List[HumanMessage]):
-        # TODO: Add LLD prompt
-        prompt = ClassificationPrompts.get_classification_prompt(AgentType.QNA)
+        prompt = ClassificationPrompts.get_classification_prompt(AgentType.LLD)
         inputs = {"query": query, "history": [msg.content for msg in history[-10:]]}
 
         parser = PydanticOutputParser(pydantic_object=ClassificationResponse)

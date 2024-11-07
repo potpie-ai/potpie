@@ -89,6 +89,7 @@ class IntegrationTestAgent:
                 - Validate that the fetched code matches the expected component names and discard any mismatches.
 
             3. **Test Plan Generation:**
+            Generate a test plan only if a test plan is not already present in the chat history or the user asks for it again.
             - **Comprehensive Coverage:**
                 - For each component and their interactions, create detailed test plans covering:
                 - **Happy Path Scenarios:** Typical use cases where interactions work as expected.
@@ -97,6 +98,7 @@ class IntegrationTestAgent:
                 - **Performance Considerations:** Any relevant performance or security aspects that should be tested.
             - **Integration Points:**
                 - Identify all major integration points between components that require testing to ensure seamless interactions.
+            - Format the test plan in two sections "Happy Path" and "Edge Cases" as neat bullet points.
 
             4. **Integration Test Writing:**
             - **Test Suite Development:**

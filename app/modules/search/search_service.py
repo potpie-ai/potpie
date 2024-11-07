@@ -1,3 +1,4 @@
+import os
 from typing import Dict, List
 
 from sqlalchemy import delete, or_
@@ -8,6 +9,7 @@ from app.modules.search.search_models import SearchIndex
 
 class SearchService:
     def __init__(self, db: Session):
+        self.project_path = os.getenv("PROJECT_PATH", "projects/")
         self.db = db
 
     async def commit_indices(self):
@@ -47,10 +49,12 @@ class SearchService:
                         "node_id": result.node_id,
                         "name": result.name,
                         "file_path": (
-                            result.file_path.split("/projects/", 1)[-1].split("/", 1)[
+                            result.file_path.split(self.project_path, 1)[-1].split(
+                                "/", 2
+                            )[
                                 -1
-                            ]
-                            if "/projects/" in result.file_path
+                            ]  # ensure that your project path value does not end with a /
+                            if self.project_path in result.file_path
                             else result.file_path
                         ),
                         "content": result.content,
