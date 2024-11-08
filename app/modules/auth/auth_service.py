@@ -88,7 +88,7 @@ class AuthService:
         hmac_key = AuthService.get_hmac_secret_key()
         if not hmac_key:
             raise ValueError("HMAC secret key not configured")
-        payload_str = json.dumps(payload_body, sort_keys=True)
+        payload_str = payload_body if isinstance(payload_body, str) else json.dumps(payload_body, sort_keys=True)
         expected_signature = hmac.new(
             key=hmac_key,
             msg=payload_str.encode(),
