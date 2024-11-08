@@ -3,6 +3,7 @@ import hmac
 import json
 import logging
 import os
+from typing import Union
 
 import requests
 from fastapi import Depends, HTTPException, Request, Response, status
@@ -82,7 +83,7 @@ class AuthService:
         return hmac_obj.hexdigest()
 
     @staticmethod 
-    def verify_hmac_signature(payload_body: dict, hmac_signature: str) -> bool:
+    def verify_hmac_signature(payload_body: Union[str, dict], hmac_signature: str) -> bool:
         """Verify HMAC signature matches the payload"""
         hmac_key = AuthService.get_hmac_secret_key()
         if not hmac_key:
