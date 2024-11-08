@@ -4,8 +4,10 @@ from typing import Any, Dict, List
 
 import httpx
 from dotenv import load_dotenv
+from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_schema import NodeContext
+from app.modules.intelligence.agents.agents_service import AgentsService
 
 logger = logging.getLogger(__name__)
 
@@ -55,14 +57,11 @@ class CustomAgentsService:
                 )
                 raise
 
-    async def validate_agent(self, agent_id: str) -> bool:
-        return True
-        # validate_url = f"{self.base_url}/api/v1/agents/{agent_id}/validate"
-
-        # async with httpx.AsyncClient() as client:
-        #     try:
-        #         response = await client.get(validate_url)
-        #         return response.status_code == 200
-        #     except Exception as e:
-        #         logger.error(f"Error validating agent {agent_id}: {e}")
-        #         return False
+    async def validate_agent(self,db: Session, user_id: str, agent_id: str) -> bool:
+        try:
+            agents_service = AgentsService(db)
+            custom_agents = await agents_service.fetch_custom_agents(user_id)
+            return any(agent.id == agent_id for agent in custom_agents)
+        except Exception as e:
+            logger.error(f"Error validating agent {agent_id}: {str(e)}")
+            return False

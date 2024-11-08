@@ -58,7 +58,7 @@ class AgentInjectorService:
                 user_id=self.user_id,
             )
 
-    def validate_agent_id(self, agent_id: str) -> bool:
+    def validate_agent_id(self, user_id: str, agent_id: str) -> bool:
         return agent_id in self.agents or self.custom_agent_service.validate_agent(
-            agent_id
+            self.sql_db, user_id, agent_id
         )

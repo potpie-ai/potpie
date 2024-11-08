@@ -130,6 +130,3 @@ class CustomAgent:
         except Exception as e:
             logger.error(f"Error during CustomAgent run: {str(e)}", exc_info=True)
             yield f"An error occurred: {str(e)}"
-
-    async def is_valid(self) -> bool:
-        return await self.custom_agents_service.validate_agent(self.agent_id)

@@ -57,18 +57,17 @@ class AgentsService:
             ),
         ]
 
-        custom_agents = await self.fetch_custom_agents(current_user)
+        custom_agents = await self.fetch_custom_agents(current_user["user_id"])
 
         if list_system_agents:
             return system_agents + custom_agents
         else:
             return custom_agents
 
-    async def fetch_custom_agents(self, current_user: dict) -> List[AgentInfo]:
+    async def fetch_custom_agents(self, user_id: str) -> List[AgentInfo]:
         custom_agents = []
         skip = 0
         limit = 10
-        user_id = current_user["user_id"]
         hmac_signature = AuthService.generate_hmac_signature(f"user_id={user_id}")
         headers = {"X-HMAC-Signature": hmac_signature}
 
