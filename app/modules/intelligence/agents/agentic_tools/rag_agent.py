@@ -196,7 +196,7 @@ class RAGAgent:
         os.environ["OPENAI_API_KEY"] = self.openai_api_key
 
         agentops.init(
-            os.getenv("AGENTOPS_API_KEY"), default_tags=["openai-gpt-notebook"]
+            os.getenv("AGENTOPS_API_KEY")
         )
         code_results = []
         if len(node_ids) > 0:

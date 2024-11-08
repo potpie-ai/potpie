@@ -171,6 +171,7 @@ class CodeGenerationAgent:
             code_gen_result = await kickoff_code_generation_crew(
                 query,
                 project_id,
+                validated_history[-5:],
                 node_ids,
                 self.db,
                 self.llm,
