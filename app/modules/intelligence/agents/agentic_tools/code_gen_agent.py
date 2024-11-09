@@ -18,7 +18,7 @@ from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_t
     get_ask_knowledge_graph_queries_tool,
 )
 from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool import get_nodes_from_tags_tool
-
+from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import get_code_file_structure_tool
 
 class CodeGenerationAgent:
     def __init__(self, sql_db, llm, mini_llm, user_id):
@@ -32,6 +32,7 @@ class CodeGenerationAgent:
         self.get_code_from_probable_node_name = get_code_from_probable_node_name_tool(sql_db, user_id)
         self.query_knowledge_graph = get_ask_knowledge_graph_queries_tool(sql_db, user_id)
         self.get_nodes_from_tags = get_nodes_from_tags_tool(sql_db, user_id)
+        self.get_file_structure = get_code_file_structure_tool(sql_db)
         self.llm = llm
         self.mini_llm = mini_llm
         self.user_id = user_id
@@ -50,6 +51,8 @@ class CodeGenerationAgent:
                 self.get_node_neighbours,
                 self.get_code_from_probable_node_name,  
                 self.query_knowledge_graph,
+                self.get_nodes_from_tags,
+                self.get_file_structure,
             ],
             allow_delegation=False,
             verbose=True,
@@ -109,7 +112,10 @@ class CodeGenerationAgent:
             - Check dependency compatibility
             - Analyze database schemas and interactions
             - Review API contracts and interfaces
-
+            - IF NO SPECIFIC FILES ARE FOUND: 
+            * FIRST Use get_file_structure tool to get the file structure of the project and get any relevant file context
+            * THEN IF STILL NO SPECIFIC FILES ARE FOUND, use get_nodes_from_tags tool to search by relevant tags
+            
             4. Implementation Planning:
             - Plan changes that maintain exact formatting
             - Never modify existing patterns unless requested
@@ -120,6 +126,9 @@ class CodeGenerationAgent:
             - CRITICAL: Create concrete changes for EVERY impacted file
             - Map all required database schema updates
             - Detail API changes and version impacts
+                        
+            CRITICAL: If any file that is REQUIRED to propose changes is missing, stop and request the user to provide the file using "@filename" or "@functionname". NEVER create hypothetical files.
+
 
             5. Code Generation Format:
             Structure your response in this user-friendly format:
