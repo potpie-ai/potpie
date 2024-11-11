@@ -57,7 +57,10 @@ class AgentsService:
             ),
         ]
 
-        custom_agents = await self.fetch_custom_agents(current_user["user_id"])
+        try:
+            custom_agents = await self.fetch_custom_agents(current_user["user_id"])
+        except Exception as e:
+            custom_agents = []
 
         if list_system_agents:
             return system_agents + custom_agents
