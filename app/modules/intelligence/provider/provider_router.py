@@ -1,6 +1,6 @@
 from typing import List
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -41,7 +41,9 @@ class ProviderAPI:
     async def get_preferred_llm(
         user_id: str,
         db: Session = Depends(get_db),
+        hmac_signature: str = Header(..., alias="X-HMAC-Signature"),
     ):
-        #todo add hmac
+        if not AuthService.verify_hmac_signature(user_id, hmac_signature):
+            raise HTTPException(status_code=401, detail="Unauthorized")
         controller = ProviderController(db, user_id)
         return await controller.get_preferred_llm(user_id)
