@@ -129,7 +129,7 @@ class ProviderService:
             )
 
             self.llm = ChatAnthropic(
-                model="claude-3-5-sonnet-20240620",
+                model="claude-3-5-sonnet-20241022",
                 temperature=0.3,
                 api_key=anthropic_key,
                 base_url=PORTKEY_GATEWAY_URL,
@@ -242,7 +242,7 @@ class ProviderService:
         )
 
         model_type = (
-            "gpt-4o" if preferred_provider == "openai" else "claude-3-5-sonnet-20240620"
+            "gpt-4o" if preferred_provider == "openai" else "claude-3-5-sonnet-20241022"
         )
 
         return preferred_provider, model_type
