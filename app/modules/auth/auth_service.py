@@ -95,7 +95,6 @@ class AuthService:
             msg=payload_str.encode("utf-8"),
             digestmod=hashlib.sha256
         ).hexdigest()
-        print("expected signature", expected_signature)
         return hmac.compare_digest(hmac_signature, expected_signature)
 
     @staticmethod

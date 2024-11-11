@@ -52,7 +52,6 @@ async def list_tools_hmac(
     db: Session = Depends(get_db),
     hmac_signature: str = Header(..., alias="X-HMAC-Signature"),
 ):
-    print("recieved hmac", hmac_signature)
     if not AuthService.verify_hmac_signature(user_id, hmac_signature):
         raise HTTPException(status_code=401, detail="Unauthorized")
     tool_service = ToolService(db, user_id)
