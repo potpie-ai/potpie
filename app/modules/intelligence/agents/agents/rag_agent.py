@@ -41,7 +41,7 @@ class RAGResponse(BaseModel):
     response: List[NodeResponse]
 
 
-class DebugRAGCrew:
+class RAGAgent:
     def __init__(self, sql_db, llm, mini_llm, user_id):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.max_iter = os.getenv("MAX_ITER", 5)
@@ -162,6 +162,7 @@ class DebugRAGCrew:
             - Prioritize "Get Code and docstring From Probable Node Name" tool for stacktraces or specific file/function mentions
             - Use available tools as directed
             - Proceed to next step if insufficient information found
+            - Use markdown for code snippets with language name in the code block like ```python or ```javascript
 
             Ground your responses in provided code context and tool results. Use markdown for code snippets. Be concise and avoid repetition. If unsure, state it clearly. For debugging, unit testing, or unrelated code explanations, suggest specialized agents.
 
@@ -225,7 +226,7 @@ class DebugRAGCrew:
         return result
 
 
-async def kickoff_debug_rag_crew(
+async def kickoff_rag_agent(
     query: str,
     project_id: str,
     chat_history: List,
@@ -235,9 +236,9 @@ async def kickoff_debug_rag_crew(
     mini_llm,
     user_id: str,
 ) -> str:
-    debug_agent = DebugRAGCrew(sql_db, llm, mini_llm, user_id)
+    rag_agent = RAGAgent(sql_db, llm, mini_llm, user_id)
     file_structure = await GithubService(sql_db).get_project_structure_async(project_id)
-    result = await debug_agent.run(
+    result = await rag_agent.run(
         query, project_id, chat_history, node_ids, file_structure
     )
     return result

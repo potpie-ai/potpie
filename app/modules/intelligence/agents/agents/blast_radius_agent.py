@@ -17,7 +17,7 @@ from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool impo
 )
 
 
-class BlastRadiusCrew:
+class BlastRadiusAgent:
     def __init__(self, sql_db, user_id, llm):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.sql_db = sql_db
@@ -135,9 +135,9 @@ class BlastRadiusCrew:
         return result
 
 
-async def kickoff_blast_radius_crew(
+async def kickoff_blast_radius_agent(
     query: str, project_id: str, node_ids: List[NodeContext], sql_db, user_id, llm
 ) -> Dict[str, str]:
-    blast_radius_agent = BlastRadiusCrew(sql_db, user_id, llm)
+    blast_radius_agent = BlastRadiusAgent(sql_db, user_id, llm)
     result = await blast_radius_agent.run(project_id, node_ids, query)
     return result

@@ -3,16 +3,16 @@ from typing import Any, Dict
 
 from sqlalchemy.orm import Session
 
-from app.modules.intelligence.agents.chat_agents.code_changes_agent import (
-    CodeChangesAgent,
+from app.modules.intelligence.agents.chat_agents.code_changes_chat_agent import (
+    CodeChangesChatAgent,
 )
-from app.modules.intelligence.agents.chat_agents.debugging_agent import DebuggingAgent
-from app.modules.intelligence.agents.chat_agents.integration_test_agent import (
-    IntegrationTestAgent,
+from app.modules.intelligence.agents.chat_agents.debugging_chat_agent import DebuggingChatAgent
+from app.modules.intelligence.agents.chat_agents.integration_test_chat_agent import (
+    IntegrationTestChatAgent,
 )
-from app.modules.intelligence.agents.chat_agents.lld_agent import LLDAgent
-from app.modules.intelligence.agents.chat_agents.qna_agent import QNAAgent
-from app.modules.intelligence.agents.chat_agents.unit_test_agent import UnitTestAgent
+from app.modules.intelligence.agents.chat_agents.lld_chat_agent import LLDChatAgent
+from app.modules.intelligence.agents.chat_agents.qna_chat_agent import QNAChatAgent
+from app.modules.intelligence.agents.chat_agents.unit_test_chat_agent import UnitTestAgent
 from app.modules.intelligence.agents.custom_agents.custom_agent import CustomAgent
 from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
     CustomAgentsService,
@@ -34,16 +34,16 @@ class AgentInjectorService:
         mini_llm = self.provider_service.get_small_llm()
         reasoning_llm = self.provider_service.get_large_llm()
         return {
-            "debugging_agent": DebuggingAgent(mini_llm, reasoning_llm, self.sql_db),
-            "codebase_qna_agent": QNAAgent(mini_llm, reasoning_llm, self.sql_db),
+            "debugging_agent": DebuggingChatAgent(mini_llm, reasoning_llm, self.sql_db),
+            "codebase_qna_agent": QNAChatAgent(mini_llm, reasoning_llm, self.sql_db),
             "unit_test_agent": UnitTestAgent(mini_llm, reasoning_llm, self.sql_db),
-            "integration_test_agent": IntegrationTestAgent(
+            "integration_test_agent": IntegrationTestChatAgent(
                 mini_llm, reasoning_llm, self.sql_db
             ),
-            "code_changes_agent": CodeChangesAgent(
+            "code_changes_agent": CodeChangesChatAgent(
                 mini_llm, reasoning_llm, self.sql_db
             ),
-            "LLD_agent": LLDAgent(mini_llm, reasoning_llm, self.sql_db),
+            "LLD_agent": LLDChatAgent(mini_llm, reasoning_llm, self.sql_db),
         }
 
     def get_agent(self, agent_id: str) -> Any:

@@ -13,7 +13,7 @@ from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_n
 )
 
 
-class UnitTestCrew:
+class UnitTestAgent:
     def __init__(self, sql_db, llm, user_id):
         self.sql_db = sql_db
         self.user_id = user_id
@@ -143,7 +143,7 @@ class UnitTestCrew:
         return result
 
 
-async def kickoff_unit_test_crew(
+async def kickoff_unit_test_agent(
     query: str,
     chat_history: str,
     project_id: str,
@@ -156,6 +156,6 @@ async def kickoff_unit_test_crew(
         return {
             "error": "No function name is provided by the user. The agent cannot generate test plan or test code without specific class or function being selected by the user. Request the user to use the '@ followed by file or function name' feature to link individual functions to the message. "
         }
-    unit_test_agent = UnitTestCrew(sql_db, llm, user_id)
+    unit_test_agent = UnitTestAgent(sql_db, llm, user_id)
     result = await unit_test_agent.run(project_id, node_ids, query, chat_history)
     return result

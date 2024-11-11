@@ -17,7 +17,9 @@ from sqlalchemy.orm import Session
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.agents.agents_service import AgentsService
-from app.modules.intelligence.agents.crew.unit_test_crew import kickoff_unit_test_crew
+from app.modules.intelligence.agents.agents.blast_radius_agent import (
+    kickoff_blast_radius_agent,
+)
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.classification_prompts import (
     AgentType,
@@ -27,14 +29,11 @@ from app.modules.intelligence.prompts.classification_prompts import (
 )
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
-    GetCodeFromNodeIdTool,
-)
 
 logger = logging.getLogger(__name__)
 
 
-class UnitTestAgent:
+class CodeChangesChatAgent:
     def __init__(self, mini_llm, llm, db: Session):
         self.mini_llm = mini_llm
         self.llm = llm
@@ -47,7 +46,7 @@ class UnitTestAgent:
     @lru_cache(maxsize=2)
     async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
         prompts = await self.prompt_service.get_prompts_by_agent_id_and_types(
-            "UNIT_TEST_AGENT", [PromptType.SYSTEM, PromptType.HUMAN]
+            "CODE_CHANGES_AGENT", [PromptType.SYSTEM, PromptType.HUMAN]
         )
         return {prompt.type: prompt for prompt in prompts}
 
@@ -57,7 +56,7 @@ class UnitTestAgent:
         human_prompt = prompts.get(PromptType.HUMAN)
 
         if not system_prompt or not human_prompt:
-            raise ValueError("Required prompts not found for UNIT_TEST_AGENT")
+            raise ValueError("Required prompts not found for CODE_CHANGES_AGENT")
 
         prompt_template = ChatPromptTemplate(
             messages=[
@@ -67,10 +66,10 @@ class UnitTestAgent:
                 HumanMessagePromptTemplate.from_template(human_prompt.text),
             ]
         )
-        return prompt_template | self.llm
+        return prompt_template | self.mini_llm
 
     async def _classify_query(self, query: str, history: List[HumanMessage]):
-        prompt = ClassificationPrompts.get_classification_prompt(AgentType.UNIT_TEST)
+        prompt = ClassificationPrompts.get_classification_prompt(AgentType.CODE_CHANGES)
         inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
 
         parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
@@ -95,27 +94,7 @@ class UnitTestAgent:
             if not self.chain:
                 self.chain = await self._create_chain()
 
-            if not node_ids:
-                content = "It looks like there is no context selected. Please type @ followed by file or function name to interact with the unit test agent"
-                self.history_manager.add_message_chunk(
-                    conversation_id,
-                    content,
-                    MessageType.AI_GENERATED,
-                    citations=citations,
-                )
-                yield json.dumps({"citations": [], "message": content})
-                self.history_manager.flush_message_buffer(
-                    conversation_id, MessageType.AI_GENERATED
-                )
-                return
-
             history = self.history_manager.get_session_history(user_id, conversation_id)
-            for node in node_ids:
-                history.append(
-                    HumanMessage(
-                        content=f"{node.name}: {GetCodeFromNodeIdTool(self.db, user_id).run(project_id, node.node_id)}"
-                    )
-                )
             validated_history = [
                 (
                     HumanMessage(content=str(msg))
@@ -124,32 +103,30 @@ class UnitTestAgent:
                 )
                 for msg in history
             ]
+
             classification = await self._classify_query(query, validated_history)
 
             tool_results = []
             citations = []
             if classification == ClassificationResult.AGENT_REQUIRED:
-                test_response = await kickoff_unit_test_crew(
+                blast_radius_result = await kickoff_blast_radius_agent(
                     query,
-                    validated_history,
                     project_id,
                     node_ids,
                     self.db,
-                    self.llm,
                     user_id,
+                    self.mini_llm,
                 )
 
-                if test_response.pydantic:
-                    citations = test_response.pydantic.citations
-                    response = test_response.pydantic.response
+                if blast_radius_result.pydantic:
+                    citations = blast_radius_result.pydantic.citations
+                    response = blast_radius_result.pydantic.response
                 else:
                     citations = []
-                    response = test_response.raw
+                    response = blast_radius_result.raw
 
                 tool_results = [
-                    SystemMessage(
-                        content=f"Unit testing agent response, this is not visible to user:\n {response}"
-                    )
+                    SystemMessage(content=f"Blast Radius Agent result: {response}")
                 ]
 
             inputs = {
@@ -159,8 +136,9 @@ class UnitTestAgent:
             }
 
             logger.debug(f"Inputs to LLM: {inputs}")
-            citations = self.agents_service.format_citations(citations)
+
             full_response = ""
+            citations = self.agents_service.format_citations(citations)
             async for chunk in self.chain.astream(inputs):
                 content = chunk.content if hasattr(chunk, "content") else str(chunk)
                 full_response += content
@@ -168,21 +146,28 @@ class UnitTestAgent:
                     conversation_id,
                     content,
                     MessageType.AI_GENERATED,
-                    citations=citations,
+                    citations=(
+                        citations
+                        if classification == ClassificationResult.AGENT_REQUIRED
+                        else None
+                    ),
                 )
                 yield json.dumps(
                     {
-                        "citations": citations,
+                        "citations": (
+                            citations
+                            if classification == ClassificationResult.AGENT_REQUIRED
+                            else []
+                        ),
                         "message": content,
                     }
                 )
 
             logger.debug(f"Full LLM response: {full_response}")
-
             self.history_manager.flush_message_buffer(
                 conversation_id, MessageType.AI_GENERATED
             )
 
         except Exception as e:
-            logger.error(f"Error during QNAAgent run: {str(e)}", exc_info=True)
+            logger.error(f"Error during CodeChangesChatAgent run: {str(e)}", exc_info=True)
             yield f"An error occurred: {str(e)}"
