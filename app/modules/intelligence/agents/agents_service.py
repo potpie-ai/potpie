@@ -13,7 +13,7 @@ class AgentsService:
         self.project_path = os.getenv("PROJECT_PATH", "projects/")
         self.db = db
         self.prompt_service = PromptService(db)
-        self.base_url = os.getenv("POTPIE_PLUS_BASE_URL")
+        self.base_url = os.getenv("POTPIE_PLUS_BASE_URL","http://localhost:8000")
 
     async def list_available_agents(
         self, current_user: dict, list_system_agents: bool

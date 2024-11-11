@@ -40,7 +40,6 @@ class CustomAgentsService:
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout=600.0)) as client:
             try:
                 response = await client.post(run_url, json=payload)
-                logger.info("response from agent service", response.json())
                 response.raise_for_status()
                 return response.json()
             except httpx.TimeoutException as e:

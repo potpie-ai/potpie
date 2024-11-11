@@ -42,5 +42,6 @@ class ProviderAPI:
         user_id: str,
         db: Session = Depends(get_db),
     ):
+        #todo add hmac
         controller = ProviderController(db, user_id)
         return await controller.get_preferred_llm(user_id)

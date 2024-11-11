@@ -49,7 +49,7 @@ class LowLevelDesignPlan(BaseModel):
     )
 
 
-class LowLevelDesigAgent:
+class LowLevelDesignAgent:
     def __init__(self, sql_db, llm, user_id):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.max_iter = int(os.getenv("MAX_ITER", 10))
@@ -187,6 +187,6 @@ async def create_low_level_design_agent(
     llm,
     user_id: str,
 ) -> LowLevelDesignPlan:
-    design_agent = LowLevelDesigAgent(sql_db, llm, user_id)
+    design_agent = LowLevelDesignAgent(sql_db, llm, user_id)
     result = await design_agent.run(functional_requirements, project_id)
     return result
