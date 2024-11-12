@@ -207,7 +207,7 @@ class ParsingService:
                     project_id, ProjectStatusEnum.PARSED
                 )
                 # Generate docstrings using InferenceService
-                await self.inference_service.run_inference(project_id)
+                #await self.inference_service.run_inference(project_id)
                 logger.info(f"DEBUGNEO4J: After inference project {project_id}")
                 self.inference_service.log_graph_stats(project_id)
                 await self.project_service.update_project_status(

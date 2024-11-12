@@ -1,20 +1,35 @@
-(class_declaration
-  name: (identifier) @name.definition.class) @definition.class
-
+; Methods
 (method_declaration
-  name: (identifier) @name.definition.method) @definition.method
+  name: (identifier) @name.definition.method)
 
+; Method invocations
 (method_invocation
-  name: (identifier) @name.reference.call
-  arguments: (argument_list) @reference.call)
+  name: (identifier) @name.reference.method)
 
+; Class definitions
+(class_declaration
+  name: (identifier) @name.definition.class)
+
+; Interface definitions
 (interface_declaration
-  name: (identifier) @name.definition.interface) @definition.interface
+  name: (identifier) @name.definition.interface)
 
-(type_list
-  (type_identifier) @name.reference.implementation) @reference.implementation
+; Field declarations
+(field_declaration
+  declarator: (variable_declarator
+    name: (identifier) @name.definition.field))
 
-(object_creation_expression
-  type: (type_identifier) @name.reference.class) @reference.class
+; Variable declarations
+(local_variable_declaration
+  declarator: (variable_declarator
+    name: (identifier) @name.definition.variable))
 
-(superclass (type_identifier) @name.reference.class) @reference.class
+; Method parameters
+(formal_parameter
+  name: (identifier) @name.definition.parameter)
+
+; References to types
+(type_identifier) @name.reference.type
+
+; References to variables and fields
+(identifier) @name.reference.variable

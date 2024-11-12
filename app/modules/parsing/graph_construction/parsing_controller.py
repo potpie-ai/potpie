@@ -60,12 +60,13 @@ class ParsingController:
                 response = {"project_id": project_id, "status": project_status}
 
                 # Check commit status
-                is_latest = (
-                    await parse_helper.check_commit_status(project_id)
-                    if not demo_project
-                    else True
-                )
+                # is_latest = (
+                #     await parse_helper.check_commit_status(project_id)
+                #     if not demo_project
+                #     else True
+                # )
 
+                is_latest = False
                 if not is_latest or project_status != ProjectStatusEnum.READY.value:
                     cleanup_graph = True
 
@@ -178,9 +179,9 @@ class ParsingController:
         }
 
         logger.info(f"Submitting parsing task for new project {new_project_id}")
-
+        repo_name = repo_details.repo_name or repo_details.repo_path.split("/")[-1]
         await project_manager.register_project(
-            repo_details.repo_name, repo_details.branch_name, user_id, new_project_id
+            repo_name, repo_details.branch_name, user_id, new_project_id
         )
         asyncio.create_task(
             GithubService(db).get_project_structure_async(new_project_id)

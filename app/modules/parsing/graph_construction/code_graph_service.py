@@ -1,7 +1,7 @@
 import hashlib
 import logging
 from typing import Dict, Optional
-
+import time 
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 
@@ -43,10 +43,16 @@ class CodeGraphService:
         nx_graph = self.repo_map.create_graph(repo_dir)
 
         with self.driver.session() as session:
-            # Create nodes
-            import time
+            # First, clear any existing data for this project
+            session.run(
+                """
+                MATCH (n {repoId: $project_id})
+                DETACH DELETE n
+                """,
+                project_id=project_id,
+            )
 
-            start_time = time.time()  # Start timing
+            start_time = time.time()
             node_count = nx_graph.number_of_nodes()
             logging.info(f"Creating {node_count} nodes")
 
@@ -55,25 +61,38 @@ class CodeGraphService:
             for i in range(0, node_count, batch_size):
                 batch_nodes = list(nx_graph.nodes(data=True))[i : i + batch_size]
                 nodes_to_create = []
-                for node in batch_nodes:
-                    node_type = node[1].get("type")
-                    label = node_type.capitalize() if node_type else "UNKNOWN"
-                    node_data = {
-                        "name": node[0],
-                        "file_path": node[1].get("file", ""),
-                        "start_line": node[1].get("line", -1),
-                        "end_line": node[1].get("end_line", -1),
+                
+                for node_id, node_data in batch_nodes:
+                    # Get the node type and ensure it's one of our expected types
+                    node_type = node_data.get("type", "UNKNOWN")
+                    if node_type == "UNKNOWN":
+                        continue
+                    # Initialize labels with NODE
+                    labels = ["NODE"]
+                    
+                    # Add specific type label if it's a valid type
+                    if node_type in ["FILE", "CLASS", "FUNCTION", "INTERFACE"]:
+                        labels.append(node_type)
+                    
+                    # Prepare node data
+                    processed_node = {
+                        "name": node_data.get("name", node_id),  # Use node_id as fallback
+                        "file_path": node_data.get("file", ""),
+                        "start_line": node_data.get("line", -1),
+                        "end_line": node_data.get("end_line", -1),
                         "repoId": project_id,
-                        "node_id": CodeGraphService.generate_node_id(node[0], user_id),
+                        "node_id": CodeGraphService.generate_node_id(node_id, user_id),
                         "entityId": user_id,
-                        "type": node_type if node_type else "Unknown",
-                        "text": node[1].get("text", ""),
-                        "labels": ["NODE", label],
+                        "type": node_type,
+                        "text": node_data.get("text", ""),
+                        "labels": labels,
                     }
-                    # Remove any null values from node_data
-                    node_data = {k: v for k, v in node_data.items() if v is not None}
-                    nodes_to_create.append(node_data)
+                    
+                    # Remove None values
+                    processed_node = {k: v for k, v in processed_node.items() if v is not None}
+                    nodes_to_create.append(processed_node)
 
+                # Create nodes with labels
                 session.run(
                     """
                     UNWIND $nodes AS node
@@ -112,11 +131,9 @@ class CodeGraphService:
                     edges=edges_to_create,
                 )
 
-            end_time = time.time()  # End timing
-            logging.info(
-                f"Time taken to create graph and search index: {end_time - start_time:.2f} seconds"
-            )
-
+            end_time = time.time()
+            logging.info(f"Time taken to create graph and search index: {end_time - start_time:.2f} seconds")
+            
     def cleanup_graph(self, project_id: str):
         with self.driver.session() as session:
             session.run(
