@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field
 
 from app.core.config_provider import ConfigProvider
 from app.core.database import get_db
-from app.modules.intelligence.tools.tool_schema import ToolParameter
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.projects.projects_service import ProjectService
 
@@ -19,38 +18,11 @@ class GetNodesFromTagsInput(BaseModel):
 
 
 class GetNodesFromTags:
-    name = "Get Nodes from Tags"
-    description = """Fetch nodes from the knowledge graph based on specified tags.
-        :param tags: array, list of tags to filter nodes by. Valid tags are: API, WEBSOCKET, PRODUCER, CONSUMER, DATABASE, SCHEMA, EXTERNAL_SERVICE, CONFIGURATION, SCRIPT.
-        :param project_id: string, the project ID (UUID).
-
-            example:
-            {
-                "project_id": "550e8400-e29b-41d4-a716-446655440000",
-                "tags": ["API", "DATABASE"]
-            }
-            
-        Returns list of nodes with:
-        - file_path: string - path to the file
-        - docstring: string - documentation if available
-        - text: string - node text content
-        - node_id: string - unique identifier
-        - name: string - node name
-        
-        Usage guidelines:
-        1. Use for broad queries requiring ALL nodes of specific types
-        2. Limit to 1-2 tags per query for best results
-        3. List cannot be empty
-        """
-
     def __init__(self, sql_db, user_id):
         self.sql_db = sql_db
         self.user_id = user_id
 
-    async def arun(self, tags: List[str], project_id: str) -> str:
-        return await asyncio.to_thread(self.run, tags, project_id)
-
-    def run(self, tags: List[str], project_id: str) -> str:
+    def fetch_nodes(self, tags: List[str], project_id: str) -> str:
         """
         Get nodes from the knowledge graph based on the provided tags.
         Inputs for the fetch_nodes method:
@@ -105,8 +77,7 @@ class GetNodesFromTags:
 
 def get_nodes_from_tags_tool(sql_db, user_id) -> StructuredTool:
     return StructuredTool.from_function(
-        coroutine=GetNodesFromTags(sql_db, user_id).arun,
-        func=GetNodesFromTags(sql_db, user_id).run,
+        func=GetNodesFromTags(sql_db, user_id).fetch_nodes,
         name="Get Nodes from Tags",
         description="""
         Fetch nodes from the knowledge graph based on specified tags. Use this tool to retrieve nodes of specific types for a project.

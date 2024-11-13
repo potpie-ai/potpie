@@ -1,5 +1,5 @@
 import os
-from typing import List, Tuple
+from typing import List
 
 from langchain_anthropic import ChatAnthropic
 from langchain_openai.chat_models import ChatOpenAI
@@ -129,7 +129,7 @@ class ProviderService:
             )
 
             self.llm = ChatAnthropic(
-                model="claude-3-5-sonnet-20241022",
+                model="claude-3-5-sonnet-20240620",
                 temperature=0.3,
                 api_key=anthropic_key,
                 base_url=PORTKEY_GATEWAY_URL,
@@ -227,22 +227,3 @@ class ProviderService:
             return "Anthropic"
         else:
             return "Unknown"
-
-    async def get_preferred_llm(self, user_id: str) -> Tuple[str, str]:
-        user_pref = (
-            self.db.query(UserPreferences)
-            .filter(UserPreferences.user_id == user_id)
-            .first()
-        )
-
-        preferred_provider = (
-            user_pref.preferences.get("llm_provider", "openai")
-            if user_pref
-            else "openai"
-        )
-
-        model_type = (
-            "gpt-4o" if preferred_provider == "openai" else "claude-3-5-sonnet-20241022"
-        )
-
-        return preferred_provider, model_type

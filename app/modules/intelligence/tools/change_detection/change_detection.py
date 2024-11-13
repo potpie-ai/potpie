@@ -15,7 +15,6 @@ from app.modules.intelligence.tools.code_query_tools.get_code_from_node_name_too
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     GetCodeFromNodeIdTool,
 )
-from app.modules.intelligence.tools.tool_schema import ToolParameter
 from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 from app.modules.projects.projects_service import ProjectService
@@ -44,20 +43,6 @@ class ChangeDetectionResponse(BaseModel):
 
 
 class ChangeDetectionTool:
-    name = "Get code changes"
-    description = """Analyzes differences between branches in a Git repository and retrieves updated function details.
-        :param project_id: string, the ID of the project being evaluated (UUID).
-
-            example:
-            {
-                "project_id": "550e8400-e29b-41d4-a716-446655440000"
-            }
-
-        Returns dictionary containing:
-        - patches: Dict[str, str] - file patches
-        - changes: List[ChangeDetail] - list of changes with updated and entry point code
-        """
-
     def __init__(self, sql_db, user_id):
         self.sql_db = sql_db
         self.user_id = user_id
@@ -82,12 +67,12 @@ class ChangeDetectionTool:
                         changed_files[current_file].add(i)
         return changed_files
 
-    async def _find_changed_functions(self, changed_files, project_id):
+    async def _find_changed_functions(self, changed_files, repo_id):
         result = []
         for relative_file_path, lines in changed_files.items():
             try:
                 project = await ProjectService(self.sql_db).get_project_from_db_by_id(
-                    project_id
+                    repo_id
                 )
                 github_service = GithubService(self.sql_db)
                 file_content = github_service.get_file_content(
@@ -133,9 +118,9 @@ class ChangeDetectionTool:
                 logging.error(f"Exception {e}")
         return result
 
-    async def get_updated_function_list(self, patch_details, project_id):
+    async def get_updated_function_list(self, patch_details, repo_id):
         changed_files = self._parse_diff_detail(patch_details)
-        return await self._find_changed_functions(changed_files, project_id)
+        return await self._find_changed_functions(changed_files, repo_id)
 
     @staticmethod
     def _find_inbound_neighbors(tx, node_id, project_id, with_bodies):
@@ -148,8 +133,7 @@ class ChangeDetectionTool:
         }}
         RETURN start, collect({{neighbor: neighbor{', body: neighbor.body' if with_bodies else ''}}}) AS neighbors
         """
-        endpoint_id = node_id
-        result = tx.run(query, endpoint_id, project_id)
+        result = tx.run(query, endpoint_id=node_id, project_id=project_id)
         record = result.single()
         if not record:
             return []
@@ -300,28 +284,24 @@ class ChangeDetectionTool:
                 if github:
                     github.close()
 
-    async def arun(self, project_id: str) -> str:
-        return await self.get_code_changes(project_id)
-
-    def run(self, project_id: str) -> str:
+    def get_change_context(self, project_id):
         return asyncio.run(self.get_code_changes(project_id))
 
 
-def get_change_detection_tool(user_id: str) -> Tool:
+def get_blast_radius_tool(user_id: str) -> Tool:
     """
     Get a list of LangChain Tool objects for use in agents.
     """
     change_detection_tool = ChangeDetectionTool(next(get_db()), user_id)
     return StructuredTool.from_function(
-        coroutine=change_detection_tool.arun,
-        func=change_detection_tool.run,
+        func=change_detection_tool.get_change_context,
         name="Get code changes",
         description="""
-            Get the changes in the codebase.
-            This tool analyzes the differences between branches in a Git repository and retrieves updated function details, including their entry points and citations.
-            Inputs for the get_code_changes method:
-            - project_id (str): The ID of the project being evaluated, this is a UUID.
-            The output includes a dictionary of file patches and a list of changes with updated code and entry point code.
-            """,
+    Get the changes in the codebase.
+    This tool analyzes the differences between branches in a Git repository and retrieves updated function details, including their entry points and citations.
+    Inputs for the get_code_changes method:
+    - project_id (str): The ID of the project being evaluated, this is a UUID.
+    The output includes a dictionary of file patches and a list of changes with updated code and entry point code.
+    """,
         args_schema=ChangeDetectionInput,
     )

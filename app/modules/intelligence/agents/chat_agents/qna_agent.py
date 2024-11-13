@@ -17,8 +17,8 @@ from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import NodeContext
+from app.modules.intelligence.agents.agentic_tools.rag_agent import kickoff_rag_crew
 from app.modules.intelligence.agents.agents_service import AgentsService
-from app.modules.intelligence.agents.agents.debug_rag_agent import kickoff_debug_rag_agent
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.classification_prompts import (
     AgentType,
@@ -32,10 +32,10 @@ from app.modules.intelligence.prompts.prompt_service import PromptService
 logger = logging.getLogger(__name__)
 
 
-class DebuggingChatAgent:
-    def __init__(self, mini_llm, reasoning_llm, db: Session):
+class QNAAgent:
+    def __init__(self, mini_llm, llm, db: Session):
         self.mini_llm = mini_llm
-        self.llm = reasoning_llm
+        self.llm = llm
         self.history_manager = ChatHistoryService(db)
         self.prompt_service = PromptService(db)
         self.agents_service = AgentsService(db)
@@ -45,7 +45,7 @@ class DebuggingChatAgent:
     @lru_cache(maxsize=2)
     async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
         prompts = await self.prompt_service.get_prompts_by_agent_id_and_types(
-            "DEBUGGING_AGENT", [PromptType.SYSTEM, PromptType.HUMAN]
+            "QNA_AGENT", [PromptType.SYSTEM, PromptType.HUMAN]
         )
         return {prompt.type: prompt for prompt in prompts}
 
@@ -55,7 +55,7 @@ class DebuggingChatAgent:
         human_prompt = prompts.get(PromptType.HUMAN)
 
         if not system_prompt or not human_prompt:
-            raise ValueError("Required prompts not found for DEBUGGING_AGENT")
+            raise ValueError("Required prompts not found for QNA_AGENT")
 
         prompt_template = ChatPromptTemplate(
             messages=[
@@ -68,8 +68,8 @@ class DebuggingChatAgent:
         return prompt_template | self.mini_llm
 
     async def _classify_query(self, query: str, history: List[HumanMessage]):
-        prompt = ClassificationPrompts.get_classification_prompt(AgentType.DEBUGGING)
-        inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
+        prompt = ClassificationPrompts.get_classification_prompt(AgentType.QNA)
+        inputs = {"query": query, "history": [msg.content for msg in history[-10:]]}
 
         parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
         prompt_with_parser = ChatPromptTemplate.from_template(
@@ -88,11 +88,8 @@ class DebuggingChatAgent:
         user_id: str,
         conversation_id: str,
         node_ids: List[NodeContext],
-        logs: str = "",
-        stacktrace: str = "",
     ) -> AsyncGenerator[str, None]:
         start_time = time.time()  # Start the timer
-
         try:
             if not self.chain:
                 self.chain = await self._create_chain()
@@ -107,12 +104,21 @@ class DebuggingChatAgent:
                 for msg in history
             ]
 
+            classification_start_time = time.time()  # Start timer for classification
             classification = await self._classify_query(query, validated_history)
+            classification_duration = (
+                time.time() - classification_start_time
+            )  # Calculate duration
+            logger.info(
+                f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
+                f"Duration of classify method call: {classification_duration:.2f}s"
+            )
 
             tool_results = []
             citations = []
             if classification == ClassificationResult.AGENT_REQUIRED:
-                rag_result = await kickoff_debug_rag_agent(
+                rag_start_time = time.time()  # Start timer for RAG agent
+                rag_result = await kickoff_rag_crew(
                     query,
                     project_id,
                     [
@@ -126,15 +132,21 @@ class DebuggingChatAgent:
                     self.mini_llm,
                     user_id,
                 )
-                if rag_result.pydantic:
-                    response = rag_result.pydantic.response
-                    citations = rag_result.pydantic.citations
-                    result = [node.model_dump() for node in response]
-                else:
-                    result = rag_result.raw
-                    citations = []
+                rag_duration = time.time() - rag_start_time  # Calculate duration
+                logger.info(
+                    f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
+                    f"Duration of RAG agent: {rag_duration:.2f}s"
+                )
 
+                if rag_result.pydantic:
+                    citations = rag_result.pydantic.citations
+                    response = rag_result.pydantic.response
+                    result = [node for node in response]
+                else:
+                    citations = []
+                    result = rag_result.raw
                 tool_results = [SystemMessage(content=result)]
+                # Timing for adding message chunk
                 add_chunk_start_time = (
                     time.time()
                 )  # Start timer for adding message chunk
@@ -168,38 +180,58 @@ class DebuggingChatAgent:
                 )
                 yield json.dumps({"citations": citations, "message": result})
 
-            full_query = f"Query: {query}\nProject ID: {project_id}\nLogs: {logs}\nStacktrace: {stacktrace}"
-            inputs = {
-                "history": validated_history,
-                "tool_results": tool_results,
-                "input": full_query,
-            }
+            if classification != ClassificationResult.AGENT_REQUIRED:
+                inputs = {
+                    "history": validated_history[-10:],
+                    "tool_results": tool_results,
+                    "input": query,
+                }
 
-            logger.debug(f"Inputs to LLM: {inputs}")
-            citations = self.agents_service.format_citations(citations)
-            full_response = ""
-            async for chunk in self.chain.astream(inputs):
-                content = chunk.content if hasattr(chunk, "content") else str(chunk)
-                full_response += content
-                self.history_manager.add_message_chunk(
-                    conversation_id,
-                    content,
-                    MessageType.AI_GENERATED,
-                    citations=citations,
+                logger.debug(f"Inputs to LLM: {inputs}")
+                citations = self.agents_service.format_citations(citations)
+                full_response = ""
+                add_stream_chunk_start_time = (
+                    time.time()
+                )  # Start timer for adding message chunk
+
+                async for chunk in self.chain.astream(inputs):
+                    content = chunk.content if hasattr(chunk, "content") else str(chunk)
+                    full_response += content
+
+                    self.history_manager.add_message_chunk(
+                        conversation_id,
+                        content,
+                        MessageType.AI_GENERATED,
+                        citations=citations,
+                    )
+                    yield json.dumps(
+                        {
+                            "citations": citations,
+                            "message": content,
+                        }
+                    )
+                add_stream_chunk_duration = (
+                    time.time() - add_stream_chunk_start_time
+                )  # Calculate duration
+                logger.info(
+                    f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
+                    f"Duration of adding message chunk during streaming: {add_stream_chunk_duration:.2f}s"
                 )
-                yield json.dumps(
-                    {
-                        "citations": citations,
-                        "message": content,
-                    }
+
+                flush_stream_buffer_start_time = (
+                    time.time()
+                )  # Start timer for flushing message buffer after streaming
+                self.history_manager.flush_message_buffer(
+                    conversation_id, MessageType.AI_GENERATED
                 )
-
-            logger.debug(f"Full LLM response: {full_response}")
-
-            self.history_manager.flush_message_buffer(
-                conversation_id, MessageType.AI_GENERATED
-            )
+                flush_stream_buffer_duration = (
+                    time.time() - flush_stream_buffer_start_time
+                )  # Calculate duration
+                logger.info(
+                    f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
+                    f"Duration of flushing message buffer after streaming: {flush_stream_buffer_duration:.2f}s"
+                )
 
         except Exception as e:
-            logger.error(f"Error during DebuggingChatAgent run: {str(e)}", exc_info=True)
+            logger.error(f"Error during QNAAgent run: {str(e)}", exc_info=True)
             yield f"An error occurred: {str(e)}"

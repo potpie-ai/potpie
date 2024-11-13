@@ -5,9 +5,9 @@ from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
-from app.modules.intelligence.tools.change_detection.change_detection_tool import (
+from app.modules.intelligence.tools.change_detection.change_detection import (
     ChangeDetectionResponse,
-    get_change_detection_tool,
+    get_blast_radius_tool,
 )
 from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import (
     get_ask_knowledge_graph_queries_tool,
@@ -103,12 +103,11 @@ class BlastRadiusAgent:
             expected_output=f"Comprehensive impact analysis of the code changes on the codebase and answers to the users query about them. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model : {self.BlastRadiusAgentResponse.model_json_schema()}",
             agent=blast_radius_agent,
             tools=[
-                get_change_detection_tool(self.user_id),
+                get_blast_radius_tool(self.user_id),
                 self.get_nodes_from_tags,
                 self.ask_knowledge_graph_queries,
             ],
             output_pydantic=self.BlastRadiusAgentResponse,
-            async_execution=True,
         )
 
         return analyze_changes_task
@@ -135,7 +134,7 @@ class BlastRadiusAgent:
         return result
 
 
-async def kickoff_blast_radius_agent(
+async def kickoff_blast_radius_crew(
     query: str, project_id: str, node_ids: List[NodeContext], sql_db, user_id, llm
 ) -> Dict[str, str]:
     blast_radius_agent = BlastRadiusAgent(sql_db, user_id, llm)

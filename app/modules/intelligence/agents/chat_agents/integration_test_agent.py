@@ -16,10 +16,10 @@ from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import NodeContext
-from app.modules.intelligence.agents.agents_service import AgentsService
-from app.modules.intelligence.agents.agents.blast_radius_agent import (
-    kickoff_blast_radius_agent,
+from app.modules.intelligence.agents.agentic_tools.integration_test_agent import (
+    kickoff_integration_test_crew,
 )
+from app.modules.intelligence.agents.agents_service import AgentsService
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.classification_prompts import (
     AgentType,
@@ -33,7 +33,7 @@ from app.modules.intelligence.prompts.prompt_service import PromptService
 logger = logging.getLogger(__name__)
 
 
-class CodeChangesChatAgent:
+class IntegrationTestAgent:
     def __init__(self, mini_llm, llm, db: Session):
         self.mini_llm = mini_llm
         self.llm = llm
@@ -46,7 +46,7 @@ class CodeChangesChatAgent:
     @lru_cache(maxsize=2)
     async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
         prompts = await self.prompt_service.get_prompts_by_agent_id_and_types(
-            "CODE_CHANGES_AGENT", [PromptType.SYSTEM, PromptType.HUMAN]
+            "INTEGRATION_TEST_AGENT", [PromptType.SYSTEM, PromptType.HUMAN]
         )
         return {prompt.type: prompt for prompt in prompts}
 
@@ -56,7 +56,7 @@ class CodeChangesChatAgent:
         human_prompt = prompts.get(PromptType.HUMAN)
 
         if not system_prompt or not human_prompt:
-            raise ValueError("Required prompts not found for CODE_CHANGES_AGENT")
+            raise ValueError("Required prompts not found for INTEGRATION_TEST_AGENT")
 
         prompt_template = ChatPromptTemplate(
             messages=[
@@ -66,10 +66,12 @@ class CodeChangesChatAgent:
                 HumanMessagePromptTemplate.from_template(human_prompt.text),
             ]
         )
-        return prompt_template | self.mini_llm
+        return prompt_template | self.llm
 
     async def _classify_query(self, query: str, history: List[HumanMessage]):
-        prompt = ClassificationPrompts.get_classification_prompt(AgentType.CODE_CHANGES)
+        prompt = ClassificationPrompts.get_classification_prompt(
+            AgentType.INTEGRATION_TEST
+        )
         inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
 
         parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
@@ -105,28 +107,30 @@ class CodeChangesChatAgent:
             ]
 
             classification = await self._classify_query(query, validated_history)
-
-            tool_results = []
             citations = []
+            tool_results = []
             if classification == ClassificationResult.AGENT_REQUIRED:
-                blast_radius_result = await kickoff_blast_radius_agent(
+                test_response = await kickoff_integration_test_crew(
                     query,
                     project_id,
                     node_ids,
                     self.db,
+                    self.llm,
                     user_id,
-                    self.mini_llm,
+                    validated_history,
                 )
 
-                if blast_radius_result.pydantic:
-                    citations = blast_radius_result.pydantic.citations
-                    response = blast_radius_result.pydantic.response
+                if test_response.pydantic:
+                    response = test_response.pydantic.response
+                    citations = test_response.pydantic.citations
                 else:
+                    response = test_response.raw
                     citations = []
-                    response = blast_radius_result.raw
 
                 tool_results = [
-                    SystemMessage(content=f"Blast Radius Agent result: {response}")
+                    SystemMessage(
+                        content=f"Integration test agent result, this is not visible to user:\n {response}"
+                    )
                 ]
 
             inputs = {
@@ -136,9 +140,8 @@ class CodeChangesChatAgent:
             }
 
             logger.debug(f"Inputs to LLM: {inputs}")
-
-            full_response = ""
             citations = self.agents_service.format_citations(citations)
+            full_response = ""
             async for chunk in self.chain.astream(inputs):
                 content = chunk.content if hasattr(chunk, "content") else str(chunk)
                 full_response += content
@@ -146,28 +149,23 @@ class CodeChangesChatAgent:
                     conversation_id,
                     content,
                     MessageType.AI_GENERATED,
-                    citations=(
-                        citations
-                        if classification == ClassificationResult.AGENT_REQUIRED
-                        else None
-                    ),
+                    citations=citations,
                 )
                 yield json.dumps(
                     {
-                        "citations": (
-                            citations
-                            if classification == ClassificationResult.AGENT_REQUIRED
-                            else []
-                        ),
+                        "citations": citations,
                         "message": content,
                     }
                 )
 
             logger.debug(f"Full LLM response: {full_response}")
+
             self.history_manager.flush_message_buffer(
                 conversation_id, MessageType.AI_GENERATED
             )
 
         except Exception as e:
-            logger.error(f"Error during CodeChangesChatAgent run: {str(e)}", exc_info=True)
+            logger.error(
+                f"Error during Integration Test Agent run: {str(e)}", exc_info=True
+            )
             yield f"An error occurred: {str(e)}"
