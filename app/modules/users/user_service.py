@@ -9,6 +9,9 @@ from sqlalchemy.orm import Session
 from app.modules.conversations.conversation.conversation_model import Conversation
 from app.modules.users.user_model import User
 from app.modules.users.user_schema import CreateUser
+from firebase_admin import auth
+from app.modules.users.user_schema import UserProfileResponse
+
 
 logger = logging.getLogger(__name__)
 
@@ -142,4 +145,15 @@ class UserService:
                 return None
         except Exception as e:
             logger.error(f"Error fetching user ID by emails {emails}: {e}")
+            return None
+    def get_user_profile_pic(self, uid: str) -> UserProfileResponse:
+        try:
+            user_record = auth.get_user(uid)
+            profile_pic_url = user_record.photo_url
+            return {
+                "user_id": user_record.uid,
+                "profile_pic_url": profile_pic_url
+            }
+        except Exception as e:
+            logging.error(f"Error retrieving user profile picture: {e}")
             return None
