@@ -1,7 +1,10 @@
+import asyncio
+from contextlib import redirect_stdout
 import os
-from typing import Any, Dict, List
+from typing import Any, AsyncGenerator, Dict, List
 
 import agentops
+import aiofiles
 from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
 
@@ -118,6 +121,8 @@ class RAGAgent:
             - User Node IDs: {[node.model_dump() for node in node_ids]}
             - File Structure: {file_structure}
             - Code Results for user node ids: {code_results}
+            
+            0. Analyze chat history and query to determine if the query is a follow up question or a new question. If the question can be answered using the chat history and the context from the query itself, then answer the question immediately.
 
             1. Analyze project structure:
                - Identify key directories, files, and modules
@@ -235,10 +240,35 @@ async def kickoff_rag_crew(
     llm,
     mini_llm,
     user_id: str,
-) -> str:
-    rag_agent = RAGAgent(sql_db, llm, mini_llm, user_id)
+) -> AsyncGenerator[str, None]:
+    rag_agent = RAGAgent(sql_db, mini_llm, mini_llm, user_id)
     file_structure = await GithubService(sql_db).get_project_structure_async(project_id)
-    result = await rag_agent.run(
+
+
+    read_fd, write_fd = os.pipe()
+
+    async def kickoff():
+        with os.fdopen(write_fd, "w", buffering=1) as write_file:
+            with redirect_stdout(write_file):
+                await rag_agent.run(
         query, project_id, chat_history, node_ids, file_structure
     )
-    return result
+
+
+    asyncio.create_task(kickoff())
+
+    # Yield CrewAgent logs as they are written to the pipe
+    final_answer_streaming = False
+    async with aiofiles.open(read_fd, mode='r') as read_file:
+        async for line in read_file:
+            if not line:
+                break
+            else:
+                if final_answer_streaming:
+                    if line.endswith('\x1b[00m\n'):
+                        yield line[:-6]
+                    else:
+                        yield line
+                if "## Final Answer:" in line:
+                    final_answer_streaming = True
+

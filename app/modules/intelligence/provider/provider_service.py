@@ -108,6 +108,7 @@ class ProviderService:
                 temperature=0.3,
                 base_url=PORTKEY_GATEWAY_URL,
                 default_headers=portkey_headers,
+                streaming=True,
             )
 
         elif preferred_provider == "anthropic":
@@ -184,6 +185,7 @@ class ProviderService:
                 temperature=0.3,
                 base_url=PORTKEY_GATEWAY_URL,
                 default_headers=portkey_headers,
+                streaming=True,
             )
 
         elif preferred_provider == "anthropic":
