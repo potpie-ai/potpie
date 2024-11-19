@@ -138,7 +138,7 @@ def get_code_from_multiple_node_ids_tool(
     tool_instance = GetCodeFromMultipleNodeIdsTool(sql_db, user_id)
     return StructuredTool.from_function(
         func=tool_instance.run,
-        name="Get Code and docstring From Multiple Node IDs",
+        name="get_code_from_multiple_node_ids",
         description="""Retrieves code and docstring for multiple node ids in a repository given their node IDs
                 Inputs for the run_multiple method:
                 - repo_id (str): The repository ID to retrieve code and docstring for, this is a UUID.

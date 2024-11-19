@@ -133,6 +133,6 @@ def get_code_from_node_name_tool(sql_db: Session, user_id: str) -> Tool:
     tool_instance = GetCodeFromNodeNameTool(sql_db, user_id)
     return StructuredTool.from_function(
         func=tool_instance.run,
-        name="Get Code From Node Name",
+        name="get_code_from_node_name",
         description="Retrieves code for a specific node in a repository given its node name",
     )

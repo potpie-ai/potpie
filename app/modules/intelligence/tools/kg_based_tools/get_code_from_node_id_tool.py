@@ -118,7 +118,7 @@ def get_code_from_node_id_tool(sql_db: Session, user_id: str) -> StructuredTool:
     tool_instance = GetCodeFromNodeIdTool(sql_db, user_id)
     return StructuredTool.from_function(
         func=tool_instance.run,
-        name="Get Code and docstring From Node ID",
+        name="get_code_from_node_id",
         description="""Retrieves code and docstring for a specific node id in a repository given its node ID
                        Inputs for the run method:
                        - repo_id (str): The repository ID to retrieve code and docstring for, this is a UUID.

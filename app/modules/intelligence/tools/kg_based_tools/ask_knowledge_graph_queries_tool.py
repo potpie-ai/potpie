@@ -100,7 +100,7 @@ class KnowledgeGraphQueryTool:
 def get_ask_knowledge_graph_queries_tool(sql_db, user_id) -> StructuredTool:
     return StructuredTool.from_function(
         func=KnowledgeGraphQueryTool(sql_db, user_id).ask_knowledge_graph_query,
-        name="Ask Knowledge Graph Queries",
+        name="ask_knowledge_graph_queries",
         description="""
     Query the code knowledge graph using multiple natural language questions.
     The knowledge graph contains information about every function, class, and file in the codebase.

@@ -193,6 +193,6 @@ def get_code_graph_from_node_id_tool(sql_db: Session) -> Tool:
     tool_instance = GetCodeGraphFromNodeIdTool(sql_db)
     return StructuredTool.from_function(
         func=tool_instance.run,
-        name="Get Code Graph From Node ID",
+        name="get_code_graph_from_node_id",
         description="Retrieves a code graph for a specific node in a repository given its node ID",
     )

@@ -295,7 +295,7 @@ def get_blast_radius_tool(user_id: str) -> Tool:
     change_detection_tool = ChangeDetectionTool(next(get_db()), user_id)
     return StructuredTool.from_function(
         func=change_detection_tool.get_change_context,
-        name="Get code changes",
+        name="get_code_changes",
         description="""
     Get the changes in the codebase.
     This tool analyzes the differences between branches in a Git repository and retrieves updated function details, including their entry points and citations.

@@ -78,7 +78,7 @@ class GetNodesFromTags:
 def get_nodes_from_tags_tool(sql_db, user_id) -> StructuredTool:
     return StructuredTool.from_function(
         func=GetNodesFromTags(sql_db, user_id).fetch_nodes,
-        name="Get Nodes from Tags",
+        name="get_nodes_from_tags",
         description="""
         Fetch nodes from the knowledge graph based on specified tags. Use this tool to retrieve nodes of specific types for a project.
 
