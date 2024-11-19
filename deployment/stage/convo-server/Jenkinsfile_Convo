@@ -20,12 +20,12 @@ pipeline {
                     // Determine environment based on branch
                     def branch = env.GIT_BRANCH
 
-                    if (branch == "origin/support-for-custom-agent-in-conv") {
-                        env.ENVIRONMENT = 'support-for-custom-agent-in-conv'
+                    if (branch == "origin/custom_agents_backup") {
+                        env.ENVIRONMENT = 'custom_agents_backup'
                     } else if (branch == "origin/main") {
                         env.ENVIRONMENT = 'main'
                     } else {
-                        error("Unknown branch: ${branch}. This pipeline only supports main and staging branches.")
+                        error("Unknown branch: ${branch}. This pipeline only supports main and custom_agents_backup branches.")
                     }
 
                     checkout scm
