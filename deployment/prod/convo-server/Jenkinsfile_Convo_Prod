@@ -26,7 +26,9 @@ pipeline {
                         env.ENVIRONMENT = 'main'
                     } else if (branch == "origin/devops"){
                         env.ENVIORNMENT = 'devops'
-                    } else {
+                    }  else if (branch == "origin/custom-agents-backup") {
+                        env.ENVIORNMENT = 'main'
+                    }  else {
                         error("Unknown branch: ${branch}. This pipeline only supports main and staging branches.")
                     }
 

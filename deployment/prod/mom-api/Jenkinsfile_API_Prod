@@ -22,7 +22,9 @@ pipeline {
 
                     if (branch == "origin/dir-restruct") {
                         env.ENVIRONMENT = 'dir-restruct'
-                    } else if (branch == "origin/main"){
+                    } else if (branch == "origin/main") {
+                        env.ENVIORNMENT = 'main'
+                    } else if (branch == "origin/custom-agents-backup") {
                         env.ENVIORNMENT = 'main'
                     } else {
                         error("Unknown branch: ${branch}. This pipeline only supports main and staging branches.")
