@@ -10,6 +10,10 @@
   <a href="https://github.com/potpie-ai/potpie/blob/main/LICENSE">
     <img src="https://img.shields.io/github/license/potpie-ai/potpie" alt="Apache 2.0">
   </a>
+</br>
+<a href="https://discord.gg/ryk5CMD5v6">
+    <img src="https://img.shields.io/badge/Join%20our-Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join our Discord">
+</a>
 </p>
 
 <h1 align="center">
