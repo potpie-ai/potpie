@@ -1,17 +1,12 @@
-import hashlib
-import hmac
-import json
 import logging
 import os
-from typing import Union
 
-from dotenv import load_dotenv
 import requests
 from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth
 
-load_dotenv(override=True)
+
 class AuthService:
     def login(self, email, password):
         log_prefix = "AuthService::login:"
@@ -69,41 +64,6 @@ class AuthService:
                 )
             res.headers["WWW-Authenticate"] = 'Bearer realm="auth_required"'
             return decoded_token
-        
-    @staticmethod
-    def generate_hmac_signature(message: str) -> str: 
-        """Generate HMAC signature for a message string"""
-        hmac_key = AuthService.get_hmac_secret_key()
-        if not hmac_key:
-            raise ValueError("HMAC secret key not configured")
-        hmac_obj = hmac.new(
-            key=hmac_key,
-            msg=message.encode("utf-8"),
-            digestmod=hashlib.sha256
-        )
-        return hmac_obj.hexdigest()
-
-    @staticmethod 
-    def verify_hmac_signature(payload_body: Union[str, dict], hmac_signature: str) -> bool:
-        """Verify HMAC signature matches the payload"""
-        hmac_key = AuthService.get_hmac_secret_key()
-        if not hmac_key:
-            raise ValueError("HMAC secret key not configured")
-        payload_str = payload_body if isinstance(payload_body, str) else json.dumps(payload_body, sort_keys=True)
-        expected_signature = hmac.new(
-            key=hmac_key,
-            msg=payload_str.encode("utf-8"),
-            digestmod=hashlib.sha256
-        ).hexdigest()
-        return hmac.compare_digest(hmac_signature, expected_signature)
-
-    @staticmethod
-    def get_hmac_secret_key() -> bytes:
-        """Get HMAC secret key from environment"""
-        key = os.getenv("POTPIE_PLUS_HMAC_KEY", "")
-        if not key:
-            return b""
-        return key.encode("utf-8")
 
 
 auth_handler = AuthService()

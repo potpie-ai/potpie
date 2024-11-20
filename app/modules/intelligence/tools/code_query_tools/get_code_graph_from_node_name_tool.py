@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -7,7 +6,6 @@ from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
-from app.modules.intelligence.tools.tool_schema import ToolParameter
 from app.modules.projects.projects_model import Project
 
 
@@ -15,24 +13,9 @@ class GetCodeGraphFromNodeNameTool:
     """Tool for retrieving a code graph for a specific node in a repository given its node name."""
 
     name = "get_code_graph_from_node_name"
-    description = """Retrieves a code graph showing relationships between nodes starting from a node with the given name.
-        :param project_id: string, the repository ID (UUID).
-        :param node_name: string, the name of the node in format 'file_path:function_name' or 'file_path:class_name'.
-
-            example:
-            {
-                "project_id": "550e8400-e29b-41d4-a716-446655440000",
-                "node_name": "src/services/UserService.ts:authenticateUser"
-            }
-            
-        Returns dictionary containing:
-        - graph: {
-            name: string - name of the graph
-            repo_name: string - repository name
-            branch_name: string - branch name
-            root_node: object - hierarchical structure of nodes with relationships
-          }
-        """
+    description = (
+        "Retrieves a code graph for a specific node in a repository given its node name"
+    )
 
     def __init__(self, sql_db: Session):
         """
@@ -52,31 +35,26 @@ class GetCodeGraphFromNodeNameTool:
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
 
-    async def arun(self, project_id: str, node_name: str) -> Dict[str, Any]:
-        return await asyncio.to_thread(self.run, project_id, node_name)
-
-    def run(self, project_id: str, node_name: str) -> Dict[str, Any]:
+    def run(self, repo_id: str, node_name: str) -> Dict[str, Any]:
         """
         Run the tool to retrieve the code graph.
 
         Args:
-            project_id (str): Repository ID.
+            repo_id (str): Repository ID.
             node_name (str): Name of the node to retrieve the graph for.
 
         Returns:
             Dict[str, Any]: Code graph data or error message.
         """
         try:
-            project = self._get_project(project_id)
+            project = self._get_project(repo_id)
             if not project:
-                return {
-                    "error": f"Project with ID '{project_id}' not found in database"
-                }
+                return {"error": f"Project with ID '{repo_id}' not found in database"}
 
-            graph_data = self._get_graph_data(project_id, node_name)
+            graph_data = self._get_graph_data(repo_id, node_name)
             if not graph_data:
                 return {
-                    "error": f"No graph data found for node name '{node_name}' in repo '{project_id}'"
+                    "error": f"No graph data found for node name '{node_name}' in repo '{repo_id}'"
                 }
 
             return self._process_graph_data(graph_data, project)
@@ -84,16 +62,14 @@ class GetCodeGraphFromNodeNameTool:
             logging.exception(f"An unexpected error occurred: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
-    def _get_project(self, project_id: str) -> Optional[Project]:
+    def _get_project(self, repo_id: str) -> Optional[Project]:
         """Retrieve project from the database."""
-        return self.sql_db.query(Project).filter(Project.id == project_id).first()
+        return self.sql_db.query(Project).filter(Project.id == repo_id).first()
 
-    def _get_graph_data(
-        self, project_id: str, node_name: str
-    ) -> Optional[Dict[str, Any]]:
+    def _get_graph_data(self, repo_id: str, node_name: str) -> Optional[Dict[str, Any]]:
         """Retrieve graph data from Neo4j."""
         query = """
-        MATCH (start:NODE {repoId: $project_id})
+        MATCH (start:NODE {repoId: $repo_id})
         WHERE toLower(start.name) = toLower($node_name)
         CALL apoc.path.subgraphAll(start, {
             relationshipFilter: "CONTAINS|CALLS|FUNCTION_DEFINITION|IMPORTS|INSTANTIATES|CLASS_DEFINITION>",
@@ -123,7 +99,7 @@ class GetCodeGraphFromNodeNameTool:
         } as node_data
         """
         with self.neo4j_driver.session() as session:
-            result = session.run(query, node_name=node_name, project_id=project_id)
+            result = session.run(query, node_name=node_name, repo_id=repo_id)
             nodes = [record["node_data"] for record in result]
             if not nodes:
                 return None
@@ -210,11 +186,14 @@ class GetCodeGraphFromNodeNameTool:
         if hasattr(self, "neo4j_driver"):
             self.neo4j_driver.close()
 
+    async def arun(self, repo_id: str, node_name: str) -> Dict[str, Any]:
+        """Asynchronous version of the run method."""
+        return self.run(repo_id, node_name)
+
 
 def get_code_graph_from_node_name_tool(sql_db: Session) -> Tool:
     tool_instance = GetCodeGraphFromNodeNameTool(sql_db)
     return StructuredTool.from_function(
-        coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="Get Code Graph From Node Name",
         description="Retrieves a code graph for a specific node in a repository given its node name",

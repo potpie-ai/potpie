@@ -16,10 +16,10 @@ from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import NodeContext
-from app.modules.intelligence.agents.agents_service import AgentsService
-from app.modules.intelligence.agents.agents.integration_test_agent import (
-    kickoff_integration_test_agent,
+from app.modules.intelligence.agents.agentic_tools.unit_test_agent import (
+    kickoff_unit_test_crew,
 )
+from app.modules.intelligence.agents.agents_service import AgentsService
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.classification_prompts import (
     AgentType,
@@ -29,11 +29,14 @@ from app.modules.intelligence.prompts.classification_prompts import (
 )
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
+    GetCodeFromNodeIdTool,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class IntegrationTestChatAgent:
+class UnitTestAgent:
     def __init__(self, mini_llm, llm, db: Session):
         self.mini_llm = mini_llm
         self.llm = llm
@@ -46,7 +49,7 @@ class IntegrationTestChatAgent:
     @lru_cache(maxsize=2)
     async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
         prompts = await self.prompt_service.get_prompts_by_agent_id_and_types(
-            "INTEGRATION_TEST_AGENT", [PromptType.SYSTEM, PromptType.HUMAN]
+            "UNIT_TEST_AGENT", [PromptType.SYSTEM, PromptType.HUMAN]
         )
         return {prompt.type: prompt for prompt in prompts}
 
@@ -56,7 +59,7 @@ class IntegrationTestChatAgent:
         human_prompt = prompts.get(PromptType.HUMAN)
 
         if not system_prompt or not human_prompt:
-            raise ValueError("Required prompts not found for INTEGRATION_TEST_AGENT")
+            raise ValueError("Required prompts not found for UNIT_TEST_AGENT")
 
         prompt_template = ChatPromptTemplate(
             messages=[
@@ -69,9 +72,7 @@ class IntegrationTestChatAgent:
         return prompt_template | self.llm
 
     async def _classify_query(self, query: str, history: List[HumanMessage]):
-        prompt = ClassificationPrompts.get_classification_prompt(
-            AgentType.INTEGRATION_TEST
-        )
+        prompt = ClassificationPrompts.get_classification_prompt(AgentType.UNIT_TEST)
         inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
 
         parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
@@ -96,7 +97,27 @@ class IntegrationTestChatAgent:
             if not self.chain:
                 self.chain = await self._create_chain()
 
+            if not node_ids:
+                content = "It looks like there is no context selected. Please type @ followed by file or function name to interact with the unit test agent"
+                self.history_manager.add_message_chunk(
+                    conversation_id,
+                    content,
+                    MessageType.AI_GENERATED,
+                    citations=citations,
+                )
+                yield json.dumps({"citations": [], "message": content})
+                self.history_manager.flush_message_buffer(
+                    conversation_id, MessageType.AI_GENERATED
+                )
+                return
+
             history = self.history_manager.get_session_history(user_id, conversation_id)
+            for node in node_ids:
+                history.append(
+                    HumanMessage(
+                        content=f"{node.name}: {GetCodeFromNodeIdTool(self.db, user_id).run(project_id, node.node_id)}"
+                    )
+                )
             validated_history = [
                 (
                     HumanMessage(content=str(msg))
@@ -105,31 +126,31 @@ class IntegrationTestChatAgent:
                 )
                 for msg in history
             ]
-
             classification = await self._classify_query(query, validated_history)
-            citations = []
+
             tool_results = []
+            citations = []
             if classification == ClassificationResult.AGENT_REQUIRED:
-                test_response = await kickoff_integration_test_agent(
+                test_response = await kickoff_unit_test_crew(
                     query,
+                    validated_history,
                     project_id,
                     node_ids,
                     self.db,
                     self.llm,
                     user_id,
-                    validated_history,
                 )
 
                 if test_response.pydantic:
-                    response = test_response.pydantic.response
                     citations = test_response.pydantic.citations
+                    response = test_response.pydantic.response
                 else:
-                    response = test_response.raw
                     citations = []
+                    response = test_response.raw
 
                 tool_results = [
                     SystemMessage(
-                        content=f"Integration test agent result, this is not visible to user:\n {response}"
+                        content=f"Unit testing agent response, this is not visible to user:\n {response}"
                     )
                 ]
 
@@ -165,7 +186,5 @@ class IntegrationTestChatAgent:
             )
 
         except Exception as e:
-            logger.error(
-                f"Error during Integration Test Chat Agent run: {str(e)}", exc_info=True
-            )
+            logger.error(f"Error during QNAAgent run: {str(e)}", exc_info=True)
             yield f"An error occurred: {str(e)}"

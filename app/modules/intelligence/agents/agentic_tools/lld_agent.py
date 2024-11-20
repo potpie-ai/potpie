@@ -180,7 +180,7 @@ class LowLevelDesignAgent:
         return result
 
 
-async def create_low_level_design_agent(
+async def create_low_level_design(
     functional_requirements: str,
     project_id: str,
     sql_db,

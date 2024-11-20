@@ -69,7 +69,7 @@ class InferenceService:
                     )
 
         except Exception as e:
-            logger.error(f"An error occurred: {str(e)}")
+            print(f"An error occurred: {str(e)}")
 
     def num_tokens_from_string(self, string: str, model: str = "gpt-4") -> int:
         """Returns the number of tokens in a text string."""
