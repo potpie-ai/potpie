@@ -5,6 +5,7 @@ from typing import Dict, List
 from langchain.tools import StructuredTool
 from pydantic import BaseModel, Field
 
+from app.modules.intelligence.tools.tool_schema import ToolParameter
 from app.modules.parsing.knowledge_graph.inference_schema import QueryResponse
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 from app.modules.projects.projects_service import ProjectService
@@ -30,11 +31,32 @@ class MultipleKnowledgeGraphQueriesInput(BaseModel):
 
 
 class KnowledgeGraphQueryTool:
+    name = "Ask Knowledge Graph Queries"
+    description = """Query the code knowledge graph using natural language questions.
+    The knowledge graph contains information about every function, class, and file in the codebase.
+    This tool allows asking multiple questions about the codebase in a single operation.
+      Use this tool when you need to ask multiple related questions about the codebase at once.
+    Do not use this to query code directly. The inputs structure is as foillowing
+        :param queries: array, list of natural language questions to ask about the codebase.
+        :param project_id: string, the project ID (UUID).
+        :param node_ids: array, optional list of node IDs to query (use when answer relates to specific nodes).
+
+            example:
+            {
+                "queries": ["What does the UserService class do?", "How is authentication implemented?"],
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                "node_ids": ["123e4567-e89b-12d3-a456-426614174000"]
+            }
+            
+        Returns list of query responses with relevant code information.
+        """
+
     def __init__(self, sql_db, user_id):
         self.kg_query_url = os.getenv("KNOWLEDGE_GRAPH_URL")
         self.headers = {"Content-Type": "application/json"}
         self.user_id = user_id
         self.sql_db = sql_db
+
 
     async def ask_multiple_knowledge_graph_queries(
         self, queries: List[QueryRequest]
@@ -63,7 +85,12 @@ class KnowledgeGraphQueryTool:
 
         return results
 
-    def ask_knowledge_graph_query(
+    async def arun(
+        self, queries: List[str], project_id: str, node_ids: List[str] = []
+    ) -> Dict[str, str]:
+        return await asyncio.to_thread(self.run, queries, project_id, node_ids)
+
+    def run(
         self, queries: List[str], project_id: str, node_ids: List[str] = []
     ) -> Dict[str, str]:
         """
@@ -99,7 +126,8 @@ class KnowledgeGraphQueryTool:
 
 def get_ask_knowledge_graph_queries_tool(sql_db, user_id) -> StructuredTool:
     return StructuredTool.from_function(
-        func=KnowledgeGraphQueryTool(sql_db, user_id).ask_knowledge_graph_query,
+        coroutine=KnowledgeGraphQueryTool(sql_db, user_id).arun,
+        func=KnowledgeGraphQueryTool(sql_db, user_id).run,
         name="Ask Knowledge Graph Queries",
         description="""
     Query the code knowledge graph using multiple natural language questions.

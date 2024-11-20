@@ -1,6 +1,5 @@
 import json
 import logging
-import time
 from functools import lru_cache
 from typing import AsyncGenerator, Dict, List
 
@@ -17,10 +16,8 @@ from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import NodeContext
-from app.modules.intelligence.agents.agentic_tools.debug_rag_agent import (
-    kickoff_debug_crew,
-)
 from app.modules.intelligence.agents.agents_service import AgentsService
+from app.modules.intelligence.agents.agents.unit_test_agent import kickoff_unit_test_agent
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.classification_prompts import (
     AgentType,
@@ -30,14 +27,17 @@ from app.modules.intelligence.prompts.classification_prompts import (
 )
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
+    GetCodeFromNodeIdTool,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class DebuggingAgent:
-    def __init__(self, mini_llm, reasoning_llm, db: Session):
+class UnitTestAgent:
+    def __init__(self, mini_llm, llm, db: Session):
         self.mini_llm = mini_llm
-        self.llm = reasoning_llm
+        self.llm = llm
         self.history_manager = ChatHistoryService(db)
         self.prompt_service = PromptService(db)
         self.agents_service = AgentsService(db)
@@ -47,7 +47,7 @@ class DebuggingAgent:
     @lru_cache(maxsize=2)
     async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
         prompts = await self.prompt_service.get_prompts_by_agent_id_and_types(
-            "DEBUGGING_AGENT", [PromptType.SYSTEM, PromptType.HUMAN]
+            "UNIT_TEST_AGENT", [PromptType.SYSTEM, PromptType.HUMAN]
         )
         return {prompt.type: prompt for prompt in prompts}
 
@@ -57,7 +57,7 @@ class DebuggingAgent:
         human_prompt = prompts.get(PromptType.HUMAN)
 
         if not system_prompt or not human_prompt:
-            raise ValueError("Required prompts not found for DEBUGGING_AGENT")
+            raise ValueError("Required prompts not found for UNIT_TEST_AGENT")
 
         prompt_template = ChatPromptTemplate(
             messages=[
@@ -67,10 +67,10 @@ class DebuggingAgent:
                 HumanMessagePromptTemplate.from_template(human_prompt.text),
             ]
         )
-        return prompt_template | self.mini_llm
+        return prompt_template | self.llm
 
     async def _classify_query(self, query: str, history: List[HumanMessage]):
-        prompt = ClassificationPrompts.get_classification_prompt(AgentType.DEBUGGING)
+        prompt = ClassificationPrompts.get_classification_prompt(AgentType.UNIT_TEST)
         inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
 
         parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
@@ -90,16 +90,32 @@ class DebuggingAgent:
         user_id: str,
         conversation_id: str,
         node_ids: List[NodeContext],
-        logs: str = "",
-        stacktrace: str = "",
     ) -> AsyncGenerator[str, None]:
-        start_time = time.time()  # Start the timer
-
         try:
             if not self.chain:
                 self.chain = await self._create_chain()
 
+            if not node_ids:
+                content = "It looks like there is no context selected. Please type @ followed by file or function name to interact with the unit test agent"
+                self.history_manager.add_message_chunk(
+                    conversation_id,
+                    content,
+                    MessageType.AI_GENERATED,
+                    citations=citations,
+                )
+                yield json.dumps({"citations": [], "message": content})
+                self.history_manager.flush_message_buffer(
+                    conversation_id, MessageType.AI_GENERATED
+                )
+                return
+
             history = self.history_manager.get_session_history(user_id, conversation_id)
+            for node in node_ids:
+                history.append(
+                    HumanMessage(
+                        content=f"{node.name}: {GetCodeFromNodeIdTool(self.db, user_id).run(project_id, node.node_id)}"
+                    )
+                )
             validated_history = [
                 (
                     HumanMessage(content=str(msg))
@@ -108,73 +124,38 @@ class DebuggingAgent:
                 )
                 for msg in history
             ]
-
             classification = await self._classify_query(query, validated_history)
 
             tool_results = []
             citations = []
             if classification == ClassificationResult.AGENT_REQUIRED:
-                rag_result = await kickoff_debug_crew(
+                test_response = await kickoff_unit_test_agent(
                     query,
+                    validated_history,
                     project_id,
-                    [
-                        msg.content
-                        for msg in validated_history
-                        if isinstance(msg, HumanMessage)
-                    ],
                     node_ids,
                     self.db,
                     self.llm,
-                    self.mini_llm,
                     user_id,
                 )
-                if rag_result.pydantic:
-                    response = rag_result.pydantic.response
-                    citations = rag_result.pydantic.citations
-                    result = [node.model_dump() for node in response]
+
+                if test_response.pydantic:
+                    citations = test_response.pydantic.citations
+                    response = test_response.pydantic.response
                 else:
-                    result = rag_result.raw
                     citations = []
+                    response = test_response.raw
 
-                tool_results = [SystemMessage(content=result)]
-                add_chunk_start_time = (
-                    time.time()
-                )  # Start timer for adding message chunk
-                self.history_manager.add_message_chunk(
-                    conversation_id,
-                    tool_results[0].content,
-                    MessageType.AI_GENERATED,
-                    citations=citations,
-                )
-                add_chunk_duration = (
-                    time.time() - add_chunk_start_time
-                )  # Calculate duration
-                logger.info(
-                    f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
-                    f"Duration of adding message chunk: {add_chunk_duration:.2f}s"
-                )
+                tool_results = [
+                    SystemMessage(
+                        content=f"Unit testing agent response, this is not visible to user:\n {response}"
+                    )
+                ]
 
-                # Timing for flushing message buffer
-                flush_buffer_start_time = (
-                    time.time()
-                )  # Start timer for flushing message buffer
-                self.history_manager.flush_message_buffer(
-                    conversation_id, MessageType.AI_GENERATED
-                )
-                flush_buffer_duration = (
-                    time.time() - flush_buffer_start_time
-                )  # Calculate duration
-                logger.info(
-                    f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
-                    f"Duration of flushing message buffer: {flush_buffer_duration:.2f}s"
-                )
-                yield json.dumps({"citations": citations, "message": result})
-
-            full_query = f"Query: {query}\nProject ID: {project_id}\nLogs: {logs}\nStacktrace: {stacktrace}"
             inputs = {
                 "history": validated_history,
                 "tool_results": tool_results,
-                "input": full_query,
+                "input": query,
             }
 
             logger.debug(f"Inputs to LLM: {inputs}")
@@ -203,5 +184,5 @@ class DebuggingAgent:
             )
 
         except Exception as e:
-            logger.error(f"Error during DebuggingAgent run: {str(e)}", exc_info=True)
+            logger.error(f"Error during UnitTestChatAgent run: {str(e)}", exc_info=True)
             yield f"An error occurred: {str(e)}"

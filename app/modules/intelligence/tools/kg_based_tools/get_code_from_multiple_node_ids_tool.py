@@ -9,21 +9,34 @@ from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 from app.modules.github.github_service import GithubService
+from app.modules.intelligence.tools.tool_schema import ToolParameter
 from app.modules.projects.projects_model import Project
 
 logger = logging.getLogger(__name__)
 
 
 class GetCodeFromMultipleNodeIdsInput(BaseModel):
-    repo_id: str = Field(description="The repository ID, this is a UUID")
+    project_id: str = Field(description="The repository ID, this is a UUID")
     node_ids: List[str] = Field(description="List of node IDs, this is a UUID")
 
 
 class GetCodeFromMultipleNodeIdsTool:
-    name = "get_code_from_multiple_node_ids"
-    description = (
-        "Retrieves code for multiple node ids in a repository given their node IDs"
-    )
+    name = "Get Code and docstring From Multiple Node IDs"
+    description = """Retrieves code and docstring for multiple nodes in a repository.
+        :param project_id: string, the repository ID (UUID).
+        :param node_ids: array, list of node IDs to retrieve code for.
+
+            example:
+            {
+                "project_id": "550e8400-e29b-41d4-a716-446655440000",
+                "node_ids": [
+                    "123e4567-e89b-12d3-a456-426614174000",
+                    "987f6543-e21b-12d3-a456-426614174000"
+                ]
+            }
+            
+        Returns dictionary mapping node IDs to their code content and metadata.
+        """
 
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db
@@ -37,22 +50,29 @@ class GetCodeFromMultipleNodeIdsTool:
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
 
-    def run(self, repo_id: str, node_ids: List[str]) -> Dict[str, Any]:
-        return asyncio.run(self.run_multiple(repo_id, node_ids))
+    async def arun(self, project_id: str, node_ids: List[str]) -> Dict[str, Any]:
+        return await asyncio.to_thread(self.run, project_id, node_ids)
 
-    async def run_multiple(self, repo_id: str, node_ids: List[str]) -> Dict[str, Any]:
+    def run(self, project_id: str, node_ids: List[str]) -> Dict[str, Any]:
+        return asyncio.run(self.run_multiple(project_id, node_ids))
+
+    async def run_multiple(
+        self, project_id: str, node_ids: List[str]
+    ) -> Dict[str, Any]:
         try:
-            project = self._get_project(repo_id)
+            project = self._get_project(project_id)
             if not project:
-                logger.error(f"Project with ID '{repo_id}' not found in database")
-                return {"error": f"Project with ID '{repo_id}' not found in database"}
+                logger.error(f"Project with ID '{project_id}' not found in database")
+                return {
+                    "error": f"Project with ID '{project_id}' not found in database"
+                }
             if project.user_id != self.user_id:
                 raise ValueError(
-                    f"Project with ID '{repo_id}' not found in database for user '{self.user_id}'"
+                    f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
                 )
 
             tasks = [
-                self._retrieve_node_data(repo_id, node_id, project)
+                self._retrieve_node_data(project_id, node_id, project)
                 for node_id in node_ids
             ]
             completed_tasks = await asyncio.gather(*tasks)
@@ -67,25 +87,27 @@ class GetCodeFromMultipleNodeIdsTool:
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
     async def _retrieve_node_data(
-        self, repo_id: str, node_id: str, project: Project
+        self, project_id: str, node_id: str, project: Project
     ) -> Dict[str, Any]:
-        node_data = self._get_node_data(repo_id, node_id)
+        node_data = self._get_node_data(project_id, node_id)
         if node_data:
             return self._process_result(node_data, project, node_id)
         else:
-            return {"error": f"Node with ID '{node_id}' not found in repo '{repo_id}'"}
+            return {
+                "error": f"Node with ID '{node_id}' not found in repo '{project_id}'"
+            }
 
-    def _get_node_data(self, repo_id: str, node_id: str) -> Dict[str, Any]:
+    def _get_node_data(self, project_id: str, node_id: str) -> Dict[str, Any]:
         query = """
-        MATCH (n:NODE {node_id: $node_id, repoId: $repo_id})
+        MATCH (n:NODE {node_id: $node_id, repoId: $project_id})
         RETURN n.file_path AS file_path, n.start_line AS start_line, n.end_line AS end_line, n.text as code, n.docstring as docstring
         """
         with self.neo4j_driver.session() as session:
-            result = session.run(query, node_id=node_id, repo_id=repo_id)
+            result = session.run(query, node_id=node_id, project_id=project_id)
             return result.single()
 
-    def _get_project(self, repo_id: str) -> Project:
-        return self.sql_db.query(Project).filter(Project.id == repo_id).first()
+    def _get_project(self, project_id: str) -> Project:
+        return self.sql_db.query(Project).filter(Project.id == project_id).first()
 
     def _process_result(
         self, node_data: Dict[str, Any], project: Project, node_id: str
@@ -137,11 +159,12 @@ def get_code_from_multiple_node_ids_tool(
 ) -> StructuredTool:
     tool_instance = GetCodeFromMultipleNodeIdsTool(sql_db, user_id)
     return StructuredTool.from_function(
+        coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="Get Code and docstring From Multiple Node IDs",
         description="""Retrieves code and docstring for multiple node ids in a repository given their node IDs
                 Inputs for the run_multiple method:
-                - repo_id (str): The repository ID to retrieve code and docstring for, this is a UUID.
+                - project_id (str): The repository ID to retrieve code and docstring for, this is a UUID.
                 - node_ids (List[str]): A list of node IDs to retrieve code and docstring for, this is a UUID.""",
         args_schema=GetCodeFromMultipleNodeIdsInput,
     )
