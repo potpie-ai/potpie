@@ -193,7 +193,7 @@ async def kickoff_integration_test_agent(
 ) -> Dict[str, str]:
     if not node_ids:
         raise HTTPException(status_code=400, detail="No node IDs provided")
-    graph = GetCodeGraphFromNodeIdTool(sql_db, user_id).run(
+    graph = GetCodeGraphFromNodeIdTool(sql_db).run(
         project_id, node_ids[0].node_id
     )
 
