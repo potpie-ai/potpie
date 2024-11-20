@@ -113,7 +113,7 @@ class ParsingController:
                                 new_project_id, ProjectStatusEnum.SUBMITTED
                             )
 
-                            old_project_id = await project_manager.get_demo_project_id(
+                            old_repo_id = await project_manager.get_demo_repo_id(
                                 repo_name
                             )
 
@@ -124,7 +124,7 @@ class ParsingController:
                             )
                             # Duplicate the graph under the new repo ID
                             await parsing_service.duplicate_graph(
-                                old_project_id, new_project_id
+                                old_repo_id, new_project_id
                             )
 
                             # Update the project status to READY after copying

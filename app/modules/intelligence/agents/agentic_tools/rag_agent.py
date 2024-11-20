@@ -226,7 +226,7 @@ class RAGAgent:
         return result
 
 
-async def kickoff_rag_agent(
+async def kickoff_rag_crew(
     query: str,
     project_id: str,
     chat_history: List,

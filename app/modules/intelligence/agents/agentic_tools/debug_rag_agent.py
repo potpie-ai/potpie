@@ -41,7 +41,7 @@ class RAGResponse(BaseModel):
     response: List[NodeResponse]
 
 
-class DebugRAGAgent:
+class DebugAgent:
     def __init__(self, sql_db, llm, mini_llm, user_id):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.max_iter = os.getenv("MAX_ITER", 5)
@@ -225,7 +225,7 @@ class DebugRAGAgent:
         return result
 
 
-async def kickoff_debug_rag_agent(
+async def kickoff_debug_crew(
     query: str,
     project_id: str,
     chat_history: List,
@@ -235,7 +235,7 @@ async def kickoff_debug_rag_agent(
     mini_llm,
     user_id: str,
 ) -> str:
-    debug_agent = DebugRAGAgent(sql_db, llm, mini_llm, user_id)
+    debug_agent = DebugAgent(sql_db, llm, mini_llm, user_id)
     file_structure = await GithubService(sql_db).get_project_structure_async(project_id)
     result = await debug_agent.run(
         query, project_id, chat_history, node_ids, file_structure
