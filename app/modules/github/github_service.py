@@ -490,27 +490,30 @@ class GithubService:
 
         return structure
 
-    def _format_tree_structure(self, structure: Dict[str, Any], root_path: str = "") -> str:
+    def _format_tree_structure(
+        self, structure: Dict[str, Any], root_path: str = ""
+    ) -> str:
         """
         Creates a clear hierarchical structure using simple nested dictionaries.
-        
+
         Args:
             self: The instance object
             structure: Dictionary containing name and children
             root_path: Optional root path string (unused but kept for signature compatibility)
         """
+
         def _format_node(node: Dict[str, Any], depth: int = 0) -> List[str]:
             output = []
-            
+
             indent = "  " * depth
             if depth > 0:  # Skip root name
                 output.append(f"{indent}{node['name']}")
-            
+
             if "children" in node:
                 children = sorted(node.get("children", []), key=lambda x: x["name"])
                 for child in children:
                     output.extend(_format_node(child, depth + 1))
-            
+
             return output
-        
+
         return "\n".join(_format_node(structure))
