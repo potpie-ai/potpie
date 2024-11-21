@@ -178,7 +178,7 @@ def get_code_from_probable_node_name_tool(
     tool_instance = GetCodeFromProbableNodeNameTool(sql_db, user_id)
     return StructuredTool.from_function(
         func=tool_instance.get_code_from_probable_node_name,
-        name="Get Code and docstring From Probable Node Name",
+        name="Get Code and Docstring From Probable Node Name",
         description="""Retrieves code and docstring for the closest node name in a repository. Node names are in the format of 'file_path:function_name' or 'file_path:class_name' or 'file_path',
                 Useful to extract code for a function or file mentioned in a stacktrace or error message. Inputs for the get_code_from_probable_node_name method:
                 - project_id (str): The project ID to retrieve code and docstring for, this is ALWAYS a UUID.

@@ -3,7 +3,7 @@ import logging
 import os
 import random
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import chardet
 import requests
@@ -42,7 +42,7 @@ class GithubService:
             GithubService.initialize_tokens()
         self.redis = Redis.from_url(config_provider.get_redis_url())
         self.max_workers = 10
-        self.max_depth = 10
+        self.max_depth = 4
         self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
 
     def get_github_repo_details(self, repo_name: str) -> Tuple[Github, Dict, str]:
@@ -331,15 +331,22 @@ class GithubService:
                     detail=f"Repository {repo_name} not found or inaccessible on GitHub",
                 )
 
-    async def get_project_structure_async(self, project_id: str) -> str:
-        logger.info(f"Fetching project structure for project ID: {project_id}")
+    async def get_project_structure_async(
+        self, project_id: str, path: Optional[str] = None
+    ) -> str:
+        logger.info(
+            f"Fetching project structure for project ID: {project_id}, path: {path}"
+        )
 
-        cache_key = f"project_structure:{project_id}:depth_{self.max_depth}"
+        # Modify cache key to reflect that we're only caching the specific path
+        cache_key = (
+            f"project_structure:{project_id}:exact_path_{path}:depth_{self.max_depth}"
+        )
         cached_structure = self.redis.get(cache_key)
 
         if cached_structure:
             logger.info(
-                f"Project structure found in cache for project ID: {project_id}"
+                f"Project structure found in cache for project ID: {project_id}, path: {path}"
             )
             return cached_structure.decode("utf-8")
 
@@ -355,7 +362,21 @@ class GithubService:
 
         try:
             github, repo = self.get_repo(repo_name)
-            structure = await self._fetch_repo_structure_async(repo)
+
+            # If path is provided, verify it exists
+            if path:
+                try:
+                    # Check if the path exists in the repository
+                    repo.get_contents(path)
+                except Exception:
+                    raise HTTPException(
+                        status_code=404, detail=f"Path {path} not found in repository"
+                    )
+
+            # Start structure fetch from the specified path with depth 0
+            structure = await self._fetch_repo_structure_async(
+                repo, path or "", current_depth=0, base_path=path
+            )
             formatted_structure = self._format_tree_structure(structure)
 
             self.redis.setex(cache_key, 3600, formatted_structure)  # Cache for 1 hour
@@ -369,14 +390,46 @@ class GithubService:
                 exc_info=True,
             )
             raise HTTPException(
-                status_code=500,
-                detail=f"Failed to fetch project structure: {str(e)}",
+                status_code=500, detail=f"Failed to fetch project structure: {str(e)}"
             )
 
     async def _fetch_repo_structure_async(
-        self, repo: Any, path: str = "", depth: int = 0
+        self,
+        repo: Any,
+        path: str = "",
+        current_depth: int = 0,
+        base_path: Optional[str] = None,
     ) -> Dict[str, Any]:
-        if depth >= self.max_depth:
+        exclude_extensions = [
+            "png",
+            "jpg",
+            "jpeg",
+            "gif",
+            "bmp",
+            "tiff",
+            "webp",
+            "ico",
+            "svg",
+            "mp4",
+            "avi",
+            "mov",
+            "wmv",
+            "flv",
+            "ipynb",
+            "zlib",
+        ]
+
+        # Calculate current depth relative to base_path
+        if base_path:
+            # If we have a base_path, calculate depth relative to it
+            relative_path = path[len(base_path) :].strip("/")
+            current_depth = len(relative_path.split("/")) if relative_path else 0
+        else:
+            # If no base_path, calculate depth from root
+            current_depth = len(path.split("/")) if path else 0
+
+        # If we've reached max depth, return truncated indicator
+        if current_depth >= self.max_depth:
             return {
                 "type": "directory",
                 "name": path.split("/")[-1] or repo.name,
@@ -397,10 +450,27 @@ class GithubService:
             if not isinstance(contents, list):
                 contents = [contents]
 
+            # Filter out files with excluded extensions
+            contents = [
+                item
+                for item in contents
+                if item.type == "dir"
+                or not any(item.name.endswith(ext) for ext in exclude_extensions)
+            ]
+
             tasks = []
             for item in contents:
+                # Only process items within the base_path if it's specified
+                if base_path and not item.path.startswith(base_path):
+                    continue
+
                 if item.type == "dir":
-                    task = self._fetch_repo_structure_async(repo, item.path, depth + 1)
+                    task = self._fetch_repo_structure_async(
+                        repo,
+                        item.path,
+                        current_depth=current_depth,
+                        base_path=base_path,
+                    )
                     tasks.append(task)
                 else:
                     structure["children"].append(
@@ -420,24 +490,27 @@ class GithubService:
 
         return structure
 
-    def _format_tree_structure(
-        self, structure: Dict[str, Any], prefix: str = ""
-    ) -> str:
-        output = []
-        name = structure["name"]
-        if prefix:
-            output.append(f"{prefix[:-1]}└── {name}")
-        else:
-            output.append(name)
-
-        children = sorted(structure["children"], key=lambda x: (x["type"], x["name"]))
-        for i, child in enumerate(children):
-            is_last = i == len(children) - 1
-            new_prefix = prefix + ("    " if is_last else "│   ")
-
-            if child["type"] == "directory":
-                output.append(self._format_tree_structure(child, new_prefix))
-            else:
-                output.append(f"{new_prefix[:-1]}└── {child['name']}")
-
-        return "\n".join(output)
+    def _format_tree_structure(self, structure: Dict[str, Any], root_path: str = "") -> str:
+        """
+        Creates a clear hierarchical structure using simple nested dictionaries.
+        
+        Args:
+            self: The instance object
+            structure: Dictionary containing name and children
+            root_path: Optional root path string (unused but kept for signature compatibility)
+        """
+        def _format_node(node: Dict[str, Any], depth: int = 0) -> List[str]:
+            output = []
+            
+            indent = "  " * depth
+            if depth > 0:  # Skip root name
+                output.append(f"{indent}{node['name']}")
+            
+            if "children" in node:
+                children = sorted(node.get("children", []), key=lambda x: x["name"])
+                for child in children:
+                    output.extend(_format_node(child, depth + 1))
+            
+            return output
+        
+        return "\n".join(_format_node(structure))
