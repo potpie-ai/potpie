@@ -43,6 +43,7 @@ class ParsingController:
             "AgentOps-AI/agentops",
             "calcom/cal.com",
             "SigNoz/signoz",
+            "langchain-ai/langchain",
         ]
 
         try:
