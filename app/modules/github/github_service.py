@@ -83,30 +83,22 @@ class GithubService:
     ) -> str:
         logger.info(f"Attempting to access file: {file_path} in repo: {repo_name}")
 
-        # Clean up the file path
-        path_parts = file_path.split("/")
-        if len(path_parts) > 1 and "-" in path_parts[0]:
-            path_parts = path_parts[1:]
-        clean_file_path = "/".join(path_parts)
-
-        logger.info(f"Cleaned file path: {clean_file_path}")
-
         try:
             # Try authenticated access first
             github, repo = self.get_repo(repo_name)
-            file_contents = repo.get_contents(clean_file_path, ref=branch_name)
+            file_contents = repo.get_contents(file_path, ref=branch_name)
         except Exception as private_error:
             logger.info(f"Failed to access private repo: {str(private_error)}")
             # If authenticated access fails, try public access
             try:
                 github = self.get_public_github_instance()
                 repo = github.get_repo(repo_name)
-                file_contents = repo.get_contents(clean_file_path)
+                file_contents = repo.get_contents(file_path)
             except Exception as public_error:
                 logger.error(f"Failed to access public repo: {str(public_error)}")
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Repository or file not found or inaccessible: {repo_name}/{clean_file_path}",
+                    detail=f"Repository or file not found or inaccessible: {repo_name}/{file_path}",
                 )
 
         if isinstance(file_contents, list):
@@ -128,7 +120,7 @@ class GithubService:
             return "\n".join(selected_lines)
         except Exception as e:
             logger.error(
-                f"Error processing file content for {repo_name}/{clean_file_path}: {e}",
+                f"Error processing file content for {repo_name}/{file_path}: {e}",
                 exc_info=True,
             )
             raise HTTPException(
