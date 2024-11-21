@@ -123,7 +123,7 @@ class DebugAgent:
             - Project ID: {project_id}
             - User Node IDs: {[node.model_dump() for node in node_ids]}
             - File Structure upto depth 4:
-            {file_structure}
+{file_structure}
             - Code Results for user node ids: {code_results}
 
 
@@ -157,9 +157,9 @@ class DebugAgent:
             Additional context retrieval (if needed):
 
             - For each relevant directory with hidden contents:
-                a. Call "Get Code File Structure" tool with directory path
-                b. From returned structure, extract complete file paths
-                c. For each relevant file, call "Get Code and docstring From Probable Node Name" tool
+                a. FIRST: Call "Get Code File Structure" tool with directory path
+                b. THEN: From returned structure, extract complete file paths
+                c. THEN: For each relevant file, call "Get Code and docstring From Probable Node Name" tool
             - Never call "Get Code and docstring From Probable Node Name" tool with directory paths
             - Always ensure you have complete file paths before using the probable node tool
             - Extract hidden file names from the file structure subdirectories that seem relevant
@@ -184,34 +184,6 @@ class DebugAgent:
                - Format the file paths as follows (only include relevant project details from file path):
                  path: potpie/projects/username-reponame-branchname-userid/gymhero/models/training_plan.py
                  output: gymhero/models/training_plan.py
-
-
-
-            Tool Usage Guidelines:
-
-            "Get Code File Structure" tool:
-
-            - Use for exploring directory contents
-            - Input: directory path (e.g., "src/models")
-            - Returns: complete file structure of that directory
-            - Always use this BEFORE trying to get code from files in unexplored directories
-            - Prioritize for stacktraces or specific file/function mentions
-
-
-            "Get Code and docstring From Probable Node Name" tool:
-
-            - Use only with complete file paths, never with directory paths
-            - Valid inputs:
-
-                - File paths: "src/models/user.py"
-                - Function/class references: "src/models/user.py:UserClass"
-
-
-            - Invalid inputs:
-
-                - Directory paths: "src/models/"
-                - Incomplete paths: "user.py"
-
 
             Note:
 

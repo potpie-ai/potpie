@@ -35,11 +35,10 @@ def get_code_file_structure_tool(db: Session) -> StructuredTool:
         description="""Retrieve the hierarchical file structure of a specified repository or subdirectory in a repository. Expecting 'repo_id' as a required input and an optional 'path' to specify a subdirectory. If no path is provided, it will assume the root by default.
         For input :
         ```
-        repo_name
-        ├── dir_name
-        │   ├── subdir_name
-        |   │   └── ...
-        │   ├── filename.extension
+            dir_name
+                subdir_name
+                    ...
+                filename.extension
         ```
         the path for the subdir_name should be dir_name/subdir_name""",
         coroutine=RepoStructureService(db).run,
