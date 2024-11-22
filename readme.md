@@ -57,7 +57,7 @@ It provides pre-built agents that are expert on your codebase to perform common 
 AI agents are autonomous tools that have the ability to reason, take decisions and perform actions on their own. They are provided with 'tools' that they can use to perform tasks. Agents are iterative in nature and build on top of the results of the previous iteration in order to perform any task assigned to them.
 
 Software development is a similarly iterative process and agents can be used to automate and optimize key aspects of software development.
-Things that developers do daily, like dbugging, can be broken down into a series of iterative steps that can be automated by agents.
+Things that developers do daily, like debugging, can be broken down into a series of iterative steps that can be automated by agents.
 For example, debugging can be broken down into:
 1. Understanding the stacktrace
 2. Understanding the code around the stacktrace

@@ -1,5 +1,6 @@
 from typing import List
 import asyncio
+from typing import Optional
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel
@@ -9,9 +10,10 @@ from app.modules.github.github_service import GithubService
 from app.modules.intelligence.tools.tool_schema import ToolParameter
 
 
-class GetCodeFileStructureToolRequest(BaseModel):
-    project_id: str
 
+class RepoStructureRequest(BaseModel):
+    repo_id: str
+    path: Optional[str] = None
 
 class GetCodeFileStructureTool:
     name = "get_code_file_structure"
@@ -29,22 +31,28 @@ class GetCodeFileStructureTool:
     def __init__(self, db: Session):
         self.github_service = GithubService(db)
 
+    async def fetch_repo_structure(self, project_id: str,path: Optional[str] = None) -> str:
+        return await self.github_service.get_project_structure_async(project_id, path)
 
-    async def fetch_repo_structure(self, project_id: str) -> str:
-        return await self.github_service.get_project_structure_async(project_id)
+    async def arun(self, project_id: str, path: Optional[str] = None) -> str:
+        return await self.fetch_repo_structure(project_id, path)
 
-    async def arun(self, project_id: str) -> str:
-        return await self.fetch_repo_structure(project_id)
-
-    def run(self, project_id: str) -> str:
-        return asyncio.run(self.fetch_repo_structure(project_id))
-
+    def run(self, project_id: str, path: Optional[str] = None) -> str:
+        return asyncio.run(self.fetch_repo_structure(project_id, path))
 
 def get_code_file_structure_tool(db: Session) -> StructuredTool:
     return StructuredTool(
         name="get_code_file_structure",
-        description="Retrieve the hierarchical file structure of a specified repository.",
+        description="""Retrieve the hierarchical file structure of a specified repository or subdirectory in a repository. Expecting 'repo_id' as a required input and an optional 'path' to specify a subdirectory. If no path is provided, it will assume the root by default.
+        For input :
+        ```
+            dir_name
+                subdir_name
+                    ...
+                filename.extension
+        ```
+        the path for the subdir_name should be dir_name/subdir_name""",
         coroutine=GetCodeFileStructureTool(db).arun,
         func=GetCodeFileStructureTool(db).run,
-        args_schema=GetCodeFileStructureToolRequest,
+        args_schema=RepoStructureRequest,
     )

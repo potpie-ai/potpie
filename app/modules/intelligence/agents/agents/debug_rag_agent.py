@@ -7,6 +7,9 @@ from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.github.github_service import GithubService
+from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
+    get_code_file_structure_tool,
+)
 from app.modules.intelligence.tools.code_query_tools.get_node_neighbours_from_node_id_tool import (
     get_node_neighbours_from_node_id_tool,
 )
@@ -60,6 +63,7 @@ class DebugRAGAgent:
         self.get_node_neighbours_from_node_id = get_node_neighbours_from_node_id_tool(
             sql_db
         )
+        self.get_code_file_structure = get_code_file_structure_tool(sql_db)
         self.llm = llm
         self.mini_llm = mini_llm
         self.user_id = user_id
@@ -87,6 +91,7 @@ class DebugRAGAgent:
                 self.get_code_from_multiple_node_ids,
                 self.get_code_from_probable_node_name,
                 self.get_node_neighbours_from_node_id,
+                self.get_code_file_structure,
             ],
             allow_delegation=False,
             verbose=True,
@@ -112,18 +117,34 @@ class DebugRAGAgent:
         combined_task = Task(
             description=f"""
             Adhere to {self.max_iter} iterations max. Analyze input:
+
             - Chat History: {chat_history}
             - Query: {query}
             - Project ID: {project_id}
             - User Node IDs: {[node.model_dump() for node in node_ids]}
-            - File Structure: {file_structure}
+            - File Structure upto depth 4:
+{file_structure}
             - Code Results for user node ids: {code_results}
 
+
             1. Analyze project structure:
-               - Identify key directories, files, and modules
-               - Guide search strategy and provide context
-               - Locate files relevant to query
-               - Use relevant file names with "Get Code and docstring From Probable Node Name" tool
+
+            - Identify key directories, files, and modules
+            - Guide search strategy and provide context
+            - For directories of interest that show "└── ...", use "Get Code File Structure" tool with the directory path to reveal nested files
+            - Only after getting complete file paths, use "Get Code and docstring From Probable Node Name" tool
+            - Locate relevant files or subdirectory path
+
+
+            Directory traversal strategy:
+
+            - Start with high-level file structure analysis
+            - When encountering a directory with hidden contents (indicated by "└── ..."):
+                a. First: Use "Get Code File Structure" tool with the directory path
+                b. Then: From the returned structure, identify relevant files
+                c. Finally: Use "Get Code and docstring From Probable Node Name" tool with the complete file paths
+            - Subdirectories with hidden nested files are followed by "│   │   │          └── ..."
+
 
             2. Initial context retrieval:
                - Analyze provided Code Results for user node ids
@@ -133,9 +154,17 @@ class DebugRAGAgent:
                - Transform query for knowledge graph tool
                - Execute query and analyze results
 
-            4. Additional context retrieval (if needed):
-               - Extract probable node names
-               - Use "Get Code and docstring From Probable Node Name" tool
+            Additional context retrieval (if needed):
+
+            - For each relevant directory with hidden contents:
+                a. FIRST: Call "Get Code File Structure" tool with directory path
+                b. THEN: From returned structure, extract complete file paths
+                c. THEN: For each relevant file, call "Get Code and docstring From Probable Node Name" tool
+            - Never call "Get Code and docstring From Probable Node Name" tool with directory paths
+            - Always ensure you have complete file paths before using the probable node tool
+            - Extract hidden file names from the file structure subdirectories that seem relevant
+            - Extract probable node names. Nodes can be files or functions/classes. But not directories.
+
 
             5. Use "Get Nodes from Tags" tool as last resort only if absolutely necessary
 
@@ -156,16 +185,20 @@ class DebugRAGAgent:
                  path: potpie/projects/username-reponame-branchname-userid/gymhero/models/training_plan.py
                  output: gymhero/models/training_plan.py
 
-            Objective: Provide a comprehensive response with deep context and relevant file paths as citations.
-
             Note:
+
+            -   Always traverse directories before attempting to access files
+            - Never skip the directory structure retrieval step
+            - Use available tools in the correct order: structure first, then code
+            - Use markdown for code snippets with language name in the code block like python or javascript
             - Prioritize "Get Code and docstring From Probable Node Name" tool for stacktraces or specific file/function mentions
+            - Prioritize "Get Code File Structure" tool to get the nested file structure of a relevant subdirectory when deeper levels are not provided
             - Use available tools as directed
             - Proceed to next step if insufficient information found
 
             Ground your responses in provided code context and tool results. Use markdown for code snippets. Be concise and avoid repetition. If unsure, state it clearly. For debugging, unit testing, or unrelated code explanations, suggest specialized agents.
-
             Tailor your response based on question type:
+
             - New questions: Provide comprehensive answers
             - Follow-ups: Build on previous explanations from the chat history
             - Clarifications: Offer clear, concise explanations
@@ -173,7 +206,6 @@ class DebugRAGAgent:
 
             Indicate when more information is needed. Use specific code references. Adapt to user's expertise level. Maintain a conversational tone and context from previous exchanges.
             Ask clarifying questions if needed. Offer follow-up suggestions to guide the conversation.
-
             Provide a comprehensive response with deep context, relevant file paths, include relevant code snippets wherever possible. Format it in markdown format.
             """,
             expected_output=(
