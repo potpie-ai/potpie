@@ -5,7 +5,6 @@ from typing import Dict, List
 from langchain.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from app.modules.intelligence.tools.tool_schema import ToolParameter
 from app.modules.parsing.knowledge_graph.inference_schema import QueryResponse
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 from app.modules.projects.projects_service import ProjectService
@@ -47,7 +46,7 @@ class KnowledgeGraphQueryTool:
                 "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "node_ids": ["123e4567-e89b-12d3-a456-426614174000"]
             }
-            
+
         Returns list of query responses with relevant code information.
         """
 
@@ -56,7 +55,6 @@ class KnowledgeGraphQueryTool:
         self.headers = {"Content-Type": "application/json"}
         self.user_id = user_id
         self.sql_db = sql_db
-
 
     async def ask_multiple_knowledge_graph_queries(
         self, queries: List[QueryRequest]

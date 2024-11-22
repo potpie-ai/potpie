@@ -15,7 +15,6 @@ from app.modules.intelligence.tools.code_query_tools.get_code_from_node_name_too
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     GetCodeFromNodeIdTool,
 )
-from app.modules.intelligence.tools.tool_schema import ToolParameter
 from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 from app.modules.projects.projects_service import ProjectService

@@ -142,8 +142,7 @@ class ConversationService:
     ) -> tuple[str, str]:
         try:
             if not self.agent_injector_service.validate_agent_id(
-                user_id,
-                conversation.agent_ids[0]
+                user_id, conversation.agent_ids[0]
             ):
                 raise ConversationServiceError(
                     f"Invalid agent_id: {conversation.agent_ids[0]}"

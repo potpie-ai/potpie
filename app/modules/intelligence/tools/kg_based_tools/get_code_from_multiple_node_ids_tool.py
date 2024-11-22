@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 from app.modules.github.github_service import GithubService
-from app.modules.intelligence.tools.tool_schema import ToolParameter
 from app.modules.projects.projects_model import Project
 
 logger = logging.getLogger(__name__)
@@ -34,7 +33,7 @@ class GetCodeFromMultipleNodeIdsTool:
                     "987f6543-e21b-12d3-a456-426614174000"
                 ]
             }
-            
+
         Returns dictionary mapping node IDs to their code content and metadata.
         """
 

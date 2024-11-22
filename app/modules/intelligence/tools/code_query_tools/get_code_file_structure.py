@@ -1,4 +1,3 @@
-from typing import List
 import asyncio
 from typing import Optional
 
@@ -7,13 +6,12 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.modules.github.github_service import GithubService
-from app.modules.intelligence.tools.tool_schema import ToolParameter
-
 
 
 class RepoStructureRequest(BaseModel):
     project_id: str
     path: Optional[str] = None
+
 
 class GetCodeFileStructureTool:
     name = "get_code_file_structure"
@@ -24,14 +22,16 @@ class GetCodeFileStructureTool:
             {
                 "project_id": "550e8400-e29b-41d4-a716-446655440000"
             }
-            
+
         Returns string containing the hierarchical file structure.
         """
 
     def __init__(self, db: Session):
         self.github_service = GithubService(db)
 
-    async def fetch_repo_structure(self, project_id: str,path: Optional[str] = None) -> str:
+    async def fetch_repo_structure(
+        self, project_id: str, path: Optional[str] = None
+    ) -> str:
         return await self.github_service.get_project_structure_async(project_id, path)
 
     async def arun(self, project_id: str, path: Optional[str] = None) -> str:
@@ -39,6 +39,7 @@ class GetCodeFileStructureTool:
 
     def run(self, project_id: str, path: Optional[str] = None) -> str:
         return asyncio.run(self.fetch_repo_structure(project_id, path))
+
 
 def get_code_file_structure_tool(db: Session) -> StructuredTool:
     return StructuredTool(

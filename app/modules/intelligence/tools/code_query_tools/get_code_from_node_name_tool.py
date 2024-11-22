@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from fastapi import HTTPException
 from langchain_core.tools import StructuredTool, Tool
@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 from app.modules.github.github_service import GithubService
-from app.modules.intelligence.tools.tool_schema import ToolParameter
 from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_service import ProjectService
 
@@ -27,7 +26,7 @@ class GetCodeFromNodeNameTool:
                 "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "node_name": "src/services/UserService.ts:authenticateUser"
             }
-            
+
         Returns dictionary containing node details including code content and file location.
         """
 
@@ -140,6 +139,7 @@ class GetCodeFromNodeNameTool:
     def __del__(self):
         if hasattr(self, "neo4j_driver"):
             self.neo4j_driver.close()
+
 
 def get_code_from_node_name_tool(sql_db: Session, user_id: str) -> Tool:
     tool_instance = GetCodeFromNodeNameTool(sql_db, user_id)

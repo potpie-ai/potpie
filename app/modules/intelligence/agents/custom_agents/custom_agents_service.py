@@ -56,7 +56,7 @@ class CustomAgentsService:
                 )
                 raise
 
-    async def validate_agent(self,db: Session, user_id: str, agent_id: str) -> bool:
+    async def validate_agent(self, db: Session, user_id: str, agent_id: str) -> bool:
         try:
             agents_service = AgentsService(db)
             custom_agents = await agents_service.fetch_custom_agents(user_id)

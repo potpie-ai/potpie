@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from langchain.tools import StructuredTool
 from neo4j import GraphDatabase
@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 from app.modules.github.github_service import GithubService
-from app.modules.intelligence.tools.tool_schema import ToolParameter
 from app.modules.projects.projects_model import Project
 
 logger = logging.getLogger(__name__)
@@ -31,7 +30,7 @@ class GetCodeFromNodeIdTool:
                 "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "node_id": "123e4567-e89b-12d3-a456-426614174000"
             }
-            
+
         Returns dictionary containing node code, docstring, and file location details.
         """
 
@@ -133,6 +132,7 @@ class GetCodeFromNodeIdTool:
     def __del__(self):
         if hasattr(self, "neo4j_driver"):
             self.neo4j_driver.close()
+
 
 def get_code_from_node_id_tool(sql_db: Session, user_id: str) -> StructuredTool:
     tool_instance = GetCodeFromNodeIdTool(sql_db, user_id)

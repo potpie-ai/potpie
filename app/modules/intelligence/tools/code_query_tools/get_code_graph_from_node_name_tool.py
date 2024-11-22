@@ -7,7 +7,6 @@ from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
-from app.modules.intelligence.tools.tool_schema import ToolParameter
 from app.modules.projects.projects_model import Project
 
 
@@ -24,7 +23,7 @@ class GetCodeGraphFromNodeNameTool:
                 "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "node_name": "src/services/UserService.ts:authenticateUser"
             }
-            
+
         Returns dictionary containing:
         - graph: {
             name: string - name of the graph

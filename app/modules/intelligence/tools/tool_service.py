@@ -35,7 +35,7 @@ from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_n
 from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool import (
     GetNodesFromTags,
 )
-from app.modules.intelligence.tools.tool_schema import ToolInfo, ToolParameter
+from app.modules.intelligence.tools.tool_schema import ToolInfo
 
 
 class ToolService:

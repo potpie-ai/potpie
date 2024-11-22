@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field
 
 from app.core.config_provider import ConfigProvider
 from app.core.database import get_db
-from app.modules.intelligence.tools.tool_schema import ToolParameter
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.projects.projects_service import ProjectService
 
@@ -29,14 +28,14 @@ class GetNodesFromTags:
                 "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "tags": ["API", "DATABASE"]
             }
-            
+
         Returns list of nodes with:
         - file_path: string - path to the file
         - docstring: string - documentation if available
         - text: string - node text content
         - node_id: string - unique identifier
         - name: string - node name
-        
+
         Usage guidelines:
         1. Use for broad queries requiring ALL nodes of specific types
         2. Limit to 1-2 tags per query for best results

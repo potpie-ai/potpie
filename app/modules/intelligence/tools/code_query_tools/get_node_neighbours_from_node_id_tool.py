@@ -7,7 +7,6 @@ from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
-from app.modules.intelligence.tools.tool_schema import ToolParameter
 
 
 class GetNodeNeighboursFromNodeIdTool:
@@ -23,7 +22,7 @@ class GetNodeNeighboursFromNodeIdTool:
                 "project_id": "550e8400-e29b-41d4-a716-446655440000",
                 "node_ids": ["123e4567-e89b-12d3-a456-426614174000"]
             }
-            
+
         Returns dictionary containing neighbor nodes with their IDs, names, and docstrings.
         """
 

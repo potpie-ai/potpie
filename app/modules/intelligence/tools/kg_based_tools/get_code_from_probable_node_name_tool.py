@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 from app.modules.github.github_service import GithubService
-from app.modules.intelligence.tools.tool_schema import ToolParameter
 from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
@@ -38,7 +37,7 @@ class GetCodeFromProbableNodeNameTool:
                     "src/models/User.ts:User"
                 ]
             }
-            
+
         Returns list of matching nodes with their code content and metadata.
         """
 
@@ -204,6 +203,7 @@ class GetCodeFromProbableNodeNameTool:
         if hasattr(self, "neo4j_driver"):
             self.neo4j_driver.close()
 
+
 def get_code_from_probable_node_name_tool(
     sql_db: Session, user_id: str
 ) -> StructuredTool:
@@ -224,7 +224,7 @@ def get_code_from_probable_node_name_tool(
                     "src/models/User.ts:User"
                 ]
             }
-            
+
         Returns list of matching nodes with their code content and metadata.
         """,
         args_schema=GetCodeFromProbableNodeNameInput,

@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
+
 class CustomAgent:
     def __init__(self, llm, db: Session, agent_id: str, user_id: str):
         self.llm = llm
@@ -38,7 +39,6 @@ class CustomAgent:
         self.custom_agents_service = CustomAgentsService()
         self.chain = None
         self.base_url = os.getenv("POTPIE_PLUS_BASE_URL")
-
 
     async def _get_system_prompt(self) -> str:
         """Fetch system prompt from POTPIE_PLUS_BASE_URL with HMAC authentication"""

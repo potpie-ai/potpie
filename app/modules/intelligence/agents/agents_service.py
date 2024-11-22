@@ -1,5 +1,6 @@
-from typing import List
 import os
+from typing import List
+
 import aiohttp
 
 from app.modules.auth.auth_service import AuthService
@@ -8,12 +9,11 @@ from app.modules.intelligence.prompts.prompt_service import PromptService
 
 
 class AgentsService:
-
     def __init__(self, db):
         self.project_path = os.getenv("PROJECT_PATH", "projects/")
         self.db = db
         self.prompt_service = PromptService(db)
-        self.base_url = os.getenv("POTPIE_PLUS_BASE_URL","http://localhost:8000")
+        self.base_url = os.getenv("POTPIE_PLUS_BASE_URL", "http://localhost:8000")
 
     async def list_available_agents(
         self, current_user: dict, list_system_agents: bool
@@ -59,7 +59,7 @@ class AgentsService:
 
         try:
             custom_agents = await self.fetch_custom_agents(current_user["user_id"])
-        except Exception as e:
+        except Exception:
             custom_agents = []
 
         if list_system_agents:
@@ -99,7 +99,6 @@ class AgentsService:
                         break
 
         return custom_agents
-
 
     def format_citations(self, citations: List[str]) -> List[str]:
         cleaned_citations = []

@@ -6,13 +6,17 @@ from sqlalchemy.orm import Session
 from app.modules.intelligence.agents.chat_agents.code_changes_chat_agent import (
     CodeChangesChatAgent,
 )
-from app.modules.intelligence.agents.chat_agents.debugging_chat_agent import DebuggingChatAgent
+from app.modules.intelligence.agents.chat_agents.debugging_chat_agent import (
+    DebuggingChatAgent,
+)
 from app.modules.intelligence.agents.chat_agents.integration_test_chat_agent import (
     IntegrationTestChatAgent,
 )
 from app.modules.intelligence.agents.chat_agents.lld_chat_agent import LLDChatAgent
 from app.modules.intelligence.agents.chat_agents.qna_chat_agent import QNAChatAgent
-from app.modules.intelligence.agents.chat_agents.unit_test_chat_agent import UnitTestAgent
+from app.modules.intelligence.agents.chat_agents.unit_test_chat_agent import (
+    UnitTestAgent,
+)
 from app.modules.intelligence.agents.custom_agents.custom_agent import CustomAgent
 from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
     CustomAgentsService,
