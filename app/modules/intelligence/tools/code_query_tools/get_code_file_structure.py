@@ -12,7 +12,7 @@ from app.modules.intelligence.tools.tool_schema import ToolParameter
 
 
 class RepoStructureRequest(BaseModel):
-    repo_id: str
+    project_id: str
     path: Optional[str] = None
 
 class GetCodeFileStructureTool:
@@ -43,7 +43,7 @@ class GetCodeFileStructureTool:
 def get_code_file_structure_tool(db: Session) -> StructuredTool:
     return StructuredTool(
         name="get_code_file_structure",
-        description="""Retrieve the hierarchical file structure of a specified repository or subdirectory in a repository. Expecting 'repo_id' as a required input and an optional 'path' to specify a subdirectory. If no path is provided, it will assume the root by default.
+        description="""Retrieve the hierarchical file structure of a specified repository or subdirectory in a repository. Expecting 'project_id' as a required input and an optional 'path' to specify a subdirectory. If no path is provided, it will assume the root by default.
         For input :
         ```
             dir_name
