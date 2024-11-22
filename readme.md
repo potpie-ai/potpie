@@ -17,7 +17,7 @@
 </p>
 
 <h1 align="center">
-AI agents for your codebase in minutes.
+Prompt-To-Agent: Create custom engineering agents for your code
 </h1>
 
 <p align="center">
