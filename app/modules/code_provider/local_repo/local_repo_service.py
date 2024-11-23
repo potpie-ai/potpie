@@ -4,13 +4,13 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
+import git
 from fastapi import HTTPException
 from redis import Redis
 from sqlalchemy.orm import Session
-import git 
+
 from app.core.config_provider import config_provider
 from app.modules.projects.projects_service import ProjectService
-from app.modules.users.user_model import User
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,9 @@ class LocalRepoService:
     def __init__(self, db: Session):
         self.db = db
         self.project_manager = ProjectService(db)
-        self.projects_dir = os.path.join(os.getcwd(), "projects")  # Define the projects directory
+        self.projects_dir = os.path.join(
+            os.getcwd(), "projects"
+        )  # Define the projects directory
         self.redis = Redis.from_url(config_provider.get_redis_url())
         self.max_workers = 10
         self.max_depth = 4
@@ -28,7 +30,9 @@ class LocalRepoService:
     def get_local_repo(self, repo_name: str) -> git.Repo:
         repo_path = os.path.join(self.projects_dir, repo_name)
         if not os.path.exists(repo_path):
-            raise HTTPException(status_code=404, detail=f"Local repository {repo_name} not found")
+            raise HTTPException(
+                status_code=404, detail=f"Local repository {repo_name} not found"
+            )
         return git.Repo(repo_path)
 
     def get_file_content(
@@ -44,7 +48,7 @@ class LocalRepoService:
             repo = self.get_local_repo(repo_name)
             repo.git.checkout(branch_name)
             file_full_path = os.path.join(self.projects_dir, repo_name, file_path)
-            with open(file_full_path, 'r', encoding='utf-8') as file:
+            with open(file_full_path, "r", encoding="utf-8") as file:
                 lines = file.readlines()
                 if (start_line == end_line == 0) or (start_line == end_line == None):
                     return "".join(lines)

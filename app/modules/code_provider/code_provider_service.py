@@ -1,7 +1,8 @@
 import os
 
-from app.modules.code_provider.local_repo.local_repo_service import LocalRepoService
 from app.modules.code_provider.github.github_service import GithubService
+from app.modules.code_provider.local_repo.local_repo_service import LocalRepoService
+
 
 class CodeProviderService:
     def __init__(self, sql_db):
@@ -18,4 +19,6 @@ class CodeProviderService:
         return await self.service_instance.get_project_structure_async(project_id)
 
     def get_file_content(self, repo_name, file_path, start_line, end_line, branch_name):
-        return self.service_instance.get_file_content(repo_name, file_path, start_line, end_line, branch_name)
+        return self.service_instance.get_file_content(
+            repo_name, file_path, start_line, end_line, branch_name
+        )

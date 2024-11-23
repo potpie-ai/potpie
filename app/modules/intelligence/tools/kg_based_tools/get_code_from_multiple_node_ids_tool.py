@@ -8,8 +8,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
-from app.modules.projects.projects_model import Project
 from app.modules.code_provider.code_provider_service import CodeProviderService
+from app.modules.projects.projects_model import Project
+
 logger = logging.getLogger(__name__)
 
 

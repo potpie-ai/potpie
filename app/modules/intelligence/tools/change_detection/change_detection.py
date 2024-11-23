@@ -195,7 +195,9 @@ class ChangeDetectionTool:
         branch_name = project_details["branch_name"]
         github = None
 
-        github, _, _ = CodeProviderService(self.sql_db).get_github_repo_details(repo_name)
+        github, _, _ = CodeProviderService(self.sql_db).get_github_repo_details(
+            repo_name
+        )
 
         try:
             repo = github.get_repo(repo_name)
