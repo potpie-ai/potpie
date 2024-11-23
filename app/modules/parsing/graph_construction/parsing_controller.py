@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
 from app.celery.tasks.parsing_tasks import process_parsing
-from app.modules.github.github_service import GithubService
+from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
@@ -121,7 +121,7 @@ class ParsingController:
                             )
 
                             asyncio.create_task(
-                                GithubService(db).get_project_structure_async(
+                                CodeProviderService(db).get_project_structure_async(
                                     new_project_id
                                 )
                             )
@@ -189,7 +189,7 @@ class ParsingController:
             repo_details.repo_name, repo_details.branch_name, user_id, new_project_id
         )
         asyncio.create_task(
-            GithubService(db).get_project_structure_async(new_project_id)
+            CodeProviderService(db).get_project_structure_async(new_project_id)
         )
         process_parsing.delay(
             repo_details.model_dump(),

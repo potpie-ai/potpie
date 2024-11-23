@@ -12,7 +12,7 @@ from git import Repo
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
-from app.modules.github.github_service import GithubService
+from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.parsing.graph_construction.parsing_helper import (
     ParseHelper,
@@ -39,7 +39,7 @@ class ParsingService:
         self.project_service = ProjectService(db)
         self.inference_service = InferenceService(db, user_id)
         self.search_service = SearchService(db)
-        self.github_service = GithubService(db)
+        self.github_service = CodeProviderService(db)
 
     @contextmanager
     def change_dir(self, path):

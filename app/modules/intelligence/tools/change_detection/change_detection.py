@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from tree_sitter_languages import get_parser
 
 from app.core.database import get_db
-from app.modules.github.github_service import GithubService
+from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.intelligence.tools.code_query_tools.get_code_from_node_name_tool import (
     GetCodeFromNodeNameTool,
 )
@@ -74,7 +74,7 @@ class ChangeDetectionTool:
                 project = await ProjectService(self.sql_db).get_project_from_db_by_id(
                     repo_id
                 )
-                github_service = GithubService(self.sql_db)
+                github_service = CodeProviderService(self.sql_db)
                 file_content = github_service.get_file_content(
                     project["project_name"],
                     relative_file_path,
@@ -195,7 +195,7 @@ class ChangeDetectionTool:
         branch_name = project_details["branch_name"]
         github = None
 
-        github, _, _ = GithubService(self.sql_db).get_github_repo_details(repo_name)
+        github, _, _ = CodeProviderService(self.sql_db).get_github_repo_details(repo_name)
 
         try:
             repo = github.get_repo(repo_name)

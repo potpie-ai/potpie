@@ -1,7 +1,6 @@
 from sqlalchemy.orm import Session
 
-from app.modules.github.github_service import GithubService
-
+from app.modules.code_provider.github.github_service import GithubService
 
 class GithubController:
     def __init__(self, db: Session):

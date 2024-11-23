@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from git import GitCommandError, Repo
 from sqlalchemy.orm import Session
 
-from app.modules.github.github_service import GithubService
+from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
@@ -30,7 +30,7 @@ class ParseHelper:
     def __init__(self, db_session: Session):
         self.project_manager = ProjectService(db_session)
         self.db = db_session
-        self.github_service = GithubService(db_session)
+        self.github_service = CodeProviderService(db_session)
 
     @staticmethod
     def get_directory_size(path):

@@ -8,10 +8,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
-from app.modules.github.github_service import GithubService
 from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
+from app.modules.code_provider.code_provider_service import CodeProviderService
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +136,7 @@ class GetCodeFromProbableNodeNameTool:
 
         relative_file_path = self._get_relative_file_path(file_path)
 
-        code_content = GithubService(self.sql_db).get_file_content(
+        code_content = CodeProviderService(self.sql_db).get_file_content(
             project.repo_name,
             relative_file_path,
             start_line,

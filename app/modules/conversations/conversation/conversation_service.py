@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 from datetime import datetime, timezone
@@ -9,6 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 from uuid6 import uuid7
 
+from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.conversations.conversation.conversation_model import (
     Conversation,
     ConversationStatus,
@@ -29,7 +31,6 @@ from app.modules.conversations.message.message_schema import (
     MessageResponse,
     NodeContext,
 )
-from app.modules.github.github_service import GithubService
 from app.modules.intelligence.agents.agent_injector_service import AgentInjectorService
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import ProviderService
@@ -156,7 +157,7 @@ class ConversationService:
             )
 
             asyncio.create_task(
-                GithubService(self.sql_db).get_project_structure_async(
+                CodeProviderService(self.sql_db).get_project_structure_async(
                     conversation.project_ids[0]
                 )
             )

@@ -11,10 +11,10 @@ from app.core.base_model import Base
 from app.core.database import SessionLocal, engine
 from app.core.models import *  # noqa #necessary for models to not give import errors
 from app.modules.auth.auth_router import auth_router
+from app.modules.code_provider.github.github_router import router as github_router
 from app.modules.conversations.conversations_router import (
     router as conversations_router,
 )
-from app.modules.github.github_router import router as github_router
 from app.modules.intelligence.agents.agents_router import router as agent_router
 from app.modules.intelligence.prompts.prompt_router import router as prompt_router
 from app.modules.intelligence.prompts.system_prompt_setup import SystemPromptSetup
