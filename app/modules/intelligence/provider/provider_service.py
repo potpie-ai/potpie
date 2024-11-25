@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import List, Tuple
 
@@ -17,7 +18,9 @@ class ProviderService:
         self.db = db
         self.llm = None
         self.user_id = user_id
-        self.PORTKEY_API_KEY = os.environ.get("PORTKEY_API_KEY")
+        self.environment = os.getenv("ENV")
+        if self.environment != "development":
+            self.PORTKEY_API_KEY = os.environ.get("PORTKEY_API_KEY")
 
     @classmethod
     def create(cls, db, user_id: str):
@@ -83,7 +86,12 @@ class ProviderService:
             else "openai"
         )
 
-        if preferred_provider == "openai":
+        if self.environment != "development":
+            logging.info("Development mode enabled. Skipping LLM initialization.")
+            self.llm = None
+
+        elif preferred_provider == "openai":
+            logging.info("Initializing OpenAI LLM")
             try:
                 # Try fetching the secret key from SecretManager
                 secret = SecretManager.get_secret("openai", self.user_id)
@@ -111,6 +119,7 @@ class ProviderService:
             )
 
         elif preferred_provider == "anthropic":
+            logging.info("Initializing Anthropic LLM")
             try:
                 # Try fetching the secret key from SecretManager
                 secret = SecretManager.get_secret("anthropic", self.user_id)
