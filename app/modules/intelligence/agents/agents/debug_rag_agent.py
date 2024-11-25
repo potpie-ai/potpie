@@ -44,7 +44,7 @@ class RAGResponse(BaseModel):
     response: List[NodeResponse]
 
 
-class RAGAgent:
+class DebugRAGAgent:
     def __init__(self, sql_db, llm, mini_llm, user_id):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.max_iter = os.getenv("MAX_ITER", 5)
@@ -185,10 +185,9 @@ class RAGAgent:
                  path: potpie/projects/username-reponame-branchname-userid/gymhero/models/training_plan.py
                  output: gymhero/models/training_plan.py
 
-
             Note:
 
-            - Always traverse directories before attempting to access files
+            -   Always traverse directories before attempting to access files
             - Never skip the directory structure retrieval step
             - Use available tools in the correct order: structure first, then code
             - Use markdown for code snippets with language name in the code block like python or javascript
@@ -258,7 +257,7 @@ class RAGAgent:
         return result
 
 
-async def kickoff_rag_crew(
+async def kickoff_debug_rag_agent(
     query: str,
     project_id: str,
     chat_history: List,
@@ -268,9 +267,9 @@ async def kickoff_rag_crew(
     mini_llm,
     user_id: str,
 ) -> str:
-    rag_agent = RAGAgent(sql_db, llm, mini_llm, user_id)
+    debug_agent = DebugRAGAgent(sql_db, llm, mini_llm, user_id)
     file_structure = await GithubService(sql_db).get_project_structure_async(project_id)
-    result = await rag_agent.run(
+    result = await debug_agent.run(
         query, project_id, chat_history, node_ids, file_structure
     )
     return result
