@@ -33,7 +33,6 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-
 class MainApp:
     def __init__(self):
         load_dotenv(override=True)
@@ -64,8 +63,11 @@ class MainApp:
         )
 
     def setup_data(self):
-        if os.getenv("ENV") != "development":
+        if os.getenv("ENV") == "development":
+            logging.info("Development mode enabled. Skipping Firebase setup.")
+        else:
             FirebaseSetup.firebase_init()
+
 
     def initialize_database(self):
         # Initialize database tables
