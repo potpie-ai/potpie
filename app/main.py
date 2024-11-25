@@ -42,10 +42,7 @@ class MainApp:
         self.setup_cors()
         self.initialize_database()
         self.check_and_set_env_vars()
-        if os.getenv("isDevelopmentMode") == "enabled":
-            self.setup_data()
-        else:
-            FirebaseSetup.firebase_init()
+        self.setup_data()
         self.include_routers()
 
     def setup_sentry(self):
@@ -65,6 +62,10 @@ class MainApp:
             allow_methods=["*"],
             allow_headers=["*"],
         )
+
+    def setup_data(self):
+        if os.getenv("ENV") != "development":
+            FirebaseSetup.firebase_init()
 
     def initialize_database(self):
         # Initialize database tables

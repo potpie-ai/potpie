@@ -50,7 +50,7 @@ class AuthService:
         ),
     ):
         # Check if the application is in debug mode
-        if os.getenv("isDevelopmentMode") == "enabled" and credential is None:
+        if os.getenv("ENV") == "development" and credential is None:
             request.state.user = {"user_id": os.getenv("defaultUsername")}
             return {"user_id": os.getenv("defaultUsername")}
         else:

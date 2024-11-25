@@ -21,12 +21,12 @@ router = APIRouter()
 class SecretManager:
     @staticmethod
     def get_client_and_project():
-        if os.getenv("isDevelopmentMode") == "disabled":
-            client = secretmanager.SecretManagerServiceClient()
-            project_id = os.environ.get("GCP_PROJECT")
-        else:
+        if os.getenv("ENV") == "development":
             client = None
             project_id = None
+        else:
+            client = secretmanager.SecretManagerServiceClient()
+            project_id = os.environ.get("GCP_PROJECT")
         return client, project_id
 
     @router.post("/secrets")
