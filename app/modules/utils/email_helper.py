@@ -9,10 +9,12 @@ class EmailHelper:
         self.transaction_emails_enabled = (
             os.environ.get("TRANSACTION_EMAILS_ENABLED", "false").lower() == "true"
         )
-        self.from_address = os.environ.get("EMAIL_FROM_ADDRESS", "dhiren@updates.potpie.ai")
+        self.from_address = os.environ.get(
+            "EMAIL_FROM_ADDRESS", "dhiren@updates.potpie.ai"
+        )
         resend.api_key = self.api_key
 
-    async def send_email(self, to_address, repo_name, branch_name ):
+    async def send_email(self, to_address, repo_name, branch_name):
         if not self.transaction_emails_enabled:
             return
 
@@ -24,7 +26,7 @@ class EmailHelper:
             "html": f"""
                 <p>Hi!</p>
                 <p>Your repository <strong>{repo_name}</strong> at branch <strong>{branch_name}</strong> has been processed successfully.</p>
-                <p>You can use any of Potpie's ready-to-use agents to chat with it at: 
+                <p>You can use any of Potpie's ready-to-use agents to chat with it at:
                     <a href='https://app.potpie.ai/newchat'>https://app.potpie.ai/newchat</a>.
                 </p>
                 <p>Please refer this document to get started: <a href='https://potpieai.notion.site/potpie-s-beta-program-10cc13a23aa8801e8e2bd34d8f1488f5'>Potpie User Guide</a></p>
