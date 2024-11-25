@@ -27,6 +27,8 @@ class PostHogClient:
             properties (dict): Additional properties related to the event.
         """
         if self.environment == "development":
+            logging.info("Development mode enabled. Skipping PostHog event : user_id : %s, event_name %s, properties: %s",
+                         user_id, event_name, properties)
             return
 
         if self.posthog is not None:  # Ensure posthog is initialized
