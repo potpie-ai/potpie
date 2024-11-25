@@ -20,3 +20,5 @@ cli/momentum_cli/.momentum
 *.log
 .cursorrules
 projects/
+# Ignore PyCharm config
+.idea
