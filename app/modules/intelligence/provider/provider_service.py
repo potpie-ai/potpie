@@ -18,7 +18,6 @@ class ProviderService:
         self.db = db
         self.llm = None
         self.user_id = user_id
-        self.environment = os.getenv("ENV")
         if os.getenv("isDevelopmentMode") != "enabled":
             self.PORTKEY_API_KEY = os.environ.get("PORTKEY_API_KEY")
 
