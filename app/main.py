@@ -39,6 +39,7 @@ class MainApp:
         if os.getenv("isDevelopmentMode") == "enabled":
             if os.getenv("ENV") != "development":
                 logging.error("Development mode enabled but ENV is not set to development. Exiting.")
+                exit(1)
         self.setup_sentry()
         self.app = FastAPI()
         self.setup_cors()
