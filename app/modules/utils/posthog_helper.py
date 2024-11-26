@@ -11,12 +11,12 @@ class PostHogClient:
         self.environment = os.getenv("ENV")
 
         # Only initialize PostHog if not in development mode
-        if self.environment != "production":
-            self.posthog = None
-        else:
+        if self.environment == "production":
             self.api_key = os.getenv("POSTHOG_API_KEY")
             self.posthog_host = os.getenv("POSTHOG_HOST")
             self.posthog = Posthog(self.api_key, host=self.posthog_host)
+        else:
+            self.posthog = None
 
     def send_event(self, user_id: str, event_name: str, properties: dict):
         """
