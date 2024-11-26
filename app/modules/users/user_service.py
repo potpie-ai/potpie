@@ -146,6 +146,8 @@ class UserService:
         except Exception as e:
             logger.error(f"Error fetching user ID by emails {emails}: {e}")
             return None
+
+
     def get_user_profile_pic(self, uid: str) -> UserProfileResponse:
         try:
             user_record = auth.get_user(uid)
