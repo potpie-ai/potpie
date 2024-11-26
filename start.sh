@@ -6,15 +6,14 @@ source .env
 # Set up Service Account Credentials
 export GOOGLE_APPLICATION_CREDENTIALS="./service-account.json"
 
-# Check if the environment is not development
-if [ "$ENV" != "development" ]; then
-    # Check if the credentials file exists
-    if [ ! -f "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
-        echo "Error: Service Account Credentials file not found at $GOOGLE_APPLICATION_CREDENTIALS"
-        echo "Please ensure the service-account.json file is in the current directory."
-        exit 1
-    fi
+
+# Check if the credentials file exists
+if [ ! -f "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
+    echo "Error: Service Account Credentials file not found at $GOOGLE_APPLICATION_CREDENTIALS"
+    echo "Please ensure the service-account.json file is in the current directory."
+    exit 1
 fi
+
 
 echo "Starting Docker Compose..."
 docker compose up -d
