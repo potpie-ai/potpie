@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime
 from typing import List
@@ -148,9 +149,9 @@ class UserService:
             return None
 
 
-    def get_user_profile_pic(self, uid: str) -> UserProfileResponse:
+    async def get_user_profile_pic(self, uid: str) -> UserProfileResponse:
         try:
-            user_record = auth.get_user(uid)
+            user_record = await asyncio.to_thread(auth.get_user, uid)
             profile_pic_url = user_record.photo_url
             return {
                 "user_id": user_record.uid,

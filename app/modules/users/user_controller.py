@@ -12,7 +12,7 @@ class UserController:
         self.service = UserService(db)
 
     async def get_user_profile_pic(self, uid: str) -> UserProfileResponse:
-            return self.service.get_user_profile_pic(uid)
+            return await self.service.get_user_profile_pic(uid)
 
     async def get_conversations_for_user(
         self, user_id: str, start: int, limit: int
