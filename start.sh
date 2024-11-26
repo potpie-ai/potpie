@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# source .env
+source .env
 
 # Set up Service Account Credentials
 export GOOGLE_APPLICATION_CREDENTIALS="./service-account.json"
