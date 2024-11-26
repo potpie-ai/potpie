@@ -85,11 +85,7 @@ class ProviderService:
             else "openai"
         )
 
-        if os.getenv("isDevelopmentMode") != "enabled":
-            logging.info("Development mode enabled. Skipping LLM initialization.")
-            self.llm = None
-
-        elif preferred_provider == "openai":
+        if preferred_provider == "openai":
             logging.info("Initializing OpenAI LLM")
             try:
                 # Try fetching the secret key from SecretManager
@@ -103,19 +99,28 @@ class ProviderService:
                 else:
                     raise e  # Re-raise if it's a different error
 
-            portkey_headers = createHeaders(
-                api_key=self.PORTKEY_API_KEY,
-                provider="openai",
-                metadata={"_user": self.user_id, "environment": os.environ.get("ENV")},
-            )
+            if os.getenv("isDevelopmentMode") == "enabled":
+                logging.info("Development mode enabled. Not initializing Portkey.")
+                self.llm = ChatOpenAI(
+                    model_name="gpt-4o",
+                    api_key=openai_key,  # Use the key properly
+                    temperature=0.3,
+                )
 
-            self.llm = ChatOpenAI(
-                model_name="gpt-4o",
-                api_key=openai_key,  # Use the key properly
-                temperature=0.3,
-                base_url=PORTKEY_GATEWAY_URL,
-                default_headers=portkey_headers,
-            )
+            else:
+                portkey_headers = createHeaders(
+                    api_key=self.PORTKEY_API_KEY,
+                    provider="openai",
+                    metadata={"_user": self.user_id, "environment": os.environ.get("ENV")},
+                )
+
+                self.llm = ChatOpenAI(
+                    model_name="gpt-4o",
+                    api_key=openai_key,  # Use the key properly
+                    temperature=0.3,
+                    base_url=PORTKEY_GATEWAY_URL,
+                    default_headers=portkey_headers,
+                )
 
         elif preferred_provider == "anthropic":
             logging.info("Initializing Anthropic LLM")
@@ -130,19 +135,29 @@ class ProviderService:
                     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
                 else:
                     raise e  # Re-raise if it's a different error
-            portkey_headers = createHeaders(
-                api_key=self.PORTKEY_API_KEY,
-                provider="anthropic",
-                metadata={"_user": self.user_id, "environment": os.environ.get("ENV")},
-            )
 
-            self.llm = ChatAnthropic(
-                model="claude-3-5-sonnet-20241022",
-                temperature=0.3,
-                api_key=anthropic_key,
-                base_url=PORTKEY_GATEWAY_URL,
-                default_headers=portkey_headers,
-            )
+            if os.getenv("isDevelopmentMode") == "enabled":
+                logging.info("Development mode enabled. Not initializing Portkey.")
+                self.llm = ChatAnthropic(
+                    model="claude-3-5-sonnet-20241022",
+                    temperature=0.3,
+                    api_key=anthropic_key,
+                )
+
+            else:
+                portkey_headers = createHeaders(
+                    api_key=self.PORTKEY_API_KEY,
+                    provider="anthropic",
+                    metadata={"_user": self.user_id, "environment": os.environ.get("ENV")},
+                )
+
+                self.llm = ChatAnthropic(
+                    model="claude-3-5-sonnet-20241022",
+                    temperature=0.3,
+                    api_key=anthropic_key,
+                    base_url=PORTKEY_GATEWAY_URL,
+                    default_headers=portkey_headers,
+                )
 
         else:
             raise ValueError("Invalid LLM provider selected.")
