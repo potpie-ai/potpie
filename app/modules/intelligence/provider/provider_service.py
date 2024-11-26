@@ -19,7 +19,7 @@ class ProviderService:
         self.llm = None
         self.user_id = user_id
         self.environment = os.getenv("ENV")
-        if self.environment != "development":
+        if os.getenv("isDevelopmentMode") != "enabled":
             self.PORTKEY_API_KEY = os.environ.get("PORTKEY_API_KEY")
 
     @classmethod
@@ -86,7 +86,7 @@ class ProviderService:
             else "openai"
         )
 
-        if self.environment != "development":
+        if os.getenv("isDevelopmentMode") != "enabled":
             logging.info("Development mode enabled. Skipping LLM initialization.")
             self.llm = None
 
