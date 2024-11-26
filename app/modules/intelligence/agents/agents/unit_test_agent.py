@@ -114,6 +114,7 @@ class UnitTestAgent:
             agent=unit_test_agent,
             output_pydantic=self.TestAgentResponse,
             tools=[self.get_code_from_probable_node_name, self.get_code_from_node_id],
+            async_execution=True,
         )
 
         return unit_test_task
@@ -142,7 +143,7 @@ class UnitTestAgent:
         return result
 
 
-async def kickoff_unit_test_crew(
+async def kickoff_unit_test_agent(
     query: str,
     chat_history: str,
     project_id: str,
