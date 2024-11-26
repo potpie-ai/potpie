@@ -63,11 +63,10 @@ class MainApp:
         )
 
     def setup_data(self):
-        if os.getenv("ENV") == "development":
+        if os.getenv("isDevelopmentMode") == "enabled":
             logging.info("Development mode enabled. Skipping Firebase setup.")
         else:
             FirebaseSetup.firebase_init()
-
 
     def initialize_database(self):
         # Initialize database tables

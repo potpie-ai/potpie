@@ -12,7 +12,7 @@ def validate_parsing_input(func):
         user_id = kwargs.get("user_id")
 
         if repo_details and user_id:
-            if os.getenv("ENV") != "development" and repo_details.repo_path:
+            if os.getenv("isDevelopmentMode") != "enabled" and repo_details.repo_path:
                 raise HTTPException(
                     status_code=403,
                     detail="Development mode is not enabled, cannot parse local repository.",

@@ -82,5 +82,5 @@
     ```
 
 ## Additional Notes
-- Ensure that the environment variable `ENV` is set to "development" to parse local repositories.
+- Ensure that the environment variable `isDevelopmentMode` is set to "enabled" to parse local repositories.
 - The `user_id` must not match the `defaultUsername` environment variable when parsing remote repositories.
