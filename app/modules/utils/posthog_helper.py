@@ -11,7 +11,7 @@ class PostHogClient:
         self.environment = os.getenv("ENV")
 
         # Only initialize PostHog if not in development mode
-        if self.environment == "development":
+        if self.environment != "production":
             self.posthog = None
         else:
             self.api_key = os.getenv("POSTHOG_API_KEY")
