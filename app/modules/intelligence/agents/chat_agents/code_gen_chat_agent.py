@@ -21,7 +21,7 @@ from app.modules.intelligence.prompts.prompt_service import PromptService
 logger = logging.getLogger(__name__)
 
 
-class CodeGenerationAgent:
+class CodeGenerationChatAgent:
     def __init__(self, mini_llm, llm, db: Session):
         self.mini_llm = mini_llm
         self.llm = llm
@@ -32,8 +32,6 @@ class CodeGenerationAgent:
         self.db = db
 
 
-
-# [Rest of the implementation remains the same]
     async def run(
         self,
         query: str,
@@ -76,17 +74,10 @@ class CodeGenerationAgent:
                 f"Duration of Code Generation: {code_gen_duration:.2f}s"
             )
 
-            # Format the result for the response
-            # result = {
-            #     "plan": code_gen_result.plan.dict(),
-            #     "modifications": [mod.dict() for mod in code_gen_result.modifications],
-            #     "validation_notes": code_gen_result.validation_notes
-            # }
             result = code_gen_result.raw
             
             tool_results = [SystemMessage(content=result)]
 
-            # Timing for adding message chunk
             add_chunk_start_time = time.time()
             self.history_manager.add_message_chunk(
                 conversation_id,

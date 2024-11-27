@@ -3,7 +3,7 @@ from typing import Any, Dict
 
 from sqlalchemy.orm import Session
 
-from app.modules.intelligence.agents.chat_agents.code_gen import CodeGenerationAgent
+from app.modules.intelligence.agents.chat_agents.code_gen_chat_agent import CodeGenerationChatAgent
 from app.modules.intelligence.agents.chat_agents.code_changes_agent import (
     CodeChangesAgent,
 )
@@ -39,7 +39,7 @@ class AgentInjectorService:
                 mini_llm, reasoning_llm, self.sql_db
             ),
             "LLD_agent": LLDAgent(mini_llm, reasoning_llm, self.sql_db),
-            "code_generation_agent": CodeGenerationAgent(
+            "code_generation_agent": CodeGenerationChatAgent(
                 mini_llm, reasoning_llm, self.sql_db
             ),
         }
