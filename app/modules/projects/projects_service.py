@@ -57,13 +57,14 @@ class ProjectService:
             ) from e
 
     async def register_project(
-        self, repo_name: str, branch_name: str, user_id: str, project_id: str
+        self, repo_name: str, branch_name: str, user_id: str, project_id: str, repo_path: str = None
     ):
         project = Project(
             id=project_id,
             repo_name=repo_name,
             branch_name=branch_name,
             user_id=user_id,
+            repo_path=repo_path,
             status=ProjectStatusEnum.SUBMITTED.value,
         )
         project = ProjectService.create_project(self.db, project)
@@ -112,13 +113,14 @@ class ProjectService:
             f"Project with ID {project_id} has now been updated with status {status}."
         )
 
-    async def get_project_from_db(self, repo_name: str, branch_name: str, user_id: str):
+    async def get_project_from_db(self, repo_name: str, branch_name: str, user_id: str, repo_path: str = None):
         project = (
             self.db.query(Project)
             .filter(
                 Project.repo_name == repo_name,
                 Project.user_id == user_id,
                 Project.branch_name == branch_name,
+                Project.repo_path == repo_path,
             )
             .first()
         )
@@ -127,14 +129,14 @@ class ProjectService:
         else:
             return None
 
-    async def get_global_project_from_db(self, repo_name: str, branch_name: str):
+    async def get_global_project_from_db(self, repo_name: str, branch_name: str, repo_path: str = None):
         project = (
             self.db.query(Project)
             .filter(
                 Project.repo_name == repo_name,
                 Project.branch_name == branch_name,
                 Project.status == ProjectStatusEnum.READY.value,
-            )
+                Project.repo_path == repo_path)
             .first()
         )
         if project:
@@ -152,6 +154,7 @@ class ProjectService:
                 "status": project.status,
                 "branch_name": project.branch_name,
                 "user_id": project.user_id,
+                "repo_path": project.repo_path,
             }
         else:
             return None
@@ -165,6 +168,7 @@ class ProjectService:
                 "commit_id": project.commit_id,
                 "status": project.status,
                 "branch_name": project.branch_name,
+                "repo_path": project.repo_path,
             }
         else:
             return None
@@ -181,6 +185,7 @@ class ProjectService:
                 "repo_name": project.repo_name,
                 "branch_name": project.branch_name,
                 "user_id": project.user_id,
+                "repo_path": project.repo_path,
             }
         else:
             return None
@@ -188,7 +193,7 @@ class ProjectService:
     async def get_repo_and_branch_name(self, project_id: int):
         project = ProjectService.get_project_by_id(self.db, project_id)
         if project:
-            return project.repo_name, project.branch_name, project.directory
+            return project.repo_name, project.branch_name, project.directory, project.repo_path
         else:
             return None
 

@@ -27,7 +27,7 @@ class LocalRepoService:
         self.max_depth = 4
         self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
 
-    def get_local_repo(self, repo_name: str) -> git.Repo:
+    def get_repo(self, repo_name: str) -> git.Repo:
         repo_path = os.path.join(self.projects_dir, repo_name)
         if not os.path.exists(repo_path):
             raise HTTPException(
@@ -45,7 +45,7 @@ class LocalRepoService:
     ) -> str:
         logger.info(f"Attempting to access file: {file_path} in repo: {repo_name}")
         try:
-            repo = self.get_local_repo(repo_name)
+            repo = self.get_repo(repo_name)
             repo.git.checkout(branch_name)
             file_full_path = os.path.join(self.projects_dir, repo_name, file_path)
             with open(file_full_path, "r", encoding="utf-8") as file:
@@ -67,7 +67,7 @@ class LocalRepoService:
 
     async def get_branch_list(self, repo_name: str):
         try:
-            repo = self.get_local_repo(repo_name)
+            repo = self.get_repo(repo_name)
             branches = [head.name for head in repo.heads]
             return {"branches": branches}
         except Exception as e:
@@ -82,52 +82,27 @@ class LocalRepoService:
     async def get_project_structure_async(
         self, project_id: str, path: Optional[str] = None
     ) -> str:
-        logger.info(
-            f"Fetching project structure for project ID: {project_id}, path: {path}"
-        )
-        # Modify cache key to reflect that we're only caching the specific path
-        cache_key = (
-            f"project_structure:{project_id}:exact_path_{path}:depth_{self.max_depth}"
-        )
-        cached_structure = self.redis.get(cache_key)
-
-        if cached_structure:
-            logger.info(
-                f"Project structure found in cache for project ID: {project_id}, path: {path}"
-            )
-            return cached_structure.decode("utf-8")
-
         project = await self.project_manager.get_project_from_db_by_id(project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        repo_name = project["project_name"]
-        if not repo_name:
+        repo_path = project["repo_path"]
+        print(911, project)
+        if not repo_path:
             raise HTTPException(
                 status_code=400, detail="Project has no associated local repository"
             )
 
         try:
-            repo = self.get_local_repo(repo_name)
-            # If path is provided, verify it exists
-            if path:
-                file_full_path = os.path.join(self.projects_dir, repo_name, path)
-                if not os.path.exists(file_full_path):
-                    raise HTTPException(
-                        status_code=404, detail=f"Path {path} not found in repository"
-                    )
-            # Start structure fetch from the specified path with depth 0
+            repo = self.get_repo(repo_path)
             structure = await self._fetch_repo_structure_async(
-                repo, path or "", current_depth=0, base_path=path
+                repo, repo_path or "", current_depth=0, base_path=path
             )
             formatted_structure = self._format_tree_structure(structure)
-
-            self.redis.setex(cache_key, 3600, formatted_structure)  # Cache for 1 hour
-
             return formatted_structure
         except Exception as e:
             logger.error(
-                f"Error fetching project structure for {repo_name}: {str(e)}",
+                f"Error fetching project structure for {repo_path}: {str(e)}",
                 exc_info=True,
             )
             raise HTTPException(

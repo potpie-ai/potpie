@@ -614,8 +614,8 @@ class InferenceService:
                 for n in docstrings.docstrings
             ]
             project = self.project_manager.get_project_from_db_by_id_sync(repo_id)
-            repo_name = project.get("project_name")
-            is_local_repo = len(repo_name.split("/")) < 2
+            repo_path = project.get("repo_path")
+            is_local_repo = True if repo_path else False
             for i in range(0, len(docstring_list), batch_size):
                 batch = docstring_list[i : i + batch_size]
                 session.run(

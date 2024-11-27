@@ -35,7 +35,21 @@ class ParsingController:
         parse_helper = ParseHelper(db)
         parsing_service = ParsingService(db, user_id)
         repo_name = repo_details.repo_name or repo_details.repo_path.split("/")[-1]
-
+        repo_path = repo_details.repo_path
+        print(11)
+        # Skip rest of the logic if we have a repo_path for local repos
+        if repo_path:
+            print(22)
+            new_project_id = str(uuid7())
+            return await ParsingController.handle_new_project(
+                repo_details,
+                user_id,
+                user_email,
+                new_project_id,
+                project_manager,
+                db,
+            )
+        
         demo_repos = [
             "Portkey-AI/gateway",
             "crewAIInc/crewAI",

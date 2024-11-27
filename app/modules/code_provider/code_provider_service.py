@@ -15,6 +15,9 @@ class CodeProviderService:
         else:
             return GithubService(self.sql_db)
 
+    def get_repo(self, repo_name):
+        return self.service_instance.get_repo(repo_name)
+    
     async def get_project_structure_async(self, project_id):
         return await self.service_instance.get_project_structure_async(project_id)
 
