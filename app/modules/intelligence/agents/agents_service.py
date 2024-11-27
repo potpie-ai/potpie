@@ -59,6 +59,7 @@ class AgentsService:
                 id="code_generation_agent",
                 name="Code Generation Agent",
                 description="An agent specialized in generating code for new features or fixing bugs.",
+                status="SYSTEM",
             ),
         ]
 
