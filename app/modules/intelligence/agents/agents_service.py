@@ -55,6 +55,12 @@ class AgentsService:
                 description="An agent specialized in generating detailed analysis of code changes in your current branch compared to default branch. Works best with Py, JS, TS",
                 status="SYSTEM",
             ),
+            AgentInfo(
+                id="code_generation_agent",
+                name="Code Generation Agent",
+                description="An agent specialized in generating code for new features or fixing bugs.",
+                status="SYSTEM",
+            ),
         ]
 
         try:
