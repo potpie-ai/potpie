@@ -248,7 +248,7 @@ class ProjectService:
         self.db.delete(project)
         self.db.commit()
 
-    async def get_demo_repo_id(self, repo_name: str):
+    async def get_demo_project_id(self, repo_name: str):
         try:
             # Query for the project associated with the demo repo name
             project = (

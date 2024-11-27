@@ -146,6 +146,7 @@ class IntegrationTestAgent:
                 self.get_code_from_probable_node_name,
                 self.get_code_from_multiple_node_ids,
             ],
+            async_execution=True,
         )
 
         return integration_test_task
@@ -181,7 +182,7 @@ class IntegrationTestAgent:
         return result
 
 
-async def kickoff_integration_test_crew(
+async def kickoff_integration_test_agent(
     query: str,
     project_id: str,
     node_ids: List[NodeContext],

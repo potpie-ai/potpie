@@ -1,7 +1,8 @@
 import asyncio
 import logging
-from typing import Any, Dict
 from asyncio import create_task
+from typing import Any, Dict
+
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
@@ -16,8 +17,9 @@ from app.modules.parsing.graph_construction.parsing_validator import (
 )
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
-from app.modules.utils.posthog_helper import PostHogClient
 from app.modules.utils.email_helper import EmailHelper
+from app.modules.utils.posthog_helper import PostHogClient
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,6 +43,7 @@ class ParsingController:
             "AgentOps-AI/agentops",
             "calcom/cal.com",
             "SigNoz/signoz",
+            "langchain-ai/langchain",
         ]
 
         try:
@@ -113,7 +116,7 @@ class ParsingController:
                                 new_project_id, ProjectStatusEnum.SUBMITTED
                             )
 
-                            old_repo_id = await project_manager.get_demo_repo_id(
+                            old_project_id = await project_manager.get_demo_project_id(
                                 repo_name
                             )
 
@@ -124,15 +127,18 @@ class ParsingController:
                             )
                             # Duplicate the graph under the new repo ID
                             await parsing_service.duplicate_graph(
-                                old_repo_id, new_project_id
+                                old_project_id, new_project_id
                             )
 
                             # Update the project status to READY after copying
                             await project_manager.update_project_status(
                                 new_project_id, ProjectStatusEnum.READY
                             )
-                            create_task(EmailHelper().send_email(user_email, repo_name, repo_details.branch_name))
-
+                            create_task(
+                                EmailHelper().send_email(
+                                    user_email, repo_name, repo_details.branch_name
+                                )
+                            )
 
                         return {
                             "project_id": new_project_id,
