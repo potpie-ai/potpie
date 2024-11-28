@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
+import re
 from typing import Any, Dict, List, Optional
 
 import git
@@ -10,6 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 from app.modules.projects.projects_service import ProjectService
+
+import pygit2
 
 logger = logging.getLogger(__name__)
 
@@ -25,27 +28,36 @@ class LocalRepoService:
         self.max_depth = 4
         self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
 
-    def get_repo(self, repo_name: str) -> git.Repo:
-        repo_path = os.path.join(self.projects_dir, repo_name)
+    def get_repo(self, repo_path: str) -> git.Repo:
         if not os.path.exists(repo_path):
             raise HTTPException(
-                status_code=404, detail=f"Local repository {repo_name} not found"
+                status_code=404, detail=f"Local repository at {repo_path} not found"
             )
         return git.Repo(repo_path)
 
-    def get_file_content(
+    async def get_file_content(
         self,
         repo_name: str,
         file_path: str,
         start_line: int,
         end_line: int,
         branch_name: str,
+        project_id: str
     ) -> str:
-        logger.info(f"Attempting to access file: {file_path} in repo: {repo_name}")
+        logger.info(f"Attempting to access file: {file_path} for project ID: {project_id}")
         try:
-            repo = self.get_repo(repo_name)
+            project = await self.project_manager.get_project_from_db_by_id(project_id)
+            if not project:
+                raise HTTPException(status_code=404, detail="Project not found")
+            repo_path = project["repo_path"]
+            if not repo_path:
+                raise HTTPException(
+                    status_code=400, detail="Project has no associated local repository"
+                )
+
+            repo = self.get_repo(repo_path)
             repo.git.checkout(branch_name)
-            file_full_path = os.path.join(self.projects_dir, repo_name, file_path)
+            file_full_path = os.path.join(repo_path, file_path)
             with open(file_full_path, "r", encoding="utf-8") as file:
                 lines = file.readlines()
                 if (start_line == end_line == 0) or (start_line == end_line == None):
@@ -55,7 +67,7 @@ class LocalRepoService:
                 return "".join(selected_lines)
         except Exception as e:
             logger.error(
-                f"Error processing file content for {repo_name}/{file_path}: {e}",
+                f"Error processing file content for project ID {project_id}, file {file_path}: {e}",
                 exc_info=True,
             )
             raise HTTPException(
@@ -216,3 +228,44 @@ class LocalRepoService:
             return output
 
         return "\n".join(_format_node(structure))
+
+    def get_local_repo_diff(self, repo_path: str, branch_name: str) -> Dict[str, str]:
+        try:
+            repo = self.get_repo(repo_path)
+            repo.git.checkout(branch_name)
+            
+            # Determine the default branch name
+            default_branch_name = repo.git.symbolic_ref('refs/remotes/origin/HEAD').split('/')[-1]
+            
+            # Get the diff between the current branch and the default branch
+            diff = repo.git.diff(f'{default_branch_name}..{branch_name}', unified=0)
+            patches_dict = self._parse_diff(diff)
+            return patches_dict
+        except Exception as e:
+            logger.error(f"Error computing diff for local repo: {str(e)}", exc_info=True)
+            raise HTTPException(
+                status_code=500, detail=f"Error computing diff for local repo: {str(e)}"
+            )
+
+    def _parse_diff(self, diff: str) -> Dict[str, str]:
+        """
+        Parses the git diff output and returns a dictionary of file patches.
+        """
+        patches_dict = {}
+        current_file = None
+        patch_lines = []
+
+        for line in diff.splitlines():
+            if line.startswith('diff --git'):
+                if current_file and patch_lines:
+                    patches_dict[current_file] = "\n".join(patch_lines)
+                match = re.search(r'b/(.+)', line)
+                current_file = match.group(1) if match else None
+                patch_lines = []
+            elif current_file:
+                patch_lines.append(line)
+
+        if current_file and patch_lines:
+            patches_dict[current_file] = "\n".join(patch_lines)
+
+        return patches_dict

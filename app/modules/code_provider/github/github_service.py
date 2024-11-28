@@ -74,13 +74,14 @@ class GithubService:
 
         return github, response.json(), owner
 
-    def get_file_content(
+    async def get_file_content(
         self,
         repo_name: str,
         file_path: str,
         start_line: int,
         end_line: int,
         branch_name: str,
+        project_id: str,
     ) -> str:
         logger.info(f"Attempting to access file: {file_path} in repo: {repo_name}")
 
