@@ -27,6 +27,7 @@ from app.modules.parsing.graph_construction.parsing_router import (
 from app.modules.projects.projects_router import router as projects_router
 from app.modules.search.search_router import router as search_router
 from app.modules.users.user_router import router as user_router
+from app.modules.users.user_service import UserService
 from app.modules.utils.firebase_setup import FirebaseSetup
 
 logging.basicConfig(
@@ -68,6 +69,12 @@ class MainApp:
     def setup_data(self):
         if os.getenv("isDevelopmentMode") == "enabled":
             logging.info("Development mode enabled. Skipping Firebase setup.")
+            # Setup dummy user for development mode
+            db = SessionLocal()
+            user_service = UserService(db)
+            user_service.setup_dummy_user()
+            db.close()
+            print("Dummy user created")
         else:
             FirebaseSetup.firebase_init()
 

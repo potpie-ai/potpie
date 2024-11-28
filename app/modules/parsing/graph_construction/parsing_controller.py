@@ -38,8 +38,10 @@ class ParsingController:
         parse_helper = ParseHelper(db)
         parsing_service = ParsingService(db, user_id)
         repo_name = repo_details.repo_name or repo_details.repo_path.split("/")[-1]
+        if not repo_details.repo_name:
+            repo_details.repo_name = repo_name
         repo_path = repo_details.repo_path
-        print(11, repo_name)
+        print(11, repo_details)
         if repo_path:
             if os.getenv("isDevelopmentMode") != "enabled":
                 raise HTTPException(

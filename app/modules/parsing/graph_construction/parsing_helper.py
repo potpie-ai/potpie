@@ -296,9 +296,11 @@ class ParseHelper:
             if isinstance(repo_details, Repo)
             else repo.full_name
         )
+        print(111, repo_details)
         project = await self.project_manager.get_project_from_db(
-            full_name, branch, user_id
+            full_name, branch, user_id, repo_details.repo_path
         )
+        print(222, project)
         if not project:
             project_id = await self.project_manager.register_project(
                 full_name,

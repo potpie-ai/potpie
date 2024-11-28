@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime
+import os
 from typing import List
 
 from sqlalchemy import desc
@@ -82,6 +83,29 @@ class UserService:
             uid = ""
 
         return uid, message, error
+    
+    def setup_dummy_user(self):
+        defaultUserId = os.getenv("defaultUsername")
+        user_service = UserService(self.db)
+        user = user_service.get_user_by_uid(defaultUserId)
+        if user:
+            print("Dummy user already exists")
+            return
+        else:
+            user = CreateUser(
+                uid=defaultUserId,
+                email="defaultuser@potpie.ai",
+                display_name="Dummy User",
+                email_verified=True,
+                created_at=datetime.utcnow(),
+                last_login_at=datetime.utcnow(),
+                provider_info={},
+                provider_username="self",
+            )
+            uid, message, error = user_service.create_user(user)
+            
+        uid, _ , _ = user_service.create_user(user)
+        logging.info(f"Created dummy user with uid: {uid}")
 
     def get_user_by_uid(self, uid: str):
         try:
@@ -147,7 +171,6 @@ class UserService:
         except Exception as e:
             logger.error(f"Error fetching user ID by emails {emails}: {e}")
             return None
-
 
     async def get_user_profile_pic(self, uid: str) -> UserProfileResponse:
         try:
