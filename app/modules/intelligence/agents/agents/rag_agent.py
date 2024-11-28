@@ -229,7 +229,7 @@ class RAGAgent:
 
         agentops.init(os.getenv("AGENTOPS_API_KEY"))
         code_results = []
-        if len(node_ids) > 0:
+        if node_ids:  # Check if node_ids is not None and not empty
             code_results = await GetCodeFromMultipleNodeIdsTool(
                 self.sql_db, self.user_id
             ).run_multiple(project_id, [node.node_id for node in node_ids])
