@@ -227,9 +227,7 @@ class RAGAgent:
     ) -> str:
         os.environ["OPENAI_API_KEY"] = self.openai_api_key
 
-        agentops.init(
-            os.getenv("AGENTOPS_API_KEY")
-        )
+        agentops.init(os.getenv("AGENTOPS_API_KEY"))
         code_results = []
         if len(node_ids) > 0:
             code_results = await GetCodeFromMultipleNodeIdsTool(

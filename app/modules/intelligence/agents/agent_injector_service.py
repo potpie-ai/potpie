@@ -3,9 +3,11 @@ from typing import Any, Dict
 
 from sqlalchemy.orm import Session
 
-from app.modules.intelligence.agents.chat_agents.code_gen_chat_agent import CodeGenerationChatAgent
 from app.modules.intelligence.agents.chat_agents.code_changes_chat_agent import (
     CodeChangesChatAgent,
+)
+from app.modules.intelligence.agents.chat_agents.code_gen_chat_agent import (
+    CodeGenerationChatAgent,
 )
 from app.modules.intelligence.agents.chat_agents.debugging_chat_agent import (
     DebuggingChatAgent,

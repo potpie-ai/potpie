@@ -27,3 +27,11 @@ async def get_branch_list(
     db: Session = Depends(get_db),
 ):
     return await GithubController(db).get_branch_list(repo_name=repo_name)
+
+@router.get("/github/check-public-repo")
+async def check_public_repo(
+    repo_name: str = Query(..., description="Repository name"),
+    user=Depends(AuthService.check_auth),
+    db: Session = Depends(get_db),
+):
+    return await GithubController(db).check_public_repo(repo_name=repo_name)
