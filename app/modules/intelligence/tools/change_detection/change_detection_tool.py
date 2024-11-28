@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from tree_sitter_languages import get_parser
 
 from app.core.database import get_db
-from app.modules.code_provider.code_provider_service import CodeProviderService
+from app.modules.code_provider.github.github_service import GithubService
 from app.modules.intelligence.tools.code_query_tools.get_code_from_node_name_tool import (
     GetCodeFromNodeNameTool,
 )
@@ -20,6 +20,7 @@ from app.modules.parsing.knowledge_graph.inference_service import InferenceServi
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
 
+# Not yet supported in development mode
 
 class ChangeDetectionInput(BaseModel):
     project_id: str = Field(
@@ -88,7 +89,7 @@ class ChangeDetectionTool:
                 project = await ProjectService(self.sql_db).get_project_from_db_by_id(
                     project_id
                 )
-                github_service = CodeProviderService(self.sql_db)
+                github_service = GithubService(self.sql_db)
                 file_content = github_service.get_file_content(
                     project["project_name"],
                     relative_file_path,
@@ -210,7 +211,7 @@ class ChangeDetectionTool:
         branch_name = project_details["branch_name"]
         github = None
 
-        github, _, _ = CodeProviderService(self.sql_db).get_github_repo_details(
+        github, _, _ = GithubService(self.sql_db).get_github_repo_details(
             repo_name
         )
 
