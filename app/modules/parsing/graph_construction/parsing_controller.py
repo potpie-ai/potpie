@@ -1,8 +1,10 @@
 import asyncio
 import logging
 from asyncio import create_task
+import os
 from typing import Any, Dict
 
+from dotenv import load_dotenv
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
@@ -22,6 +24,7 @@ from app.modules.utils.posthog_helper import PostHogClient
 
 logger = logging.getLogger(__name__)
 
+load_dotenv(override=True)
 
 class ParsingController:
     @staticmethod
@@ -36,12 +39,17 @@ class ParsingController:
         parsing_service = ParsingService(db, user_id)
         repo_name = repo_details.repo_name or repo_details.repo_path.split("/")[-1]
         repo_path = repo_details.repo_path
-        print(11)
-        # Skip rest of the logic if we have a repo_path for local repos
+        print(11, repo_name)
         if repo_path:
-            print(22)
-            new_project_id = str(uuid7())
-            return await ParsingController.handle_new_project(
+            if os.getenv("isDevelopmentMode") != "enabled":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Parsing local repositories is only supported in development mode"
+                )
+            else:
+                print(22)
+                new_project_id = str(uuid7())
+                return await ParsingController.handle_new_project(
                 repo_details,
                 user_id,
                 user_email,
@@ -200,7 +208,7 @@ class ParsingController:
         logger.info(f"Submitting parsing task for new project {new_project_id}")
 
         await project_manager.register_project(
-            repo_details.repo_name, repo_details.branch_name, user_id, new_project_id
+            repo_details.repo_name, repo_details.branch_name, user_id, new_project_id, repo_details.repo_path
         )
         asyncio.create_task(
             CodeProviderService(db).get_project_structure_async(new_project_id)

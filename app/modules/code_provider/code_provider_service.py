@@ -10,7 +10,7 @@ class CodeProviderService:
         self.service_instance = self._get_service_instance()
 
     def _get_service_instance(self):
-        if os.getenv("isDevelopmentMode") == "true":
+        if os.getenv("isDevelopmentMode") == "enabled":
             return LocalRepoService(self.sql_db)
         else:
             return GithubService(self.sql_db)
