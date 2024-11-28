@@ -35,7 +35,7 @@ class LocalRepoService:
             )
         return git.Repo(repo_path)
 
-    async def get_file_content(
+    def get_file_content(
         self,
         repo_name: str,
         file_path: str,
@@ -46,7 +46,7 @@ class LocalRepoService:
     ) -> str:
         logger.info(f"Attempting to access file: {file_path} for project ID: {project_id}")
         try:
-            project = await self.project_manager.get_project_from_db_by_id(project_id)
+            project = self.project_manager.get_project_from_db_by_id_sync(project_id)
             if not project:
                 raise HTTPException(status_code=404, detail="Project not found")
             repo_path = project["repo_path"]

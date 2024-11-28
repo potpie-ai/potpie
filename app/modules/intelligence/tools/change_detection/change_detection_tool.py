@@ -92,7 +92,7 @@ class ChangeDetectionTool:
                     project_id
                 )
                 code_service = CodeProviderService(self.sql_db)
-                file_content = code_service.get_file_content(
+                file_content =await code_service.get_file_content(
                     project["project_name"],
                     relative_file_path,
                     0,

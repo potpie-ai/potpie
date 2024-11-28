@@ -23,17 +23,6 @@ class CodeProviderService:
         return await self.service_instance.get_project_structure_async(project_id, path)
 
     def get_file_content(self, repo_name, file_path, start_line, end_line, branch_name, project_id):
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            return asyncio.create_task(self._get_file_content_async(
-                repo_name, file_path, start_line, end_line, branch_name, project_id
-            ))
-        else:
-            return asyncio.run(self._get_file_content_async(
-                repo_name, file_path, start_line, end_line, branch_name, project_id
-            ))
-
-    async def _get_file_content_async(self, repo_name, file_path, start_line, end_line, branch_name, project_id):
-        return await self.service_instance.get_file_content(
-            repo_name, file_path, start_line, end_line, branch_name, project_id
+        return self.service_instance.get_file_content(
+                    repo_name, file_path, start_line, end_line, branch_name, project_id
         )

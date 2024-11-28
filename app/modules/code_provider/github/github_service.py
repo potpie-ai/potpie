@@ -74,7 +74,7 @@ class GithubService:
 
         return github, response.json(), owner
 
-    async def get_file_content(
+    def get_file_content(
         self,
         repo_name: str,
         file_path: str,
