@@ -103,9 +103,9 @@ class GetCodeFromNodeNameTool:
 
         relative_file_path = self._get_relative_file_path(file_path)
 
-        github_service = CodeProviderService(self.sql_db)
+        code_provider_service = CodeProviderService(self.sql_db)
         try:
-            code_content = github_service.get_file_content(
+            code_content = code_provider_service.get_file_content(
                 project.repo_name,
                 relative_file_path,
                 start_line,

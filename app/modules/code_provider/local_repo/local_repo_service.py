@@ -6,7 +6,6 @@ from typing import Any, Dict, List, Optional
 
 import git
 from fastapi import HTTPException
-from redis import Redis
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
@@ -21,8 +20,7 @@ class LocalRepoService:
         self.project_manager = ProjectService(db)
         self.projects_dir = os.path.join(
             os.getcwd(), "projects"
-        )  # Define the projects directory
-        self.redis = Redis.from_url(config_provider.get_redis_url())
+        )
         self.max_workers = 10
         self.max_depth = 4
         self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
@@ -63,20 +61,6 @@ class LocalRepoService:
             raise HTTPException(
                 status_code=500,
                 detail=f"Error processing file content: {str(e)}",
-            )
-
-    async def get_branch_list(self, repo_name: str):
-        try:
-            repo = self.get_repo(repo_name)
-            branches = [head.name for head in repo.heads]
-            return {"branches": branches}
-        except Exception as e:
-            logger.error(
-                f"Error fetching branches for repo {repo_name}: {str(e)}", exc_info=True
-            )
-            raise HTTPException(
-                status_code=404,
-                detail=f"Repository not found or error fetching branches: {str(e)}",
             )
 
     async def get_project_structure_async(
