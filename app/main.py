@@ -74,7 +74,7 @@ class MainApp:
             user_service = UserService(db)
             user_service.setup_dummy_user()
             db.close()
-            print("Dummy user created")
+            logging.info("Dummy user created")
         else:
             FirebaseSetup.firebase_init()
 

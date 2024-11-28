@@ -60,7 +60,6 @@ class ParsingService:
     ):
         project_manager = ProjectService(self.db)
         extracted_dir = None
-        print("repo details in parse_directory", repo_details)
         try:
             if cleanup_graph:
                 neo4j_config = config_provider.get_neo4j_config()
@@ -81,10 +80,14 @@ class ParsingService:
             repo, owner, auth = await self.parse_helper.clone_or_copy_repository(
                 repo_details, user_id
             )
-            print("recieve repo in parse_directory", repo)
-            extracted_dir, project_id = await self.parse_helper.setup_project_directory(
-                repo, repo_details.branch_name, auth, repo_details, user_id, project_id
-            )
+            if(os.getenv("isDevelopmentMode") == "enabled"):
+                extracted_dir, project_id = await self.parse_helper.setup_project_directory(
+                    repo, repo_details.branch_name, auth, repo_details, user_id, project_id
+                )
+            else:
+             extracted_dir, project_id = await self.parse_helper.setup_project_directory(
+                    repo, repo_details.branch_name, auth, repo, user_id, project_id
+                )
 
             if isinstance(repo, Repo):
                 language = self.parse_helper.detect_repo_language(extracted_dir)

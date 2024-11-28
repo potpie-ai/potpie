@@ -87,7 +87,6 @@ class LocalRepoService:
             raise HTTPException(status_code=404, detail="Project not found")
 
         repo_path = project["repo_path"]
-        print(911, project)
         if not repo_path:
             raise HTTPException(
                 status_code=400, detail="Project has no associated local repository"

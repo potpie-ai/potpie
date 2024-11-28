@@ -41,7 +41,6 @@ class ParsingController:
         if not repo_details.repo_name:
             repo_details.repo_name = repo_name
         repo_path = repo_details.repo_path
-        print(11, repo_details)
         if repo_path:
             if os.getenv("isDevelopmentMode") != "enabled":
                 raise HTTPException(
@@ -49,7 +48,6 @@ class ParsingController:
                     detail="Parsing local repositories is only supported in development mode"
                 )
             else:
-                print(22)
                 new_project_id = str(uuid7())
                 return await ParsingController.handle_new_project(
                 repo_details,

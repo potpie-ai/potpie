@@ -296,11 +296,10 @@ class ParseHelper:
             if isinstance(repo_details, Repo)
             else repo.full_name if hasattr(repo, 'full_name') else repo_details.repo_name
         )
-        print(111, repo_details)
+        repo_path = getattr(repo_details, 'repo_path', None)
         project = await self.project_manager.get_project_from_db(
-            full_name, branch, user_id, repo_details.repo_path
+            full_name, branch, user_id, repo_path
         )
-        print(222, project)
         if not project:
             project_id = await self.project_manager.register_project(
                 full_name,
@@ -308,7 +307,7 @@ class ParseHelper:
                 user_id,
                 project_id,
             )
-        if repo_details.repo_path:
+        if repo_path is not None:
             if os.getenv("isDevelopmentMode", "false").lower() == "false":
                 raise HTTPException(
                     status_code=400,
