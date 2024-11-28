@@ -11,8 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import NodeContext
-from app.modules.intelligence.agents.agentic_tools.code_gen_agent import kickoff_code_generation_crew
 
+from app.modules.intelligence.agents.agents.code_gen_agent import kickoff_code_generation_crew
 from app.modules.intelligence.agents.agents_service import AgentsService
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 
