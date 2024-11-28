@@ -1,11 +1,18 @@
 import os
 from typing import Any, Dict, List
 
-from crewai import Agent, Crew, Process, Task
 import agentops
+from crewai import Agent, Crew, Process, Task
+
 from app.modules.conversations.message.message_schema import NodeContext
+from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
+    get_code_file_structure_tool,
+)
 from app.modules.intelligence.tools.code_query_tools.get_node_neighbours_from_node_id_tool import (
     get_node_neighbours_from_node_id_tool,
+)
+from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import (
+    get_ask_knowledge_graph_queries_tool,
 )
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_multiple_node_ids_tool import (
     GetCodeFromMultipleNodeIdsTool,
@@ -14,11 +21,10 @@ from app.modules.intelligence.tools.kg_based_tools.get_code_from_multiple_node_i
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_name_tool import (
     get_code_from_probable_node_name_tool,
 )
-from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import (
-    get_ask_knowledge_graph_queries_tool,
+from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool import (
+    get_nodes_from_tags_tool,
 )
-from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool import get_nodes_from_tags_tool
-from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import get_code_file_structure_tool
+
 
 class CodeGenerationAgent:
     def __init__(self, sql_db, llm, mini_llm, user_id):
@@ -29,22 +35,25 @@ class CodeGenerationAgent:
             sql_db, user_id
         )
         self.get_node_neighbours = get_node_neighbours_from_node_id_tool(sql_db)
-        self.get_code_from_probable_node_name = get_code_from_probable_node_name_tool(sql_db, user_id)
-        self.query_knowledge_graph = get_ask_knowledge_graph_queries_tool(sql_db, user_id)
+        self.get_code_from_probable_node_name = get_code_from_probable_node_name_tool(
+            sql_db, user_id
+        )
+        self.query_knowledge_graph = get_ask_knowledge_graph_queries_tool(
+            sql_db, user_id
+        )
         self.get_nodes_from_tags = get_nodes_from_tags_tool(sql_db, user_id)
         self.get_file_structure = get_code_file_structure_tool(sql_db)
         self.llm = llm
         self.mini_llm = mini_llm
         self.user_id = user_id
 
-
     async def create_agents(self):
         # [Previous create_agents code remains the same until the task description]
         code_generator = Agent(
             role="Code Generation Agent",
             goal="Generate precise, copy-paste ready code modifications that maintain project consistency and handle all dependencies",
-            backstory=f"""
-                You are an expert code generation agent specialized in creating production-ready, 
+            backstory="""
+                You are an expert code generation agent specialized in creating production-ready,
                 immediately usable code modifications. Your primary responsibilities include:
                 1. Analyzing existing codebase context and understanding dependencies
                 2. Planning code changes that maintain exact project patterns and style
@@ -61,7 +70,7 @@ class CodeGenerationAgent:
             tools=[
                 self.get_code_from_multiple_node_ids,
                 self.get_node_neighbours,
-                self.get_code_from_probable_node_name,  
+                self.get_code_from_probable_node_name,
                 self.query_knowledge_graph,
                 self.get_nodes_from_tags,
                 self.get_file_structure,
@@ -77,7 +86,7 @@ class CodeGenerationAgent:
     async def create_tasks(
         self,
         query: str,
-        project_id: str,    
+        project_id: str,
         history: str,
         node_ids: List[NodeContext],
         code_results: List[Dict[str, Any]],
@@ -124,10 +133,10 @@ class CodeGenerationAgent:
             - Check dependency compatibility
             - Analyze database schemas and interactions
             - Review API contracts and interfaces
-            - IF NO SPECIFIC FILES ARE FOUND: 
+            - IF NO SPECIFIC FILES ARE FOUND:
             * FIRST Use get_file_structure tool to get the file structure of the project and get any relevant file context
             * THEN IF STILL NO SPECIFIC FILES ARE FOUND, use get_nodes_from_tags tool to search by relevant tags
-            
+
             4. Implementation Planning:
             - Plan changes that maintain exact formatting
             - Never modify existing patterns unless requested
@@ -138,7 +147,7 @@ class CodeGenerationAgent:
             - CRITICAL: Create concrete changes for EVERY impacted file
             - Map all required database schema updates
             - Detail API changes and version impacts
-                        
+
             CRITICAL: If any file that is REQUIRED to propose changes is missing, stop and request the user to provide the file using "@filename" or "@functionname". NEVER create hypothetical files.
 
 
@@ -158,7 +167,7 @@ class CodeGenerationAgent:
             • Required Dependency Updates:
                 - dependent1.py: [specific changes needed]
                 - dependent2.py: [specific changes needed]
-                
+
             • Database Changes:
                 - Schema updates
                 - Migration requirements
@@ -169,7 +178,7 @@ class CodeGenerationAgent:
             [REPEAT THIS SECTION FOR EVERY IMPACTED FILE, INCLUDING DEPENDENCIES]
 
             ### 📄 [filename.py]
-            
+
             **Purpose of Changes:**
             Brief explanation of what's being changed and why
 
@@ -226,7 +235,7 @@ class CodeGenerationAgent:
             - MUST provide concrete changes for ALL impacted files
             - Include specific database migration steps when needed
             - Detail API versioning requirements
-            
+
             The output should be easy to:
             - Read in a chat interface
             - Copy-paste into an IDE
@@ -241,7 +250,7 @@ class CodeGenerationAgent:
         )
 
         return code_generation_task
-    
+
     async def run(
         self,
         query: str,
@@ -250,7 +259,7 @@ class CodeGenerationAgent:
         node_ids: List[NodeContext],
     ) -> str:
         os.environ["OPENAI_API_KEY"] = self.openai_api_key
-        
+
         code_results = []
         if len(node_ids) > 0:
             code_results = await GetCodeFromMultipleNodeIdsTool(
@@ -273,9 +282,7 @@ class CodeGenerationAgent:
             process=Process.sequential,
             verbose=False,
         )
-        agentops.init(
-            os.getenv("AGENTOPS_API_KEY")
-        )
+        agentops.init(os.getenv("AGENTOPS_API_KEY"))
         result = await crew.kickoff_async()
         agentops.end_session("Success")
         return result
