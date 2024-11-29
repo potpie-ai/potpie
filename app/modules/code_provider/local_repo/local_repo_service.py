@@ -12,8 +12,6 @@ from sqlalchemy.orm import Session
 from app.core.config_provider import config_provider
 from app.modules.projects.projects_service import ProjectService
 
-import pygit2
-
 logger = logging.getLogger(__name__)
 
 
