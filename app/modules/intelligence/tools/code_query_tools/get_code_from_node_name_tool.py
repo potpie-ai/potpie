@@ -8,7 +8,7 @@ from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
-from app.modules.github.github_service import GithubService
+from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_service import ProjectService
 
@@ -103,14 +103,15 @@ class GetCodeFromNodeNameTool:
 
         relative_file_path = self._get_relative_file_path(file_path)
 
-        github_service = GithubService(self.sql_db)
+        code_provider_service = CodeProviderService(self.sql_db)
         try:
-            code_content = github_service.get_file_content(
+            code_content = code_provider_service.get_file_content(
                 project.repo_name,
                 relative_file_path,
                 start_line,
                 end_line,
                 project.branch_name,
+                project.id,
             )
         except HTTPException as http_exc:
             return {"error": f"Failed to retrieve code content: {http_exc.detail}"}

@@ -12,7 +12,7 @@ from git import Repo
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
-from app.modules.github.github_service import GithubService
+from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.parsing.graph_construction.parsing_helper import (
     ParseHelper,
@@ -39,7 +39,7 @@ class ParsingService:
         self.project_service = ProjectService(db)
         self.inference_service = InferenceService(db, user_id)
         self.search_service = SearchService(db)
-        self.github_service = GithubService(db)
+        self.github_service = CodeProviderService(db)
 
     @contextmanager
     def change_dir(self, path):
@@ -60,7 +60,6 @@ class ParsingService:
     ):
         project_manager = ProjectService(self.db)
         extracted_dir = None
-
         try:
             if cleanup_graph:
                 neo4j_config = config_provider.get_neo4j_config()
@@ -77,13 +76,29 @@ class ParsingService:
                 except Exception as e:
                     logger.error(f"Error in cleanup_graph: {e}")
                     raise HTTPException(status_code=500, detail="Internal server error")
-            # Remove self.db from the arguments
+
             repo, owner, auth = await self.parse_helper.clone_or_copy_repository(
                 repo_details, user_id
             )
-            extracted_dir, project_id = await self.parse_helper.setup_project_directory(
-                repo, repo_details.branch_name, auth, repo, user_id, project_id
-            )
+            if os.getenv("isDevelopmentMode") == "enabled":
+                (
+                    extracted_dir,
+                    project_id,
+                ) = await self.parse_helper.setup_project_directory(
+                    repo,
+                    repo_details.branch_name,
+                    auth,
+                    repo_details,
+                    user_id,
+                    project_id,
+                )
+            else:
+                (
+                    extracted_dir,
+                    project_id,
+                ) = await self.parse_helper.setup_project_directory(
+                    repo, repo_details.branch_name, auth, repo, user_id, project_id
+                )
 
             if isinstance(repo, Repo):
                 language = self.parse_helper.detect_repo_language(extracted_dir)

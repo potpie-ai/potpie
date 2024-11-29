@@ -5,8 +5,8 @@ import agentops
 from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
 
+from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.conversations.message.message_schema import NodeContext
-from app.modules.github.github_service import GithubService
 from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
     get_code_file_structure_tool,
 )
@@ -229,7 +229,7 @@ class RAGAgent:
 
         agentops.init(os.getenv("AGENTOPS_API_KEY"))
         code_results = []
-        if len(node_ids) > 0:
+        if node_ids:  # Check if node_ids is not None and not empty
             code_results = await GetCodeFromMultipleNodeIdsTool(
                 self.sql_db, self.user_id
             ).run_multiple(project_id, [node.node_id for node in node_ids])
@@ -267,7 +267,9 @@ async def kickoff_rag_agent(
     user_id: str,
 ) -> str:
     rag_agent = RAGAgent(sql_db, llm, mini_llm, user_id)
-    file_structure = await GithubService(sql_db).get_project_structure_async(project_id)
+    file_structure = await CodeProviderService(sql_db).get_project_structure_async(
+        project_id
+    )
     result = await rag_agent.run(
         query, project_id, chat_history, node_ids, file_structure
     )
