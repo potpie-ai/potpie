@@ -76,16 +76,27 @@ class ParsingService:
                 except Exception as e:
                     logger.error(f"Error in cleanup_graph: {e}")
                     raise HTTPException(status_code=500, detail="Internal server error")
-                
+
             repo, owner, auth = await self.parse_helper.clone_or_copy_repository(
                 repo_details, user_id
             )
-            if(os.getenv("isDevelopmentMode") == "enabled"):
-                extracted_dir, project_id = await self.parse_helper.setup_project_directory(
-                    repo, repo_details.branch_name, auth, repo_details, user_id, project_id
+            if os.getenv("isDevelopmentMode") == "enabled":
+                (
+                    extracted_dir,
+                    project_id,
+                ) = await self.parse_helper.setup_project_directory(
+                    repo,
+                    repo_details.branch_name,
+                    auth,
+                    repo_details,
+                    user_id,
+                    project_id,
                 )
             else:
-             extracted_dir, project_id = await self.parse_helper.setup_project_directory(
+                (
+                    extracted_dir,
+                    project_id,
+                ) = await self.parse_helper.setup_project_directory(
                     repo, repo_details.branch_name, auth, repo, user_id, project_id
                 )
 

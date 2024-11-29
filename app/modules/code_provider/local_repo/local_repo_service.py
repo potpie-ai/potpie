@@ -1,15 +1,14 @@
 import asyncio
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 import git
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.config_provider import config_provider
 from app.modules.projects.projects_service import ProjectService
 
 logger = logging.getLogger(__name__)
@@ -19,9 +18,7 @@ class LocalRepoService:
     def __init__(self, db: Session):
         self.db = db
         self.project_manager = ProjectService(db)
-        self.projects_dir = os.path.join(
-            os.getcwd(), "projects"
-        )
+        self.projects_dir = os.path.join(os.getcwd(), "projects")
         self.max_workers = 10
         self.max_depth = 4
         self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
@@ -40,9 +37,11 @@ class LocalRepoService:
         start_line: int,
         end_line: int,
         branch_name: str,
-        project_id: str
+        project_id: str,
     ) -> str:
-        logger.info(f"Attempting to access file: {file_path} for project ID: {project_id}")
+        logger.info(
+            f"Attempting to access file: {file_path} for project ID: {project_id}"
+        )
         try:
             project = self.project_manager.get_project_from_db_by_id_sync(project_id)
             if not project:
@@ -231,16 +230,20 @@ class LocalRepoService:
         try:
             repo = self.get_repo(repo_path)
             repo.git.checkout(branch_name)
-            
+
             # Determine the default branch name
-            default_branch_name = repo.git.symbolic_ref('refs/remotes/origin/HEAD').split('/')[-1]
-            
+            default_branch_name = repo.git.symbolic_ref(
+                "refs/remotes/origin/HEAD"
+            ).split("/")[-1]
+
             # Get the diff between the current branch and the default branch
-            diff = repo.git.diff(f'{default_branch_name}..{branch_name}', unified=0)
+            diff = repo.git.diff(f"{default_branch_name}..{branch_name}", unified=0)
             patches_dict = self._parse_diff(diff)
             return patches_dict
         except Exception as e:
-            logger.error(f"Error computing diff for local repo: {str(e)}", exc_info=True)
+            logger.error(
+                f"Error computing diff for local repo: {str(e)}", exc_info=True
+            )
             raise HTTPException(
                 status_code=500, detail=f"Error computing diff for local repo: {str(e)}"
             )
@@ -254,10 +257,10 @@ class LocalRepoService:
         patch_lines = []
 
         for line in diff.splitlines():
-            if line.startswith('diff --git'):
+            if line.startswith("diff --git"):
                 if current_file and patch_lines:
                     patches_dict[current_file] = "\n".join(patch_lines)
-                match = re.search(r'b/(.+)', line)
+                match = re.search(r"b/(.+)", line)
                 current_file = match.group(1) if match else None
                 patch_lines = []
             elif current_file:

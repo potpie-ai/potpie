@@ -294,9 +294,11 @@ class ParseHelper:
         full_name = (
             repo.working_tree_dir.split("/")[-1]
             if isinstance(repo_details, Repo)
-            else repo.full_name if hasattr(repo, 'full_name') else repo_details.repo_name
+            else (
+                repo.full_name if hasattr(repo, "full_name") else repo_details.repo_name
+            )
         )
-        repo_path = getattr(repo_details, 'repo_path', None)
+        repo_path = getattr(repo_details, "repo_path", None)
         project = await self.project_manager.get_project_from_db(
             full_name, branch, user_id, repo_path
         )
@@ -311,7 +313,7 @@ class ParseHelper:
             if os.getenv("isDevelopmentMode", "false").lower() == "false":
                 raise HTTPException(
                     status_code=400,
-                    detail="Passing remote repositories is not allowed in development mode"
+                    detail="Passing remote repositories is not allowed in development mode",
                 )
             return repo_details.repo_path, project_id
         if isinstance(repo_details, Repo):

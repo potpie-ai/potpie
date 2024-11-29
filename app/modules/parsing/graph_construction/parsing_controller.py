@@ -1,7 +1,7 @@
 import asyncio
 import logging
-from asyncio import create_task
 import os
+from asyncio import create_task
 from typing import Any, Dict
 
 from dotenv import load_dotenv
@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 load_dotenv(override=True)
 
+
 class ParsingController:
     @staticmethod
     @validate_parsing_input
@@ -45,19 +46,19 @@ class ParsingController:
             if os.getenv("isDevelopmentMode") != "enabled":
                 raise HTTPException(
                     status_code=400,
-                    detail="Parsing local repositories is only supported in development mode"
+                    detail="Parsing local repositories is only supported in development mode",
                 )
             else:
                 new_project_id = str(uuid7())
                 return await ParsingController.handle_new_project(
-                repo_details,
-                user_id,
-                user_email,
-                new_project_id,
-                project_manager,
-                db,
-            )
-        
+                    repo_details,
+                    user_id,
+                    user_email,
+                    new_project_id,
+                    project_manager,
+                    db,
+                )
+
         demo_repos = [
             "Portkey-AI/gateway",
             "crewAIInc/crewAI",
@@ -208,7 +209,11 @@ class ParsingController:
         logger.info(f"Submitting parsing task for new project {new_project_id}")
 
         await project_manager.register_project(
-            repo_details.repo_name, repo_details.branch_name, user_id, new_project_id, repo_details.repo_path
+            repo_details.repo_name,
+            repo_details.branch_name,
+            user_id,
+            new_project_id,
+            repo_details.repo_path,
         )
         asyncio.create_task(
             CodeProviderService(db).get_project_structure_async(new_project_id)

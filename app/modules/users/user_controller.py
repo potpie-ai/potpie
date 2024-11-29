@@ -2,9 +2,11 @@ from typing import List
 
 from sqlalchemy.orm import Session
 
-from app.modules.users.user_schema import UserConversationListResponse
+from app.modules.users.user_schema import (
+    UserConversationListResponse,
+    UserProfileResponse,
+)
 from app.modules.users.user_service import UserService
-from app.modules.users.user_schema import UserProfileResponse
 
 
 class UserController:
@@ -12,7 +14,7 @@ class UserController:
         self.service = UserService(db)
 
     async def get_user_profile_pic(self, uid: str) -> UserProfileResponse:
-            return await self.service.get_user_profile_pic(uid)
+        return await self.service.get_user_profile_pic(uid)
 
     async def get_conversations_for_user(
         self, user_id: str, start: int, limit: int

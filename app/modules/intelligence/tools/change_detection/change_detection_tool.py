@@ -24,6 +24,7 @@ from app.modules.search.search_service import SearchService
 
 # Not yet supported in development mode
 
+
 class ChangeDetectionInput(BaseModel):
     project_id: str = Field(
         ..., description="The ID of the project being evaluated, this is a UUID."
@@ -98,7 +99,7 @@ class ChangeDetectionTool:
                     0,
                     0,
                     project["branch_name"],
-                    project_id
+                    project_id,
                 )
                 tags = RepoMap.get_tags_from_code(relative_file_path, file_content)
 
@@ -227,7 +228,9 @@ class ChangeDetectionTool:
                     file.filename: file.patch for file in git_diff.files if file.patch
                 }
             elif isinstance(code_service.service_instance, LocalRepoService):
-                patches_dict = code_service.service_instance.get_local_repo_diff(repo_path, branch_name)
+                patches_dict = code_service.service_instance.get_local_repo_diff(
+                    repo_path, branch_name
+                )
         except Exception as e:
             raise HTTPException(
                 status_code=400, detail=f"Error while fetching changes: {str(e)}"

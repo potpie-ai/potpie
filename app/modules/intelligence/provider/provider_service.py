@@ -88,7 +88,9 @@ class ProviderService:
         if preferred_provider == "openai":
             logging.info("Initializing OpenAI LLM")
             if os.getenv("isDevelopmentMode") == "enabled":
-                logging.info("Development mode enabled. Using environment variable for API key.")
+                logging.info(
+                    "Development mode enabled. Using environment variable for API key."
+                )
                 openai_key = os.getenv("OPENAI_API_KEY")
                 self.llm = ChatOpenAI(
                     model_name="gpt-4o",
@@ -108,7 +110,10 @@ class ProviderService:
                 portkey_headers = createHeaders(
                     api_key=self.PORTKEY_API_KEY,
                     provider="openai",
-                    metadata={"_user": self.user_id, "environment": os.environ.get("ENV")},
+                    metadata={
+                        "_user": self.user_id,
+                        "environment": os.environ.get("ENV"),
+                    },
                 )
 
                 self.llm = ChatOpenAI(
@@ -122,7 +127,9 @@ class ProviderService:
         elif preferred_provider == "anthropic":
             logging.info("Initializing Anthropic LLM")
             if os.getenv("isDevelopmentMode") == "enabled":
-                logging.info("Development mode enabled. Using environment variable for API key.")
+                logging.info(
+                    "Development mode enabled. Using environment variable for API key."
+                )
                 anthropic_key = os.getenv("ANTHROPIC_API_KEY")
                 self.llm = ChatAnthropic(
                     model="claude-3-5-sonnet-20241022",
@@ -142,7 +149,10 @@ class ProviderService:
                 portkey_headers = createHeaders(
                     api_key=self.PORTKEY_API_KEY,
                     provider="anthropic",
-                    metadata={"_user": self.user_id, "environment": os.environ.get("ENV")},
+                    metadata={
+                        "_user": self.user_id,
+                        "environment": os.environ.get("ENV"),
+                    },
                 )
 
                 self.llm = ChatAnthropic(
@@ -180,7 +190,9 @@ class ProviderService:
 
         if preferred_provider == "openai":
             if os.getenv("isDevelopmentMode") == "enabled":
-                logging.info("Development mode enabled. Using environment variable for API key.")
+                logging.info(
+                    "Development mode enabled. Using environment variable for API key."
+                )
                 openai_key = os.getenv("OPENAI_API_KEY")
                 self.llm = ChatOpenAI(
                     model_name="gpt-4o-mini",
@@ -200,7 +212,10 @@ class ProviderService:
                 portkey_headers = createHeaders(
                     api_key=self.PORTKEY_API_KEY,
                     provider="openai",
-                    metadata={"_user": self.user_id, "environment": os.environ.get("ENV")},
+                    metadata={
+                        "_user": self.user_id,
+                        "environment": os.environ.get("ENV"),
+                    },
                 )
 
                 self.llm = ChatOpenAI(
@@ -213,7 +228,9 @@ class ProviderService:
 
         elif preferred_provider == "anthropic":
             if os.getenv("isDevelopmentMode") == "enabled":
-                logging.info("Development mode enabled. Using environment variable for API key.")
+                logging.info(
+                    "Development mode enabled. Using environment variable for API key."
+                )
                 anthropic_key = os.getenv("ANTHROPIC_API_KEY")
                 self.llm = ChatAnthropic(
                     model="claude-3-haiku-20240307",
@@ -233,7 +250,10 @@ class ProviderService:
                 portkey_headers = createHeaders(
                     api_key=self.PORTKEY_API_KEY,
                     provider="anthropic",
-                    metadata={"_user": self.user_id, "environment": os.environ.get("ENV")},
+                    metadata={
+                        "_user": self.user_id,
+                        "environment": os.environ.get("ENV"),
+                    },
                 )
 
                 self.llm = ChatAnthropic(

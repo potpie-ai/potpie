@@ -34,11 +34,17 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
+
 class MainApp:
     def __init__(self):
         load_dotenv(override=True)
-        if os.getenv("isDevelopmentMode") == "enabled" and os.getenv("ENV") != "development":
-            logging.error("Development mode enabled but ENV is not set to development. Exiting.")
+        if (
+            os.getenv("isDevelopmentMode") == "enabled"
+            and os.getenv("ENV") != "development"
+        ):
+            logging.error(
+                "Development mode enabled but ENV is not set to development. Exiting."
+            )
             exit(1)
         self.setup_sentry()
         self.app = FastAPI()

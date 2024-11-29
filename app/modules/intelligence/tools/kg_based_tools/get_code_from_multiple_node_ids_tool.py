@@ -123,7 +123,7 @@ class GetCodeFromMultipleNodeIdsTool:
             start_line,
             end_line,
             project.branch_name,
-            project.id
+            project.id,
         )
 
         docstring = None
