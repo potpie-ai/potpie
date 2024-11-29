@@ -87,36 +87,38 @@ class ProviderService:
 
         if preferred_provider == "openai":
             logging.info("Initializing OpenAI LLM")
-            try:
-                # Try fetching the secret key from SecretManager
-                secret = SecretManager.get_secret("openai", self.user_id)
-                openai_key = secret.get("api_key")
-            except Exception as e:
-                # Log the exception if needed
-                if "404" in str(e):
-                    # If the secret is not found, fallback to environment variable
-                    openai_key = os.getenv("OPENAI_API_KEY")
-                else:
-                    raise e  # Re-raise if it's a different error
-
             if os.getenv("isDevelopmentMode") == "enabled":
-                logging.info("Development mode enabled. Not initializing Portkey.")
+                logging.info(
+                    "Development mode enabled. Using environment variable for API key."
+                )
+                openai_key = os.getenv("OPENAI_API_KEY")
                 self.llm = ChatOpenAI(
                     model_name="gpt-4o",
-                    api_key=openai_key,  # Use the key properly
+                    api_key=openai_key,
                     temperature=0.3,
                 )
-
             else:
+                try:
+                    secret = SecretManager.get_secret("openai", self.user_id)
+                    openai_key = secret.get("api_key")
+                except Exception as e:
+                    if "404" in str(e):
+                        openai_key = os.getenv("OPENAI_API_KEY")
+                    else:
+                        raise e
+
                 portkey_headers = createHeaders(
                     api_key=self.PORTKEY_API_KEY,
                     provider="openai",
-                    metadata={"_user": self.user_id, "environment": os.environ.get("ENV")},
+                    metadata={
+                        "_user": self.user_id,
+                        "environment": os.environ.get("ENV"),
+                    },
                 )
 
                 self.llm = ChatOpenAI(
                     model_name="gpt-4o",
-                    api_key=openai_key,  # Use the key properly
+                    api_key=openai_key,
                     temperature=0.3,
                     base_url=PORTKEY_GATEWAY_URL,
                     default_headers=portkey_headers,
@@ -124,31 +126,33 @@ class ProviderService:
 
         elif preferred_provider == "anthropic":
             logging.info("Initializing Anthropic LLM")
-            try:
-                # Try fetching the secret key from SecretManager
-                secret = SecretManager.get_secret("anthropic", self.user_id)
-                anthropic_key = secret.get("api_key")
-            except Exception as e:
-                # Log the exception if needed
-                if "404" in str(e):
-                    # If the secret is not found, fallback to environment variable
-                    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-                else:
-                    raise e  # Re-raise if it's a different error
-
             if os.getenv("isDevelopmentMode") == "enabled":
-                logging.info("Development mode enabled. Not initializing Portkey.")
+                logging.info(
+                    "Development mode enabled. Using environment variable for API key."
+                )
+                anthropic_key = os.getenv("ANTHROPIC_API_KEY")
                 self.llm = ChatAnthropic(
                     model="claude-3-5-sonnet-20241022",
                     temperature=0.3,
                     api_key=anthropic_key,
                 )
-
             else:
+                try:
+                    secret = SecretManager.get_secret("anthropic", self.user_id)
+                    anthropic_key = secret.get("api_key")
+                except Exception as e:
+                    if "404" in str(e):
+                        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+                    else:
+                        raise e
+
                 portkey_headers = createHeaders(
                     api_key=self.PORTKEY_API_KEY,
                     provider="anthropic",
-                    metadata={"_user": self.user_id, "environment": os.environ.get("ENV")},
+                    metadata={
+                        "_user": self.user_id,
+                        "environment": os.environ.get("ENV"),
+                    },
                 )
 
                 self.llm = ChatAnthropic(
@@ -185,54 +189,80 @@ class ProviderService:
         )
 
         if preferred_provider == "openai":
-            try:
-                # Try fetching the secret key from SecretManager
-                secret = SecretManager.get_secret("openai", self.user_id)
-                openai_key = secret.get("api_key")
-            except Exception as e:
-                if "404" in str(e):
-                    # If the secret is not found, fallback to environment variable
-                    openai_key = os.getenv("OPENAI_API_KEY")
-                else:
-                    raise e  # Re-raise if it's a different error
-            portkey_headers = createHeaders(
-                api_key=self.PORTKEY_API_KEY,
-                provider="openai",
-                metadata={"_user": self.user_id, "environment": os.environ.get("ENV")},
-            )
+            if os.getenv("isDevelopmentMode") == "enabled":
+                logging.info(
+                    "Development mode enabled. Using environment variable for API key."
+                )
+                openai_key = os.getenv("OPENAI_API_KEY")
+                self.llm = ChatOpenAI(
+                    model_name="gpt-4o-mini",
+                    api_key=openai_key,
+                    temperature=0.3,
+                )
+            else:
+                try:
+                    secret = SecretManager.get_secret("openai", self.user_id)
+                    openai_key = secret.get("api_key")
+                except Exception as e:
+                    if "404" in str(e):
+                        openai_key = os.getenv("OPENAI_API_KEY")
+                    else:
+                        raise e
 
-            self.llm = ChatOpenAI(
-                model_name="gpt-4o-mini",
-                api_key=openai_key,
-                temperature=0.3,
-                base_url=PORTKEY_GATEWAY_URL,
-                default_headers=portkey_headers,
-            )
+                portkey_headers = createHeaders(
+                    api_key=self.PORTKEY_API_KEY,
+                    provider="openai",
+                    metadata={
+                        "_user": self.user_id,
+                        "environment": os.environ.get("ENV"),
+                    },
+                )
+
+                self.llm = ChatOpenAI(
+                    model_name="gpt-4o-mini",
+                    api_key=openai_key,
+                    temperature=0.3,
+                    base_url=PORTKEY_GATEWAY_URL,
+                    default_headers=portkey_headers,
+                )
 
         elif preferred_provider == "anthropic":
-            try:
-                # Try fetching the secret key from SecretManager
-                secret = SecretManager.get_secret("anthropic", self.user_id)
-                anthropic_key = secret.get("api_key")
-            except Exception as e:
-                if "404" in str(e):
-                    # If the secret is not found, fallback to environment variable
-                    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-                else:
-                    raise e  # Re-raise if it's a different error
-            portkey_headers = createHeaders(
-                api_key=self.PORTKEY_API_KEY,
-                provider="anthropic",
-                metadata={"_user": self.user_id, "environment": os.environ.get("ENV")},
-            )
+            if os.getenv("isDevelopmentMode") == "enabled":
+                logging.info(
+                    "Development mode enabled. Using environment variable for API key."
+                )
+                anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+                self.llm = ChatAnthropic(
+                    model="claude-3-haiku-20240307",
+                    temperature=0.3,
+                    api_key=anthropic_key,
+                )
+            else:
+                try:
+                    secret = SecretManager.get_secret("anthropic", self.user_id)
+                    anthropic_key = secret.get("api_key")
+                except Exception as e:
+                    if "404" in str(e):
+                        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+                    else:
+                        raise e
 
-            self.llm = ChatAnthropic(
-                model="claude-3-haiku-20240307",
-                temperature=0.3,
-                api_key=anthropic_key,
-                base_url=PORTKEY_GATEWAY_URL,
-                default_headers=portkey_headers,
-            )
+                portkey_headers = createHeaders(
+                    api_key=self.PORTKEY_API_KEY,
+                    provider="anthropic",
+                    metadata={
+                        "_user": self.user_id,
+                        "environment": os.environ.get("ENV"),
+                    },
+                )
+
+                self.llm = ChatAnthropic(
+                    model="claude-3-haiku-20240307",
+                    temperature=0.3,
+                    api_key=anthropic_key,
+                    base_url=PORTKEY_GATEWAY_URL,
+                    default_headers=portkey_headers,
+                )
 
         else:
             raise ValueError("Invalid LLM provider selected.")

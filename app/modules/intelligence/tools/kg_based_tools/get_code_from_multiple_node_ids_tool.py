@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
-from app.modules.github.github_service import GithubService
+from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_model import Project
 
 logger = logging.getLogger(__name__)
@@ -117,12 +117,13 @@ class GetCodeFromMultipleNodeIdsTool:
 
         relative_file_path = self._get_relative_file_path(file_path)
 
-        code_content = GithubService(self.sql_db).get_file_content(
+        code_content = CodeProviderService(self.sql_db).get_file_content(
             project.repo_name,
             relative_file_path,
             start_line,
             end_line,
             project.branch_name,
+            project.id,
         )
 
         docstring = None

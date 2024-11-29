@@ -104,13 +104,13 @@ When you’re ready to submit your changes:
 
 ## FAQs
 
-### What is the difference between the ENV and the isDevelopmentMode environment variables ? 
-`ENV` signifies the environment the app is running in, 
+### What is the difference between the ENV and the isDevelopmentMode environment variables ?
+`ENV` signifies the environment the app is running in,
 signfying configuration to load in dev / stage or prod env.
 
 `isDevelopmentMode` tells the app that it can run without dependencies such as firebase, GitHub configuration etc.
 
-The `ENV=development` still needs firebase / gcp / GitHub etc because it simply is about running potpie's backend locally. 
+The `ENV=development` still needs firebase / gcp / GitHub etc because it simply is about running potpie's backend locally.
 But `isDevelopmentMode=enabled` disables all these to bring in support for running without most dependencies and support local parsing for example.
 
 
