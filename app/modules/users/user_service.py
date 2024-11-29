@@ -1,17 +1,18 @@
 import asyncio
 import logging
-import os
 from datetime import datetime
 from typing import List
 
-from firebase_admin import auth
 from sqlalchemy import desc
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.modules.conversations.conversation.conversation_model import Conversation
 from app.modules.users.user_model import User
-from app.modules.users.user_schema import CreateUser, UserProfileResponse
+from app.modules.users.user_schema import CreateUser
+from firebase_admin import auth
+from app.modules.users.user_schema import UserProfileResponse
+
 
 logger = logging.getLogger(__name__)
 
@@ -82,29 +83,6 @@ class UserService:
 
         return uid, message, error
 
-    def setup_dummy_user(self):
-        defaultUserId = os.getenv("defaultUsername")
-        user_service = UserService(self.db)
-        user = user_service.get_user_by_uid(defaultUserId)
-        if user:
-            print("Dummy user already exists")
-            return
-        else:
-            user = CreateUser(
-                uid=defaultUserId,
-                email="defaultuser@potpie.ai",
-                display_name="Dummy User",
-                email_verified=True,
-                created_at=datetime.utcnow(),
-                last_login_at=datetime.utcnow(),
-                provider_info={},
-                provider_username="self",
-            )
-            uid, message, error = user_service.create_user(user)
-
-        uid, _, _ = user_service.create_user(user)
-        logging.info(f"Created dummy user with uid: {uid}")
-
     def get_user_by_uid(self, uid: str):
         try:
             user = self.db.query(User).filter(User.uid == uid).first()
@@ -170,11 +148,15 @@ class UserService:
             logger.error(f"Error fetching user ID by emails {emails}: {e}")
             return None
 
+
     async def get_user_profile_pic(self, uid: str) -> UserProfileResponse:
         try:
             user_record = await asyncio.to_thread(auth.get_user, uid)
             profile_pic_url = user_record.photo_url
-            return {"user_id": user_record.uid, "profile_pic_url": profile_pic_url}
+            return {
+                "user_id": user_record.uid,
+                "profile_pic_url": profile_pic_url
+            }
         except Exception as e:
             logging.error(f"Error retrieving user profile picture: {e}")
             return None

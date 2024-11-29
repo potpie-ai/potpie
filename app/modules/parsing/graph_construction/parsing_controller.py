@@ -1,16 +1,14 @@
 import asyncio
 import logging
-import os
 from asyncio import create_task
 from typing import Any, Dict
 
-from dotenv import load_dotenv
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
 from app.celery.tasks.parsing_tasks import process_parsing
-from app.modules.code_provider.code_provider_service import CodeProviderService
+from app.modules.github.github_service import GithubService
 from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
@@ -23,8 +21,6 @@ from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.posthog_helper import PostHogClient
 
 logger = logging.getLogger(__name__)
-
-load_dotenv(override=True)
 
 
 class ParsingController:
@@ -39,25 +35,6 @@ class ParsingController:
         parse_helper = ParseHelper(db)
         parsing_service = ParsingService(db, user_id)
         repo_name = repo_details.repo_name or repo_details.repo_path.split("/")[-1]
-        if not repo_details.repo_name:
-            repo_details.repo_name = repo_name
-        repo_path = repo_details.repo_path
-        if repo_path:
-            if os.getenv("isDevelopmentMode") != "enabled":
-                raise HTTPException(
-                    status_code=400,
-                    detail="Parsing local repositories is only supported in development mode",
-                )
-            else:
-                new_project_id = str(uuid7())
-                return await ParsingController.handle_new_project(
-                    repo_details,
-                    user_id,
-                    user_email,
-                    new_project_id,
-                    project_manager,
-                    db,
-                )
 
         demo_repos = [
             "Portkey-AI/gateway",
@@ -144,7 +121,7 @@ class ParsingController:
                             )
 
                             asyncio.create_task(
-                                CodeProviderService(db).get_project_structure_async(
+                                GithubService(db).get_project_structure_async(
                                     new_project_id
                                 )
                             )
@@ -209,14 +186,10 @@ class ParsingController:
         logger.info(f"Submitting parsing task for new project {new_project_id}")
 
         await project_manager.register_project(
-            repo_details.repo_name,
-            repo_details.branch_name,
-            user_id,
-            new_project_id,
-            repo_details.repo_path,
+            repo_details.repo_name, repo_details.branch_name, user_id, new_project_id
         )
         asyncio.create_task(
-            CodeProviderService(db).get_project_structure_async(new_project_id)
+            GithubService(db).get_project_structure_async(new_project_id)
         )
         process_parsing.delay(
             repo_details.model_dump(),

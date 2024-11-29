@@ -1,7 +1,6 @@
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
-
-from app.modules.code_provider.github.github_service import GithubService
+from fastapi import HTTPException
+from app.modules.github.github_service import GithubService
 
 
 class GithubController:
