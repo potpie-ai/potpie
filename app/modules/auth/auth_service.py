@@ -53,10 +53,7 @@ class AuthService:
         if os.getenv("isDevelopmentMode") == "enabled" and credential is None:
             request.state.user = {"user_id": os.getenv("defaultUsername")}
             logging.info("Development mode enabled. Using Mock Authentication.")
-            return {
-                "user_id": os.getenv("defaultUsername"),
-                "email": "defaultuser@potpie.ai",
-            }
+            return {"user_id": os.getenv("defaultUsername")}
         else:
             if credential is None:
                 raise HTTPException(

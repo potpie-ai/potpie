@@ -35,8 +35,6 @@ class SecretManager:
         user=Depends(AuthService.check_auth),
         db: Session = Depends(get_db),
     ):
-        if os.getenv("isDevelopmentMode") == "enabled":
-            return {"message": "Secret creation is not allowed in development mode"}
         customer_id = user["user_id"]
         client, project_id = SecretManager.get_client_and_project()
 
@@ -75,8 +73,6 @@ class SecretManager:
 
     @staticmethod
     def get_secret_id(provider: Literal["openai", "anthropic"], customer_id: str):
-        if os.getenv("isDevelopmentMode") == "enabled":
-            return None
         if provider == "openai":
             secret_id = f"openai-api-key-{customer_id}"
         elif provider == "anthropic":
@@ -91,8 +87,6 @@ class SecretManager:
         user=Depends(AuthService.check_auth),
         db: Session = Depends(get_db),
     ):
-        if os.getenv("isDevelopmentMode") == "enabled":
-            return None
         customer_id = user["user_id"]
         # Check user preferences first
         user_pref = (
@@ -109,8 +103,6 @@ class SecretManager:
 
     @staticmethod
     def get_secret(provider: Literal["openai", "anthropic"], customer_id: str):
-        if os.getenv("isDevelopmentMode") == "enabled":
-            return None
         client, project_id = SecretManager.get_client_and_project()
         secret_id = SecretManager.get_secret_id(provider, customer_id)
         name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
@@ -131,8 +123,6 @@ class SecretManager:
         user=Depends(AuthService.check_auth),
         db: Session = Depends(get_db),
     ):
-        if os.getenv("isDevelopmentMode") == "enabled":
-            return {"message": "Secret update is not allowed in development mode"}
         customer_id = user["user_id"]
         api_key = request.api_key
         secret_id = SecretManager.get_secret_id(request.provider, customer_id)
@@ -163,8 +153,6 @@ class SecretManager:
         user=Depends(AuthService.check_auth),
         db: Session = Depends(get_db),
     ):
-        if os.getenv("isDevelopmentMode") == "enabled":
-            return {"message": "Secret deletion is not allowed in development mode"}
         customer_id = user["user_id"]
         secret_id = SecretManager.get_secret_id(provider, customer_id)
         client, project_id = SecretManager.get_client_and_project()
