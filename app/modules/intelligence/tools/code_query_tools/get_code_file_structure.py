@@ -5,7 +5,7 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.modules.github.github_service import GithubService
+from app.modules.code_provider.code_provider_service import CodeProviderService
 
 
 class RepoStructureRequest(BaseModel):
@@ -27,7 +27,7 @@ class GetCodeFileStructureTool:
         """
 
     def __init__(self, db: Session):
-        self.github_service = GithubService(db)
+        self.github_service = CodeProviderService(db)
 
     async def fetch_repo_structure(
         self, project_id: str, path: Optional[str] = None

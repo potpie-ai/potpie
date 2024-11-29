@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from git import GitCommandError, Repo
 from sqlalchemy.orm import Session
 
-from app.modules.github.github_service import GithubService
+from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
@@ -30,7 +30,7 @@ class ParseHelper:
     def __init__(self, db_session: Session):
         self.project_manager = ProjectService(db_session)
         self.db = db_session
-        self.github_service = GithubService(db_session)
+        self.github_service = CodeProviderService(db_session)
 
     @staticmethod
     def get_directory_size(path):
@@ -294,10 +294,13 @@ class ParseHelper:
         full_name = (
             repo.working_tree_dir.split("/")[-1]
             if isinstance(repo_details, Repo)
-            else repo.full_name
+            else (
+                repo.full_name if hasattr(repo, "full_name") else repo_details.repo_name
+            )
         )
+        repo_path = getattr(repo_details, "repo_path", None)
         project = await self.project_manager.get_project_from_db(
-            full_name, branch, user_id
+            full_name, branch, user_id, repo_path
         )
         if not project:
             project_id = await self.project_manager.register_project(
@@ -306,7 +309,13 @@ class ParseHelper:
                 user_id,
                 project_id,
             )
-
+        if repo_path is not None:
+            if os.getenv("isDevelopmentMode", "false").lower() == "false":
+                raise HTTPException(
+                    status_code=400,
+                    detail="Passing remote repositories is not allowed in development mode",
+                )
+            return repo_details.repo_path, project_id
         if isinstance(repo_details, Repo):
             extracted_dir = repo_details.working_tree_dir
             try:

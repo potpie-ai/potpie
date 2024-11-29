@@ -6,8 +6,10 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
 from app.modules.users.user_controller import UserController
-from app.modules.users.user_schema import UserConversationListResponse
-from app.modules.users.user_schema import UserProfileResponse
+from app.modules.users.user_schema import (
+    UserConversationListResponse,
+    UserProfileResponse,
+)
 from app.modules.utils.APIRouter import APIRouter
 
 router = APIRouter()

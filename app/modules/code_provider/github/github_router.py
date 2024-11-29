@@ -4,9 +4,8 @@ from sqlalchemy.orm import Session
 from app.core.config_provider import config_provider
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
+from app.modules.code_provider.github.github_controller import GithubController
 from app.modules.utils.APIRouter import APIRouter
-
-from .github_controller import GithubController
 
 router = APIRouter()
 
@@ -28,6 +27,7 @@ async def get_branch_list(
     db: Session = Depends(get_db),
 ):
     return await GithubController(db).get_branch_list(repo_name=repo_name)
+
 
 @router.get("/github/check-public-repo")
 async def check_public_repo(
