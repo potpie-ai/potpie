@@ -23,7 +23,7 @@ class Project(Base):
 
     id = Column(Text, primary_key=True)
     properties = Column(BYTEA)
-    repo_name = Column(Text, nullable=True)
+    repo_name = Column(Text)
     repo_path = Column(Text, nullable=True)
     branch_name = Column(Text)
     user_id = Column(
