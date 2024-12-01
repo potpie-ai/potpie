@@ -8,6 +8,7 @@ from app.modules.conversations.conversation.conversation_model import (  # noqa
 )
 from app.modules.intelligence.prompts.prompt_model import Prompt  # noqa
 from app.modules.projects.projects_model import Project  # noqa
+from app.modules.usage.usage_models import Usage  # noqa
 from app.modules.users.user_preferences_model import UserPreferences  # noqa
 
 
@@ -28,3 +29,4 @@ class User(Base):
     conversations = relationship("Conversation", back_populates="user")
     created_prompts = relationship("Prompt", back_populates="creator")
     preferences = relationship("UserPreferences", back_populates="user", uselist=False)
+    usage = relationship("Usage", back_populates="user", uselist=False)

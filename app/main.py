@@ -26,6 +26,7 @@ from app.modules.parsing.graph_construction.parsing_router import (
 )
 from app.modules.projects.projects_router import router as projects_router
 from app.modules.search.search_router import router as search_router
+from app.modules.usage.usage_router import router as usage_router
 from app.modules.users.user_router import router as user_router
 from app.modules.users.user_service import UserService
 from app.modules.utils.firebase_setup import FirebaseSetup
@@ -85,7 +86,6 @@ class MainApp:
             FirebaseSetup.firebase_init()
 
     def initialize_database(self):
-        # Initialize database tables
         Base.metadata.create_all(bind=engine)
 
     def check_and_set_env_vars(self):
@@ -116,6 +116,7 @@ class MainApp:
             self.app.include_router(
                 secret_manager_router, prefix="/api/v1", tags=["Secret Manager"]
             )
+        self.app.include_router(usage_router, prefix="/api/v1", tags=["Usage"])
 
     def add_health_check(self):
         @self.app.get("/health", tags=["Health"])
