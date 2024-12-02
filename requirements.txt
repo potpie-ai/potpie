@@ -62,3 +62,4 @@ posthog
 newrelic==9.0.0
 tiktoken
 agentops
+pygit2
