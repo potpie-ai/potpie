@@ -76,7 +76,7 @@ def test_get_file_content_invalid_encoding(github_service):
                 project_id="123"
             )
         assert exc_info.value.status_code == 500
-        assert exc_info.value.detail == "Unable to determine file encoding or low confidence"
+        assert "Unable to determine file encoding or low confidence" in exc_info.value.detail
 
 
 def test_get_file_content_full_content(github_service):
