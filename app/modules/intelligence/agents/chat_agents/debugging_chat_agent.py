@@ -170,37 +170,38 @@ class DebuggingChatAgent:
                 )
                 yield json.dumps({"citations": citations, "message": result})
 
-            full_query = f"Query: {query}\nProject ID: {project_id}\nLogs: {logs}\nStacktrace: {stacktrace}"
-            inputs = {
-                "history": validated_history,
-                "tool_results": tool_results,
-                "input": full_query,
-            }
+            if classification != ClassificationResult.AGENT_REQUIRED:
+                full_query = f"Query: {query}\nProject ID: {project_id}\nLogs: {logs}\nStacktrace: {stacktrace}"
+                inputs = {
+                    "history": validated_history,
+                    "tool_results": tool_results,
+                    "input": full_query,
+                }
 
-            logger.debug(f"Inputs to LLM: {inputs}")
-            citations = self.agents_service.format_citations(citations)
-            full_response = ""
-            async for chunk in self.chain.astream(inputs):
-                content = chunk.content if hasattr(chunk, "content") else str(chunk)
-                full_response += content
-                self.history_manager.add_message_chunk(
-                    conversation_id,
-                    content,
-                    MessageType.AI_GENERATED,
-                    citations=citations,
+                logger.debug(f"Inputs to LLM: {inputs}")
+                citations = self.agents_service.format_citations(citations)
+                full_response = ""
+                async for chunk in self.chain.astream(inputs):
+                    content = chunk.content if hasattr(chunk, "content") else str(chunk)
+                    full_response += content
+                    self.history_manager.add_message_chunk(
+                        conversation_id,
+                        content,
+                        MessageType.AI_GENERATED,
+                        citations=citations,
+                    )
+                    yield json.dumps(
+                        {
+                            "citations": citations,
+                            "message": content,
+                        }
+                    )
+
+                logger.debug(f"Full LLM response: {full_response}")
+
+                self.history_manager.flush_message_buffer(
+                    conversation_id, MessageType.AI_GENERATED
                 )
-                yield json.dumps(
-                    {
-                        "citations": citations,
-                        "message": content,
-                    }
-                )
-
-            logger.debug(f"Full LLM response: {full_response}")
-
-            self.history_manager.flush_message_buffer(
-                conversation_id, MessageType.AI_GENERATED
-            )
 
         except Exception as e:
             logger.error(
