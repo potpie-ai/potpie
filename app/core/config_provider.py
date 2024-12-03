@@ -23,7 +23,7 @@ class ConfigProvider:
     def get_demo_repo_list(self):
         return [
             {
-                "id": "demo7",
+                "id": "demo8",
                 "name": "langchain",
                 "full_name": "langchain-ai/langchain",
                 "private": False,
@@ -31,7 +31,7 @@ class ConfigProvider:
                 "owner": "langchain-ai",
             },
             {
-                "id": "demo6",
+                "id": "demo7",
                 "name": "signoz",
                 "full_name": "SigNoz/signoz",
                 "private": False,
@@ -39,12 +39,20 @@ class ConfigProvider:
                 "owner": "SigNoz",
             },
             {
-                "id": "demo5",
+                "id": "demo6",
                 "name": "cal.com",
                 "full_name": "calcom/cal.com",
                 "private": False,
                 "url": "https://github.com/calcom/cal.com",
                 "owner": "calcom",
+            },
+            {
+                "id": "demo5",
+                "name": "formbricks",
+                "full_name": "formbricks/formbricks",
+                "private": False,
+                "url": "https://github.com/formbricks/formbricks",
+                "owner": "formbricks",
             },
             {
                 "id": "demo4",
@@ -76,6 +84,14 @@ class ConfigProvider:
                 "full_name": "AgentOps-AI/agentops",
                 "private": False,
                 "url": "https://github.com/AgentOps-AI/agentops",
+                "owner": "AgentOps-AI",
+            },
+            {
+                "id": "demo0",
+                "name": "agentstack",
+                "full_name": "AgentOps-AI/AgentStack",
+                "private": False,
+                "url": "https://github.com/AgentOps-AI/AgentStack",
                 "owner": "AgentOps-AI",
             },
         ]

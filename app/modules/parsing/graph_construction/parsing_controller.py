@@ -67,6 +67,8 @@ class ParsingController:
             "calcom/cal.com",
             "SigNoz/signoz",
             "langchain-ai/langchain",
+            "AgentOps-AI/AgentStack",
+            "formbricks/formbricks",
         ]
 
         try:
