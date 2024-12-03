@@ -19,8 +19,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("projects", sa.Column("repo_path", sa.Text(), nullable=True))
-
+    op.execute('ALTER TABLE projects ADD COLUMN repo_path TEXT DEFAULT NULL')
 
 def downgrade() -> None:
     op.drop_column("projects", "repo_path")
