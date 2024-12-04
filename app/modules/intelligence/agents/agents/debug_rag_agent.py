@@ -271,7 +271,8 @@ async def kickoff_debug_rag_agent(
 ) -> str:
     provider_service = ProviderService(sql_db, user_id)
     crew_ai_mini_llm = provider_service.get_small_llm(agent_type=AgentType.CREWAI)
-    debug_agent = DebugRAGAgent(sql_db, llm, crew_ai_mini_llm, user_id)
+    crew_ai_llm = provider_service.get_large_llm(agent_type=AgentType.CREWAI)
+    debug_agent = DebugRAGAgent(sql_db, crew_ai_llm, crew_ai_mini_llm, user_id)
     file_structure = await CodeProviderService(sql_db).get_project_structure_async(
         project_id
     )
