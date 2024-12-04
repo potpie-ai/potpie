@@ -19,8 +19,8 @@
 4. Start using Potpie with your local codebases!
 
 
-# Production setup 
-For a production deployment with Firebase authentication, Github access, Secret Management etc 
+# Production setup
+For a production deployment with Firebase authentication, Github access, Secret Management etc
 
 ## Firebase Setup
 To set up Firebase, follow these steps:

@@ -1,9 +1,9 @@
-from enum import Enum
 import logging
 import os
+from enum import Enum
 from typing import List, Tuple
-from crewai import LLM
 
+from crewai import LLM
 from langchain_anthropic import ChatAnthropic
 from langchain_openai.chat_models import ChatOpenAI
 from portkey_ai import PORTKEY_GATEWAY_URL, createHeaders
@@ -14,9 +14,11 @@ from app.modules.utils.posthog_helper import PostHogClient
 
 from .provider_schema import ProviderInfo
 
+
 class AgentType(Enum):
     CREWAI = "CREWAI"
     LANGCHAIN = "LANGCHAIN"
+
 
 class ProviderService:
     def __init__(self, db, user_id: str):
@@ -129,17 +131,15 @@ class ProviderService:
                 )
                 if agent_type == AgentType.CREWAI:
                     self.llm = LLM(
-                        model="openai/gpt-4o-mini",
-                        api_key=openai_key,
-                        temperature=0.3
+                        model="openai/gpt-4o-mini", api_key=openai_key, temperature=0.3
                     )
                 else:
                     self.llm = ChatOpenAI(
-                    model_name="gpt-4o",
-                    api_key=openai_key,
-                    temperature=0.3,
-                    base_url=PORTKEY_GATEWAY_URL,
-                    default_headers=portkey_headers,
+                        model_name="gpt-4o",
+                        api_key=openai_key,
+                        temperature=0.3,
+                        base_url=PORTKEY_GATEWAY_URL,
+                        default_headers=portkey_headers,
                     )
 
         elif preferred_provider == "anthropic":
@@ -184,7 +184,7 @@ class ProviderService:
                     self.llm = LLM(
                         model="anthropic/claude-3-5-sonnet-20241022",
                         temperature=0.3,
-                        api_key=anthropic_key
+                        api_key=anthropic_key,
                     )
                 else:
                     self.llm = ChatAnthropic(
@@ -262,7 +262,7 @@ class ProviderService:
                         api_key=openai_key,
                         temperature=0.3,
                     )
-                else:   
+                else:
                     self.llm = ChatOpenAI(
                         model_name="gpt-4o-mini",
                         api_key=openai_key,
@@ -283,7 +283,7 @@ class ProviderService:
                         temperature=0.3,
                         api_key=anthropic_key,
                     )
-                else:      
+                else:
                     self.llm = ChatAnthropic(
                         model="claude-3-haiku-20240307",
                         temperature=0.3,
@@ -314,7 +314,7 @@ class ProviderService:
                         temperature=0.3,
                         api_key=anthropic_key,
                     )
-                else:   
+                else:
                     self.llm = ChatAnthropic(
                         model="claude-3-haiku-20240307",
                         temperature=0.3,

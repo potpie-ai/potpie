@@ -80,13 +80,7 @@ class CodeChangesChatAgent:
         chain = prompt_with_parser | self.llm | parser
         response = await chain.ainvoke(input=inputs)
 
-        try:
-            return response.classification
-        except AttributeError:
-            response_content = response.content
-            response_dict = json.loads(response_content)
-            classification_value = response_dict.get("classification")
-            return classification_value
+        return response.classification
 
     async def run(
         self,

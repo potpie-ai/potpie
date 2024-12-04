@@ -5,7 +5,10 @@ from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
 
 # Import necessary tools (assuming they're available in your project)
-from app.modules.intelligence.provider.provider_service import AgentType, ProviderService
+from app.modules.intelligence.provider.provider_service import (
+    AgentType,
+    ProviderService,
+)
 from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
     get_code_file_structure_tool,
 )

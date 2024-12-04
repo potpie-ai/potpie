@@ -5,7 +5,10 @@ from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
-from app.modules.intelligence.provider.provider_service import AgentType, ProviderService
+from app.modules.intelligence.provider.provider_service import (
+    AgentType,
+    ProviderService,
+)
 from app.modules.intelligence.tools.change_detection.change_detection_tool import (
     ChangeDetectionResponse,
     get_change_detection_tool,

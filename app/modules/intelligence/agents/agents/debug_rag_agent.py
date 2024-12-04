@@ -7,7 +7,10 @@ from pydantic import BaseModel, Field
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.conversations.message.message_schema import NodeContext
-from app.modules.intelligence.provider.provider_service import AgentType, ProviderService
+from app.modules.intelligence.provider.provider_service import (
+    AgentType,
+    ProviderService,
+)
 from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
     get_code_file_structure_tool,
 )

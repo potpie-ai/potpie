@@ -35,7 +35,10 @@ from app.modules.intelligence.agents.custom_agents.custom_agents_service import 
     CustomAgentsService,
 )
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
-from app.modules.intelligence.provider.provider_service import AgentType, ProviderService
+from app.modules.intelligence.provider.provider_service import (
+    AgentType,
+    ProviderService,
+)
 from app.modules.projects.projects_service import ProjectService
 from app.modules.users.user_service import UserService
 from app.modules.utils.posthog_helper import PostHogClient

@@ -24,7 +24,10 @@ from app.modules.intelligence.agents.custom_agents.custom_agent import CustomAge
 from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
     CustomAgentsService,
 )
-from app.modules.intelligence.provider.provider_service import AgentType, ProviderService
+from app.modules.intelligence.provider.provider_service import (
+    AgentType,
+    ProviderService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +42,9 @@ class AgentInjectorService:
 
     def _initialize_agents(self) -> Dict[str, Any]:
         mini_llm = self.provider_service.get_small_llm(agent_type=AgentType.LANGCHAIN)
-        reasoning_llm = self.provider_service.get_large_llm(agent_type=AgentType.LANGCHAIN)
+        reasoning_llm = self.provider_service.get_large_llm(
+            agent_type=AgentType.LANGCHAIN
+        )
         return {
             "debugging_agent": DebuggingChatAgent(mini_llm, reasoning_llm, self.sql_db),
             "codebase_qna_agent": QNAChatAgent(mini_llm, reasoning_llm, self.sql_db),
@@ -60,7 +65,9 @@ class AgentInjectorService:
         if agent_id in self.agents:
             return self.agents[agent_id]
         else:
-            reasoning_llm = self.provider_service.get_large_llm(agent_type=AgentType.LANGCHAIN)
+            reasoning_llm = self.provider_service.get_large_llm(
+                agent_type=AgentType.LANGCHAIN
+            )
             return CustomAgent(
                 llm=reasoning_llm,
                 db=self.sql_db,
