@@ -81,7 +81,7 @@ class IntegrationTestChatAgent:
         )
         chain = prompt_with_parser | self.llm | parser
         response = await chain.ainvoke(input=inputs)
-        
+
         return response.classification
 
     async def run(
