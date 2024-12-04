@@ -5,6 +5,7 @@ import agentops
 from crewai import Agent, Crew, Process, Task
 
 from app.modules.conversations.message.message_schema import NodeContext
+from app.modules.intelligence.provider.provider_service import AgentType, ProviderService
 from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
     get_code_file_structure_tool,
 )
@@ -258,8 +259,6 @@ class CodeGenerationAgent:
         history: str,
         node_ids: List[NodeContext],
     ) -> str:
-        os.environ["OPENAI_API_KEY"] = self.openai_api_key
-
         code_results = []
         if len(node_ids) > 0:
             code_results = await GetCodeFromMultipleNodeIdsTool(
@@ -298,6 +297,8 @@ async def kickoff_code_generation_crew(
     mini_llm,
     user_id: str,
 ) -> str:
-    code_gen_agent = CodeGenerationAgent(sql_db, llm, mini_llm, user_id)
+    provider_service = ProviderService(sql_db, user_id)
+    crew_ai_mini_llm = provider_service.get_small_llm(agent_type=AgentType.CREWAI)
+    code_gen_agent = CodeGenerationAgent(sql_db, llm, crew_ai_mini_llm, user_id)
     result = await code_gen_agent.run(query, project_id, history, node_ids)
     return result

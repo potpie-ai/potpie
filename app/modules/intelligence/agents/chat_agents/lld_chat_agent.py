@@ -78,8 +78,14 @@ class LLDChatAgent:
         )
         chain = prompt_with_parser | self.llm | parser
         response = await chain.ainvoke(input=inputs)
-
-        return response.classification
+        
+        try:
+            return response.classification
+        except AttributeError:
+            response_content = response.content
+            response_dict = json.loads(response_content)
+            classification_value = response_dict.get("classification")
+            return classification_value
 
     async def run(
         self,

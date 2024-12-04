@@ -5,6 +5,7 @@ from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
+from app.modules.intelligence.provider.provider_service import AgentType, ProviderService
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     get_code_from_node_id_tool,
 )
@@ -156,6 +157,8 @@ async def kickoff_unit_test_agent(
         return {
             "error": "No function name is provided by the user. The agent cannot generate test plan or test code without specific class or function being selected by the user. Request the user to use the '@ followed by file or function name' feature to link individual functions to the message. "
         }
-    unit_test_agent = UnitTestAgent(sql_db, llm, user_id)
+    provider_service = ProviderService(sql_db, user_id)
+    crew_ai_llm = provider_service.get_large_llm(agent_type=AgentType.CREWAI)
+    unit_test_agent = UnitTestAgent(sql_db, crew_ai_llm, user_id)
     result = await unit_test_agent.run(project_id, node_ids, query, chat_history)
     return result

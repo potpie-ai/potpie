@@ -1,6 +1,8 @@
+from enum import Enum
 import logging
 import os
 from typing import List, Tuple
+from crewai import LLM
 
 from langchain_anthropic import ChatAnthropic
 from langchain_openai.chat_models import ChatOpenAI
@@ -12,6 +14,9 @@ from app.modules.utils.posthog_helper import PostHogClient
 
 from .provider_schema import ProviderInfo
 
+class AgentType(Enum):
+    CREWAI = "CREWAI"
+    LANGCHAIN = "LANGCHAIN"
 
 class ProviderService:
     def __init__(self, db, user_id: str):
@@ -70,7 +75,7 @@ class ProviderService:
         self.db.commit()
         return {"message": f"AI provider set to {provider}"}
 
-    def get_large_llm(self):
+    def get_large_llm(self, agent_type: AgentType):
         # Get user preferences from the database
         user_pref = (
             self.db.query(UserPreferences)
@@ -92,11 +97,18 @@ class ProviderService:
                     "Development mode enabled. Using environment variable for API key."
                 )
                 openai_key = os.getenv("OPENAI_API_KEY")
-                self.llm = ChatOpenAI(
-                    model_name="gpt-4o",
-                    api_key=openai_key,
-                    temperature=0.3,
-                )
+                if agent_type == AgentType.CREWAI:
+                    self.llm = LLM(
+                        model="openai/gpt-4o-mini",
+                        api_key=openai_key,
+                        temperature=0.3,
+                    )
+                else:
+                    self.llm = ChatOpenAI(
+                        model_name="gpt-4o",
+                        api_key=openai_key,
+                        temperature=0.3,
+                    )
             else:
                 try:
                     secret = SecretManager.get_secret("openai", self.user_id)
@@ -115,14 +127,20 @@ class ProviderService:
                         "environment": os.environ.get("ENV"),
                     },
                 )
-
-                self.llm = ChatOpenAI(
+                if agent_type == AgentType.CREWAI:
+                    self.llm = LLM(
+                        model="openai/gpt-4o-mini",
+                        api_key=openai_key,
+                        temperature=0.3
+                    )
+                else:
+                    self.llm = ChatOpenAI(
                     model_name="gpt-4o",
                     api_key=openai_key,
                     temperature=0.3,
                     base_url=PORTKEY_GATEWAY_URL,
                     default_headers=portkey_headers,
-                )
+                    )
 
         elif preferred_provider == "anthropic":
             logging.info("Initializing Anthropic LLM")
@@ -131,11 +149,18 @@ class ProviderService:
                     "Development mode enabled. Using environment variable for API key."
                 )
                 anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-                self.llm = ChatAnthropic(
-                    model="claude-3-5-sonnet-20241022",
-                    temperature=0.3,
-                    api_key=anthropic_key,
-                )
+                if agent_type == AgentType.CREWAI:
+                    self.llm = LLM(
+                        model="anthropic/claude-3-5-sonnet-20241022",
+                        temperature=0.3,
+                        api_key=anthropic_key,
+                    )
+                else:
+                    self.llm = ChatAnthropic(
+                        model="claude-3-5-sonnet-20241022",
+                        temperature=0.3,
+                        api_key=anthropic_key,
+                    )
             else:
                 try:
                     secret = SecretManager.get_secret("anthropic", self.user_id)
@@ -155,20 +180,27 @@ class ProviderService:
                     },
                 )
 
-                self.llm = ChatAnthropic(
-                    model="claude-3-5-sonnet-20241022",
-                    temperature=0.3,
-                    api_key=anthropic_key,
-                    base_url=PORTKEY_GATEWAY_URL,
-                    default_headers=portkey_headers,
-                )
+                if agent_type == AgentType.CREWAI:
+                    self.llm = LLM(
+                        model="anthropic/claude-3-5-sonnet-20241022",
+                        temperature=0.3,
+                        api_key=anthropic_key
+                    )
+                else:
+                    self.llm = ChatAnthropic(
+                        model="claude-3-5-sonnet-20241022",
+                        temperature=0.3,
+                        api_key=anthropic_key,
+                        base_url=PORTKEY_GATEWAY_URL,
+                        default_headers=portkey_headers,
+                    )
 
         else:
             raise ValueError("Invalid LLM provider selected.")
 
         return self.llm
 
-    def get_small_llm(self):
+    def get_small_llm(self, agent_type: AgentType):
         # Get user preferences from the database
         if self.user_id == "dummy":
             user_pref = UserPreferences(
@@ -194,11 +226,18 @@ class ProviderService:
                     "Development mode enabled. Using environment variable for API key."
                 )
                 openai_key = os.getenv("OPENAI_API_KEY")
-                self.llm = ChatOpenAI(
-                    model_name="gpt-4o-mini",
-                    api_key=openai_key,
-                    temperature=0.3,
-                )
+                if agent_type == AgentType.CREWAI:
+                    self.llm = LLM(
+                        model="openai/gpt-4o-mini",
+                        api_key=openai_key,
+                        temperature=0.3,
+                    )
+                else:
+                    self.llm = ChatOpenAI(
+                        model_name="gpt-4o-mini",
+                        api_key=openai_key,
+                        temperature=0.3,
+                    )
             else:
                 try:
                     secret = SecretManager.get_secret("openai", self.user_id)
@@ -217,14 +256,20 @@ class ProviderService:
                         "environment": os.environ.get("ENV"),
                     },
                 )
-
-                self.llm = ChatOpenAI(
-                    model_name="gpt-4o-mini",
-                    api_key=openai_key,
-                    temperature=0.3,
-                    base_url=PORTKEY_GATEWAY_URL,
-                    default_headers=portkey_headers,
-                )
+                if agent_type == AgentType.CREWAI:
+                    self.llm = LLM(
+                        model="openai/gpt-4o-mini",
+                        api_key=openai_key,
+                        temperature=0.3,
+                    )
+                else:   
+                    self.llm = ChatOpenAI(
+                        model_name="gpt-4o-mini",
+                        api_key=openai_key,
+                        temperature=0.3,
+                        base_url=PORTKEY_GATEWAY_URL,
+                        default_headers=portkey_headers,
+                    )
 
         elif preferred_provider == "anthropic":
             if os.getenv("isDevelopmentMode") == "enabled":
@@ -232,11 +277,18 @@ class ProviderService:
                     "Development mode enabled. Using environment variable for API key."
                 )
                 anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-                self.llm = ChatAnthropic(
-                    model="claude-3-haiku-20240307",
-                    temperature=0.3,
-                    api_key=anthropic_key,
-                )
+                if agent_type == AgentType.CREWAI:
+                    self.llm = LLM(
+                        model="anthropic/claude-3-haiku-20240307",
+                        temperature=0.3,
+                        api_key=anthropic_key,
+                    )
+                else:      
+                    self.llm = ChatAnthropic(
+                        model="claude-3-haiku-20240307",
+                        temperature=0.3,
+                        api_key=anthropic_key,
+                    )
             else:
                 try:
                     secret = SecretManager.get_secret("anthropic", self.user_id)
@@ -256,13 +308,20 @@ class ProviderService:
                     },
                 )
 
-                self.llm = ChatAnthropic(
-                    model="claude-3-haiku-20240307",
-                    temperature=0.3,
-                    api_key=anthropic_key,
-                    base_url=PORTKEY_GATEWAY_URL,
-                    default_headers=portkey_headers,
-                )
+                if agent_type == AgentType.CREWAI:
+                    self.llm = LLM(
+                        model="anthropic/claude-3-haiku-20240307",
+                        temperature=0.3,
+                        api_key=anthropic_key,
+                    )
+                else:   
+                    self.llm = ChatAnthropic(
+                        model="claude-3-haiku-20240307",
+                        temperature=0.3,
+                        api_key=anthropic_key,
+                        base_url=PORTKEY_GATEWAY_URL,
+                        default_headers=portkey_headers,
+                    )
 
         else:
             raise ValueError("Invalid LLM provider selected.")
@@ -271,7 +330,7 @@ class ProviderService:
 
     def get_llm_provider_name(self) -> str:
         """Returns the name of the LLM provider based on the LLM instance."""
-        llm = self.get_small_llm()
+        llm = self.get_small_llm(agent_type=AgentType.LANGCHAIN)
 
         # Check the type of the LLM to determine the provider
         if isinstance(llm, ChatOpenAI):
