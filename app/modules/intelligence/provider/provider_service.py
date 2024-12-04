@@ -131,7 +131,7 @@ class ProviderService:
                 )
                 if agent_type == AgentType.CREWAI:
                     self.llm = LLM(
-                        model="openai/gpt-4o-mini", api_key=openai_key, temperature=0.3
+                        model="openai/gpt-4o", api_key=openai_key, temperature=0.3
                     )
                 else:
                     self.llm = ChatOpenAI(
@@ -337,6 +337,8 @@ class ProviderService:
             return "OpenAI"
         elif isinstance(llm, ChatAnthropic):
             return "Anthropic"
+        elif isinstance(llm, LLM):
+            return "OpenAI" if llm.model.split("/")[0] == "openai" else "Anthropic"
         else:
             return "Unknown"
 
