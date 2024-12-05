@@ -3,13 +3,19 @@ from typing import List
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.modules.intelligence.llm_provider.llm_provider_schema import GetLLMProviderResponse, LLMProviderInfo, SetLLMProviderRequest
-from app.modules.intelligence.llm_provider.llm_provider_service import ProviderService
+from app.modules.intelligence.llm_provider.llm_provider_schema import (
+    GetLLMProviderResponse,
+    LLMProviderInfo,
+    SetLLMProviderRequest,
+)
+from app.modules.intelligence.llm_provider.llm_provider_service import (
+    LLMProviderService,
+)
 
 
-class ProviderController:
+class LLMProviderController:
     def __init__(self, db: Session, user_id: str):
-        self.service = ProviderService.create(db, user_id)
+        self.service = LLMProviderService.create(db, user_id)
         self.user_id = user_id
 
     async def list_available_llms(self) -> List[LLMProviderInfo]:

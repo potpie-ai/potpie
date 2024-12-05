@@ -34,11 +34,11 @@ from app.modules.intelligence.agents.agent_injector_service import AgentInjector
 from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
     CustomAgentsService,
 )
-from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
-from app.modules.intelligence.provider.provider_service import (
+from app.modules.intelligence.llm_provider.llm_provider_service import (
     AgentType,
-    ProviderService,
+    LLMProviderService,
 )
+from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.projects.projects_service import ProjectService
 from app.modules.users.user_service import UserService
 from app.modules.utils.posthog_helper import PostHogClient
@@ -74,7 +74,7 @@ class ConversationService:
         user_email: str,
         project_service: ProjectService,
         history_manager: ChatHistoryService,
-        provider_service: ProviderService,
+        llm_provider_service: LLMProviderService,
         agent_injector_service: AgentInjectorService,
         custom_agent_service: CustomAgentsService,
     ):
@@ -83,7 +83,7 @@ class ConversationService:
         self.user_email = user_email
         self.project_service = project_service
         self.history_manager = history_manager
-        self.provider_service = provider_service
+        self.llm_provider_service = llm_provider_service
         self.agent_injector_service = agent_injector_service
         self.custom_agent_service = custom_agent_service
 
@@ -91,8 +91,8 @@ class ConversationService:
     def create(cls, db: Session, user_id: str, user_email: str):
         project_service = ProjectService(db)
         history_manager = ChatHistoryService(db)
-        provider_service = ProviderService(db, user_id)
-        agent_injector_service = AgentInjectorService(db, provider_service, user_id)
+        llm_provider_service = LLMProviderService(db, user_id)
+        agent_injector_service = AgentInjectorService(db, llm_provider_service, user_id)
         custom_agent_service = CustomAgentsService()
         return cls(
             db,
@@ -100,7 +100,7 @@ class ConversationService:
             user_email,
             project_service,
             history_manager,
-            provider_service,
+            llm_provider_service,
             agent_injector_service,
             custom_agent_service,
         )
@@ -206,7 +206,7 @@ class ConversationService:
         logger.info(
             f"Project id : {conversation.project_ids[0]} Created new conversation with ID: {conversation_id}, title: {title}, user_id: {user_id}, agent_id: {conversation.agent_ids[0]}"
         )
-        provider_name = self.provider_service.get_llm_provider_name()
+        provider_name = self.llm_provider_service.get_llm_provider_name()
         PostHogClient().send_event(
             user_id,
             "create Conversation Event",
@@ -261,7 +261,7 @@ class ConversationService:
                 conversation_id, message_type, user_id
             )
             logger.info(f"Stored message in conversation {conversation_id}")
-            provider_name = self.provider_service.get_llm_provider_name()
+            provider_name = self.llm_provider_service.get_llm_provider_name()
 
             PostHogClient().send_event(
                 user_id,
@@ -335,7 +335,7 @@ class ConversationService:
     ) -> str:
         agent_type = conversation.agent_ids[0]
 
-        llm = self.provider_service.get_small_llm(agent_type=AgentType.LANGCHAIN)
+        llm = self.llm_provider_service.get_small_llm(agent_type=AgentType.LANGCHAIN)
         prompt = ChatPromptTemplate.from_template(
             "Given an agent type '{agent_type}' and an initial message '{message}', "
             "generate a concise and relevant title for a conversation. "

@@ -19,7 +19,7 @@ class AgentType(Enum):
     LANGCHAIN = "LANGCHAIN"
 
 
-class ProviderService:
+class LLMProviderService:
     def __init__(self, db, user_id: str):
         self.db = db
         self.llm = None

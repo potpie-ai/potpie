@@ -5,9 +5,14 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
-from app.modules.intelligence.llm_provider.llm_provider_controller import ProviderController
-from app.modules.intelligence.llm_provider.llm_provider_schema import GetLLMProviderResponse, LLMProviderInfo, SetLLMProviderRequest
-
+from app.modules.intelligence.llm_provider.llm_provider_controller import (
+    LLMProviderController,
+)
+from app.modules.intelligence.llm_provider.llm_provider_schema import (
+    GetLLMProviderResponse,
+    LLMProviderInfo,
+    SetLLMProviderRequest,
+)
 
 router = APIRouter()
 
@@ -20,7 +25,7 @@ class ProviderAPI:
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
-        controller = ProviderController(db, user_id)
+        controller = LLMProviderController(db, user_id)
         return await controller.list_available_llms()
 
     @staticmethod
@@ -31,7 +36,7 @@ class ProviderAPI:
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
-        controller = ProviderController(db, user_id)
+        controller = LLMProviderController(db, user_id)
         return await controller.set_global_ai_provider(
             user["user_id"], provider_request
         )
@@ -45,5 +50,5 @@ class ProviderAPI:
     ):
         if not AuthService.verify_hmac_signature(user_id, hmac_signature):
             raise HTTPException(status_code=401, detail="Unauthorized")
-        controller = ProviderController(db, user_id)
+        controller = LLMProviderController(db, user_id)
         return await controller.get_preferred_llm(user_id)

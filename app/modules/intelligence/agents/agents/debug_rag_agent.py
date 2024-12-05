@@ -7,9 +7,9 @@ from pydantic import BaseModel, Field
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.conversations.message.message_schema import NodeContext
-from app.modules.intelligence.provider.provider_service import (
+from app.modules.intelligence.llm_provider.llm_provider_service import (
     AgentType,
-    ProviderService,
+    LLMProviderService,
 )
 from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
     get_code_file_structure_tool,
@@ -269,7 +269,7 @@ async def kickoff_debug_rag_agent(
     mini_llm,
     user_id: str,
 ) -> str:
-    provider_service = ProviderService(sql_db, user_id)
+    provider_service = LLMProviderService(sql_db, user_id)
     crew_ai_mini_llm = provider_service.get_small_llm(agent_type=AgentType.CREWAI)
     crew_ai_llm = provider_service.get_large_llm(agent_type=AgentType.CREWAI)
     debug_agent = DebugRAGAgent(sql_db, crew_ai_llm, crew_ai_mini_llm, user_id)

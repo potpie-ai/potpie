@@ -24,16 +24,16 @@ from app.modules.intelligence.agents.custom_agents.custom_agent import CustomAge
 from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
     CustomAgentsService,
 )
-from app.modules.intelligence.provider.provider_service import (
+from app.modules.intelligence.llm_provider.llm_provider_service import (
     AgentType,
-    ProviderService,
+    LLMProviderService,
 )
 
 logger = logging.getLogger(__name__)
 
 
 class AgentInjectorService:
-    def __init__(self, db: Session, provider_service: ProviderService, user_id: str):
+    def __init__(self, db: Session, provider_service: LLMProviderService, user_id: str):
         self.sql_db = db
         self.provider_service = provider_service
         self.custom_agent_service = CustomAgentsService()
