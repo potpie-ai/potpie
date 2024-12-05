@@ -26,6 +26,7 @@ from app.modules.parsing.graph_construction.parsing_router import (
 )
 from app.modules.projects.projects_router import router as projects_router
 from app.modules.search.search_router import router as search_router
+from app.modules.usage.usage_router import router as usage_router
 from app.modules.users.user_router import router as user_router
 from app.modules.users.user_service import UserService
 from app.modules.utils.firebase_setup import FirebaseSetup
@@ -112,6 +113,7 @@ class MainApp:
         self.app.include_router(agent_router, prefix="/api/v1", tags=["Agents"])
         self.app.include_router(provider_router, prefix="/api/v1", tags=["Providers"])
         self.app.include_router(tool_router, prefix="/api/v1", tags=["Tools"])
+        self.app.include_router(usage_router, prefix="/api/v1/usage", tags=["Usage"])
         if os.getenv("isDevelopmentMode") != "enabled":
             self.app.include_router(
                 secret_manager_router, prefix="/api/v1", tags=["Secret Manager"]
