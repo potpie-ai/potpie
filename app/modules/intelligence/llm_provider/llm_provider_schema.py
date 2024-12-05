@@ -1,16 +1,16 @@
 from pydantic import BaseModel
 
 
-class ProviderInfo(BaseModel):
+class LLMProviderInfo(BaseModel):
     id: str
     name: str
     description: str
 
 
-class SetProviderRequest(BaseModel):
+class SetLLMProviderRequest(BaseModel):
     provider: str
 
 
-class GetProviderResponse(BaseModel):
+class GetLLMProviderResponse(BaseModel):
     preferred_llm: str
     model_type: str

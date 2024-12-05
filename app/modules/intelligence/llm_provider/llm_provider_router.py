@@ -5,16 +5,16 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
+from app.modules.intelligence.llm_provider.llm_provider_controller import ProviderController
+from app.modules.intelligence.llm_provider.llm_provider_schema import GetLLMProviderResponse, LLMProviderInfo, SetLLMProviderRequest
 
-from .provider_controller import ProviderController
-from .provider_schema import GetProviderResponse, ProviderInfo, SetProviderRequest
 
 router = APIRouter()
 
 
 class ProviderAPI:
     @staticmethod
-    @router.get("/list-available-llms/", response_model=List[ProviderInfo])
+    @router.get("/list-available-llms/", response_model=List[LLMProviderInfo])
     async def list_available_llms(
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
@@ -26,7 +26,7 @@ class ProviderAPI:
     @staticmethod
     @router.post("/set-global-ai-provider/")
     async def set_global_ai_provider(
-        provider_request: SetProviderRequest,
+        provider_request: SetLLMProviderRequest,
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
@@ -37,7 +37,7 @@ class ProviderAPI:
         )
 
     @staticmethod
-    @router.get("/get-preferred-llm/", response_model=GetProviderResponse)
+    @router.get("/get-preferred-llm/", response_model=GetLLMProviderResponse)
     async def get_preferred_llm(
         user_id: str,
         db: Session = Depends(get_db),

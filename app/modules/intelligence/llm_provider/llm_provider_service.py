@@ -8,11 +8,10 @@ from langchain_anthropic import ChatAnthropic
 from langchain_openai.chat_models import ChatOpenAI
 from portkey_ai import PORTKEY_GATEWAY_URL, createHeaders
 
+from app.modules.intelligence.llm_provider.llm_provider_schema import LLMProviderInfo
 from app.modules.key_management.secret_manager import SecretManager
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.posthog_helper import PostHogClient
-
-from .provider_schema import ProviderInfo
 
 
 class AgentType(Enum):
@@ -32,14 +31,14 @@ class ProviderService:
     def create(cls, db, user_id: str):
         return cls(db, user_id)
 
-    async def list_available_llms(self) -> List[ProviderInfo]:
+    async def list_available_llms(self) -> List[LLMProviderInfo]:
         return [
-            ProviderInfo(
+            LLMProviderInfo(
                 id="openai",
                 name="OpenAI",
                 description="A leading LLM provider, known for GPT models like GPT-3, GPT-4.",
             ),
-            ProviderInfo(
+            LLMProviderInfo(
                 id="anthropic",
                 name="Anthropic",
                 description="An AI safety-focused company known for models like Claude.",

@@ -3,8 +3,8 @@ from typing import List
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from .provider_schema import GetProviderResponse, ProviderInfo, SetProviderRequest
-from .provider_service import ProviderService
+from app.modules.intelligence.llm_provider.llm_provider_schema import GetLLMProviderResponse, LLMProviderInfo, SetLLMProviderRequest
+from app.modules.intelligence.llm_provider.llm_provider_service import ProviderService
 
 
 class ProviderController:
@@ -12,7 +12,7 @@ class ProviderController:
         self.service = ProviderService.create(db, user_id)
         self.user_id = user_id
 
-    async def list_available_llms(self) -> List[ProviderInfo]:
+    async def list_available_llms(self) -> List[LLMProviderInfo]:
         try:
             providers = await self.service.list_available_llms()
             return providers
@@ -22,7 +22,7 @@ class ProviderController:
             )
 
     async def set_global_ai_provider(
-        self, user_id: str, provider_request: SetProviderRequest
+        self, user_id: str, provider_request: SetLLMProviderRequest
     ):
         try:
             response = await self.service.set_global_ai_provider(
@@ -34,10 +34,10 @@ class ProviderController:
                 status_code=500, detail=f"Error setting AI provider: {str(e)}"
             )
 
-    async def get_preferred_llm(self, user_id: str) -> GetProviderResponse:
+    async def get_preferred_llm(self, user_id: str) -> GetLLMProviderResponse:
         try:
             preferred_llm, model_type = await self.service.get_preferred_llm(user_id)
-            return GetProviderResponse(
+            return GetLLMProviderResponse(
                 preferred_llm=preferred_llm, model_type=model_type
             )
         except Exception as e:
