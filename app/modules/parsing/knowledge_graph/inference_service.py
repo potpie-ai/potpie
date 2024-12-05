@@ -12,7 +12,10 @@ from sentence_transformers import SentenceTransformer
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
-from app.modules.intelligence.provider.provider_service import ProviderService
+from app.modules.intelligence.provider.provider_service import (
+    AgentType,
+    ProviderService,
+)
 from app.modules.parsing.knowledge_graph.inference_schema import (
     DocstringRequest,
     DocstringResponse,
@@ -30,7 +33,9 @@ class InferenceService:
             neo4j_config["uri"],
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
-        self.llm = ProviderService(db, user_id).get_small_llm()
+        self.llm = ProviderService(db, user_id).get_small_llm(
+            agent_type=AgentType.LANGCHAIN
+        )
         self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
         self.search_service = SearchService(db)
         self.project_manager = ProjectService(db)

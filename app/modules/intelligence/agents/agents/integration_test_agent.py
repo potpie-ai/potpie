@@ -6,6 +6,10 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
+from app.modules.intelligence.provider.provider_service import (
+    AgentType,
+    ProviderService,
+)
 from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id_tool import (
     GetCodeGraphFromNodeIdTool,
 )
@@ -159,8 +163,6 @@ class IntegrationTestAgent:
         graph: Dict[str, Any],
         history: List,
     ) -> Dict[str, str]:
-        os.environ["OPENAI_API_KEY"] = self.openai_api_key
-
         integration_test_agent = await self.create_agents()
         integration_test_task = await self.create_tasks(
             node_ids,
@@ -213,7 +215,9 @@ async def kickoff_integration_test_agent(
         return node_contexts
 
     node_contexts = extract_unique_node_contexts(graph["graph"]["root_node"])
-    integration_test_agent = IntegrationTestAgent(sql_db, llm, user_id)
+    provider_service = ProviderService(sql_db, user_id)
+    crew_ai_llm = provider_service.get_large_llm(agent_type=AgentType.CREWAI)
+    integration_test_agent = IntegrationTestAgent(sql_db, crew_ai_llm, user_id)
     result = await integration_test_agent.run(
         project_id, node_contexts, query, graph, history
     )
