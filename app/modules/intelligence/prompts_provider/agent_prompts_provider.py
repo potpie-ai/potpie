@@ -16,12 +16,14 @@ from app.modules.intelligence.prompts_provider.agent_types import AgentRuntimeLL
 
 class AgentPromptsProvider:
     @classmethod
-    def get_agent_prompt(
+    async def get_agent_prompt(
         cls, agent_id: str, user_id, db: Session, **kwargs: Dict[str, Any]
     ) -> Optional[Dict[str, str]]:
         """Get agent prompt based on agent ID and LLM type."""
         llm_provider_service = LLMProviderService.create(db, user_id)
-        preferred_llm, model_type = llm_provider_service.get_preferred_llm(user_id)
+        preferred_llm, model_type = await llm_provider_service.get_preferred_llm(
+            user_id
+        )
         if preferred_llm == AgentRuntimeLLMType.ANTHROPIC.value.lower():
             prompt = AnthropicAgentPrompts.get_anthropic_agent_prompt(agent_id)
         elif preferred_llm == AgentRuntimeLLMType.OPENAI.value.lower():
@@ -37,12 +39,14 @@ class AgentPromptsProvider:
         return prompt
 
     @classmethod
-    def get_task_prompt(
+    async def get_task_prompt(
         cls, task_id: str, user_id, db: Session, **kwargs: Dict[str, Any]
     ) -> Optional[str]:
         """Get task prompt based on task ID and LLM type."""
         llm_provider_service = LLMProviderService.create(db, user_id)
-        preferred_llm, model_type = llm_provider_service.get_preferred_llm(user_id)
+        preferred_llm, model_type = await llm_provider_service.get_preferred_llm(
+            user_id
+        )
         if preferred_llm == AgentRuntimeLLMType.ANTHROPIC.value.lower():
             description = AnthropicAgentPrompts.get_anthropic_task_prompt(task_id)
         elif preferred_llm == AgentRuntimeLLMType.OPENAI.value.lower():

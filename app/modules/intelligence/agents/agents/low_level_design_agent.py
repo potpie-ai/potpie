@@ -79,7 +79,7 @@ class LowLevelDesignAgent:
         )
 
     async def create_agents(self):
-        codebase_analyst_prompt = AgentPromptsProvider.get_agent_prompt(
+        codebase_analyst_prompt = await AgentPromptsProvider.get_agent_prompt(
             agent_id="codebase_analyst",
             user_id=self.user_id,
             db=self.sql_db,
@@ -101,7 +101,7 @@ class LowLevelDesignAgent:
             llm=self.llm,
         )
 
-        design_planner_prompt = AgentPromptsProvider.get_agent_prompt(
+        design_planner_prompt = await AgentPromptsProvider.get_agent_prompt(
             agent_id="design_planner",
             user_id=self.user_id,
             db=self.sql_db,
@@ -133,7 +133,7 @@ class LowLevelDesignAgent:
         codebase_analyst,
         design_planner,
     ):
-        analyze_task_prompt = AgentPromptsProvider.get_task_prompt(
+        analyze_task_prompt = await AgentPromptsProvider.get_task_prompt(
             task_id="analyze_codebase_task",
             user_id=self.user_id,
             db=self.sql_db,
@@ -147,7 +147,7 @@ class LowLevelDesignAgent:
             expected_output="Codebase analysis report with insights on project structure and patterns",
         )
 
-        design_task_prompt = AgentPromptsProvider.get_task_prompt(
+        design_task_prompt = await AgentPromptsProvider.get_task_prompt(
             task_id="create_design_plan_task",
             user_id=self.user_id,
             db=self.sql_db,

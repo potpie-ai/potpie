@@ -55,7 +55,7 @@ class CodeGenerationAgent:
         self.user_id = user_id
 
     async def create_agents(self):
-        agent_prompt = AgentPromptsProvider.get_agent_prompt(
+        agent_prompt = await AgentPromptsProvider.get_agent_prompt(
             agent_id="code_generator", user_id=self.user_id, db=self.sql_db
         )
         code_generator = Agent(
@@ -88,7 +88,7 @@ class CodeGenerationAgent:
         code_generator,
     ):
         node_ids_list = [node.model_dump() for node in node_ids]
-        task_prompt = AgentPromptsProvider.get_task_prompt(
+        task_prompt = await AgentPromptsProvider.get_task_prompt(
             task_id="code_generation_task",
             user_id=self.user_id,
             db=self.sql_db,

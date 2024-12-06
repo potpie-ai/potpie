@@ -36,7 +36,7 @@ class BlastRadiusAgent:
         )
 
     async def create_agents(self):
-        agent_prompt = AgentPromptsProvider.get_agent_prompt(
+        agent_prompt = await AgentPromptsProvider.get_agent_prompt(
             agent_id="blast_radius_agent", user_id=self.user_id, db=self.sql_db
         )
         blast_radius_agent = Agent(
@@ -66,7 +66,7 @@ class BlastRadiusAgent:
         query: str,
         blast_radius_agent,
     ):
-        task_prompt = AgentPromptsProvider.get_task_prompt(
+        task_prompt = await AgentPromptsProvider.get_task_prompt(
             task_id="analyze_changes_task",
             user_id=self.user_id,
             db=self.sql_db,

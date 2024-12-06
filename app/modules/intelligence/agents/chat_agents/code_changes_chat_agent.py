@@ -20,12 +20,13 @@ from app.modules.intelligence.agents.agents.blast_radius_agent import (
     kickoff_blast_radius_agent,
 )
 from app.modules.intelligence.agents.agents_service import AgentsService
+from app.modules.intelligence.llm_provider.llm_provider_service import (
+    LLMProviderService,
+)
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.prompts_provider.agent_types import (
-    SystemAgentType,
-)
+from app.modules.intelligence.prompts_provider.agent_types import SystemAgentType
 from app.modules.intelligence.prompts_provider.classification_prompts_provider import (
     ClassificationPromptsProvider,
     ClassificationResponse,
@@ -73,8 +74,10 @@ class CodeChangesChatAgent:
     async def _classify_query(
         self, query: str, history: List[HumanMessage], user_id: str
     ):
+        llm_provider_service = LLMProviderService.create(self.db, user_id)
+        preferred_llm, _ = await llm_provider_service.get_preferred_llm(user_id)
         prompt = ClassificationPromptsProvider.get_classification_prompt(
-            SystemAgentType.CODE_CHANGES, user_id, self.db
+            SystemAgentType.CODE_CHANGES, preferred_llm
         )
         inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
 

@@ -76,7 +76,7 @@ class DebugRAGAgent:
         self.user_id = user_id
 
     async def create_agents(self):
-        agent_prompt = AgentPromptsProvider.get_agent_prompt(
+        agent_prompt = await AgentPromptsProvider.get_agent_prompt(
             agent_id="debug_rag_query_agent",
             user_id=self.user_id,
             db=self.sql_db,
@@ -115,7 +115,7 @@ class DebugRAGAgent:
         if not node_ids:
             node_ids = []
         node_ids_list = [node.model_dump() for node in node_ids]
-        task_prompt = AgentPromptsProvider.get_task_prompt(
+        task_prompt = await AgentPromptsProvider.get_task_prompt(
             task_id="combined_task",
             user_id=self.user_id,
             db=self.sql_db,
