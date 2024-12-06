@@ -21,7 +21,7 @@ class AgentPromptsProvider:
     ) -> Optional[Dict[str, str]]:
         """Get agent prompt based on agent ID and LLM type."""
         llm_provider_service = LLMProviderService.create(db, user_id)
-        preferred_llm, model_type = await llm_provider_service.get_preferred_llm(
+        preferred_llm, _ = await llm_provider_service.get_preferred_llm(
             user_id
         )
         if preferred_llm == AgentRuntimeLLMType.ANTHROPIC.value.lower():
@@ -44,7 +44,7 @@ class AgentPromptsProvider:
     ) -> Optional[str]:
         """Get task prompt based on task ID and LLM type."""
         llm_provider_service = LLMProviderService.create(db, user_id)
-        preferred_llm, model_type = await llm_provider_service.get_preferred_llm(
+        preferred_llm, _ = await llm_provider_service.get_preferred_llm(
             user_id
         )
         if preferred_llm == AgentRuntimeLLMType.ANTHROPIC.value.lower():
