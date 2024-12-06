@@ -1,17 +1,17 @@
-agents_dict = {
-    "agents": [
-        {
-            "id": "blast_radius_agent",
+from typing import Dict
+
+
+class OpenAIAgentPrompts:
+    AGENTS_DICT: Dict[str, Dict[str, str]] = {
+        "blast_radius_agent": {
             "role": "Blast Radius Agent",
             "goal": "Explain the blast radius of the changes made in the code.",
             "backstory": "You are an expert in understanding the impact of code changes on the codebase.",
         },
-        {
-            "id": "code_generator",
+        "code_generator": {
             "role": "Code Generation Agent",
             "goal": "Generate precise, copy-paste ready code modifications that maintain project consistency and handle all dependencies",
-            "backstory": """
-                You are an expert code generation agent specialized in creating production-ready,
+            "backstory": """You are an expert code generation agent specialized in creating production-ready,
                 immediately usable code modifications. Your primary responsibilities include:
                 1. Analyzing existing codebase context and understanding dependencies
                 2. Planning code changes that maintain exact project patterns and style
@@ -26,12 +26,9 @@ agents_dict = {
                 - Maintain exact indentation and spacing patterns from original code
                 - Include clear section markers for where code should be inserted/modified""",
         },
-        {
-            "id": "debug_rag_query_agent",
+        "debug_rag_query_agent": {
             "role": "Context curation agent",
-            "goal": (
-                "Handle querying the knowledge graph and refining the results to provide accurate and contextually rich responses."
-            ),
+            "goal": "Handle querying the knowledge graph and refining the results to provide accurate and contextually rich responses.",
             "backstory": """
                 You are a highly efficient and intelligent RAG agent capable of querying complex knowledge graphs and refining the results to generate precise and comprehensive responses.
                 Your tasks include:
@@ -41,29 +38,24 @@ agents_dict = {
                 4. Maintaining traceability by including relevant citations and references in your output.
                 5. Including relevant citations in the response.
 
-                You must adhere to the specified {self.max_iter} iterations to optimize performance and reduce latency.
+                You must adhere to the specified {max_iter} iterations to optimize performance and reduce latency.
             """,
         },
-        {
-            "id": "integration_test_agent",
+        "integration_test_agent": {
             "role": "Integration Test Writer",
             "goal": "Create a comprehensive integration test suite for the provided codebase. Analyze the code, determine the appropriate testing language and framework, and write tests that cover all major integration points.",
             "backstory": "You are an expert in writing unit tests for code using latest features of the popular testing libraries for the given programming language.",
         },
-        {
-            "id": "codebase_analyst",
+        "codebase_analyst": {
             "role": "Codebase Analyst",
             "goal": "Analyze the existing codebase and provide insights on the current structure and patterns",
             "backstory": """You are an expert in analyzing complex codebases. Your task is to understand the
             current project structure, identify key components, and provide insights that will help in
             planning new feature implementations.""",
         },
-        {
-            "id": "design_planner",
+        "design_planner": {
             "role": "Context curation agent",
-            "goal": (
-                "Handle querying the knowledge graph and refining the results to provide accurate and contextually rich responses."
-            ),
+            "goal": "Handle querying the knowledge graph and refining the results to provide accurate and contextually rich responses.",
             "backstory": """
                 You are a highly efficient and intelligent RAG agent capable of querying complex knowledge graphs and refining the results to generate precise and comprehensive responses.
                 Your tasks include:
@@ -73,20 +65,20 @@ agents_dict = {
                 4. Maintaining traceability by including relevant citations and references in your output.
                 5. Including relevant citations in the response.
 
-                You must adhere to the specified {self.max_iter} iterations to optimize performance and reduce latency.
+                You must adhere to the specified {max_iter} iterations to optimize performance and reduce latency.
             """,
         },
-        {
-            "id": "unit_test_agent",
+        "unit_test_agent": {
             "role": "Test Plan and Unit Test Expert",
             "goal": "Create test plans and write unit tests based on user requirements",
             "backstory": "You are a seasoned AI test engineer specializing in creating robust test plans and unit tests. You aim to assist users effectively in generating and refining test plans and unit tests, ensuring they are comprehensive and tailored to the user's project requirements.",
         },
-    ],
-    "tasks": [
+    }
+
+    TASK_PROMPTS: Dict[str, Dict[str, str]] = (
         {
-            "id": "analyze_changes_task",
-            "description": """Fetch the changes in the current branch for project {project_id} using the get code changes tool.
+            "analyze_changes_task": {
+                "description": """Fetch the changes in the current branch for project {project_id} using the get code changes tool.
             The response of the fetch changes tool is in the following format:
             {ChangeDetectionResponse.model_json_schema()}
             In the response, the patches contain the file patches for the changes.
@@ -128,16 +120,15 @@ agents_dict = {
 
 
             Ensure that your output ALWAYS follows the structure outlined in the following pydantic model:
-            {self.BlastRadiusAgentResponse.model_json_schema()}""",
-        },
-        {
-            "id": "code_generation_task",
-            "description": """
-            Work within {self.max_iter} iterations to generate copy-paste ready code based on:
+            {BlastRadiusAgentResponse.model_json_schema()}""",
+            },
+            "code_generation_task": {
+                "description": """
+            Work within {max_iter} iterations to generate copy-paste ready code based on:
             - Query: {query}
             - Project ID: {project_id}
             - History: {history}
-            - Target Node IDs: {[node.model_dump() for node in node_ids]}
+            - Target Node IDs: {node_ids}
             - Existing Code Context: {code_results}
 
             Follow this structured approach:
@@ -284,18 +275,17 @@ agents_dict = {
             - Execute database migrations
             - Manage API versioning
             """,
-        },
-        {
-            "id": "combined_task",
-            "description": """
-            Adhere to {self.max_iter} iterations max. Analyze input:
+            },
+            "combined_task": {
+                "description": """
+            Adhere to {max_iter} iterations max. Analyze input:
 
             - Chat History: {chat_history}
             - Query: {query}
             - Project ID: {project_id}
-            - User Node IDs: {[node.model_dump() for node in node_ids]}
+            - User Node IDs: {node_ids}
             - File Structure upto depth 4:
-{file_structure}
+            {file_structure}
             - Code Results for user node ids: {code_results}
 
 
@@ -380,10 +370,9 @@ agents_dict = {
             Ask clarifying questions if needed. Offer follow-up suggestions to guide the conversation.
             Provide a comprehensive response with deep context, relevant file paths, include relevant code snippets wherever possible. Format it in markdown format.
             """,
-        },
-        {
-            "id": "integration_test_task",
-            "description": """Your mission is to create comprehensive test plans and corresponding integration tests based on the user's query and provided code.
+            },
+            "integration_test_task": {
+                "description": """Your mission is to create comprehensive test plans and corresponding integration tests based on the user's query and provided code.
 
             **Process:**
 
@@ -433,7 +422,7 @@ agents_dict = {
             5. **Reflection and Iteration:**
             - **Review and Refinement:**
                 - Review the test plans and integration tests to ensure comprehensive coverage and correctness.
-                - Make refinements as necessary, respecting the max iterations limit of {self.max_iterations}.
+                - Make refinements as necessary, respecting the max iterations limit of {max_iterations}.
 
             6. **Response Construction:**
             - **Structured Output:**
@@ -449,19 +438,18 @@ agents_dict = {
             **Constraints:**
             - **User Query:** Refer to the user's query: "{query}"
             - **Chat History:** Consider the chat history: '{history[-min(5, len(history)):]}' for any specific instructions or context.
-            - **Iteration Limit:** Respect the max iterations limit of {self.max_iterations} when planning and executing tools.
+            - **Iteration Limit:** Respect the max iterations limit of {max_iterations} when planning and executing tools.
 
             **Output Requirements:**
-            - Ensure that your final response MUST be a valid JSON object which follows the structure outlined in the Pydantic model: {self.TestAgentResponse.model_json_schema()}
+            - Ensure that your final response MUST be a valid JSON object which follows the structure outlined in the Pydantic model: {TestAgentResponse.model_json_schema()}
             - Do not wrap the response in ```json, ```python, ```code, or ``` symbols.
             - For citations, include only the `file_path` of the nodes fetched and used.
             - Do not include any explanation or additional text outside of this JSON object.
             - Ensure all test plans and code are included within the "response" string.
             """,
-        },
-        {
-            "id": "analyze_codebase_task",
-            "description": """
+            },
+            "analyze_codebase_task": {
+                "description": """
             Analyze the existing codebase for repo id {project_id} to understand its structure and patterns.
             Focus on the following:
             1. Identify the main components and their relationships.
@@ -473,10 +461,9 @@ agents_dict = {
             You can use the probable node name tool to get the code for a node by providing a partial file or function name.
             Provide a comprehensive analysis that will aid in creating a low-level design plan.
             """,
-        },
-        {
-            "id": "create_design_plan_task",
-            "description": """
+            },
+            "create_design_plan_task": {
+                "description": """
 
             Based on the codebase analysis of repo id {project_id} and the following functional requirements: {functional_requirements}
             Create a detailed low-level design plan for implementing the new feature. Your plan should include:
@@ -492,18 +479,17 @@ agents_dict = {
             You can use the probable node name tool to get the code for a node by providing a partial file or function name.
             Ensure your output follows the structure defined in the LowLevelDesignPlan Pydantic model.
             """,
-        },
-        {
-            "id": "combined_task_rag_agent",
-            "description": """
-            Adhere to {self.max_iter} iterations max. Analyze input:
+            },
+            "combined_task_rag_agent": {
+                "description": """
+            Adhere to {max_iter} iterations max. Analyze input:
 
             - Chat History: {chat_history}
             - Query: {query}
             - Project ID: {project_id}
-            - User Node IDs: {[node.model_dump() for node in node_ids]}
+            - User Node IDs: {node_ids}
             - File Structure upto depth 4:
-{file_structure}
+            {file_structure}
             - Code Results for user node ids: {code_results}
 
 
@@ -589,10 +575,9 @@ agents_dict = {
             Ask clarifying questions if needed. Offer follow-up suggestions to guide the conversation.
             Provide a comprehensive response with deep context, relevant file paths, include relevant code snippets wherever possible. Format it in markdown format.
             """,
-        },
-        {
-            "id": "unit_test_task",
-            "description": """Your mission is to create comprehensive test plans and corresponding unit tests based on the user's query and provided code.
+            },
+            "unit_test_task": {
+                "description": """Your mission is to create comprehensive test plans and corresponding unit tests based on the user's query and provided code.
             Given the following context:
             - Chat History: {history}
 
@@ -629,7 +614,7 @@ agents_dict = {
             6. **Reflection and Iteration:**
             - Review the test plans and unit tests.
             - Ensure comprehensive coverage and correctness.
-            - Make refinements as necessary, respecting the max iterations limit of {self.max_iterations}.
+            - Make refinements as necessary, respecting the max iterations limit of {max_iterations}.
 
             7. **Response Construction:**
             - Provide the test plans and unit tests in your response.
@@ -639,12 +624,22 @@ agents_dict = {
             Constraints:
             - Refer to the user's query: "{query}"
             - Consider the chat history for any specific instructions or context.
-            - Respect the max iterations limit of {self.max_iterations} when planning and executing tools.
+            - Respect the max iterations limit of {max_iterations} when planning and executing tools.
 
-            Ensure that your final response is JSON serializable and follows the specified pydantic model: {self.TestAgentResponse.model_json_schema()}
+            Ensure that your final response is JSON serializable and follows the specified pydantic model: {TestAgentResponse.model_json_schema()}
             Don't wrap it in ```json or ```python or ```code or ```
             For citations, include only the file_path of the nodes fetched and used.
             """,
-        },
-    ],
-}
+            }
+        }
+    )
+
+    @classmethod
+    def get_openai_agent_prompt(cls, agent_id: str) -> Dict[str, str]:
+        """Get agent prompt based on agent ID."""
+        return cls.AGENTS_DICT.get(agent_id, {})
+
+    @classmethod
+    def get_openai_task_prompt(cls, task_id: str) -> str:
+        """Get task prompt based on task ID."""
+        return cls.TASK_PROMPTS.get(task_id, "")["description"]

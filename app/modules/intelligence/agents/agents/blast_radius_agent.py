@@ -8,6 +8,7 @@ from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.llm_provider.llm_provider_service import (
     LLMProviderService,
 )
+from app.modules.intelligence.prompts_provider.agent_prompts import AgentPromptsProvider
 from app.modules.intelligence.prompts_provider.agent_types import AgentLLMType
 from app.modules.intelligence.tools.change_detection.change_detection_tool import (
     ChangeDetectionResponse,
@@ -33,10 +34,13 @@ class BlastRadiusAgent:
         )
 
     async def create_agents(self):
+        agent_prompt = AgentPromptsProvider.get_agent_prompt(
+            agent_id="blast_radius_agent", agent_type=AgentLLMType.CREWAI
+        )
         blast_radius_agent = Agent(
-            role="Blast Radius Agent",
-            goal="Explain the blast radius of the changes made in the code.",
-            backstory="You are an expert in understanding the impact of code changes on the codebase.",
+            role=agent_prompt["role"],
+            goal=agent_prompt["goal"],
+            backstory=agent_prompt["backstory"],
             allow_delegation=False,
             verbose=True,
             llm=self.llm,
@@ -60,50 +64,17 @@ class BlastRadiusAgent:
         query: str,
         blast_radius_agent,
     ):
+        task_prompt = AgentPromptsProvider.get_task_prompt(
+            task_id="analyze_changes_task",
+            agent_type=AgentLLMType.CREWAI,
+            project_id=project_id,
+            query=query,
+            ChangeDetectionResponse=ChangeDetectionResponse,
+            BlastRadiusAgentResponse=self.BlastRadiusAgentResponse,
+        )
+
         analyze_changes_task = Task(
-            description=f"""Fetch the changes in the current branch for project {project_id} using the get code changes tool.
-            The response of the fetch changes tool is in the following format:
-            {ChangeDetectionResponse.model_json_schema()}
-            In the response, the patches contain the file patches for the changes.
-            The changes contain the list of changes with the updated and entry point code. Entry point corresponds to the API/Consumer upstream of the function that the change was made in.
-            The citations contain the list of file names referenced in the changed code and entry point code.
-
-            You also have access the the query knowledge graph tool to answer natural language questions about the codebase during the analysis.
-            Based on the response from the get code changes tool, formulate queries to ask details about specific changed code elements.
-            1. Frame your query for the knowledge graph tool:
-            - Identify key concepts, code elements, and implied relationships from the changed code.
-            - Consider the context from the users query: {query}.
-            - Determine the intent and key technical terms.
-            - Transform into keyword phrases that might match docstrings:
-                * Use concise, functionality-based phrases (e.g., "creates document MongoDB collection").
-                * Focus on verb-based keywords (e.g., "create", "define", "calculate").
-                * Include docstring-related keywords like "parameters", "returns", "raises" when relevant.
-                * Preserve key technical terms from the original query.
-                * Generate multiple keyword variations to increase matching chances.
-                * Be specific in keywords to improve match accuracy.
-                * Ensure the query includes relevant details and follows a similar structure to enhance similarity search results.
-
-            2. Execute your formulated query using the knowledge graph tool.
-
-            Analyze the changes fetched and explain their impact on the codebase. Consider the following:
-            1. Which functions or classes have been directly modified?
-            2. What are the potential side effects of these changes?
-            3. Are there any dependencies that might be affected?
-            4. How might these changes impact the overall system behavior?
-            5. Based on the entry point code, determine which APIs or consumers etc are impacted by the changes.
-
-            Refer to the {query} for any specific instructions and follow them.
-
-            Based on the analysis, provide a structured inference of the blast radius:
-            1. Summarize the direct changes
-            2. List potential indirect effects
-            3. Identify any critical areas that require careful testing
-            4. Suggest any necessary refactoring or additional changes to mitigate risks
-            6. If the changes are impacting multiple APIs/Consumers, then say so.
-
-
-            Ensure that your output ALWAYS follows the structure outlined in the following pydantic model:
-            {self.BlastRadiusAgentResponse.model_json_schema()}""",
+            description=task_prompt,
             expected_output=f"Comprehensive impact analysis of the code changes on the codebase and answers to the users query about them. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model : {self.BlastRadiusAgentResponse.model_json_schema()}",
             agent=blast_radius_agent,
             tools=[
