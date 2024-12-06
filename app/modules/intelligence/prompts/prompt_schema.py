@@ -15,6 +15,9 @@ class PromptType(str, Enum):
     SYSTEM = "SYSTEM"
     HUMAN = "HUMAN"
 
+class PromptLLM(str, Enum):
+    OPENAI = "OPENAI"
+    ANTHROPIC = "ANTHROPIC"
 
 # Request Schema for Creating a Prompt
 class PromptCreate(BaseModel):
@@ -23,8 +26,6 @@ class PromptCreate(BaseModel):
     status: Optional[PromptStatusType] = Field(
         PromptStatusType.ACTIVE, description="Status of the prompt (active or inactive)"
     )
-    # Remove the version field from here
-
 
 # Request Schema for Updating a Prompt
 class PromptUpdate(BaseModel):
@@ -39,7 +40,6 @@ class PromptUpdate(BaseModel):
     status: Optional[PromptStatusType] = Field(
         None, description="Status of the prompt (active or inactive)"
     )
-    # Remove the version field from here
 
 
 # Response Schema for a Single Prompt
