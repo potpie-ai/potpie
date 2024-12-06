@@ -75,10 +75,9 @@ class OpenAIAgentPrompts:
         },
     }
 
-    TASK_PROMPTS: Dict[str, Dict[str, str]] = (
-        {
-            "analyze_changes_task": {
-                "description": """Fetch the changes in the current branch for project {project_id} using the get code changes tool.
+    TASK_PROMPTS: Dict[str, Dict[str, str]] = {
+        "analyze_changes_task": {
+            "description": """Fetch the changes in the current branch for project {project_id} using the get code changes tool.
             The response of the fetch changes tool is in the following format:
             {ChangeDetectionResponse.model_json_schema()}
             In the response, the patches contain the file patches for the changes.
@@ -121,9 +120,9 @@ class OpenAIAgentPrompts:
 
             Ensure that your output ALWAYS follows the structure outlined in the following pydantic model:
             {BlastRadiusAgentResponse.model_json_schema()}""",
-            },
-            "code_generation_task": {
-                "description": """
+        },
+        "code_generation_task": {
+            "description": """
             Work within {max_iter} iterations to generate copy-paste ready code based on:
             - Query: {query}
             - Project ID: {project_id}
@@ -275,9 +274,9 @@ class OpenAIAgentPrompts:
             - Execute database migrations
             - Manage API versioning
             """,
-            },
-            "combined_task": {
-                "description": """
+        },
+        "combined_task": {
+            "description": """
             Adhere to {max_iter} iterations max. Analyze input:
 
             - Chat History: {chat_history}
@@ -370,9 +369,9 @@ class OpenAIAgentPrompts:
             Ask clarifying questions if needed. Offer follow-up suggestions to guide the conversation.
             Provide a comprehensive response with deep context, relevant file paths, include relevant code snippets wherever possible. Format it in markdown format.
             """,
-            },
-            "integration_test_task": {
-                "description": """Your mission is to create comprehensive test plans and corresponding integration tests based on the user's query and provided code.
+        },
+        "integration_test_task": {
+            "description": """Your mission is to create comprehensive test plans and corresponding integration tests based on the user's query and provided code.
 
             **Process:**
 
@@ -447,9 +446,9 @@ class OpenAIAgentPrompts:
             - Do not include any explanation or additional text outside of this JSON object.
             - Ensure all test plans and code are included within the "response" string.
             """,
-            },
-            "analyze_codebase_task": {
-                "description": """
+        },
+        "analyze_codebase_task": {
+            "description": """
             Analyze the existing codebase for repo id {project_id} to understand its structure and patterns.
             Focus on the following:
             1. Identify the main components and their relationships.
@@ -461,9 +460,9 @@ class OpenAIAgentPrompts:
             You can use the probable node name tool to get the code for a node by providing a partial file or function name.
             Provide a comprehensive analysis that will aid in creating a low-level design plan.
             """,
-            },
-            "create_design_plan_task": {
-                "description": """
+        },
+        "create_design_plan_task": {
+            "description": """
 
             Based on the codebase analysis of repo id {project_id} and the following functional requirements: {functional_requirements}
             Create a detailed low-level design plan for implementing the new feature. Your plan should include:
@@ -479,9 +478,9 @@ class OpenAIAgentPrompts:
             You can use the probable node name tool to get the code for a node by providing a partial file or function name.
             Ensure your output follows the structure defined in the LowLevelDesignPlan Pydantic model.
             """,
-            },
-            "combined_task_rag_agent": {
-                "description": """
+        },
+        "combined_task_rag_agent": {
+            "description": """
             Adhere to {max_iter} iterations max. Analyze input:
 
             - Chat History: {chat_history}
@@ -575,9 +574,9 @@ class OpenAIAgentPrompts:
             Ask clarifying questions if needed. Offer follow-up suggestions to guide the conversation.
             Provide a comprehensive response with deep context, relevant file paths, include relevant code snippets wherever possible. Format it in markdown format.
             """,
-            },
-            "unit_test_task": {
-                "description": """Your mission is to create comprehensive test plans and corresponding unit tests based on the user's query and provided code.
+        },
+        "unit_test_task": {
+            "description": """Your mission is to create comprehensive test plans and corresponding unit tests based on the user's query and provided code.
             Given the following context:
             - Chat History: {history}
 
@@ -630,9 +629,8 @@ class OpenAIAgentPrompts:
             Don't wrap it in ```json or ```python or ```code or ```
             For citations, include only the file_path of the nodes fetched and used.
             """,
-            }
-        }
-    )
+        },
+    }
 
     @classmethod
     def get_openai_agent_prompt(cls, agent_id: str) -> Dict[str, str]:

@@ -26,7 +26,7 @@ from app.modules.intelligence.prompts_provider.agent_types import (
     AgentLLMType,
     SystemAgentType,
 )
-from app.modules.intelligence.prompts_provider.classification_prompts import (
+from app.modules.intelligence.prompts_provider.classification_prompts_provider import (
     ClassificationPromptsProvider,
     ClassificationResponse,
     ClassificationResult,

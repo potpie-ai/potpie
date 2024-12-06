@@ -20,6 +20,10 @@ from app.modules.intelligence.prompts.prompt_schema import (
     PromptType,
     PromptUpdate,
 )
+from app.modules.intelligence.prompts_provider.agent_types import AgentLLMType
+from app.modules.intelligence.prompts_provider.anthropic_system_prompts_provider import (
+    AnthropicSystemPromptsProvider,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -338,3 +342,13 @@ class PromptService:
             raise PromptServiceError(
                 "Failed to get prompts by agent ID and types"
             ) from e
+
+    async def get_prompts_by_agent_id_and_types_and_llm(
+        self, agent_id: str, prompt_types: List[PromptType], llm: AgentLLMType
+    ) -> List[PromptResponse]:
+        if llm == AgentLLMType.LANGCHAIN:
+            return await self.get_prompts_by_agent_id_and_types(agent_id, prompt_types)
+        else:
+            return await AnthropicSystemPromptsProvider.get_anthropic_system_prompts(
+                agent_id, prompt_types
+            )

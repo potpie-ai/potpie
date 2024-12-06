@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from app.modules.intelligence.llm_provider.llm_provider_service import (
     LLMProviderService,
 )
-from app.modules.intelligence.prompts_provider.agent_prompts import AgentPromptsProvider
+from app.modules.intelligence.prompts_provider.agent_prompts_provider import AgentPromptsProvider
 from app.modules.intelligence.prompts_provider.agent_types import AgentLLMType
 from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
     get_code_file_structure_tool,

@@ -13,3 +13,8 @@ class SystemAgentType(Enum):
 class AgentLLMType(Enum):
     CREWAI = "CREWAI"
     LANGCHAIN = "LANGCHAIN"
+
+
+class AgentRuntimeLLMType(Enum):
+    ANTHROPIC = "ANTHROPIC"
+    OPENAI = "OPENAI"

@@ -4,16 +4,20 @@ from typing import Optional, Dict, Any
 
 from app.modules.intelligence.agents.agents.prompts.anthropic_agent_prompts import AnthropicAgentPrompts
 from app.modules.intelligence.agents.agents.prompts.openai_agent_prompts import OpenAIAgentPrompts
-from app.modules.intelligence.llm_provider.llm_provider_service import AgentLLMType
+from app.modules.intelligence.llm_provider.llm_provider_service import LLMProviderService
+from app.modules.intelligence.prompts_provider.agent_types import AgentRuntimeLLMType
+from sqlalchemy.orm import Session
 
 
 class AgentPromptsProvider:
     @classmethod
-    def get_agent_prompt(cls, agent_id: str, agent_type: AgentLLMType, **kwargs: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    def get_agent_prompt(cls, agent_id: str,user_id, db: Session, **kwargs: Dict[str, Any]) -> Optional[Dict[str, str]]:
         """Get agent prompt based on agent ID and LLM type."""
-        if agent_type == AgentLLMType.CREWAI:
+        llm_provider_service = LLMProviderService.create(db, user_id)
+        preferred_llm, model_type = llm_provider_service.get_preferred_llm(user_id)
+        if preferred_llm == AgentRuntimeLLMType.ANTHROPIC.value.lower():
             prompt = AnthropicAgentPrompts.get_anthropic_agent_prompt(agent_id)
-        elif agent_type == AgentLLMType.LANGCHAIN:
+        elif preferred_llm == AgentRuntimeLLMType.OPENAI.value.lower():
             prompt = OpenAIAgentPrompts.get_openai_agent_prompt(agent_id)
         else:
             return None
@@ -26,11 +30,13 @@ class AgentPromptsProvider:
         return prompt
 
     @classmethod
-    def get_task_prompt(cls, task_id: str, agent_type: AgentLLMType, **kwargs: Dict[str, Any]) -> Optional[str]:
+    def get_task_prompt(cls, task_id: str,user_id, db: Session, **kwargs: Dict[str, Any]) -> Optional[str]:
         """Get task prompt based on task ID and LLM type."""
-        if agent_type == AgentLLMType.CREWAI:
+        llm_provider_service = LLMProviderService.create(db, user_id)
+        preferred_llm, model_type = llm_provider_service.get_preferred_llm(user_id)
+        if preferred_llm == AgentRuntimeLLMType.ANTHROPIC.value.lower():
             description = AnthropicAgentPrompts.get_anthropic_task_prompt(task_id)
-        elif agent_type == AgentLLMType.LANGCHAIN:
+        elif  preferred_llm ==  AgentRuntimeLLMType.OPENAI.value.lower():
             description = OpenAIAgentPrompts.get_openai_task_prompt(task_id)
         else:
             return None
