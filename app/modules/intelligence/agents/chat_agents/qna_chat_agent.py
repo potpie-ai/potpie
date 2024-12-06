@@ -23,7 +23,6 @@ from app.modules.intelligence.memory.chat_history_service import ChatHistoryServ
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.prompts_provider.agent_types import (
-    AgentLLMType,
     SystemAgentType,
 )
 from app.modules.intelligence.prompts_provider.classification_prompts_provider import (
@@ -70,9 +69,11 @@ class QNAChatAgent:
         )
         return prompt_template | self.mini_llm
 
-    async def _classify_query(self, query: str, history: List[HumanMessage]):
+    async def _classify_query(
+        self, query: str, history: List[HumanMessage], user_id: str
+    ):
         prompt = ClassificationPromptsProvider.get_classification_prompt(
-            AgentLLMType.LANGCHAIN, SystemAgentType.QNA
+            SystemAgentType.QNA, user_id, self.db
         )
         inputs = {"query": query, "history": [msg.content for msg in history[-10:]]}
 
@@ -110,7 +111,9 @@ class QNAChatAgent:
             ]
 
             classification_start_time = time.time()  # Start timer for classification
-            classification = await self._classify_query(query, validated_history)
+            classification = await self._classify_query(
+                query, validated_history, user_id
+            )
             classification_duration = (
                 time.time() - classification_start_time
             )  # Calculate duration

@@ -24,7 +24,6 @@ from app.modules.intelligence.memory.chat_history_service import ChatHistoryServ
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.prompts_provider.agent_types import (
-    AgentLLMType,
     SystemAgentType,
 )
 from app.modules.intelligence.prompts_provider.classification_prompts_provider import (
@@ -74,9 +73,11 @@ class UnitTestAgent:
         )
         return prompt_template | self.llm
 
-    async def _classify_query(self, query: str, history: List[HumanMessage]):
+    async def _classify_query(
+        self, query: str, history: List[HumanMessage], user_id: str
+    ):
         prompt = ClassificationPromptsProvider.get_classification_prompt(
-            AgentLLMType.LANGCHAIN, SystemAgentType.UNIT_TEST
+            SystemAgentType.UNIT_TEST, user_id, self.db
         )
         inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
 
@@ -131,7 +132,9 @@ class UnitTestAgent:
                 )
                 for msg in history
             ]
-            classification = await self._classify_query(query, validated_history)
+            classification = await self._classify_query(
+                query, validated_history, user_id
+            )
 
             tool_results = []
             citations = []
