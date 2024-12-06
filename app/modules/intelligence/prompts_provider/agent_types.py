@@ -1,4 +1,3 @@
-
 from enum import Enum
 
 
@@ -9,7 +8,7 @@ class SystemAgentType(Enum):
     INTEGRATION_TEST = "INTEGRATION_TEST_AGENT"
     CODE_CHANGES = "CODE_CHANGES_AGENT"
     LLD = "LLD_AGENT"
-    
+
 
 class AgentLLMType(Enum):
     CREWAI = "CREWAI"

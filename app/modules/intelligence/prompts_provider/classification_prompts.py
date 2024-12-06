@@ -1,9 +1,13 @@
 from enum import Enum
-from typing import Dict
 
 from pydantic import BaseModel
-from app.modules.intelligence.agents.chat_agents.classification_prompts.anthropic_classification_prompts import AnthropicClassificationPrompts
-from app.modules.intelligence.agents.chat_agents.classification_prompts.openai_classification_prompts import OpenAIClassificationPrompts
+
+from app.modules.intelligence.agents.chat_agents.classification_prompts.anthropic_classification_prompts import (
+    AnthropicClassificationPrompts,
+)
+from app.modules.intelligence.agents.chat_agents.classification_prompts.openai_classification_prompts import (
+    OpenAIClassificationPrompts,
+)
 from app.modules.intelligence.llm_provider.llm_provider_service import AgentLLMType
 from app.modules.intelligence.prompts_provider.agent_types import SystemAgentType
 
@@ -18,11 +22,16 @@ class ClassificationResponse(BaseModel):
 
 
 class ClassificationPromptsProvider:
-
     @classmethod
-    def get_classification_prompt(cls, agent_type: AgentLLMType, system_agent_type: SystemAgentType) -> str:
+    def get_classification_prompt(
+        cls, agent_type: AgentLLMType, system_agent_type: SystemAgentType
+    ) -> str:
         if agent_type == AgentLLMType.CREWAI:
-            return AnthropicClassificationPrompts.get_anthropic_classification_prompt(system_agent_type)
+            return AnthropicClassificationPrompts.get_anthropic_classification_prompt(
+                system_agent_type
+            )
         elif agent_type == AgentLLMType.LANGCHAIN:
-            return OpenAIClassificationPrompts.get_openai_classification_prompt(system_agent_type)
+            return OpenAIClassificationPrompts.get_openai_classification_prompt(
+                system_agent_type
+            )
         return ""

@@ -73,7 +73,7 @@ class DebugRAGAgent:
         self.user_id = user_id
 
     async def create_agents(self):
-        query_agent = Agent(
+        debug_rag_query_agent = Agent(
             role="Context curation agent",
             goal=(
                 "Handle querying the knowledge graph and refining the results to provide accurate and contextually rich responses."
@@ -103,7 +103,7 @@ class DebugRAGAgent:
             max_iter=self.max_iter,
         )
 
-        return query_agent
+        return debug_rag_query_agent
 
     async def create_tasks(
         self,

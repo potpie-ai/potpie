@@ -1,8 +1,6 @@
-from enum import Enum
 from typing import Dict
 
 from app.modules.intelligence.prompts_provider.agent_types import SystemAgentType
-
 
 
 class OpenAIClassificationPrompts:

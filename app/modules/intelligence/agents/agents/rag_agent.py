@@ -118,7 +118,7 @@ class RAGAgent:
         if not node_ids:
             node_ids = []
 
-        combined_task = Task(
+        combined_task_rag_agent = Task(
             description=f"""
             Adhere to {self.max_iter} iterations max. Analyze input:
 
@@ -219,7 +219,7 @@ class RAGAgent:
             agent=query_agent,
         )
 
-        return combined_task
+        return combined_task_rag_agent
 
     async def run(
         self,
