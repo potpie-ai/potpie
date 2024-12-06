@@ -35,10 +35,10 @@ from app.modules.intelligence.agents.custom_agents.custom_agents_service import 
     CustomAgentsService,
 )
 from app.modules.intelligence.llm_provider.llm_provider_service import (
-    AgentType,
     LLMProviderService,
 )
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
+from app.modules.intelligence.prompts_provider.agent_types import AgentLLMType
 from app.modules.projects.projects_service import ProjectService
 from app.modules.users.user_service import UserService
 from app.modules.utils.posthog_helper import PostHogClient
@@ -335,7 +335,7 @@ class ConversationService:
     ) -> str:
         agent_type = conversation.agent_ids[0]
 
-        llm = self.llm_provider_service.get_small_llm(agent_type=AgentType.LANGCHAIN)
+        llm = self.llm_provider_service.get_small_llm(agent_type=AgentLLMType.LANGCHAIN)
         prompt = ChatPromptTemplate.from_template(
             "Given an agent type '{agent_type}' and an initial message '{message}', "
             "generate a concise and relevant title for a conversation. "

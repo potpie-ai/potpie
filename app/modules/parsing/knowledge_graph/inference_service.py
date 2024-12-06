@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 from app.modules.intelligence.llm_provider.llm_provider_service import (
-    AgentType,
+    AgentLLMType,
     LLMProviderService,
 )
 from app.modules.parsing.knowledge_graph.inference_schema import (
@@ -34,7 +34,7 @@ class InferenceService:
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
         self.llm = LLMProviderService(db, user_id).get_small_llm(
-            agent_type=AgentType.LANGCHAIN
+            agent_type=AgentLLMType.LANGCHAIN
         )
         self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
         self.search_service = SearchService(db)

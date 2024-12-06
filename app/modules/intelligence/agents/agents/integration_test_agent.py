@@ -7,9 +7,9 @@ from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.llm_provider.llm_provider_service import (
-    AgentType,
     LLMProviderService,
 )
+from app.modules.intelligence.prompts_provider.agent_types import AgentLLMType
 from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id_tool import (
     GetCodeGraphFromNodeIdTool,
 )
@@ -216,7 +216,7 @@ async def kickoff_integration_test_agent(
 
     node_contexts = extract_unique_node_contexts(graph["graph"]["root_node"])
     provider_service = LLMProviderService(sql_db, user_id)
-    crew_ai_llm = provider_service.get_large_llm(agent_type=AgentType.CREWAI)
+    crew_ai_llm = provider_service.get_large_llm(agent_type=AgentLLMType.CREWAI)
     integration_test_agent = IntegrationTestAgent(sql_db, crew_ai_llm, user_id)
     result = await integration_test_agent.run(
         project_id, node_contexts, query, graph, history

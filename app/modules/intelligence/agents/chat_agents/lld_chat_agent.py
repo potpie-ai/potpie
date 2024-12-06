@@ -20,14 +20,17 @@ from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.agents.agents.rag_agent import kickoff_rag_agent
 from app.modules.intelligence.agents.agents_service import AgentsService
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
-from app.modules.intelligence.prompts.classification_prompts import (
-    AgentType,
-    ClassificationPrompts,
+from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
+from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.prompts_provider.agent_types import (
+    AgentLLMType,
+    SystemAgentType,
+)
+from app.modules.intelligence.prompts_provider.classification_prompts import (
+    ClassificationPromptsProvider,
     ClassificationResponse,
     ClassificationResult,
 )
-from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
-from app.modules.intelligence.prompts.prompt_service import PromptService
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +71,9 @@ class LLDChatAgent:
         return prompt_template | self.mini_llm
 
     async def _classify_query(self, query: str, history: List[HumanMessage]):
-        prompt = ClassificationPrompts.get_classification_prompt(AgentType.LLD)
+        prompt = ClassificationPromptsProvider.get_classification_prompt(
+            AgentLLMType.LANGCHAIN, SystemAgentType.LLD
+        )
         inputs = {"query": query, "history": [msg.content for msg in history[-10:]]}
 
         parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
