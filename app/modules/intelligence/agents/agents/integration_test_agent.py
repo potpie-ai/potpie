@@ -9,7 +9,9 @@ from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.llm_provider.llm_provider_service import (
     LLMProviderService,
 )
-from app.modules.intelligence.prompts_provider.agent_prompts_provider import AgentPromptsProvider
+from app.modules.intelligence.prompts_provider.agent_prompts_provider import (
+    AgentPromptsProvider,
+)
 from app.modules.intelligence.prompts_provider.agent_types import AgentLLMType
 from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id_tool import (
     GetCodeGraphFromNodeIdTool,
@@ -39,7 +41,8 @@ class IntegrationTestAgent:
     async def create_agents(self):
         agent_prompt = AgentPromptsProvider.get_agent_prompt(
             agent_id="integration_test_agent",
-            agent_type=AgentLLMType.CREWAI,
+            user_id=self.user_id,
+            db=self.sql_db,
             max_iter=self.max_iterations,
         )
         integration_test_agent = Agent(
@@ -75,7 +78,8 @@ class IntegrationTestAgent:
 
         task_prompt = AgentPromptsProvider.get_task_prompt(
             task_id="integration_test_task",
-            agent_type=AgentLLMType.CREWAI,
+            user_id=self.user_id,
+            db=self.sql_db,
             graph=graph,
             node_ids_list=node_ids_list,
             project_id=project_id,

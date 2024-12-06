@@ -8,7 +8,9 @@ from pydantic import BaseModel, Field
 from app.modules.intelligence.llm_provider.llm_provider_service import (
     LLMProviderService,
 )
-from app.modules.intelligence.prompts_provider.agent_prompts_provider import AgentPromptsProvider
+from app.modules.intelligence.prompts_provider.agent_prompts_provider import (
+    AgentPromptsProvider,
+)
 from app.modules.intelligence.prompts_provider.agent_types import AgentLLMType
 from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
     get_code_file_structure_tool,
@@ -79,7 +81,8 @@ class LowLevelDesignAgent:
     async def create_agents(self):
         codebase_analyst_prompt = AgentPromptsProvider.get_agent_prompt(
             agent_id="codebase_analyst",
-            agent_type=AgentLLMType.CREWAI,
+            user_id=self.user_id,
+            db=self.sql_db,
             max_iter=self.max_iter,
         )
         codebase_analyst = Agent(
@@ -100,7 +103,8 @@ class LowLevelDesignAgent:
 
         design_planner_prompt = AgentPromptsProvider.get_agent_prompt(
             agent_id="design_planner",
-            agent_type=AgentLLMType.CREWAI,
+            user_id=self.user_id,
+            db=self.sql_db,
             max_iter=self.max_iter,
         )
         design_planner = Agent(
@@ -131,7 +135,8 @@ class LowLevelDesignAgent:
     ):
         analyze_task_prompt = AgentPromptsProvider.get_task_prompt(
             task_id="analyze_codebase_task",
-            agent_type=AgentLLMType.CREWAI,
+            user_id=self.user_id,
+            db=self.sql_db,
             project_id=project_id,
             functional_requirements=functional_requirements,
             max_iter=self.max_iter,
@@ -144,7 +149,8 @@ class LowLevelDesignAgent:
 
         design_task_prompt = AgentPromptsProvider.get_task_prompt(
             task_id="create_design_plan_task",
-            agent_type=AgentLLMType.CREWAI,
+            user_id=self.user_id,
+            db=self.sql_db,
             project_id=project_id,
             functional_requirements=functional_requirements,
             max_iter=self.max_iter,

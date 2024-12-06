@@ -10,7 +10,9 @@ from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.llm_provider.llm_provider_service import (
     LLMProviderService,
 )
-from app.modules.intelligence.prompts_provider.agent_prompts_provider import AgentPromptsProvider
+from app.modules.intelligence.prompts_provider.agent_prompts_provider import (
+    AgentPromptsProvider,
+)
 from app.modules.intelligence.prompts_provider.agent_types import AgentLLMType
 from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
     get_code_file_structure_tool,
@@ -76,7 +78,8 @@ class DebugRAGAgent:
     async def create_agents(self):
         agent_prompt = AgentPromptsProvider.get_agent_prompt(
             agent_id="debug_rag_query_agent",
-            agent_type=AgentLLMType.CREWAI,
+            user_id=self.user_id,
+            db=self.sql_db,
             max_iter=self.max_iter,
         )
         debug_rag_query_agent = Agent(
@@ -114,7 +117,8 @@ class DebugRAGAgent:
         node_ids_list = [node.model_dump() for node in node_ids]
         task_prompt = AgentPromptsProvider.get_task_prompt(
             task_id="combined_task",
-            agent_type=AgentLLMType.CREWAI,
+            user_id=self.user_id,
+            db=self.sql_db,
             max_iter=self.max_iter,
             chat_history=chat_history,
             query=query,

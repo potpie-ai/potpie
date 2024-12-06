@@ -8,7 +8,9 @@ from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.llm_provider.llm_provider_service import (
     LLMProviderService,
 )
-from app.modules.intelligence.prompts_provider.agent_prompts_provider import AgentPromptsProvider
+from app.modules.intelligence.prompts_provider.agent_prompts_provider import (
+    AgentPromptsProvider,
+)
 from app.modules.intelligence.prompts_provider.agent_types import AgentLLMType
 from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
     get_code_file_structure_tool,
@@ -54,7 +56,7 @@ class CodeGenerationAgent:
 
     async def create_agents(self):
         agent_prompt = AgentPromptsProvider.get_agent_prompt(
-            agent_id="code_generator", agent_type=AgentLLMType.CREWAI
+            agent_id="code_generator", user_id=self.user_id, db=self.sql_db
         )
         code_generator = Agent(
             role=agent_prompt["role"],
@@ -88,7 +90,8 @@ class CodeGenerationAgent:
         node_ids_list = [node.model_dump() for node in node_ids]
         task_prompt = AgentPromptsProvider.get_task_prompt(
             task_id="code_generation_task",
-            agent_type=AgentLLMType.CREWAI,
+            user_id=self.user_id,
+            db=self.sql_db,
             query=query,
             project_id=project_id,
             history=history,

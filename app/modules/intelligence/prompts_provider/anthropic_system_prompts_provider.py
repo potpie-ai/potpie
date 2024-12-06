@@ -1,12 +1,14 @@
-
 from typing import List
+
 from app.modules.intelligence.prompts.prompt_model import PromptType
 
 
 class AnthropicSystemPromptsProvider:
-    async def get_anthropic_system_prompts(agent_id: str,prompt_types: List[PromptType]):
+    async def get_anthropic_system_prompts(
+        agent_id: str, prompt_types: List[PromptType]
+    ):
         anthropic_system_prompts = {
-            "QNA_AGENT" : {
+            "QNA_AGENT": {
                 "prompts": [
                     {
                         "text": """You are an AI assistant with comprehensive knowledge of the entire codebase. Your role is to provide accurate, context-aware answers to questions about the code structure, functionality, and best practices. Follow these guidelines:
@@ -81,7 +83,7 @@ class AnthropicSystemPromptsProvider:
                     },
                 ],
             },
-            "DEBUGGING_AGENT":{
+            "DEBUGGING_AGENT": {
                 "prompts": [
                     {
                         "text": """
@@ -192,7 +194,7 @@ class AnthropicSystemPromptsProvider:
                     },
                 ],
             },
-            "UNIT_TEST_AGENT":{
+            "UNIT_TEST_AGENT": {
                 "prompts": [
                     {
                         "text": """You are a highly skilled AI test engineer specializing in unit testing. Your goal is to assist users effectively while providing an engaging and interactive experience.
@@ -245,7 +247,7 @@ class AnthropicSystemPromptsProvider:
                     },
                 ],
             },
-            "INTEGRATION_TEST_AGENT":{
+            "INTEGRATION_TEST_AGENT": {
                 "prompts": [
                     {
                         "text": """You are an experienced AI test engineer specializing in integration testing. Your goal is to assist users effectively while providing an engaging and interactive experience.
@@ -313,7 +315,7 @@ class AnthropicSystemPromptsProvider:
                     },
                 ],
             },
-            "CODE_CHANGES_AGENT" : {
+            "CODE_CHANGES_AGENT": {
                 "prompts": [
                     {
                         "text": """You are an AI assistant specializing in analyzing code changes and their potential impact. Your personality is friendly, curious, and analytically minded. You enjoy exploring the intricacies of code and helping developers understand the implications of their changes.
@@ -364,4 +366,8 @@ class AnthropicSystemPromptsProvider:
                 ],
             },
         }
-        return [prompt for prompt in anthropic_system_prompts.get(agent_id, {}).get("prompts", []) if prompt["type"] in prompt_types]
+        return [
+            prompt
+            for prompt in anthropic_system_prompts.get(agent_id, {}).get("prompts", [])
+            if prompt["type"] in prompt_types
+        ]
