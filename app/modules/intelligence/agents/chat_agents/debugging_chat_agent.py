@@ -48,14 +48,18 @@ class DebuggingChatAgent:
         self.db = db
 
     @lru_cache(maxsize=2)
-    async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
-        prompts = await self.prompt_service.get_prompts_by_agent_id_and_types(
-            "DEBUGGING_AGENT", [PromptType.SYSTEM, PromptType.HUMAN]
+    async def _get_prompts(self,user_id:str) -> Dict[PromptType, PromptResponse]:
+        llm_provider_service = LLMProviderService.create(self.db, user_id)
+        preferred_llm, _ = await llm_provider_service.get_preferred_llm(
+            user_id
+        )
+        prompts = await self.prompt_service.get_prompts_by_agent_id_and_types_llm_based(
+            "DEBUGGING_AGENT", [PromptType.SYSTEM, PromptType.HUMAN], preferred_llm
         )
         return {prompt.type: prompt for prompt in prompts}
 
-    async def _create_chain(self) -> RunnableSequence:
-        prompts = await self._get_prompts()
+    async def _create_chain(self,user_id:str) -> RunnableSequence:
+        prompts = await self._get_prompts(user_id)
         system_prompt = prompts.get(PromptType.SYSTEM)
         human_prompt = prompts.get(PromptType.HUMAN)
 
@@ -106,7 +110,7 @@ class DebuggingChatAgent:
 
         try:
             if not self.chain:
-                self.chain = await self._create_chain()
+                self.chain = await self._create_chain(user_id)
 
             history = self.history_manager.get_session_history(user_id, conversation_id)
             validated_history = [
