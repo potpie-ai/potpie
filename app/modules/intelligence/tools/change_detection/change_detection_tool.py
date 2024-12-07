@@ -22,6 +22,7 @@ from app.modules.parsing.knowledge_graph.inference_service import InferenceServi
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
 
+
 class ChangeDetectionInput(BaseModel):
     project_id: str = Field(
         ..., description="The ID of the project being evaluated, this is a UUID."

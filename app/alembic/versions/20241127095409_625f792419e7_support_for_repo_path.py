@@ -8,7 +8,6 @@ Create Date: 2024-11-27 09:54:09.683918
 
 from typing import Sequence, Union
 
-import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -19,7 +18,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.execute('ALTER TABLE projects ADD COLUMN repo_path TEXT DEFAULT NULL')
+    op.execute("ALTER TABLE projects ADD COLUMN repo_path TEXT DEFAULT NULL")
+
 
 def downgrade() -> None:
     op.drop_column("projects", "repo_path")
