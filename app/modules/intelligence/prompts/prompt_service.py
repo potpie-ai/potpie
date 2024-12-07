@@ -6,7 +6,6 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.modules.intelligence.llm_provider.llm_provider_service import LLMProviderService
 from app.modules.intelligence.prompts.prompt_model import (
     AgentPromptMapping,
     Prompt,
@@ -21,7 +20,9 @@ from app.modules.intelligence.prompts.prompt_schema import (
     PromptType,
     PromptUpdate,
 )
-from app.modules.intelligence.prompts_provider.agent_types import AgentLLMType, AgentRuntimeLLMType
+from app.modules.intelligence.prompts_provider.agent_types import (
+    AgentRuntimeLLMType,
+)
 from app.modules.intelligence.prompts_provider.anthropic_system_prompts_provider import (
     AnthropicSystemPromptsProvider,
 )
@@ -345,11 +346,11 @@ class PromptService:
             ) from e
 
     async def get_prompts_by_agent_id_and_types_llm_based(
-        self, agent_id: str, prompt_types: List[PromptType], preferred_llm : str
+        self, agent_id: str, prompt_types: List[PromptType], preferred_llm: str
     ) -> List[PromptResponse]:
-        if preferred_llm == AgentRuntimeLLMType.ANTHROPIC.value.lower():
-             return await self.get_prompts_by_agent_id_and_types(agent_id, prompt_types)
-        elif preferred_llm == AgentRuntimeLLMType.OPENAI.value.lower():
+        if preferred_llm == AgentRuntimeLLMType.OPENAI.value.lower():
+            return await self.get_prompts_by_agent_id_and_types(agent_id, prompt_types)
+        elif preferred_llm == AgentRuntimeLLMType.ANTHROPIC.value.lower():
             return await AnthropicSystemPromptsProvider.get_anthropic_system_prompts(
                 agent_id, prompt_types
             )

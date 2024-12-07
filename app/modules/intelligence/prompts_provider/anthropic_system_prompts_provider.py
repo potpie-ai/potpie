@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from typing import List
 
 from app.modules.intelligence.prompts.prompt_model import PromptType
@@ -366,8 +367,7 @@ class AnthropicSystemPromptsProvider:
                 ],
             },
         }
-        return [
-            prompt
-            for prompt in anthropic_system_prompts.get(agent_id, {}).get("prompts", [])
-            if prompt["type"] in prompt_types
-        ]
+        prompts = anthropic_system_prompts.get(agent_id, {}).get("prompts", [])
+        if not prompts:
+            raise ValueError("Required prompts not found for QNA_AGENT")
+        return [SimpleNamespace(**prompt) for prompt in prompts]

@@ -74,19 +74,19 @@ class IntegrationTestAgent:
         history: List[str],
         integration_test_agent,
     ):
-        node_ids_list = [node.node_id for node in node_ids]
+        node_ids = [node.node_id for node in node_ids]
 
         task_prompt = await AgentPromptsProvider.get_task_prompt(
             task_id="integration_test_task",
             user_id=self.user_id,
             db=self.sql_db,
             graph=graph,
-            node_ids_list=node_ids_list,
+            node_ids=node_ids,
             project_id=project_id,
             query=query,
             history=history,
             max_iterations=self.max_iterations,
-            TestAgentResponse=self.TestAgentResponse,
+            TestAgentResponse=self.TestAgentResponse.model_json_schema(),
         )
 
         integration_test_task = Task(

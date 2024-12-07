@@ -382,7 +382,7 @@ class OpenAIAgentPrompts:
                 - Identify all major components, their dependencies, and interaction points.
             - **Code Retrieval:**
                 - Fetch the docstrings and code for the provided node IDs using the `Get Code and docstring From Multiple Node IDs` tool.
-                - Node IDs: {', '.join(node_ids_list)}
+                - Node IDs: {node_ids}
                 - Project ID: {project_id}
                 - Fetch the code for all relevant nodes in the graph to understand the full context of the codebase.
 
@@ -440,7 +440,7 @@ class OpenAIAgentPrompts:
             - **Iteration Limit:** Respect the max iterations limit of {max_iterations} when planning and executing tools.
 
             **Output Requirements:**
-            - Ensure that your final response MUST be a valid JSON object which follows the structure outlined in the Pydantic model: {TestAgentResponse.model_json_schema()}
+            - Ensure that your final response MUST be a valid JSON object which follows the structure outlined in the Pydantic model: {TestAgentResponse}
             - Do not wrap the response in ```json, ```python, ```code, or ``` symbols.
             - For citations, include only the `file_path` of the nodes fetched and used.
             - Do not include any explanation or additional text outside of this JSON object.

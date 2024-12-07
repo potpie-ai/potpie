@@ -1,3 +1,4 @@
+import enum
 import json
 import logging
 from functools import lru_cache
@@ -47,20 +48,23 @@ class CodeChangesChatAgent:
         self.db = db
 
     @lru_cache(maxsize=2)
-    async def _get_prompts(self,user_id:str) -> Dict[PromptType, PromptResponse]:
+    async def _get_prompts(self, user_id: str) -> Dict[PromptType, PromptResponse]:
         llm_provider_service = LLMProviderService.create(self.db, user_id)
-        preferred_llm, _ = await llm_provider_service.get_preferred_llm(
-            user_id
-        )
+        preferred_llm, _ = await llm_provider_service.get_preferred_llm(user_id)
         prompts = await self.prompt_service.get_prompts_by_agent_id_and_types_llm_based(
             "CODE_CHANGES_AGENT", [PromptType.SYSTEM, PromptType.HUMAN], preferred_llm
         )
-        return {prompt.type: prompt for prompt in prompts}
+        return {
+            (
+                prompt.type.value if isinstance(prompt.type, enum.Enum) else prompt.type
+            ): prompt
+            for prompt in prompts
+        }
 
-    async def _create_chain(self,user_id:str) -> RunnableSequence:
+    async def _create_chain(self, user_id: str) -> RunnableSequence:
         prompts = await self._get_prompts(user_id)
-        system_prompt = prompts.get(PromptType.SYSTEM)
-        human_prompt = prompts.get(PromptType.HUMAN)
+        system_prompt = prompts.get(PromptType.SYSTEM.value)
+        human_prompt = prompts.get(PromptType.HUMAN.value)
 
         if not system_prompt or not human_prompt:
             raise ValueError("Required prompts not found for CODE_CHANGES_AGENT")
