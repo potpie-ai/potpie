@@ -60,13 +60,12 @@ class ParsingController:
                 response = {"project_id": project_id, "status": project_status}
 
                 # Check commit status
-                # is_latest = (
-                #     await parse_helper.check_commit_status(project_id)
-                #     if not demo_project
-                #     else True
-                # )
+                is_latest = (
+                    await parse_helper.check_commit_status(project_id)
+                    if not demo_project
+                    else True
+                )
 
-                is_latest = False
                 if not is_latest or project_status != ProjectStatusEnum.READY.value:
                     cleanup_graph = True
 

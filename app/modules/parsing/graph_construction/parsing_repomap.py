@@ -598,7 +598,6 @@ class RepoMap:
         references = defaultdict(set)
         seen_relationships = set()
         
-        logging.info("Starting graph creation with detailed debugging...")
         
         for root, dirs, files in os.walk(repo_dir):
             if any(part.startswith(".") for part in root.split(os.sep)):
@@ -632,23 +631,19 @@ class RepoMap:
 
                 # Process all tags in file
                 for tag in self.get_tags(file_path, rel_path):
-                    logging.debug(f"Processing tag: {tag.kind} {tag.name} (type: {tag.type})")
                     
                     if tag.kind == "def":
                         if tag.type == "class":
                             node_type = "CLASS"
                             current_class = tag.name
                             current_method = None
-                            logging.debug(f"Entered class context: {current_class}")
                         elif tag.type == "interface":
                             node_type = "INTERFACE" 
                             current_class = tag.name
                             current_method = None
-                            logging.debug(f"Entered interface context: {current_class}")
                         elif tag.type in ["method", "function"]:
                             node_type = "FUNCTION"
                             current_method = tag.name
-                            logging.debug(f"Entered method context: {current_method} in class {current_class}")
                         else:
                             continue
 
@@ -658,7 +653,6 @@ class RepoMap:
                         else:
                             node_name = f"{rel_path}:{tag.name}"
                         
-                        logging.info(f"Creating {node_type} node: {node_name}")
 
                         # Add node
                         if not G.has_node(node_name):
@@ -682,11 +676,9 @@ class RepoMap:
                                     ident=tag.name
                                 )
                                 seen_relationships.add(rel_key)
-                                logging.info(f"Added CONTAINS relationship: {file_node_name} -> {node_name}")
 
                         # Record definition
                         defines[tag.name].add(node_name)
-                        logging.debug(f"Recorded definition of {tag.name} as {node_name}")
 
                     elif tag.kind == "ref":
                         # Handle references
@@ -697,7 +689,6 @@ class RepoMap:
                         else:
                             source = rel_path
 
-                        logging.debug(f"Found reference to {tag.name} from {source}")
                         references[tag.name].add((
                             source, 
                             tag.line,
@@ -706,23 +697,11 @@ class RepoMap:
                             current_method
                         ))
 
-        logging.info("\nDefinitions collected:")
-        for ident, nodes in defines.items():
-            logging.info(f"{ident}: {nodes}")
 
-        logging.info("\nReferences collected:")
-        for ident, refs in references.items():
-            logging.info(f"{ident}: {refs}")
-
-        logging.info("\nCreating REFERENCES relationships:")
-        # Second pass - create REFERENCES relationships
         for ident, refs in references.items():
             target_nodes = defines.get(ident, set())
-            logging.info(f"\nProcessing references to {ident}")
-            logging.info(f"Target nodes: {target_nodes}")
-            
+
             for source, line, end_line, src_class, src_method in refs:
-                logging.info(f"Processing reference from {source}")
                 
                 for target in target_nodes:
                     if source == target:
@@ -736,10 +715,6 @@ class RepoMap:
                                         "ref_line": line,
                                         "end_ref_line": end_line})
     
-        logging.info("\nFinal graph statistics:")
-        logging.info(f"Nodes: {G.number_of_nodes()}")
-        logging.info(f"Edges: {G.number_of_edges()}")
-        logging.info(f"Unique relationships tracked: {len(seen_relationships)}")
         
         return G
 
