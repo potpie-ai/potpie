@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import datetime
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
@@ -7,7 +7,7 @@ from app.modules.conversations.conversation.conversation_model import Conversati
 
 class UsageService:
     @staticmethod
-    async def get_usage_data(start_date: date, end_date: date, user_id: str):
+    async def get_usage_data(start_date: datetime, end_date: datetime, user_id: str):
         with SessionLocal() as session:
             # Query to get human messages count per agent
             results = (
