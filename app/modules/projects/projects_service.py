@@ -147,6 +147,7 @@ class ProjectService:
                 Project.status == ProjectStatusEnum.READY.value,
                 Project.repo_path == repo_path,
             )
+            .order_by(Project.created_at.asc())
             .first()
         )
         if project:

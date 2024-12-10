@@ -67,37 +67,82 @@ class ParsingController:
             "calcom/cal.com",
             "SigNoz/signoz",
             "langchain-ai/langchain",
+            "AgentOps-AI/AgentStack",
+            "formbricks/formbricks",
         ]
 
         try:
             project = await project_manager.get_project_from_db(
                 repo_name, repo_details.branch_name, user_id
             )
-            duplicate_project = True
-            demo_project = False
-            if project and project.repo_name in demo_repos:
-                if project.status == ProjectStatusEnum.READY.value:
-                    duplicate_project = False
-                    demo_project = True
-
-            if project:
-                project_id = project.id
-                project_status = project.status
-                response = {"project_id": project_id, "status": project_status}
-
-                # Check commit status
-                is_latest = (
-                    await parse_helper.check_commit_status(project_id)
-                    if not demo_project
-                    else True
+            
+            # First check if this is a demo project that hasn't been accessed by this user yet
+            if not project and repo_details.repo_name in demo_repos:
+                existing_project = await project_manager.get_global_project_from_db(
+                    repo_name, repo_details.branch_name
                 )
 
-                if not is_latest or project_status != ProjectStatusEnum.READY.value:
-                    cleanup_graph = True
+                new_project_id = str(uuid7())
 
-                    logger.info(
-                        f"Submitting parsing task for existing project {project_id}"
+                if existing_project:
+                    await project_manager.duplicate_project(
+                        repo_name,
+                        repo_details.branch_name,
+                        user_id,
+                        new_project_id,
+                        existing_project.properties,
+                        existing_project.commit_id,
                     )
+                    await project_manager.update_project_status(
+                        new_project_id, ProjectStatusEnum.SUBMITTED
+                    )
+
+                    old_project_id = await project_manager.get_demo_project_id(
+                        repo_name
+                    )
+
+                    asyncio.create_task(
+                        CodeProviderService(db).get_project_structure_async(
+                            new_project_id
+                        )
+                    )
+                    # Duplicate the graph under the new repo ID
+                    await parsing_service.duplicate_graph(
+                        old_project_id, new_project_id
+                    )
+
+                    # Update the project status to READY after copying
+                    await project_manager.update_project_status(
+                        new_project_id, ProjectStatusEnum.READY
+                    )
+                    create_task(
+                        EmailHelper().send_email(
+                            user_email, repo_name, repo_details.branch_name
+                        )
+                    )
+
+                    return {
+                        "project_id": new_project_id,
+                        "status": ProjectStatusEnum.READY.value,
+                    }
+                else:
+                    return await ParsingController.handle_new_project(
+                        repo_details,
+                        user_id,
+                        user_email,
+                        new_project_id,
+                        project_manager,
+                        db,
+                    )
+            
+            # Handle existing projects (including previously duplicated demo projects)
+            if project:
+                project_id = project.id
+                is_latest = await parse_helper.check_commit_status(project_id)
+                
+                if not is_latest or project.status != ProjectStatusEnum.READY.value:
+                    cleanup_graph = True
+                    logger.info(f"Submitting parsing task for existing project {project_id}")
                     process_parsing.delay(
                         repo_details.model_dump(),
                         user_id,
@@ -105,8 +150,8 @@ class ParsingController:
                         project_id,
                         cleanup_graph,
                     )
-
-                    response["status"] = ProjectStatusEnum.SUBMITTED.value
+                    
+                    await project_manager.update_project_status(project_id, ProjectStatusEnum.SUBMITTED)
                     PostHogClient().send_event(
                         user_id,
                         "parsed_repo_event",
@@ -116,77 +161,20 @@ class ParsingController:
                             "project_id": project_id,
                         },
                     )
-                return response
+                    return {"project_id": project_id, "status": ProjectStatusEnum.SUBMITTED.value}
+                
+                return {"project_id": project_id, "status": project.status}
             else:
-                if repo_details.repo_name in demo_repos:
-                    existing_project = await project_manager.get_global_project_from_db(
-                        repo_name, repo_details.branch_name
-                    )
-
-                    new_project_id = str(uuid7())
-
-                    if existing_project:
-                        if duplicate_project:
-                            await project_manager.duplicate_project(
-                                repo_name,
-                                repo_details.branch_name,
-                                user_id,
-                                new_project_id,
-                                existing_project.properties,
-                                existing_project.commit_id,
-                            )
-                            await project_manager.update_project_status(
-                                new_project_id, ProjectStatusEnum.SUBMITTED
-                            )
-
-                            old_project_id = await project_manager.get_demo_project_id(
-                                repo_name
-                            )
-
-                            asyncio.create_task(
-                                CodeProviderService(db).get_project_structure_async(
-                                    new_project_id
-                                )
-                            )
-                            # Duplicate the graph under the new repo ID
-                            await parsing_service.duplicate_graph(
-                                old_project_id, new_project_id
-                            )
-
-                            # Update the project status to READY after copying
-                            await project_manager.update_project_status(
-                                new_project_id, ProjectStatusEnum.READY
-                            )
-                            create_task(
-                                EmailHelper().send_email(
-                                    user_email, repo_name, repo_details.branch_name
-                                )
-                            )
-
-                        return {
-                            "project_id": new_project_id,
-                            "status": ProjectStatusEnum.READY.value,
-                        }
-                    else:
-                        return await ParsingController.handle_new_project(
-                            repo_details,
-                            user_id,
-                            user_email,
-                            new_project_id,
-                            project_manager,
-                            db,
-                        )
-
-                else:
-                    new_project_id = str(uuid7())
-                    return await ParsingController.handle_new_project(
-                        repo_details,
-                        user_id,
-                        user_email,
-                        new_project_id,
-                        project_manager,
-                        db,
-                    )
+                # Handle new non-demo projects
+                new_project_id = str(uuid7())
+                return await ParsingController.handle_new_project(
+                    repo_details,
+                    user_id,
+                    user_email,
+                    new_project_id,
+                    project_manager,
+                    db,
+                )
 
         except Exception as e:
             logger.error(f"Error in parse_directory: {e}")
