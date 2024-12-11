@@ -4,7 +4,7 @@
 2. **Set Up the Environment**: Create a `.env` file based on the provided `.env.template` in the repository. This file should include all necessary configuration settings for the application.
    Ensure that:
    ```
-   isDevelopmentMode=True
+   isDevelopmentMode=enabled
    ENV=development
    OPENAI_API_KEY=<your-openai-key>
    ```
