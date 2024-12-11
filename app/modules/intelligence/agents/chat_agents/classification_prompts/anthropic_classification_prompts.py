@@ -1,30 +1,11 @@
-from enum import Enum
 from typing import Dict
 
-from pydantic import BaseModel
+from app.modules.intelligence.prompts_provider.agent_types import SystemAgentType
 
 
-class AgentType(Enum):
-    QNA = "QNA_AGENT"
-    DEBUGGING = "DEBUGGING_AGENT"
-    UNIT_TEST = "UNIT_TEST_AGENT"
-    INTEGRATION_TEST = "INTEGRATION_TEST_AGENT"
-    CODE_CHANGES = "CODE_CHANGES_AGENT"
-    LLD = "LLD_AGENT"
-
-
-class ClassificationResult(Enum):
-    LLM_SUFFICIENT = "LLM_SUFFICIENT"
-    AGENT_REQUIRED = "AGENT_REQUIRED"
-
-
-class ClassificationResponse(BaseModel):
-    classification: ClassificationResult
-
-
-class ClassificationPrompts:
-    CLASSIFICATION_PROMPTS: Dict[AgentType, str] = {
-        AgentType.QNA: """You are a query classifier. Your task is to determine if a given query can be answered using general knowledge and chat history (LLM_SUFFICIENT) or if it requires additional context from a specialized agent (AGENT_REQUIRED).
+class AnthropicClassificationPrompts:
+    ANTHROPIC_CLASSIFICATION_PROMPTS: Dict[SystemAgentType, str] = {
+        SystemAgentType.QNA: """You are a query classifier. Your task is to determine if a given query can be answered using general knowledge and chat history (LLM_SUFFICIENT) or if it requires additional context from a specialized agent (AGENT_REQUIRED).
         Given:
         - query: The user's current query
         {query}
@@ -70,7 +51,7 @@ class ClassificationPrompts:
 
         {format_instructions}
         """,
-        AgentType.DEBUGGING: """You are an advanced debugging query classifier with multiple expert personas. Your task is to determine if the given debugging query can be addressed using the LLM's knowledge and chat history, or if it requires additional context from a specialized debugging agent.
+        SystemAgentType.DEBUGGING: """You are an advanced debugging query classifier with multiple expert personas. Your task is to determine if the given debugging query can be addressed using the LLM's knowledge and chat history, or if it requires additional context from a specialized debugging agent.
 
         Personas:
         1. The Error Analyst: Specializes in understanding error messages and stack traces.
@@ -137,7 +118,7 @@ class ClassificationPrompts:
 
         {format_instructions}
         """,
-        AgentType.UNIT_TEST: """You are an advanced unit test query classifier with multiple expert personas. Your task is to determine if the given unit test query can be addressed using the LLM's knowledge and chat history alone, or if it requires additional context or code analysis that necessitates invoking a specialized unit test agent or tools.
+        SystemAgentType.UNIT_TEST: """You are an advanced unit test query classifier with multiple expert personas. Your task is to determine if the given unit test query can be addressed using the LLM's knowledge and chat history alone, or if it requires additional context or code analysis that necessitates invoking a specialized unit test agent or tools.
 
          **Personas:**
          1. **The Test Architect:** Focuses on overall testing strategy and best practices.
@@ -250,7 +231,7 @@ class ClassificationPrompts:
 
          {format_instructions}
          """,
-        AgentType.INTEGRATION_TEST: """You are an expert assistant specializing in classifying integration test queries. Your task is to determine the appropriate action based on the user's query and the conversation history.
+        SystemAgentType.INTEGRATION_TEST: """You are an expert assistant specializing in classifying integration test queries. Your task is to determine the appropriate action based on the user's query and the conversation history.
 
          **Given:**
 
@@ -361,7 +342,7 @@ class ClassificationPrompts:
 
          {format_instructions}
       """,
-        AgentType.CODE_CHANGES: """You are an advanced code changes query classifier with multiple expert personas. Your task is to determine if the given code changes query can be addressed using the LLM's knowledge and chat history, or if it requires additional context from a specialized code changes agent.
+        SystemAgentType.CODE_CHANGES: """You are an advanced code changes query classifier with multiple expert personas. Your task is to determine if the given code changes query can be addressed using the LLM's knowledge and chat history, or if it requires additional context from a specialized code changes agent.
 
         Personas:
         1. The Version Control Expert: Specializes in understanding commit histories and code diffs.
@@ -428,7 +409,7 @@ class ClassificationPrompts:
 
         {format_instructions}
         """,
-        AgentType.LLD: """You are a Low Level Design (LLD) classifier. Your task is to determine if a design query can be answered using general knowledge (LLM_SUFFICIENT) or requires leveraging the knowledge graph and code-fetching capabilities (AGENT_REQUIRED).
+        SystemAgentType.LLD: """You are a Low Level Design (LLD) classifier. Your task is to determine if a design query can be answered using general knowledge (LLM_SUFFICIENT) or requires leveraging the knowledge graph and code-fetching capabilities (AGENT_REQUIRED).
 
         Given:
         - query: The user's current query
@@ -488,5 +469,5 @@ class ClassificationPrompts:
     }
 
     @classmethod
-    def get_classification_prompt(cls, agent_type: AgentType) -> str:
-        return cls.CLASSIFICATION_PROMPTS.get(agent_type, "")
+    def get_anthropic_classification_prompt(cls, agent_type: SystemAgentType) -> str:
+        return cls.ANTHROPIC_CLASSIFICATION_PROMPTS.get(agent_type, "")

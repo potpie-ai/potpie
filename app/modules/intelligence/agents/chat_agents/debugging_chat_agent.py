@@ -1,3 +1,4 @@
+import enum
 import json
 import logging
 import time
@@ -21,15 +22,18 @@ from app.modules.intelligence.agents.agents.debug_rag_agent import (
     kickoff_debug_rag_agent,
 )
 from app.modules.intelligence.agents.agents_service import AgentsService
+from app.modules.intelligence.llm_provider.llm_provider_service import (
+    LLMProviderService,
+)
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
-from app.modules.intelligence.prompts.classification_prompts import (
-    AgentType,
-    ClassificationPrompts,
+from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
+from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.prompts_provider.agent_types import SystemAgentType
+from app.modules.intelligence.prompts_provider.classification_prompts_provider import (
+    ClassificationPromptsProvider,
     ClassificationResponse,
     ClassificationResult,
 )
-from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
-from app.modules.intelligence.prompts.prompt_service import PromptService
 
 logger = logging.getLogger(__name__)
 
@@ -45,16 +49,23 @@ class DebuggingChatAgent:
         self.db = db
 
     @lru_cache(maxsize=2)
-    async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
-        prompts = await self.prompt_service.get_prompts_by_agent_id_and_types(
-            "DEBUGGING_AGENT", [PromptType.SYSTEM, PromptType.HUMAN]
+    async def _get_prompts(self, user_id: str) -> Dict[PromptType, PromptResponse]:
+        llm_provider_service = LLMProviderService.create(self.db, user_id)
+        preferred_llm, _ = await llm_provider_service.get_preferred_llm(user_id)
+        prompts = await self.prompt_service.get_prompts_by_agent_id_and_types_llm_based(
+            "DEBUGGING_AGENT", [PromptType.SYSTEM, PromptType.HUMAN], preferred_llm
         )
-        return {prompt.type: prompt for prompt in prompts}
+        return {
+            (
+                prompt.type.value if isinstance(prompt.type, enum.Enum) else prompt.type
+            ): prompt
+            for prompt in prompts
+        }
 
-    async def _create_chain(self) -> RunnableSequence:
-        prompts = await self._get_prompts()
-        system_prompt = prompts.get(PromptType.SYSTEM)
-        human_prompt = prompts.get(PromptType.HUMAN)
+    async def _create_chain(self, user_id: str) -> RunnableSequence:
+        prompts = await self._get_prompts(user_id)
+        system_prompt = prompts.get(PromptType.SYSTEM.value)
+        human_prompt = prompts.get(PromptType.HUMAN.value)
 
         if not system_prompt or not human_prompt:
             raise ValueError("Required prompts not found for DEBUGGING_AGENT")
@@ -69,8 +80,14 @@ class DebuggingChatAgent:
         )
         return prompt_template | self.mini_llm
 
-    async def _classify_query(self, query: str, history: List[HumanMessage]):
-        prompt = ClassificationPrompts.get_classification_prompt(AgentType.DEBUGGING)
+    async def _classify_query(
+        self, query: str, history: List[HumanMessage], user_id: str
+    ):
+        llm_provider_service = LLMProviderService.create(self.db, user_id)
+        preferred_llm, _ = await llm_provider_service.get_preferred_llm(user_id)
+        prompt = ClassificationPromptsProvider.get_classification_prompt(
+            SystemAgentType.DEBUGGING, preferred_llm
+        )
         inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
 
         parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
@@ -97,7 +114,7 @@ class DebuggingChatAgent:
 
         try:
             if not self.chain:
-                self.chain = await self._create_chain()
+                self.chain = await self._create_chain(user_id)
 
             history = self.history_manager.get_session_history(user_id, conversation_id)
             validated_history = [
@@ -109,7 +126,9 @@ class DebuggingChatAgent:
                 for msg in history
             ]
 
-            classification = await self._classify_query(query, validated_history)
+            classification = await self._classify_query(
+                query, validated_history, user_id
+            )
 
             tool_results = []
             citations = []
