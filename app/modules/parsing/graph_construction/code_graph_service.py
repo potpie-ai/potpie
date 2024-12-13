@@ -44,14 +44,6 @@ class CodeGraphService:
         nx_graph = self.repo_map.create_graph(repo_dir)
 
         with self.driver.session() as session:
-            # First, clear any existing data for this project
-            session.run(
-                """
-                MATCH (n {repoId: $project_id})
-                DETACH DELETE n
-                """,
-                project_id=project_id,
-            )
 
             start_time = time.time()
             node_count = nx_graph.number_of_nodes()
