@@ -1,7 +1,8 @@
 import hashlib
 import logging
+import time
 from typing import Dict, Optional
-import time 
+
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 
@@ -61,7 +62,7 @@ class CodeGraphService:
             for i in range(0, node_count, batch_size):
                 batch_nodes = list(nx_graph.nodes(data=True))[i : i + batch_size]
                 nodes_to_create = []
-                
+
                 for node_id, node_data in batch_nodes:
                     # Get the node type and ensure it's one of our expected types
                     node_type = node_data.get("type", "UNKNOWN")
@@ -69,14 +70,16 @@ class CodeGraphService:
                         continue
                     # Initialize labels with NODE
                     labels = ["NODE"]
-                    
+
                     # Add specific type label if it's a valid type
                     if node_type in ["FILE", "CLASS", "FUNCTION", "INTERFACE"]:
                         labels.append(node_type)
-                    
+
                     # Prepare node data
                     processed_node = {
-                        "name": node_data.get("name", node_id),  # Use node_id as fallback
+                        "name": node_data.get(
+                            "name", node_id
+                        ),  # Use node_id as fallback
                         "file_path": node_data.get("file", ""),
                         "start_line": node_data.get("line", -1),
                         "end_line": node_data.get("end_line", -1),
@@ -87,9 +90,11 @@ class CodeGraphService:
                         "text": node_data.get("text", ""),
                         "labels": labels,
                     }
-                    
+
                     # Remove None values
-                    processed_node = {k: v for k, v in processed_node.items() if v is not None}
+                    processed_node = {
+                        k: v for k, v in processed_node.items() if v is not None
+                    }
                     nodes_to_create.append(processed_node)
 
                 # Create nodes with labels
@@ -132,8 +137,10 @@ class CodeGraphService:
                 )
 
             end_time = time.time()
-            logging.info(f"Time taken to create graph and search index: {end_time - start_time:.2f} seconds")
-            
+            logging.info(
+                f"Time taken to create graph and search index: {end_time - start_time:.2f} seconds"
+            )
+
     def cleanup_graph(self, project_id: str):
         with self.driver.session() as session:
             session.run(

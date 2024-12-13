@@ -75,7 +75,7 @@ class ParsingController:
             project = await project_manager.get_project_from_db(
                 repo_name, repo_details.branch_name, user_id
             )
-            
+
             # First check if this is a demo project that hasn't been accessed by this user yet
             if not project and repo_details.repo_name in demo_repos:
                 existing_project = await project_manager.get_global_project_from_db(
@@ -134,15 +134,17 @@ class ParsingController:
                         project_manager,
                         db,
                     )
-            
+
             # Handle existing projects (including previously duplicated demo projects)
             if project:
                 project_id = project.id
                 is_latest = await parse_helper.check_commit_status(project_id)
-                
+
                 if not is_latest or project.status != ProjectStatusEnum.READY.value:
                     cleanup_graph = True
-                    logger.info(f"Submitting parsing task for existing project {project_id}")
+                    logger.info(
+                        f"Submitting parsing task for existing project {project_id}"
+                    )
                     process_parsing.delay(
                         repo_details.model_dump(),
                         user_id,
@@ -150,8 +152,10 @@ class ParsingController:
                         project_id,
                         cleanup_graph,
                     )
-                    
-                    await project_manager.update_project_status(project_id, ProjectStatusEnum.SUBMITTED)
+
+                    await project_manager.update_project_status(
+                        project_id, ProjectStatusEnum.SUBMITTED
+                    )
                     PostHogClient().send_event(
                         user_id,
                         "parsed_repo_event",
@@ -161,8 +165,11 @@ class ParsingController:
                             "project_id": project_id,
                         },
                     )
-                    return {"project_id": project_id, "status": ProjectStatusEnum.SUBMITTED.value}
-                
+                    return {
+                        "project_id": project_id,
+                        "status": ProjectStatusEnum.SUBMITTED.value,
+                    }
+
                 return {"project_id": project_id, "status": project.status}
             else:
                 # Handle new non-demo projects

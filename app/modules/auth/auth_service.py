@@ -49,7 +49,6 @@ class AuthService:
             HTTPBearer(auto_error=False)
         ),
     ):
-
         # Check if the application is in debug mode
         if os.getenv("isDevelopmentMode") == "enabled" and credential is None:
             request.state.user = {"user_id": os.getenv("defaultUsername")}
