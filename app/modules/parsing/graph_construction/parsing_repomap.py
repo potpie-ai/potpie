@@ -1,7 +1,6 @@
 import logging
 import math
 import os
-import time
 import warnings
 from collections import Counter, defaultdict, namedtuple
 from pathlib import Path
@@ -12,7 +11,6 @@ from pygments.lexers import guess_lexer_for_filename
 from pygments.token import Token
 from pygments.util import ClassNotFound
 from tqdm import tqdm
-from tree_sitter import Parser
 from tree_sitter_languages import get_language, get_parser
 
 from app.core.database import get_db
@@ -26,7 +24,8 @@ Tag = namedtuple("Tag", "rel_fname fname line end_line name kind type".split())
 
 
 class RepoMap:
-    warned_files = set()
+    # Parsing logic adapted from aider (https://github.com/paul-gauthier/aider)
+    # Modified and customized for potpie's parsing needs with detailed tags, relationship tracking etc 
 
     def __init__(
         self,
@@ -160,26 +159,38 @@ class RepoMap:
         # Run the tags queries
         query = language.query(query_scm)
         captures = query.captures(tree.root_node)
-
         captures = list(captures)
-
         saw = set()
+
         for node, tag in captures:
+            node_text = node.text.decode("utf-8")
+
             if tag.startswith("name.definition."):
                 kind = "def"
-                type = tag.split(".")[-1]  #
+                type = tag.split(".")[-1]
+
             elif tag.startswith("name.reference."):
                 kind = "ref"
-                type = tag.split(".")[-1]  #
+                type = tag.split(".")[-1]
+
             else:
                 continue
 
             saw.add(kind)
 
+            # Enhanced node text extraction for Java methods
+            if lang == "java" and type == "method":
+                # Handle method calls with object references (e.g., productService.listAllProducts())
+                parent = node.parent
+                if parent and parent.type == "method_invocation":
+                    object_node = parent.child_by_field_name("object")
+                    if object_node:
+                        node_text = f"{object_node.text.decode('utf-8')}.{node_text}"
+
             result = Tag(
                 rel_fname=rel_fname,
                 fname=fname,
-                name=node.text.decode("utf-8"),
+                name=node_text,
                 kind=kind,
                 line=node.start_point[0],
                 end_line=node.end_point[0],
@@ -192,10 +203,6 @@ class RepoMap:
             return
         if "def" not in saw:
             return
-
-        # We saw defs, without any refs
-        # Some tags files only provide defs (cpp, for example)
-        # Use pygments to backfill refs
 
         try:
             lexer = guess_lexer_for_filename(fname, code)
@@ -524,205 +531,179 @@ class RepoMap:
         self.tree_cache[key] = res
         return res
 
-    def create_graph(self, repo_dir):
-        start_time = time.time()
-        logging.info("Starting parsing of codebase")
+    def create_relationship(
+        G, source, target, relationship_type, seen_relationships, extra_data=None
+    ):
+        """Helper to create relationships with proper direction checking"""
+        if source == target:
+            return False
 
+        # Determine correct direction based on node types
+        source_data = G.nodes[source]
+        target_data = G.nodes[target]
+
+        # Prevent duplicate bidirectional relationships
+        rel_key = (source, target, relationship_type)
+        reverse_key = (target, source, relationship_type)
+
+        if rel_key in seen_relationships or reverse_key in seen_relationships:
+            return False
+
+        # Only create relationship if we have right direction:
+        # 1. Interface method implementations should point to interface declaration
+        # 2. Method calls should point to method definitions
+        # 3. Class references should point to class definitions
+        valid_direction = False
+
+        if relationship_type == "REFERENCES":
+            # Implementation -> Interface
+            if (
+                source_data.get("type") == "FUNCTION"
+                and target_data.get("type") == "FUNCTION"
+                and "Impl" in source
+            ):  # Implementation class
+                valid_direction = True
+
+            # Caller -> Callee
+            elif source_data.get("type") == "FUNCTION":
+                valid_direction = True
+
+            # Class Usage -> Class Definition
+            elif target_data.get("type") == "CLASS":
+                valid_direction = True
+
+        if valid_direction:
+            G.add_edge(source, target, type=relationship_type, **(extra_data or {}))
+            seen_relationships.add(rel_key)
+            return True
+
+        return False
+
+    def create_graph(self, repo_dir):
         G = nx.MultiDiGraph()
-        defines = defaultdict(list)
-        references = defaultdict(list)
-        file_count = 0
+        defines = defaultdict(set)
+        references = defaultdict(set)
+        seen_relationships = set()
 
         for root, dirs, files in os.walk(repo_dir):
-            # Ignore folders starting with '.'
             if any(part.startswith(".") for part in root.split(os.sep)):
                 continue
 
             for file in files:
-                file_count += 1
-
                 file_path = os.path.join(root, file)
                 rel_path = os.path.relpath(file_path, repo_dir)
 
                 if not self.parse_helper.is_text_file(file_path):
                     continue
 
-                tags = self.get_tags(file_path, rel_path)
+                logging.info(f"\nProcessing file: {rel_path}")
 
-                # Extract full file content
-                file_content = self.io.read_text(file_path) or ""
-                if not file_content.endswith("\n"):
-                    file_content += "\n"
-
-                # Parse the file using tree-sitter
-                language = RepoMap.get_language_for_file(file_path)
-                if language:
-                    parser = Parser()
-                    parser.set_language(language)
-                    tree = parser.parse(bytes(file_content, "utf8"))
-                    root_node = tree.root_node
+                # Add file node
+                file_node_name = rel_path
+                if not G.has_node(file_node_name):
+                    G.add_node(
+                        file_node_name,
+                        file=rel_path,
+                        type="FILE",
+                        text=self.io.read_text(file_path) or "",
+                        line=0,
+                        end_line=0,
+                        name=rel_path.split("/")[-1],
+                    )
 
                 current_class = None
-                current_function = None
-                for tag in tags:
+                current_method = None
+
+                # Process all tags in file
+                for tag in self.get_tags(file_path, rel_path):
                     if tag.kind == "def":
                         if tag.type == "class":
+                            node_type = "CLASS"
                             current_class = tag.name
-                            current_function = None
-                            node_type = "class"
-                        elif tag.type == "function":
-                            current_function = tag.name
-                            node_type = "function"
+                            current_method = None
+                        elif tag.type == "interface":
+                            node_type = "INTERFACE"
+                            current_class = tag.name
+                            current_method = None
+                        elif tag.type in ["method", "function"]:
+                            node_type = "FUNCTION"
+                            current_method = tag.name
                         else:
-                            node_type = "other"
-
-                        node_name = f"{rel_path}:{tag.name}"
-
-                        # Extract code for the current tag using AST
-                        if language:
-                            node = RepoMap.find_node_by_range(
-                                root_node, tag.line, node_type
-                            )
-                            if node:
-                                code_context = file_content[
-                                    node.start_byte : node.end_byte
-                                ]
-                                node_end_line = (
-                                    node.end_point[0] + 1
-                                )  # Adding 1 to match 1-based line numbering
-                            else:
-                                code_context = ""
-                                node_end_line = tag.end_line
-                                continue
-                        else:
-                            code_context = ""
-                            node_end_line = tag.end_line
                             continue
 
-                        defines[tag.name].append(
-                            (
+                        # Create fully qualified node name
+                        if current_class:
+                            node_name = f"{rel_path}:{current_class}.{tag.name}"
+                        else:
+                            node_name = f"{rel_path}:{tag.name}"
+
+                        # Add node
+                        if not G.has_node(node_name):
+                            G.add_node(
                                 node_name,
-                                tag.line,
-                                node_end_line,
-                                node_type,
-                                rel_path,
-                                current_class,
+                                file=rel_path,
+                                line=tag.line,
+                                end_line=tag.end_line,
+                                type=node_type,
+                                name=tag.name,
+                                class_name=current_class,
                             )
-                        )
-                        G.add_node(
-                            node_name,
-                            file=rel_path,
-                            line=tag.line,
-                            end_line=node_end_line,
-                            type=tag.type,
-                            text=code_context,
-                        )
+
+                            # Add CONTAINS relationship from file
+                            rel_key = (file_node_name, node_name, "CONTAINS")
+                            if rel_key not in seen_relationships:
+                                G.add_edge(
+                                    file_node_name,
+                                    node_name,
+                                    type="CONTAINS",
+                                    ident=tag.name,
+                                )
+                                seen_relationships.add(rel_key)
+
+                        # Record definition
+                        defines[tag.name].add(node_name)
+
                     elif tag.kind == "ref":
-                        source = (
-                            f"{current_class}.{current_function}"
-                            if current_class and current_function
-                            else (
-                                f"{rel_path}:{current_function}"
-                                if current_function
-                                else rel_path
-                            )
-                        )
-                        references[tag.name].append(
+                        # Handle references
+                        if current_class and current_method:
+                            source = f"{rel_path}:{current_class}.{current_method}"
+                        elif current_method:
+                            source = f"{rel_path}:{current_method}"
+                        else:
+                            source = rel_path
+
+                        references[tag.name].add(
                             (
                                 source,
                                 tag.line,
                                 tag.end_line,
-                                tag.type,
-                                rel_path,
                                 current_class,
+                                current_method,
                             )
                         )
-
-                # Add a node for the entire file
-                G.add_node(
-                    rel_path,
-                    file=rel_path,
-                    type="file",
-                    text=file_content,
-                )
 
         for ident, refs in references.items():
-            if ident in defines:
-                if len(defines[ident]) == 1:
-                    target, def_line, end_def_line, def_type, def_file, def_class = (
-                        defines[ident][0]
-                    )
-                    for (
-                        source,
-                        ref_line,
-                        end_ref_line,
-                        ref_type,
-                        ref_file,
-                        ref_class,
-                    ) in refs:
-                        G.add_edge(
+            target_nodes = defines.get(ident, set())
+
+            for source, line, end_line, src_class, src_method in refs:
+                for target in target_nodes:
+                    if source == target:
+                        continue
+
+                    if G.has_node(source) and G.has_node(target):
+                        RepoMap.create_relationship(
+                            G,
                             source,
                             target,
-                            type=ref_type,
-                            ident=ident,
-                            ref_line=ref_line,
-                            end_ref_line=end_ref_line,
-                            def_line=def_line,
-                            end_def_line=end_def_line,
+                            "REFERENCES",
+                            seen_relationships,
+                            {
+                                "ident": ident,
+                                "ref_line": line,
+                                "end_ref_line": end_line,
+                            },
                         )
-                else:
-                    for (
-                        source,
-                        ref_line,
-                        end_ref_line,
-                        ref_type,
-                        ref_file,
-                        ref_class,
-                    ) in refs:
-                        best_match = None
-                        best_match_score = -1
-                        for (
-                            target,
-                            def_line,
-                            end_def_line,
-                            def_type,
-                            def_file,
-                            def_class,
-                        ) in defines[ident]:
-                            if source != target:
-                                match_score = 0
-                                if ref_file == def_file:
-                                    match_score += 2
-                                elif os.path.dirname(ref_file) == os.path.dirname(
-                                    def_file
-                                ):
-                                    match_score += 1
-                                if ref_class == def_class:
-                                    match_score += 1
-                                if match_score > best_match_score:
-                                    best_match = (
-                                        target,
-                                        def_line,
-                                        end_def_line,
-                                        def_type,
-                                    )
-                                    best_match_score = match_score
 
-                        if best_match:
-                            target, def_line, end_def_line, def_type = best_match
-                            G.add_edge(
-                                source,
-                                target,
-                                type=ref_type,
-                                ident=ident,
-                                ref_line=ref_line,
-                                end_ref_line=end_ref_line,
-                                def_line=def_line,
-                                end_def_line=end_def_line,
-                            )
-
-        end_time = time.time()
-        logging.info(f"Parsing completed, time taken: {end_time - start_time} seconds")
         return G
 
     @staticmethod
@@ -755,9 +736,20 @@ class RepoMap:
     def find_node_by_range(root_node, start_line, node_type):
         def traverse(node):
             if node.start_point[0] <= start_line and node.end_point[0] >= start_line:
-                if node_type == "function" and node.type == "function_definition":
+                if node_type == "FUNCTION" and node.type in [
+                    "function_definition",
+                    "method",
+                    "method_declaration",
+                    "function",
+                ]:
                     return node
-                elif node_type == "class" and node.type == "class_definition":
+                elif node_type in ["CLASS", "INTERFACE"] and node.type in [
+                    "class_definition",
+                    "interface",
+                    "class",
+                    "class_declaration",
+                    "interface_declaration",
+                ]:
                     return node
                 for child in node.children:
                     result = traverse(child)
