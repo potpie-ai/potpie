@@ -10,10 +10,14 @@
   <a href="https://github.com/potpie-ai/potpie/blob/main/LICENSE">
     <img src="https://img.shields.io/github/license/potpie-ai/potpie" alt="Apache 2.0">
   </a>
+</br>
+<a href="https://discord.gg/ryk5CMD5v6">
+    <img src="https://img.shields.io/badge/Join%20our-Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join our Discord">
+</a>
 </p>
 
 <h1 align="center">
-AI agents for your codebase in minutes.
+Prompt-To-Agent: Create custom engineering agents for your code
 </h1>
 
 <p align="center">
@@ -53,7 +57,7 @@ It provides pre-built agents that are expert on your codebase to perform common 
 AI agents are autonomous tools that have the ability to reason, take decisions and perform actions on their own. They are provided with 'tools' that they can use to perform tasks. Agents are iterative in nature and build on top of the results of the previous iteration in order to perform any task assigned to them.
 
 Software development is a similarly iterative process and agents can be used to automate and optimize key aspects of software development.
-Things that developers do daily, like dbugging, can be broken down into a series of iterative steps that can be automated by agents.
+Things that developers do daily, like debugging, can be broken down into a series of iterative steps that can be automated by agents.
 For example, debugging can be broken down into:
 1. Understanding the stacktrace
 2. Understanding the code around the stacktrace

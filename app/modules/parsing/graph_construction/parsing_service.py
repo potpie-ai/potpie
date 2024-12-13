@@ -2,8 +2,9 @@ import logging
 import os
 import shutil
 import traceback
-from contextlib import contextmanager
 from asyncio import create_task
+from contextlib import contextmanager
+
 from blar_graph.db_managers import Neo4jManager
 from blar_graph.graph_construction.core.graph_builder import GraphConstructor
 from fastapi import HTTPException
@@ -11,7 +12,7 @@ from git import Repo
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
-from app.modules.github.github_service import GithubService
+from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.parsing.graph_construction.parsing_helper import (
     ParseHelper,
@@ -22,9 +23,10 @@ from app.modules.parsing.knowledge_graph.inference_service import InferenceServi
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
-from app.modules.utils.posthog_helper import PostHogClient
 from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.parse_webhook_helper import ParseWebhookHelper
+from app.modules.utils.posthog_helper import PostHogClient
+
 from .parsing_schema import ParsingRequest
 
 logger = logging.getLogger(__name__)
@@ -37,7 +39,7 @@ class ParsingService:
         self.project_service = ProjectService(db)
         self.inference_service = InferenceService(db, user_id)
         self.search_service = SearchService(db)
-        self.github_service = GithubService(db)
+        self.github_service = CodeProviderService(db)
 
     @contextmanager
     def change_dir(self, path):
@@ -58,7 +60,6 @@ class ParsingService:
     ):
         project_manager = ProjectService(self.db)
         extracted_dir = None
-
         try:
             if cleanup_graph:
                 neo4j_config = config_provider.get_neo4j_config()
@@ -75,13 +76,29 @@ class ParsingService:
                 except Exception as e:
                     logger.error(f"Error in cleanup_graph: {e}")
                     raise HTTPException(status_code=500, detail="Internal server error")
-            # Remove self.db from the arguments
+
             repo, owner, auth = await self.parse_helper.clone_or_copy_repository(
                 repo_details, user_id
             )
-            extracted_dir, project_id = await self.parse_helper.setup_project_directory(
-                repo, repo_details.branch_name, auth, repo, user_id, project_id
-            )
+            if os.getenv("isDevelopmentMode") == "enabled":
+                (
+                    extracted_dir,
+                    project_id,
+                ) = await self.parse_helper.setup_project_directory(
+                    repo,
+                    repo_details.branch_name,
+                    auth,
+                    repo_details,
+                    user_id,
+                    project_id,
+                )
+            else:
+                (
+                    extracted_dir,
+                    project_id,
+                ) = await self.parse_helper.setup_project_directory(
+                    repo, repo_details.branch_name, auth, repo, user_id, project_id
+                )
 
             if isinstance(repo, Repo):
                 language = self.parse_helper.detect_repo_language(extracted_dir)
@@ -132,12 +149,20 @@ class ParsingService:
             session.run(node_query)
 
     async def analyze_directory(
-        self, extracted_dir: str, project_id: int, user_id: str, db, language: str, user_email:str
+        self,
+        extracted_dir: str,
+        project_id: int,
+        user_id: str,
+        db,
+        language: str,
+        user_email: str,
     ):
         logger.info(
             f"Parsing project {project_id}: Analyzing directory: {extracted_dir}"
         )
-        project_details = await self.project_service.get_project_from_db_by_id(project_id)
+        project_details = await self.project_service.get_project_from_db_by_id(
+            project_id
+        )
         if project_details:
             repo_name = project_details.get("project_name")
             branch_name = project_details.get("branch_name")
@@ -171,7 +196,9 @@ class ParsingService:
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.READY
                 )
-                create_task( EmailHelper().send_email(user_email, repo_name, branch_name ))
+                create_task(
+                    EmailHelper().send_email(user_email, repo_name, branch_name)
+                )
                 PostHogClient().send_event(
                     user_id,
                     "project_status_event",
@@ -213,7 +240,9 @@ class ParsingService:
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.READY
                 )
-                create_task( EmailHelper().send_email(user_email, repo_name, branch_name ))
+                create_task(
+                    EmailHelper().send_email(user_email, repo_name, branch_name)
+                )
                 logger.info(f"DEBUGNEO4J: After update project status {project_id}")
                 self.inference_service.log_graph_stats(project_id)
             finally:

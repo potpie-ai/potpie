@@ -5,6 +5,10 @@ from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
 
 # Import necessary tools (assuming they're available in your project)
+from app.modules.intelligence.provider.provider_service import (
+    AgentType,
+    ProviderService,
+)
 from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
     get_code_file_structure_tool,
 )
@@ -162,8 +166,6 @@ class LowLevelDesignAgent:
     async def run(
         self, functional_requirements: str, project_id: str
     ) -> LowLevelDesignPlan:
-        os.environ["OPENAI_API_KEY"] = self.openai_api_key
-
         codebase_analyst, design_planner = await self.create_agents()
         tasks = await self.create_tasks(
             functional_requirements, project_id, codebase_analyst, design_planner
@@ -180,13 +182,15 @@ class LowLevelDesignAgent:
         return result
 
 
-async def create_low_level_design(
+async def create_low_level_design_agent(
     functional_requirements: str,
     project_id: str,
     sql_db,
     llm,
     user_id: str,
 ) -> LowLevelDesignPlan:
-    design_agent = LowLevelDesignAgent(sql_db, llm, user_id)
+    provider_service = ProviderService(sql_db, user_id)
+    crew_ai_llm = provider_service.get_large_llm(agent_type=AgentType.CREWAI)
+    design_agent = LowLevelDesignAgent(sql_db, crew_ai_llm, user_id)
     result = await design_agent.run(functional_requirements, project_id)
     return result

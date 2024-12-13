@@ -12,7 +12,10 @@ from sentence_transformers import SentenceTransformer
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
-from app.modules.intelligence.provider.provider_service import ProviderService
+from app.modules.intelligence.provider.provider_service import (
+    AgentType,
+    ProviderService,
+)
 from app.modules.parsing.knowledge_graph.inference_schema import (
     DocstringRequest,
     DocstringResponse,
@@ -30,7 +33,9 @@ class InferenceService:
             neo4j_config["uri"],
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
-        self.llm = ProviderService(db, user_id).get_small_llm()
+        self.llm = ProviderService(db, user_id).get_small_llm(
+            agent_type=AgentType.LANGCHAIN
+        )
         self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
         self.search_service = SearchService(db)
         self.project_manager = ProjectService(db)
@@ -69,7 +74,7 @@ class InferenceService:
                     )
 
         except Exception as e:
-            print(f"An error occurred: {str(e)}")
+            logger.error(f"An error occurred: {str(e)}")
 
     def num_tokens_from_string(self, string: str, model: str = "gpt-4") -> int:
         """Returns the number of tokens in a text string."""
@@ -614,8 +619,8 @@ class InferenceService:
                 for n in docstrings.docstrings
             ]
             project = self.project_manager.get_project_from_db_by_id_sync(repo_id)
-            repo_name = project.get("project_name")
-            is_local_repo = len(repo_name.split("/")) < 2
+            repo_path = project.get("repo_path")
+            is_local_repo = True if repo_path else False
             for i in range(0, len(docstring_list), batch_size):
                 batch = docstring_list[i : i + batch_size]
                 session.run(

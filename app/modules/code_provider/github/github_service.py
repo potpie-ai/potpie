@@ -3,7 +3,7 @@ import logging
 import os
 import random
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import chardet
 import requests
@@ -11,9 +11,11 @@ from fastapi import HTTPException
 from github import Github
 from github.Auth import AppAuth
 from redis import Redis
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
+from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_service import ProjectService
 from app.modules.users.user_model import User
 
@@ -42,7 +44,7 @@ class GithubService:
             GithubService.initialize_tokens()
         self.redis = Redis.from_url(config_provider.get_redis_url())
         self.max_workers = 10
-        self.max_depth = 10
+        self.max_depth = 4
         self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
 
     def get_github_repo_details(self, repo_name: str) -> Tuple[Github, Dict, str]:
@@ -80,33 +82,26 @@ class GithubService:
         start_line: int,
         end_line: int,
         branch_name: str,
+        project_id: str,
     ) -> str:
         logger.info(f"Attempting to access file: {file_path} in repo: {repo_name}")
-
-        # Clean up the file path
-        path_parts = file_path.split("/")
-        if len(path_parts) > 1 and "-" in path_parts[0]:
-            path_parts = path_parts[1:]
-        clean_file_path = "/".join(path_parts)
-
-        logger.info(f"Cleaned file path: {clean_file_path}")
 
         try:
             # Try authenticated access first
             github, repo = self.get_repo(repo_name)
-            file_contents = repo.get_contents(clean_file_path, ref=branch_name)
+            file_contents = repo.get_contents(file_path, ref=branch_name)
         except Exception as private_error:
             logger.info(f"Failed to access private repo: {str(private_error)}")
             # If authenticated access fails, try public access
             try:
                 github = self.get_public_github_instance()
                 repo = github.get_repo(repo_name)
-                file_contents = repo.get_contents(clean_file_path)
+                file_contents = repo.get_contents(file_path)
             except Exception as public_error:
                 logger.error(f"Failed to access public repo: {str(public_error)}")
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Repository or file not found or inaccessible: {repo_name}/{clean_file_path}",
+                    detail=f"Repository or file not found or inaccessible: {repo_name}/{file_path}",
                 )
 
         if isinstance(file_contents, list):
@@ -128,7 +123,7 @@ class GithubService:
             return "\n".join(selected_lines)
         except Exception as e:
             logger.error(
-                f"Error processing file content for {repo_name}/{clean_file_path}: {e}",
+                f"Error processing file content for {repo_name}/{file_path}: {e}",
                 exc_info=True,
             )
             raise HTTPException(
@@ -261,23 +256,48 @@ class GithubService:
             )
 
     async def get_combined_user_repos(self, user_id: str):
-        parsed_repos = await self.project_manager.list_projects(user_id)
-        project_list = [
-            {
-                "id": project["id"],
-                "name": project["repo_name"].split("/")[-1],
-                "full_name": project["repo_name"],
-                "private": False,
-                "url": f"https://github.com/{project['repo_name']}",
-                "owner": project["repo_name"].split("/")[0],
-            }
-            for project in parsed_repos
-        ]
+        subquery = (
+            self.db.query(Project.repo_name, func.min(Project.id).label("min_id"))
+            .filter(Project.user_id == user_id)
+            .group_by(Project.repo_name)
+            .subquery()
+        )
+        projects = (
+            self.db.query(Project)
+            .join(
+                subquery,
+                (Project.repo_name == subquery.c.repo_name)
+                & (Project.id == subquery.c.min_id),
+            )
+            .all()
+        )
+        project_list = (
+            [
+                {
+                    "id": project.id,
+                    "name": project.repo_name.split("/")[-1],
+                    "full_name": project.repo_name,
+                    "private": False,
+                    "url": f"https://github.com/{project.repo_name}",
+                    "owner": project.repo_name.split("/")[0],
+                }
+                for project in projects
+            ]
+            if projects is not None
+            else []
+        )
         user_repo_response = await self.get_repos_for_user(user_id)
         user_repos = user_repo_response["repositories"]
-        combined_repos = {"repositories": project_list + user_repos}
-        combined_repos["repositories"] = list(reversed(combined_repos["repositories"]))
-        return combined_repos
+        db_project_full_names = {project["full_name"] for project in project_list}
+
+        filtered_user_repos = [
+            {**user_repo, "private": True}
+            for user_repo in user_repos
+            if user_repo["full_name"]
+            not in db_project_full_names  # Only include unique user repos
+        ]
+        combined_repos = list(reversed(project_list + filtered_user_repos))
+        return {"repositories": combined_repos}
 
     async def get_branch_list(self, repo_name: str):
         try:
@@ -331,15 +351,22 @@ class GithubService:
                     detail=f"Repository {repo_name} not found or inaccessible on GitHub",
                 )
 
-    async def get_project_structure_async(self, project_id: str) -> str:
-        logger.info(f"Fetching project structure for project ID: {project_id}")
+    async def get_project_structure_async(
+        self, project_id: str, path: Optional[str] = None
+    ) -> str:
+        logger.info(
+            f"Fetching project structure for project ID: {project_id}, path: {path}"
+        )
 
-        cache_key = f"project_structure:{project_id}:depth_{self.max_depth}"
+        # Modify cache key to reflect that we're only caching the specific path
+        cache_key = (
+            f"project_structure:{project_id}:exact_path_{path}:depth_{self.max_depth}"
+        )
         cached_structure = self.redis.get(cache_key)
 
         if cached_structure:
             logger.info(
-                f"Project structure found in cache for project ID: {project_id}"
+                f"Project structure found in cache for project ID: {project_id}, path: {path}"
             )
             return cached_structure.decode("utf-8")
 
@@ -355,7 +382,21 @@ class GithubService:
 
         try:
             github, repo = self.get_repo(repo_name)
-            structure = await self._fetch_repo_structure_async(repo)
+
+            # If path is provided, verify it exists
+            if path:
+                try:
+                    # Check if the path exists in the repository
+                    repo.get_contents(path)
+                except Exception:
+                    raise HTTPException(
+                        status_code=404, detail=f"Path {path} not found in repository"
+                    )
+
+            # Start structure fetch from the specified path with depth 0
+            structure = await self._fetch_repo_structure_async(
+                repo, path or "", current_depth=0, base_path=path
+            )
             formatted_structure = self._format_tree_structure(structure)
 
             self.redis.setex(cache_key, 3600, formatted_structure)  # Cache for 1 hour
@@ -369,14 +410,46 @@ class GithubService:
                 exc_info=True,
             )
             raise HTTPException(
-                status_code=500,
-                detail=f"Failed to fetch project structure: {str(e)}",
+                status_code=500, detail=f"Failed to fetch project structure: {str(e)}"
             )
 
     async def _fetch_repo_structure_async(
-        self, repo: Any, path: str = "", depth: int = 0
+        self,
+        repo: Any,
+        path: str = "",
+        current_depth: int = 0,
+        base_path: Optional[str] = None,
     ) -> Dict[str, Any]:
-        if depth >= self.max_depth:
+        exclude_extensions = [
+            "png",
+            "jpg",
+            "jpeg",
+            "gif",
+            "bmp",
+            "tiff",
+            "webp",
+            "ico",
+            "svg",
+            "mp4",
+            "avi",
+            "mov",
+            "wmv",
+            "flv",
+            "ipynb",
+            "zlib",
+        ]
+
+        # Calculate current depth relative to base_path
+        if base_path:
+            # If we have a base_path, calculate depth relative to it
+            relative_path = path[len(base_path) :].strip("/")
+            current_depth = len(relative_path.split("/")) if relative_path else 0
+        else:
+            # If no base_path, calculate depth from root
+            current_depth = len(path.split("/")) if path else 0
+
+        # If we've reached max depth, return truncated indicator
+        if current_depth >= self.max_depth:
             return {
                 "type": "directory",
                 "name": path.split("/")[-1] or repo.name,
@@ -397,10 +470,27 @@ class GithubService:
             if not isinstance(contents, list):
                 contents = [contents]
 
+            # Filter out files with excluded extensions
+            contents = [
+                item
+                for item in contents
+                if item.type == "dir"
+                or not any(item.name.endswith(ext) for ext in exclude_extensions)
+            ]
+
             tasks = []
             for item in contents:
+                # Only process items within the base_path if it's specified
+                if base_path and not item.path.startswith(base_path):
+                    continue
+
                 if item.type == "dir":
-                    task = self._fetch_repo_structure_async(repo, item.path, depth + 1)
+                    task = self._fetch_repo_structure_async(
+                        repo,
+                        item.path,
+                        current_depth=current_depth,
+                        base_path=base_path,
+                    )
                     tasks.append(task)
                 else:
                     structure["children"].append(
@@ -421,23 +511,36 @@ class GithubService:
         return structure
 
     def _format_tree_structure(
-        self, structure: Dict[str, Any], prefix: str = ""
+        self, structure: Dict[str, Any], root_path: str = ""
     ) -> str:
-        output = []
-        name = structure["name"]
-        if prefix:
-            output.append(f"{prefix[:-1]}└── {name}")
-        else:
-            output.append(name)
+        """
+        Creates a clear hierarchical structure using simple nested dictionaries.
 
-        children = sorted(structure["children"], key=lambda x: (x["type"], x["name"]))
-        for i, child in enumerate(children):
-            is_last = i == len(children) - 1
-            new_prefix = prefix + ("    " if is_last else "│   ")
+        Args:
+            self: The instance object
+            structure: Dictionary containing name and children
+            root_path: Optional root path string (unused but kept for signature compatibility)
+        """
 
-            if child["type"] == "directory":
-                output.append(self._format_tree_structure(child, new_prefix))
-            else:
-                output.append(f"{new_prefix[:-1]}└── {child['name']}")
+        def _format_node(node: Dict[str, Any], depth: int = 0) -> List[str]:
+            output = []
+            indent = "  " * depth
+            if depth > 0:  # Skip root name
+                output.append(f"{indent}{node['name']}")
 
-        return "\n".join(output)
+            if "children" in node:
+                children = sorted(node.get("children", []), key=lambda x: x["name"])
+                for child in children:
+                    output.extend(_format_node(child, depth + 1))
+
+            return output
+
+        return "\n".join(_format_node(structure))
+
+    async def check_public_repo(self, repo_name: str) -> bool:
+        try:
+            github = self.get_public_github_instance()
+            github.get_repo(repo_name)
+            return True
+        except Exception:
+            return False

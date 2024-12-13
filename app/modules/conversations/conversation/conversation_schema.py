@@ -41,6 +41,7 @@ class ConversationInfoResponse(BaseModel):
     agent_ids: List[str]
     access_type: ConversationAccessType
     is_creator: bool
+    creator_id: str
 
     class Config:
         from_attributes = True

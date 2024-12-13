@@ -31,3 +31,8 @@ class CreateUser(BaseModel):
     last_login_at: datetime
     provider_info: dict
     provider_username: str
+
+
+class UserProfileResponse(BaseModel):
+    user_id: str
+    profile_pic_url: Optional[str] = None

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 from uuid6 import uuid7
 
+from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.conversations.conversation.conversation_model import (
     Conversation,
     ConversationStatus,
@@ -29,10 +30,15 @@ from app.modules.conversations.message.message_schema import (
     MessageResponse,
     NodeContext,
 )
-from app.modules.github.github_service import GithubService
 from app.modules.intelligence.agents.agent_injector_service import AgentInjectorService
+from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
+    CustomAgentsService,
+)
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
-from app.modules.intelligence.provider.provider_service import ProviderService
+from app.modules.intelligence.provider.provider_service import (
+    AgentType,
+    ProviderService,
+)
 from app.modules.projects.projects_service import ProjectService
 from app.modules.users.user_service import UserService
 from app.modules.utils.posthog_helper import PostHogClient
@@ -70,6 +76,7 @@ class ConversationService:
         history_manager: ChatHistoryService,
         provider_service: ProviderService,
         agent_injector_service: AgentInjectorService,
+        custom_agent_service: CustomAgentsService,
     ):
         self.sql_db = db
         self.user_id = user_id
@@ -78,13 +85,15 @@ class ConversationService:
         self.history_manager = history_manager
         self.provider_service = provider_service
         self.agent_injector_service = agent_injector_service
+        self.custom_agent_service = custom_agent_service
 
     @classmethod
     def create(cls, db: Session, user_id: str, user_email: str):
         project_service = ProjectService(db)
         history_manager = ChatHistoryService(db)
         provider_service = ProviderService(db, user_id)
-        agent_injector_service = AgentInjectorService(db, provider_service)
+        agent_injector_service = AgentInjectorService(db, provider_service, user_id)
+        custom_agent_service = CustomAgentsService()
         return cls(
             db,
             user_id,
@@ -93,6 +102,7 @@ class ConversationService:
             history_manager,
             provider_service,
             agent_injector_service,
+            custom_agent_service,
         )
 
     async def check_conversation_access(
@@ -135,7 +145,7 @@ class ConversationService:
     ) -> tuple[str, str]:
         try:
             if not self.agent_injector_service.validate_agent_id(
-                conversation.agent_ids[0]
+                user_id, conversation.agent_ids[0]
             ):
                 raise ConversationServiceError(
                     f"Invalid agent_id: {conversation.agent_ids[0]}"
@@ -156,7 +166,7 @@ class ConversationService:
             )
 
             asyncio.create_task(
-                GithubService(self.sql_db).get_project_structure_async(
+                CodeProviderService(self.sql_db).get_project_structure_async(
                     conversation.project_ids[0]
                 )
             )
@@ -274,25 +284,16 @@ class ConversationService:
                     )
                     await self._update_conversation_title(conversation_id, new_title)
 
-                repo_id = (
+                project_id = (
                     conversation.project_ids[0] if conversation.project_ids else None
                 )
-                if not repo_id:
+                if not project_id:
                     raise ConversationServiceError(
                         "No project associated with this conversation"
                     )
 
-                agent = self.agent_injector_service.get_agent(conversation.agent_ids[0])
-                if not agent:
-                    raise ConversationServiceError(
-                        f"Invalid agent_id: {conversation.agent_ids[0]}"
-                    )
-
-                logger.info(
-                    f"Running agent for repo_id: {repo_id} conversation_id: {conversation_id}"
-                )
-                async for chunk in agent.run(
-                    message.content, repo_id, user_id, conversation.id, message.node_ids
+                async for chunk in self._generate_and_stream_ai_response(
+                    message.content, conversation_id, user_id, message.node_ids
                 ):
                     yield chunk
 
@@ -334,7 +335,7 @@ class ConversationService:
     ) -> str:
         agent_type = conversation.agent_ids[0]
 
-        chat = self.provider_service.get_small_llm()
+        llm = self.provider_service.get_small_llm(agent_type=AgentType.LANGCHAIN)
         prompt = ChatPromptTemplate.from_template(
             "Given an agent type '{agent_type}' and an initial message '{message}', "
             "generate a concise and relevant title for a conversation. "
@@ -344,7 +345,7 @@ class ConversationService:
         messages = prompt.format_messages(
             agent_type=agent_type, message=message_content
         )
-        response = await chat.agenerate([messages])
+        response = await llm.agenerate([messages])
 
         generated_title = response.generations[0][0].text.strip()
         if len(generated_title) > 50:
@@ -446,23 +447,32 @@ class ConversationService:
             raise ConversationNotFoundError(
                 f"Conversation with id {conversation_id} not found"
             )
-        agent = self.agent_injector_service.get_agent(conversation.agent_ids[0])
-        if not agent:
-            raise ConversationServiceError(
-                f"Invalid agent_id: {conversation.agent_ids[0]}"
-            )
+
+        agent_id = conversation.agent_ids[0]
+        project_id = conversation.project_ids[0] if conversation.project_ids else None
 
         try:
+            agent = self.agent_injector_service.get_agent(agent_id)
+
             logger.info(
-                f"conversation_id: {conversation_id}Running agent {conversation.agent_ids[0]} with query: {query} "
+                f"conversation_id: {conversation_id} Running agent {agent_id} with query: {query}"
             )
-            async for chunk in agent.run(
-                query, conversation.project_ids[0], user_id, conversation.id, node_ids
-            ):
-                if chunk:
+
+            if isinstance(agent, CustomAgentsService):
+                # Custom agent doesn't support streaming, so we'll yield the entire response at once
+                response = await agent.run(
+                    agent_id, query, project_id, user_id, conversation.id, node_ids
+                )
+                yield response
+            else:
+                # For other agents that support streaming
+                async for chunk in agent.run(
+                    query, project_id, user_id, conversation.id, node_ids
+                ):
                     yield chunk
+
             logger.info(
-                f"Generated and streamed AI response for conversation {conversation.id} for user {user_id} using agent {conversation.agent_ids[0]}"
+                f"Generated and streamed AI response for conversation {conversation.id} for user {user_id} using agent {agent_id}"
             )
         except Exception as e:
             logger.error(
@@ -574,6 +584,7 @@ class ConversationService:
                 agent_ids=conversation.agent_ids,
                 access_type=access_type,
                 is_creator=is_creator,
+                creator_id=conversation.user_id,
             )
         except ConversationNotFoundError as e:
             logger.warning(str(e))

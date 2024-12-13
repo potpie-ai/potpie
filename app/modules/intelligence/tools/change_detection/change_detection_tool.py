@@ -8,7 +8,9 @@ from pydantic import BaseModel, Field
 from tree_sitter_languages import get_parser
 
 from app.core.database import get_db
-from app.modules.github.github_service import GithubService
+from app.modules.code_provider.code_provider_service import CodeProviderService
+from app.modules.code_provider.github.github_service import GithubService
+from app.modules.code_provider.local_repo.local_repo_service import LocalRepoService
 from app.modules.intelligence.tools.code_query_tools.get_code_from_node_name_tool import (
     GetCodeFromNodeNameTool,
 )
@@ -43,6 +45,20 @@ class ChangeDetectionResponse(BaseModel):
 
 
 class ChangeDetectionTool:
+    name = "Get code changes"
+    description = """Analyzes differences between branches in a Git repository and retrieves updated function details.
+        :param project_id: string, the ID of the project being evaluated (UUID).
+
+            example:
+            {
+                "project_id": "550e8400-e29b-41d4-a716-446655440000"
+            }
+
+        Returns dictionary containing:
+        - patches: Dict[str, str] - file patches
+        - changes: List[ChangeDetail] - list of changes with updated and entry point code
+        """
+
     def __init__(self, sql_db, user_id):
         self.sql_db = sql_db
         self.user_id = user_id
@@ -67,20 +83,21 @@ class ChangeDetectionTool:
                         changed_files[current_file].add(i)
         return changed_files
 
-    async def _find_changed_functions(self, changed_files, repo_id):
+    async def _find_changed_functions(self, changed_files, project_id):
         result = []
         for relative_file_path, lines in changed_files.items():
             try:
                 project = await ProjectService(self.sql_db).get_project_from_db_by_id(
-                    repo_id
+                    project_id
                 )
-                github_service = GithubService(self.sql_db)
-                file_content = github_service.get_file_content(
+                code_service = CodeProviderService(self.sql_db)
+                file_content = code_service.get_file_content(
                     project["project_name"],
                     relative_file_path,
                     0,
                     0,
                     project["branch_name"],
+                    project_id,
                 )
                 tags = RepoMap.get_tags_from_code(relative_file_path, file_content)
 
@@ -118,9 +135,9 @@ class ChangeDetectionTool:
                 logging.error(f"Exception {e}")
         return result
 
-    async def get_updated_function_list(self, patch_details, repo_id):
+    async def get_updated_function_list(self, patch_details, project_id):
         changed_files = self._parse_diff_detail(patch_details)
-        return await self._find_changed_functions(changed_files, repo_id)
+        return await self._find_changed_functions(changed_files, project_id)
 
     @staticmethod
     def _find_inbound_neighbors(tx, node_id, project_id, with_bodies):
@@ -133,7 +150,8 @@ class ChangeDetectionTool:
         }}
         RETURN start, collect({{neighbor: neighbor{', body: neighbor.body' if with_bodies else ''}}}) AS neighbors
         """
-        result = tx.run(query, endpoint_id=node_id, project_id=project_id)
+        endpoint_id = node_id
+        result = tx.run(query, endpoint_id, project_id)
         record = result.single()
         if not record:
             return []
@@ -193,23 +211,24 @@ class ChangeDetectionTool:
 
         repo_name = project_details["project_name"]
         branch_name = project_details["branch_name"]
-        github = None
-
-        github, _, _ = GithubService(self.sql_db).get_github_repo_details(repo_name)
-
+        repo_path = project_details["repo_path"]
+        # Use CodeProviderService to get the appropriate service instance
+        code_service = CodeProviderService(self.sql_db)
         try:
-            repo = github.get_repo(repo_name)
-            repo_details = repo
-            default_branch = repo.default_branch
-        except Exception:
-            raise HTTPException(status_code=400, detail="Repository not found")
-
-        try:
-            git_diff = repo.compare(default_branch, branch_name)
-            patches_dict = {
-                file.filename: file.patch for file in git_diff.files if file.patch
-            }
-
+            if isinstance(code_service.service_instance, GithubService):
+                github, _, _ = code_service.service_instance.get_github_repo_details(
+                    repo_name
+                )
+                repo = github.get_repo(repo_name)
+                default_branch = repo.default_branch
+                git_diff = repo.compare(default_branch, branch_name)
+                patches_dict = {
+                    file.filename: file.patch for file in git_diff.files if file.patch
+                }
+            elif isinstance(code_service.service_instance, LocalRepoService):
+                patches_dict = code_service.service_instance.get_local_repo_diff(
+                    repo_path, branch_name
+                )
         except Exception as e:
             raise HTTPException(
                 status_code=400, detail=f"Error while fetching changes: {str(e)}"
@@ -253,8 +272,6 @@ class ChangeDetectionTool:
                         self.sql_db, "dummy"
                     ).get_entry_points_for_nodes(node_ids, project_id)
 
-                    changes = []
-
                     changes_list = []
                     for node, entry_point in entry_points.items():
                         entry_point_code = GetCodeFromNodeIdTool(
@@ -278,30 +295,30 @@ class ChangeDetectionTool:
                     logging.error(f"project_id: {project_id}, error: {str(e)}")
 
                 if len(identifiers) == 0:
-                    if github:
-                        github.close()
                     return []
-                if github:
-                    github.close()
 
-    def get_change_context(self, project_id):
+    async def arun(self, project_id: str) -> str:
+        return await self.get_code_changes(project_id)
+
+    def run(self, project_id: str) -> str:
         return asyncio.run(self.get_code_changes(project_id))
 
 
-def get_blast_radius_tool(user_id: str) -> Tool:
+def get_change_detection_tool(user_id: str) -> Tool:
     """
     Get a list of LangChain Tool objects for use in agents.
     """
     change_detection_tool = ChangeDetectionTool(next(get_db()), user_id)
     return StructuredTool.from_function(
-        func=change_detection_tool.get_change_context,
+        coroutine=change_detection_tool.arun,
+        func=change_detection_tool.run,
         name="Get code changes",
         description="""
-    Get the changes in the codebase.
-    This tool analyzes the differences between branches in a Git repository and retrieves updated function details, including their entry points and citations.
-    Inputs for the get_code_changes method:
-    - project_id (str): The ID of the project being evaluated, this is a UUID.
-    The output includes a dictionary of file patches and a list of changes with updated code and entry point code.
-    """,
+            Get the changes in the codebase.
+            This tool analyzes the differences between branches in a Git repository and retrieves updated function details, including their entry points and citations.
+            Inputs for the get_code_changes method:
+            - project_id (str): The ID of the project being evaluated, this is a UUID.
+            The output includes a dictionary of file patches and a list of changes with updated code and entry point code.
+            """,
         args_schema=ChangeDetectionInput,
     )
