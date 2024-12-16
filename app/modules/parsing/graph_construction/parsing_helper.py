@@ -220,7 +220,6 @@ class ParseHelper:
             "ruby": 0,
             "rust": 0,
             "typescript": 0,
-            "xsq": 0,
             "markdown": 0,
             "xml": 0,
             "other": 0,
