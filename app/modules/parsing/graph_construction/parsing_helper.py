@@ -133,6 +133,7 @@ class ParseHelper:
             "sh",
             "md",
             "mdx",
+            "xsq",
         ]
         if ext in exclude_extensions:
             return False
