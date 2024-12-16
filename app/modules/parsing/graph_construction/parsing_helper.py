@@ -131,6 +131,9 @@ class ParseHelper:
             "html",
             "css",
             "sh",
+            "md",
+            "mdx",
+            "xsq",
         ]
         if ext in exclude_extensions:
             return False
@@ -218,6 +221,8 @@ class ParseHelper:
             "ruby": 0,
             "rust": 0,
             "typescript": 0,
+            "markdown": 0,
+            "xml": 0,
             "other": 0,
         }
         total_chars = 0
@@ -266,6 +271,10 @@ class ParseHelper:
                                 lang_count["rust"] += 1
                             elif ext in [".ts", ".tsx"]:
                                 lang_count["typescript"] += 1
+                            elif ext in [".md", ".mdx"]:
+                                lang_count["markdown"] += 1
+                            elif ext in [".xml", ".xsq"]:
+                                lang_count["xml"] += 1
                             else:
                                 lang_count["other"] += 1
                     except (
