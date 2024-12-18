@@ -1,12 +1,17 @@
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
-from typing import AsyncGenerator, List
+from typing import AsyncGenerator, Dict, Any, List, Optional, TypedDict
+from langgraph.types import StreamWriter
 
+from fastapi import HTTPException
+from langgraph.graph import END, StateGraph
+from langgraph.types import Command
 from langchain.prompts import ChatPromptTemplate
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
-from sqlalchemy.sql import func
 from uuid6 import uuid7
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
@@ -30,7 +35,10 @@ from app.modules.conversations.message.message_schema import (
     MessageResponse,
     NodeContext,
 )
+
 from app.modules.intelligence.agents.agent_injector_service import AgentInjectorService
+from app.modules.intelligence.agents.agents_service import AgentsService
+from app.modules.intelligence.agents.agent_factory import AgentFactory
 from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
     CustomAgentsService,
 )
@@ -47,24 +55,161 @@ logger = logging.getLogger(__name__)
 
 
 class ConversationServiceError(Exception):
-    """Base exception class for ConversationService errors."""
+    pass
 
 
 class ConversationNotFoundError(ConversationServiceError):
-    """Raised when a conversation is not found."""
+    pass
 
 
 class MessageNotFoundError(ConversationServiceError):
-    """Raised when a message is not found."""
+    pass
 
 
 class AccessTypeNotFoundError(ConversationServiceError):
-    """Raised when an access type is not found."""
+    pass
 
 
 class AccessTypeReadError(ConversationServiceError):
-    """Raised when an access type is read-only."""
+    pass
 
+
+from langgraph.graph import END, StateGraph
+from langgraph.types import Command
+from typing import AsyncGenerator, Dict, Any
+
+class SimplifiedAgentSupervisor:
+    def __init__(self, db, provider_service):
+        self.db = db
+        self.provider_service = provider_service
+        self.agents = {}
+        self.classifier = None
+        self.agents_service = AgentsService(db)
+        self.agent_factory = AgentFactory(db, provider_service)
+
+    async def initialize(self, user_id: str):
+        # Get available agents using AgentsService
+        available_agents = await self.agents_service.list_available_agents(
+            current_user={"user_id": user_id},
+            list_system_agents=True
+        )
+        
+        # Create agent instances dictionary
+        self.agents = {
+            agent.id: self.agent_factory.get_agent(agent.id, user_id)
+            for agent in available_agents
+        }
+
+        self.llm = self.provider_service.get_small_llm(user_id)
+
+        # Enhanced classifier prompt with agent descriptions
+        self.classifier_prompt = """
+        Given the user query, determine which agent should handle it based on their specialties:
+        
+        Query: {query}
+        
+        Available agents and their specialties:
+        {agent_descriptions}
+        
+        Return ONLY the agent id and confidence score in format: agent_id|confidence
+        Example: debugging_agent|0.85
+        """
+
+        # Format agent descriptions for the prompt
+        self.agent_descriptions = "\n".join([
+            f"- {agent.id}: {agent.description}"
+            for agent in available_agents
+        ])
+    class State(TypedDict):
+        query: str
+        project_id: str
+        conversation_id: str
+        response: Optional[str]
+        agent_id: Optional[str]
+        user_id: str
+        node_ids: List[NodeContext]
+
+    async def classifier_node(self, state: State) -> Command:
+        """Classifies the query and routes to appropriate agent"""
+        if not state.get("query"):
+            return Command(update={"response": "No query provided"}, goto=END)
+
+        # Classification using LLM with enhanced prompt
+        prompt = self.classifier_prompt.format(
+            query=state["query"],
+            agent_descriptions=self.agent_descriptions
+        )
+        response = await self.llm.ainvoke(prompt)
+        
+        # Parse response
+        try:
+            agent_id, confidence = response.content.split("|")
+            confidence = float(confidence)
+        except (ValueError, TypeError):
+            return Command(
+                update={"response": "Error in classification format"},
+                goto=END
+            )
+
+        if confidence < 0.5 or agent_id not in self.agents:
+            return Command(
+                update={"agent_id":state["agent_id"]},
+                goto=state["agent_id"]
+            )
+
+        return Command(
+            update={"agent_id": agent_id},
+            goto=agent_id
+        )
+
+    async def agent_node(self, state: State, writer: StreamWriter):
+        """Creates a node function for a specific agent"""
+        agent = self.agents[state["agent_id"]]
+        async for chunk in agent.run(
+            query=state["query"],
+            project_id=state["project_id"],
+            conversation_id=state["conversation_id"],
+            user_id=state["user_id"],
+            node_ids=state["node_ids"]
+        ):
+            if isinstance(chunk, str):
+                writer(chunk)
+            
+        
+                
+
+    def build_graph(self) -> StateGraph:
+        """Builds the graph with classifier and agent nodes"""
+        builder = StateGraph(self.State)
+        
+        # Add classifier as entry point
+        builder.add_node("classifier", self.classifier_node)
+        #builder.add_edge("classifier", END)
+
+        # # Add agent nodes
+        #node_func = await self.agent_node(self.State, StreamWriter)
+        for agent_id in self.agents:
+            builder.add_node(agent_id, self.agent_node)
+            builder.add_edge(agent_id, END)
+
+        builder.set_entry_point("classifier")
+        return builder.compile()
+
+    async def process_query(self, query: str, project_id: str, conversation_id: str, user_id: str, node_ids: List[NodeContext], agent_id: str) -> AsyncGenerator[Dict[str, Any], None]:
+        """Main method to process queries"""
+        state = {
+            "query": query,
+            "project_id": project_id, 
+            "conversation_id": conversation_id,
+            "response": None,
+            "user_id": user_id,
+            "node_ids": node_ids,
+            "agent_id": agent_id
+        }
+
+        graph = self.build_graph()
+        async for chunk in graph.astream(state, stream_mode="custom"):
+            yield chunk
 
 class ConversationService:
     def __init__(
@@ -450,7 +595,8 @@ class ConversationService:
 
         agent_id = conversation.agent_ids[0]
         project_id = conversation.project_ids[0] if conversation.project_ids else None
-
+        supervisor = SimplifiedAgentSupervisor(self.sql_db, self.provider_service)
+        await supervisor.initialize(user_id)
         try:
             agent = self.agent_injector_service.get_agent(agent_id)
 
@@ -466,8 +612,8 @@ class ConversationService:
                 yield response
             else:
                 # For other agents that support streaming
-                async for chunk in agent.run(
-                    query, project_id, user_id, conversation.id, node_ids
+                async for chunk in supervisor.process_query(
+                    query, project_id, conversation.id, user_id, node_ids, agent_id
                 ):
                     yield chunk
 

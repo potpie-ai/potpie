@@ -110,6 +110,7 @@ class QNAChatAgent:
         )
         graph_builder.add_edge(START, "rag_agent")
         graph_builder.add_edge("rag_agent", END)
+        graph_builder.set_entry_point("rag_agent")
         return graph_builder.compile()
 
     async def run(
@@ -119,7 +120,7 @@ class QNAChatAgent:
         user_id: str,
         conversation_id: str,
         node_ids: List[NodeContext],
-):
+    ):
         state = {
             "query": query,
             "project_id": project_id,
@@ -129,7 +130,9 @@ class QNAChatAgent:
         }
         graph = self._create_graph()
         async for chunk in graph.astream(state, stream_mode="custom"):
-            yield chunk
+            if isinstance(chunk, str):
+                yield chunk
+            
 
     async def execute(
         self,

@@ -1,13 +1,12 @@
 import json
 import logging
-import time
-from typing import AsyncGenerator, Dict, List, Annotated
-from langgraph.types import StreamWriter
-from typing_extensions import TypedDict
-from langgraph.graph import StateGraph, START, END
+from typing import AsyncGenerator, List
 
-from langchain.schema import HumanMessage, SystemMessage
+from langchain.schema import HumanMessage
+from langgraph.graph import END, START, StateGraph
+from langgraph.types import StreamWriter
 from sqlalchemy.orm import Session
+from typing_extensions import TypedDict
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import NodeContext
@@ -111,10 +110,12 @@ class CodeGenerationChatAgent:
                     MessageType.AI_GENERATED,
                     citations=citations,
                 )
-                yield json.dumps({
-                    "citations": citations,
-                    "message": content,
-                })
+                yield json.dumps(
+                    {
+                        "citations": citations,
+                        "message": content,
+                    }
+                )
 
             self.history_manager.flush_message_buffer(
                 conversation_id, MessageType.AI_GENERATED
@@ -122,4 +123,6 @@ class CodeGenerationChatAgent:
 
         except Exception as e:
             logger.error(f"Error in code generation: {str(e)}")
-            yield json.dumps({"error": f"An error occurred during code generation: {str(e)}"})
+            yield json.dumps(
+                {"error": f"An error occurred during code generation: {str(e)}"}
+            )

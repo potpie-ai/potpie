@@ -2,9 +2,9 @@ import json
 import logging
 import time
 from functools import lru_cache
-from typing import AsyncGenerator, Dict, List, Annotated, TypedDict
+from typing import AsyncGenerator, Dict, List, TypedDict
 
-from langchain.schema import HumanMessage, SystemMessage
+from langchain.schema import HumanMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import (
     ChatPromptTemplate,
@@ -13,9 +13,9 @@ from langchain_core.prompts import (
     SystemMessagePromptTemplate,
 )
 from langchain_core.runnables import RunnableSequence
-from sqlalchemy.orm import Session
+from langgraph.graph import END, START, StateGraph
 from langgraph.types import StreamWriter
-from langgraph.graph import StateGraph, START, END
+from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import NodeContext
@@ -170,7 +170,11 @@ class DebuggingChatAgent:
                 async for chunk in kickoff_debug_rag_agent(
                     query,
                     project_id,
-                    [msg.content for msg in validated_history if isinstance(msg, HumanMessage)],
+                    [
+                        msg.content
+                        for msg in validated_history
+                        if isinstance(msg, HumanMessage)
+                    ],
                     node_ids,
                     self.db,
                     self.llm,
@@ -184,10 +188,12 @@ class DebuggingChatAgent:
                         MessageType.AI_GENERATED,
                         citations=citations,
                     )
-                    yield json.dumps({
-                        "citations": citations,
-                        "message": content,
-                    })
+                    yield json.dumps(
+                        {
+                            "citations": citations,
+                            "message": content,
+                        }
+                    )
 
                 self.history_manager.flush_message_buffer(
                     conversation_id, MessageType.AI_GENERATED
