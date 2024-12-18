@@ -1,7 +1,10 @@
+import asyncio
 import os
-from typing import Any, Dict, List
+from contextlib import redirect_stdout
+from typing import Any, AsyncGenerator, Dict, List
 
 import agentops
+import aiofiles
 from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
 
@@ -71,6 +74,7 @@ class RAGAgent:
         self.llm = llm
         self.mini_llm = mini_llm
         self.user_id = user_id
+        # self.callback_handler = FileCallbackHandler("rag_agent_execution.md")
 
     async def create_agents(self):
         query_agent = Agent(
@@ -101,6 +105,7 @@ class RAGAgent:
             verbose=True,
             llm=self.llm,
             max_iter=self.max_iter,
+            # step_callback=self.callback_handler,
         )
 
         return query_agent
@@ -267,7 +272,7 @@ async def kickoff_rag_agent(
     llm,
     mini_llm,
     user_id: str,
-) -> str:
+) -> AsyncGenerator[str, None]:
     provider_service = ProviderService(sql_db, user_id)
     crew_ai_llm = provider_service.get_large_llm(agent_type=AgentType.CREWAI)
     crew_ai_mini_llm = provider_service.get_small_llm(agent_type=AgentType.CREWAI)
@@ -275,7 +280,29 @@ async def kickoff_rag_agent(
     file_structure = await CodeProviderService(sql_db).get_project_structure_async(
         project_id
     )
-    result = await rag_agent.run(
-        query, project_id, chat_history, node_ids, file_structure
-    )
-    return result
+
+    read_fd, write_fd = os.pipe()
+
+    async def kickoff():
+        with os.fdopen(write_fd, "w", buffering=1) as write_file:
+            with redirect_stdout(write_file):
+                await rag_agent.run(
+                    query, project_id, chat_history, node_ids, file_structure
+                )
+
+    asyncio.create_task(kickoff())
+
+    # Yield CrewAgent logs as they are written to the pipe
+    final_answer_streaming = False
+    async with aiofiles.open(read_fd, mode="r") as read_file:
+        async for line in read_file:
+            if not line:
+                break
+            else:
+                if final_answer_streaming:
+                    if line.endswith("\\x1b[00m\\n"):
+                        yield line[:-6]
+                    else:
+                        yield line
+                if "## Final Answer:" in line:
+                    final_answer_streaming = True

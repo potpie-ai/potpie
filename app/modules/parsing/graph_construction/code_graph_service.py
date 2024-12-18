@@ -44,7 +44,6 @@ class CodeGraphService:
         nx_graph = self.repo_map.create_graph(repo_dir)
 
         with self.driver.session() as session:
-
             start_time = time.time()
             node_count = nx_graph.number_of_nodes()
             logging.info(f"Creating {node_count} nodes")
