@@ -2,7 +2,10 @@ import json
 import logging
 import time
 from functools import lru_cache
-from typing import AsyncGenerator, Dict, List
+from typing import AsyncGenerator, Dict, List, Annotated
+from langgraph.types import StreamWriter
+from typing_extensions import TypedDict
+from langgraph.graph import StateGraph, START, END
 
 from langchain.schema import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
@@ -81,7 +84,50 @@ class LLDChatAgent:
 
         return response.classification
 
+    class State(TypedDict):
+        query: str
+        project_id: str
+        user_id: str
+        conversation_id: str
+        node_ids: List[NodeContext]
+
+    async def _stream_rag_agent(self, state: State, writer: StreamWriter):
+        async for chunk in self.execute(
+            state["query"],
+            state["project_id"],
+            state["user_id"],
+            state["conversation_id"],
+            state["node_ids"],
+        ):
+            writer(chunk)
+
+    def _create_graph(self):
+        graph_builder = StateGraph(LLDChatAgent.State)
+        graph_builder.add_node("rag_agent", self._stream_rag_agent)
+        graph_builder.add_edge(START, "rag_agent")
+        graph_builder.add_edge("rag_agent", END)
+        return graph_builder.compile()
+
     async def run(
+        self,
+        query: str,
+        project_id: str,
+        user_id: str,
+        conversation_id: str,
+        node_ids: List[NodeContext],
+    ):
+        state = {
+            "query": query,
+            "project_id": project_id,
+            "user_id": user_id,
+            "conversation_id": conversation_id,
+            "node_ids": node_ids,
+        }
+        graph = self._create_graph()
+        async for chunk in graph.astream(state, stream_mode="custom"):
+            yield chunk
+
+    async def execute(
         self,
         query: str,
         project_id: str,
@@ -117,68 +163,31 @@ class LLDChatAgent:
             tool_results = []
             citations = []
             if classification == ClassificationResult.AGENT_REQUIRED:
-                rag_start_time = time.time()  # Start timer for RAG agent
-                rag_result = await kickoff_rag_agent(
+                async for chunk in kickoff_rag_agent(
                     query,
                     project_id,
-                    [
-                        msg.content
-                        for msg in validated_history
-                        if isinstance(msg, HumanMessage)
-                    ],
+                    [msg.content for msg in validated_history if isinstance(msg, HumanMessage)],
                     node_ids,
                     self.db,
                     self.llm,
                     self.mini_llm,
                     user_id,
-                )
-                rag_duration = time.time() - rag_start_time  # Calculate duration
-                logger.info(
-                    f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
-                    f"Duration of RAG agent: {rag_duration:.2f}s"
-                )
+                ):
+                    content = str(chunk)
+                    self.history_manager.add_message_chunk(
+                        conversation_id,
+                        content,
+                        MessageType.AI_GENERATED,
+                        citations=citations,
+                    )
+                    yield json.dumps({
+                        "citations": citations,
+                        "message": content,
+                    })
 
-                if rag_result.pydantic:
-                    citations = rag_result.pydantic.citations
-                    response = rag_result.pydantic.response
-                    result = [node for node in response]
-                else:
-                    citations = []
-                    result = rag_result.raw
-                tool_results = [SystemMessage(content=result)]
-                # Timing for adding message chunk
-                add_chunk_start_time = (
-                    time.time()
-                )  # Start timer for adding message chunk
-                self.history_manager.add_message_chunk(
-                    conversation_id,
-                    tool_results[0].content,
-                    MessageType.AI_GENERATED,
-                    citations=citations,
-                )
-                add_chunk_duration = (
-                    time.time() - add_chunk_start_time
-                )  # Calculate duration
-                logger.info(
-                    f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
-                    f"Duration of adding message chunk: {add_chunk_duration:.2f}s"
-                )
-
-                # Timing for flushing message buffer
-                flush_buffer_start_time = (
-                    time.time()
-                )  # Start timer for flushing message buffer
                 self.history_manager.flush_message_buffer(
                     conversation_id, MessageType.AI_GENERATED
                 )
-                flush_buffer_duration = (
-                    time.time() - flush_buffer_start_time
-                )  # Calculate duration
-                logger.info(
-                    f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
-                    f"Duration of flushing message buffer: {flush_buffer_duration:.2f}s"
-                )
-                yield json.dumps({"citations": citations, "message": result})
 
             if classification != ClassificationResult.AGENT_REQUIRED:
                 inputs = {

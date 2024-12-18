@@ -2,15 +2,9 @@ import json
 import logging
 import time
 from functools import lru_cache
-from typing import Any, AsyncGenerator, Dict, List, Optional
-from typing import Annotated
-from langgraph.types import StreamWriter
+from typing import AsyncGenerator, Dict, List
 
-from typing_extensions import TypedDict
-
-from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import add_messages
-from langchain.schema import HumanMessage, SystemMessage
+from langchain.schema import HumanMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import (
     ChatPromptTemplate,
@@ -19,7 +13,10 @@ from langchain_core.prompts import (
     SystemMessagePromptTemplate,
 )
 from langchain_core.runnables import RunnableSequence
+from langgraph.graph import END, START, StateGraph
+from langgraph.types import StreamWriter
 from sqlalchemy.orm import Session
+from typing_extensions import TypedDict
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import NodeContext
@@ -87,16 +84,12 @@ class QNAChatAgent:
 
         return response.classification
 
-
-
     class State(TypedDict):
         query: str
         project_id: str
         user_id: str
         conversation_id: str
         node_ids: List[NodeContext]
-
-
 
     async def _stream_rag_agent(self, state: State, writer: StreamWriter):
         async for chunk in self.execute(
@@ -106,7 +99,6 @@ class QNAChatAgent:
             state["conversation_id"],
             state["node_ids"],
         ):
-
             writer(chunk)
 
     def _create_graph(self):
@@ -120,12 +112,14 @@ class QNAChatAgent:
         graph_builder.add_edge("rag_agent", END)
         return graph_builder.compile()
 
-    async def run(self,
+    async def run(
+        self,
         query: str,
         project_id: str,
         user_id: str,
         conversation_id: str,
-        node_ids: List[NodeContext],):
+        node_ids: List[NodeContext],
+):
         state = {
             "query": query,
             "project_id": project_id,
@@ -134,7 +128,7 @@ class QNAChatAgent:
             "node_ids": node_ids,
         }
         graph = self._create_graph()
-        async for chunk in graph.astream(state,stream_mode="custom"):
+        async for chunk in graph.astream(state, stream_mode="custom"):
             yield chunk
 
     async def execute(
@@ -202,12 +196,10 @@ class QNAChatAgent:
                             "message": content,
                         }
                     )
-                
 
                 self.history_manager.flush_message_buffer(
                     conversation_id, MessageType.AI_GENERATED
                 )
-
 
             if classification != ClassificationResult.AGENT_REQUIRED:
                 inputs = {

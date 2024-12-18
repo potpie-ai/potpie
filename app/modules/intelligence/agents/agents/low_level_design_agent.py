@@ -1,6 +1,9 @@
+import asyncio
 import os
-from typing import Dict, List
+from contextlib import redirect_stdout
+from typing import AsyncGenerator, Dict, List
 
+import aiofiles
 from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
 
@@ -165,21 +168,40 @@ class LowLevelDesignAgent:
 
     async def run(
         self, functional_requirements: str, project_id: str
-    ) -> LowLevelDesignPlan:
+    ) -> AsyncGenerator[str, None]:
         codebase_analyst, design_planner = await self.create_agents()
         tasks = await self.create_tasks(
             functional_requirements, project_id, codebase_analyst, design_planner
         )
 
-        crew = Crew(
-            agents=[codebase_analyst, design_planner],
-            tasks=tasks,
-            process=Process.sequential,
-            verbose=True,
-        )
+        read_fd, write_fd = os.pipe()
 
-        result = await crew.kickoff_async()
-        return result
+        async def kickoff():
+            with os.fdopen(write_fd, "w", buffering=1) as write_file:
+                with redirect_stdout(write_file):
+                    crew = Crew(
+                        agents=[codebase_analyst, design_planner],
+                        tasks=tasks,
+                        process=Process.sequential,
+                        verbose=True,
+                    )
+                    await crew.kickoff_async()
+
+        asyncio.create_task(kickoff())
+
+        # Stream the output
+        final_answer_streaming = False
+        async with aiofiles.open(read_fd, mode="r") as read_file:
+            async for line in read_file:
+                if not line:
+                    break
+                if final_answer_streaming:
+                    if line.endswith("\\x1b[00m\\n"):
+                        yield line[:-6]
+                    else:
+                        yield line
+                if "## Final Answer:" in line:
+                    final_answer_streaming = True
 
 
 async def create_low_level_design_agent(
@@ -188,9 +210,9 @@ async def create_low_level_design_agent(
     sql_db,
     llm,
     user_id: str,
-) -> LowLevelDesignPlan:
+) -> AsyncGenerator[str, None]:
     provider_service = ProviderService(sql_db, user_id)
     crew_ai_llm = provider_service.get_large_llm(agent_type=AgentType.CREWAI)
     design_agent = LowLevelDesignAgent(sql_db, crew_ai_llm, user_id)
-    result = await design_agent.run(functional_requirements, project_id)
-    return result
+    async for chunk in design_agent.run(functional_requirements, project_id):
+        yield chunk

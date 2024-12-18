@@ -1,16 +1,15 @@
 import asyncio
 import os
+from contextlib import redirect_stdout
 from typing import Any, AsyncGenerator, Dict, List
 
-import aiofiles
-from contextlib import redirect_stdout
 import agentops
+import aiofiles
 from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.conversations.message.message_schema import NodeContext
-from app.modules.intelligence.agents.agents.callback_handler import FileCallbackHandler
 from app.modules.intelligence.provider.provider_service import (
     AgentType,
     ProviderService,
@@ -75,7 +74,7 @@ class RAGAgent:
         self.llm = llm
         self.mini_llm = mini_llm
         self.user_id = user_id
-        #self.callback_handler = FileCallbackHandler("rag_agent_execution.md")
+        # self.callback_handler = FileCallbackHandler("rag_agent_execution.md")
 
     async def create_agents(self):
         query_agent = Agent(
@@ -106,7 +105,7 @@ class RAGAgent:
             verbose=True,
             llm=self.llm,
             max_iter=self.max_iter,
-            #step_callback=self.callback_handler,
+            # step_callback=self.callback_handler,
         )
 
         return query_agent
@@ -282,28 +281,26 @@ async def kickoff_rag_agent(
         project_id
     )
 
-
     read_fd, write_fd = os.pipe()
 
     async def kickoff():
         with os.fdopen(write_fd, "w", buffering=1) as write_file:
             with redirect_stdout(write_file):
-               await rag_agent.run(
-        query, project_id, chat_history, node_ids, file_structure
-    )
-
+                await rag_agent.run(
+                    query, project_id, chat_history, node_ids, file_structure
+                )
 
     asyncio.create_task(kickoff())
 
     # Yield CrewAgent logs as they are written to the pipe
     final_answer_streaming = False
-    async with aiofiles.open(read_fd, mode='r') as read_file:
+    async with aiofiles.open(read_fd, mode="r") as read_file:
         async for line in read_file:
             if not line:
                 break
             else:
                 if final_answer_streaming:
-                    if line.endswith('\\x1b[00m\\n'):
+                    if line.endswith("\\x1b[00m\\n"):
                         yield line[:-6]
                     else:
                         yield line
