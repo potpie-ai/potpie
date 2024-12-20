@@ -52,7 +52,7 @@ class AgentsService:
             AgentInfo(
                 id="code_changes_agent",
                 name="Code Changes Agent",
-                description="An agent specialized in generating detailed analysis of code changes in your current branch compared to default branch. Works best with Py, JS, TS",
+                description="An agent specialized in generating blast radius of the code changes in your current branch compared to default branch. Use this for functional review of your code changes. Works best with Py, JS, TS",
                 status="SYSTEM",
             ),
             AgentInfo(
