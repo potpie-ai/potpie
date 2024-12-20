@@ -132,7 +132,6 @@ class QNAChatAgent:
         async for chunk in graph.astream(state, stream_mode="custom"):
             if isinstance(chunk, str):
                 yield chunk
-            
 
     async def execute(
         self,
