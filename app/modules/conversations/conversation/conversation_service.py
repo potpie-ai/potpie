@@ -159,15 +159,14 @@ class SimplifiedAgentSupervisor:
             agent_descriptions=self.agent_descriptions,
         )
         response = await self.llm.ainvoke(prompt)
-
+        response = response.content.strip("`")
         try:
-            agent_id, confidence = response.content.split("|")
+            agent_id, confidence = response.split("|")
             confidence = float(confidence)
         except (ValueError, TypeError):
             return Command(
                 update={"response": "Error in classification format"}, goto=END
             )
-
         if confidence < 0.5 or agent_id not in self.agents:
             return Command(
                 update={"agent_id": state["agent_id"]}, goto=state["agent_id"]
