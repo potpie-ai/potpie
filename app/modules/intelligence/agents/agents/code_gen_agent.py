@@ -302,7 +302,7 @@ class CodeGenerationAgent:
                 if not line:
                     break
                 if final_answer_streaming:
-                    if line.endswith("\\x1b[00m\\n"):
+                    if line.endswith("\x1b[00m\n"):
                         yield line[:-6]
                     else:
                         yield line
