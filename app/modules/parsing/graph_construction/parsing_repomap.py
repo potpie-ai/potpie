@@ -25,7 +25,7 @@ Tag = namedtuple("Tag", "rel_fname fname line end_line name kind type".split())
 
 class RepoMap:
     # Parsing logic adapted from aider (https://github.com/paul-gauthier/aider)
-    # Modified and customized for potpie's parsing needs with detailed tags, relationship tracking etc 
+    # Modified and customized for potpie's parsing needs with detailed tags, relationship tracking etc
 
     def __init__(
         self,

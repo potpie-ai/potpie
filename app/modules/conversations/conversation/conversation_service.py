@@ -1,12 +1,14 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import AsyncGenerator, List
+from typing import Any, AsyncGenerator, Dict, List, Optional, TypedDict
 
 from langchain.prompts import ChatPromptTemplate
+from langgraph.graph import END, StateGraph
+from langgraph.types import Command, StreamWriter
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
-from sqlalchemy.sql import func
 from uuid6 import uuid7
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
@@ -30,7 +32,9 @@ from app.modules.conversations.message.message_schema import (
     MessageResponse,
     NodeContext,
 )
+from app.modules.intelligence.agents.agent_factory import AgentFactory
 from app.modules.intelligence.agents.agent_injector_service import AgentInjectorService
+from app.modules.intelligence.agents.agents_service import AgentsService
 from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
     CustomAgentsService,
 )
@@ -47,23 +51,181 @@ logger = logging.getLogger(__name__)
 
 
 class ConversationServiceError(Exception):
-    """Base exception class for ConversationService errors."""
+    pass
 
 
 class ConversationNotFoundError(ConversationServiceError):
-    """Raised when a conversation is not found."""
+    pass
 
 
 class MessageNotFoundError(ConversationServiceError):
-    """Raised when a message is not found."""
+    pass
 
 
 class AccessTypeNotFoundError(ConversationServiceError):
-    """Raised when an access type is not found."""
+    pass
 
 
 class AccessTypeReadError(ConversationServiceError):
-    """Raised when an access type is read-only."""
+    pass
+
+
+class SimplifiedAgentSupervisor:
+    def __init__(self, db, provider_service):
+        self.db = db
+        self.provider_service = provider_service
+        self.agents = {}
+        self.classifier = None
+        self.agents_service = AgentsService(db)
+        self.agent_factory = AgentFactory(db, provider_service)
+
+    async def initialize(self, user_id: str):
+        available_agents = await self.agents_service.list_available_agents(
+            current_user={"user_id": user_id}, list_system_agents=True
+        )
+
+        self.agents = {
+            agent.id: self.agent_factory.get_agent(agent.id, user_id)
+            for agent in available_agents
+        }
+
+        self.llm = self.provider_service.get_small_llm(user_id)
+
+        self.classifier_prompt = """
+        Given the user query and the current agent ID, select the most appropriate agent by comparing the query’s requirements with each agent’s specialties.
+
+        Query: {query}
+        Current Agent ID: {agent_id}
+
+        Available agents and their specialties:
+        {agent_descriptions}
+
+        Follow the instructions below to determine the best matching agent and provide a confidence score:
+
+        Analysis Instructions (DO NOT include these instructions in the final answer):
+        1. **Semantic Analysis:**
+        - Identify the key topics, technical terms, and the user’s intent from the query.
+        - Compare these elements to each agent’s detailed specialty description.
+        - Focus on specific skills, tools, frameworks, and domain expertise mentioned.
+
+        2. **Contextual Weighting:**
+        - If the query strongly aligns with the current agent’s known capabilities, add +0.15 confidence for direct core expertise and +0.1 for related domain knowledge.
+        - If the query introduces new topics outside the current agent’s domain, do not apply the current agent bias. Instead, evaluate all agents equally based on their described expertise.
+
+        3. **Multi-Agent Evaluation:**
+        - Consider all agents’ described specialties thoroughly, not just the current agent.
+        - For overlapping capabilities, favor the agent with more specialized expertise or more relevant tools/methodologies.
+        - If no agent clearly surpasses a 0.5 confidence threshold, select the agent with the highest confidence score, even if it is below 0.5.
+
+        4. **Confidence Scoring Guidelines:**
+        - 0.9-1.0: Ideal match with the agent’s core, primary expertise.
+        - 0.7-0.9: Strong match with the agent’s known capabilities.
+        - 0.5-0.7: Partial or related match, not a direct specialty.
+        - Below 0.5: Weak match; consider if another agent is more suitable, but still choose the best available option.
+
+        Final Output Requirements:
+        - Return ONLY the chosen agent_id and the confidence score in the format:
+        `agent_id|confidence`
+
+        Examples:
+        - Direct expertise match: `debugging_agent|0.95`
+        - Related capability (current agent): `current_agent_id|0.75`
+        - Need different expertise: `ml_training_agent|0.85`
+        - Overlapping domains, choose more specialized: `choose_higher_expertise_agent|0.80`
+        """
+
+        self.agent_descriptions = "\n".join(
+            [f"- {agent.id}: {agent.description}" for agent in available_agents]
+        )
+
+    class State(TypedDict):
+        query: str
+        project_id: str
+        conversation_id: str
+        response: Optional[str]
+        agent_id: Optional[str]
+        user_id: str
+        node_ids: List[NodeContext]
+
+    async def classifier_node(self, state: State) -> Command:
+        """Classifies the query and routes to appropriate agent"""
+        if not state.get("query"):
+            return Command(update={"response": "No query provided"}, goto=END)
+
+        # Classification using LLM with enhanced prompt
+        prompt = self.classifier_prompt.format(
+            query=state["query"],
+            agent_id=state["agent_id"],
+            agent_descriptions=self.agent_descriptions,
+        )
+        response = await self.llm.ainvoke(prompt)
+
+        try:
+            agent_id, confidence = response.content.split("|")
+            confidence = float(confidence)
+        except (ValueError, TypeError):
+            return Command(
+                update={"response": "Error in classification format"}, goto=END
+            )
+
+        if confidence < 0.5 or agent_id not in self.agents:
+            return Command(
+                update={"agent_id": state["agent_id"]}, goto=state["agent_id"]
+            )
+
+        return Command(update={"agent_id": agent_id}, goto=agent_id)
+
+    async def agent_node(self, state: State, writer: StreamWriter):
+        """Creates a node function for a specific agent"""
+        agent = self.agents[state["agent_id"]]
+        async for chunk in agent.run(
+            query=state["query"],
+            project_id=state["project_id"],
+            conversation_id=state["conversation_id"],
+            user_id=state["user_id"],
+            node_ids=state["node_ids"],
+        ):
+            if isinstance(chunk, str):
+                writer(chunk)
+
+    def build_graph(self) -> StateGraph:
+        """Builds the graph with classifier and agent nodes"""
+        builder = StateGraph(self.State)
+
+        # Add classifier as entry point
+        builder.add_node("classifier", self.classifier_node)
+
+        # Add agent nodes
+        for agent_id in self.agents:
+            builder.add_node(agent_id, self.agent_node)
+            builder.add_edge(agent_id, END)
+
+        builder.set_entry_point("classifier")
+        return builder.compile()
+
+    async def process_query(
+        self,
+        query: str,
+        project_id: str,
+        conversation_id: str,
+        user_id: str,
+        node_ids: List[NodeContext],
+        agent_id: str,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Main method to process queries"""
+        state = {
+            "query": query,
+            "project_id": project_id,
+            "conversation_id": conversation_id,
+            "response": None,
+            "user_id": user_id,
+            "node_ids": node_ids,
+            "agent_id": agent_id,
+        }
+
+        graph = self.build_graph()
+        async for chunk in graph.astream(state, stream_mode="custom"):
+            yield chunk
 
 
 class ConversationService:
@@ -450,7 +612,8 @@ class ConversationService:
 
         agent_id = conversation.agent_ids[0]
         project_id = conversation.project_ids[0] if conversation.project_ids else None
-
+        supervisor = SimplifiedAgentSupervisor(self.sql_db, self.provider_service)
+        await supervisor.initialize(user_id)
         try:
             agent = self.agent_injector_service.get_agent(agent_id)
 
@@ -466,8 +629,8 @@ class ConversationService:
                 yield response
             else:
                 # For other agents that support streaming
-                async for chunk in agent.run(
-                    query, project_id, user_id, conversation.id, node_ids
+                async for chunk in supervisor.process_query(
+                    query, project_id, conversation.id, user_id, node_ids, agent_id
                 ):
                     yield chunk
 
