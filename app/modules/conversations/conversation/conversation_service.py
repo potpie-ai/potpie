@@ -80,12 +80,10 @@ class SimplifiedAgentSupervisor:
         self.agent_factory = AgentFactory(db, provider_service)
 
     async def initialize(self, user_id: str):
-        # Get available agents using AgentsService
         available_agents = await self.agents_service.list_available_agents(
             current_user={"user_id": user_id}, list_system_agents=True
         )
 
-        # Create agent instances dictionary
         self.agents = {
             agent.id: self.agent_factory.get_agent(agent.id, user_id)
             for agent in available_agents
@@ -93,7 +91,6 @@ class SimplifiedAgentSupervisor:
 
         self.llm = self.provider_service.get_small_llm(user_id)
 
-        # Enhanced classifier prompt with agent descriptions
         self.classifier_prompt = """
         Given the user query and the current agent ID, select the most appropriate agent by comparing the query’s requirements with each agent’s specialties.
 
@@ -137,7 +134,6 @@ class SimplifiedAgentSupervisor:
         - Overlapping domains, choose more specialized: `choose_higher_expertise_agent|0.80`
         """
 
-        # Format agent descriptions for the prompt
         self.agent_descriptions = "\n".join(
             [f"- {agent.id}: {agent.description}" for agent in available_agents]
         )
@@ -164,7 +160,6 @@ class SimplifiedAgentSupervisor:
         )
         response = await self.llm.ainvoke(prompt)
 
-        # Parse response
         try:
             agent_id, confidence = response.content.split("|")
             confidence = float(confidence)
@@ -199,10 +194,8 @@ class SimplifiedAgentSupervisor:
 
         # Add classifier as entry point
         builder.add_node("classifier", self.classifier_node)
-        # builder.add_edge("classifier", END)
 
-        # # Add agent nodes
-        # node_func = await self.agent_node(self.State, StreamWriter)
+        # Add agent nodes
         for agent_id in self.agents:
             builder.add_node(agent_id, self.agent_node)
             builder.add_edge(agent_id, END)
