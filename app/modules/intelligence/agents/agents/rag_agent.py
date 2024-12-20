@@ -74,7 +74,6 @@ class RAGAgent:
         self.llm = llm
         self.mini_llm = mini_llm
         self.user_id = user_id
-        # self.callback_handler = FileCallbackHandler("rag_agent_execution.md")
 
     async def create_agents(self):
         query_agent = Agent(
@@ -105,7 +104,6 @@ class RAGAgent:
             verbose=True,
             llm=self.llm,
             max_iter=self.max_iter,
-            # step_callback=self.callback_handler,
         )
 
         return query_agent
