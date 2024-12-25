@@ -22,6 +22,7 @@ langchain-anthropic==0.1.23
 langchain-community==0.2.19
 langchain-core==0.2.43
 langchain-openai==0.1.25
+langchain-google-genai==1.0.10
 langchain-postgres==0.0.12
 langgraph==0.2.58
 firebase-admin==6.6.0
