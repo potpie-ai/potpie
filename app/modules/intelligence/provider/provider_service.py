@@ -6,6 +6,7 @@ from typing import List, Tuple
 from crewai import LLM
 from langchain_anthropic import ChatAnthropic
 from langchain_openai.chat_models import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from portkey_ai import PORTKEY_GATEWAY_URL, createHeaders
 
 from app.modules.key_management.secret_manager import SecretManager
@@ -44,6 +45,11 @@ class ProviderService:
                 name="Anthropic",
                 description="An AI safety-focused company known for models like Claude.",
             ),
+            ProviderInfo(
+                id="gemini",
+                name="Google Gemini",
+                description="Google's latest language model offering.",
+            ),
         ]
 
     async def set_global_ai_provider(self, user_id: str, provider: str):
@@ -76,6 +82,25 @@ class ProviderService:
 
         self.db.commit()
         return {"message": f"AI provider set to {provider}"}
+
+    def get_llm_provider_name(self) -> str:
+        """Returns the name of the LLM provider based on the LLM instance."""
+        llm = self.get_small_llm(agent_type=AgentType.LANGCHAIN)
+
+        if isinstance(llm, ChatOpenAI):
+            return "OpenAI"
+        elif isinstance(llm, ChatAnthropic):
+            return "Anthropic"
+        elif isinstance(llm, ChatGoogleGenerativeAI):
+            return "Gemini"
+        elif isinstance(llm, LLM):
+            if llm.model.split("/")[0] == "openai":
+                return "OpenAI"
+            elif llm.model.split("/")[0] == "anthropic":
+                return "Anthropic"
+            elif llm.model.split("/")[0] == "gemini":
+                return "Gemini"
+        return "Unknown"
 
     def get_large_llm(self, agent_type: AgentType):
         # Get user preferences from the database
@@ -131,7 +156,9 @@ class ProviderService:
                 )
                 if agent_type == AgentType.CREWAI:
                     self.llm = LLM(
-                        model="openai/gpt-4o", api_key=openai_key, temperature=0.3
+                        model="openai/gpt-4o",
+                        api_key=openai_key,
+                        temperature=0.3,
                     )
                 else:
                     self.llm = ChatOpenAI(
@@ -195,8 +222,56 @@ class ProviderService:
                         default_headers=portkey_headers,
                     )
 
-        else:
-            raise ValueError("Invalid LLM provider selected.")
+        elif preferred_provider == "gemini":
+            logging.info("Initializing Gemini LLM")
+            if os.getenv("isDevelopmentMode") == "enabled":
+                logging.info("Development mode enabled. Using environment variable for API key.")
+                gemini_key = os.getenv("GOOGLE_API_KEY")
+                if agent_type == AgentType.CREWAI:
+                    self.llm = LLM(
+                        model="gemini-pro",
+                        api_key=gemini_key,
+                        temperature=0.3,
+                    )
+                else:
+                    self.llm = ChatGoogleGenerativeAI(
+                        model_name="gemini-pro",
+                        temperature=0.3,
+                        google_api_key=gemini_key,
+                    )
+            else:
+                try:
+                    secret = SecretManager.get_secret("gemini", self.user_id)
+                    gemini_key = secret.get("api_key")
+                except Exception as e:
+                    if "404" in str(e):
+                        gemini_key = os.getenv("GOOGLE_API_KEY")
+                    else:
+                        raise e
+
+                portkey_headers = createHeaders(
+                    api_key=self.PORTKEY_API_KEY,
+                    provider="gemini",
+                    metadata={
+                        "_user": self.user_id,
+                        "environment": os.environ.get("ENV"),
+                    },
+                )
+
+                if agent_type == AgentType.CREWAI:
+                    self.llm = LLM(
+                        model="gemini-pro",
+                        api_key=gemini_key,
+                        temperature=0.3,
+                    )
+                else:
+                    self.llm = ChatGoogleGenerativeAI(
+                        model_name="gemini-pro",
+                        temperature=0.3,
+                        google_api_key=gemini_key,
+                        base_url=PORTKEY_GATEWAY_URL,
+                        default_headers=portkey_headers,
+                    )
 
         return self.llm
 
@@ -221,6 +296,7 @@ class ProviderService:
         )
 
         if preferred_provider == "openai":
+            logging.info("Initializing OpenAI LLM")
             if os.getenv("isDevelopmentMode") == "enabled":
                 logging.info(
                     "Development mode enabled. Using environment variable for API key."
@@ -272,6 +348,7 @@ class ProviderService:
                     )
 
         elif preferred_provider == "anthropic":
+            logging.info("Initializing Anthropic LLM")
             if os.getenv("isDevelopmentMode") == "enabled":
                 logging.info(
                     "Development mode enabled. Using environment variable for API key."
@@ -318,45 +395,60 @@ class ProviderService:
                     self.llm = ChatAnthropic(
                         model="claude-3-haiku-20240307",
                         temperature=0.3,
-                        api_key=anthropic_key,
+                        anthropic_api_key=anthropic_key,
                         base_url=PORTKEY_GATEWAY_URL,
                         default_headers=portkey_headers,
                     )
 
-        else:
-            raise ValueError("Invalid LLM provider selected.")
+        elif preferred_provider == "gemini":
+            logging.info("Initializing Gemini LLM")
+            if os.getenv("isDevelopmentMode") == "enabled":
+                logging.info("Development mode enabled. Using environment variable for API key.")
+                gemini_key = os.getenv("GOOGLE_API_KEY")
+                if agent_type == AgentType.CREWAI:
+                    self.llm = LLM(
+                        model="gemini-pro",
+                        api_key=gemini_key,
+                        temperature=0.3,
+                    )
+                else:
+                    self.llm = ChatGoogleGenerativeAI(
+                        model_name="gemini-pro",
+                        temperature=0.3,
+                        google_api_key=gemini_key,
+                    )
+            else:
+                try:
+                    secret = SecretManager.get_secret("gemini", self.user_id)
+                    gemini_key = secret.get("api_key")
+                except Exception as e:
+                    if "404" in str(e):
+                        gemini_key = os.getenv("GOOGLE_API_KEY")
+                    else:
+                        raise e
+
+                portkey_headers = createHeaders(
+                    api_key=self.PORTKEY_API_KEY,
+                    provider="gemini",
+                    metadata={
+                        "_user": self.user_id,
+                        "environment": os.environ.get("ENV"),
+                    },
+                )
+
+                if agent_type == AgentType.CREWAI:
+                    self.llm = LLM(
+                        model="gemini-pro",
+                        api_key=gemini_key,
+                        temperature=0.3,
+                    )
+                else:
+                    self.llm = ChatGoogleGenerativeAI(
+                        model_name="gemini-pro",
+                        temperature=0.3,
+                        google_api_key=gemini_key,
+                        base_url=PORTKEY_GATEWAY_URL,
+                        default_headers=portkey_headers,
+                    )
 
         return self.llm
-
-    def get_llm_provider_name(self) -> str:
-        """Returns the name of the LLM provider based on the LLM instance."""
-        llm = self.get_small_llm(agent_type=AgentType.LANGCHAIN)
-
-        # Check the type of the LLM to determine the provider
-        if isinstance(llm, ChatOpenAI):
-            return "OpenAI"
-        elif isinstance(llm, ChatAnthropic):
-            return "Anthropic"
-        elif isinstance(llm, LLM):
-            return "OpenAI" if llm.model.split("/")[0] == "openai" else "Anthropic"
-        else:
-            return "Unknown"
-
-    async def get_preferred_llm(self, user_id: str) -> Tuple[str, str]:
-        user_pref = (
-            self.db.query(UserPreferences)
-            .filter(UserPreferences.user_id == user_id)
-            .first()
-        )
-
-        preferred_provider = (
-            user_pref.preferences.get("llm_provider", "openai")
-            if user_pref
-            else "openai"
-        )
-
-        model_type = (
-            "gpt-4o" if preferred_provider == "openai" else "claude-3-5-sonnet-20241022"
-        )
-
-        return preferred_provider, model_type
