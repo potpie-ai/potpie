@@ -46,7 +46,7 @@ class ProviderService:
                 description="An AI safety-focused company known for models like Claude.",
             ),
             ProviderInfo(
-                id="gemini",
+                id="google",
                 name="Google Gemini",
                 description="Google's latest language model offering.",
             ),
@@ -92,14 +92,14 @@ class ProviderService:
         elif isinstance(llm, ChatAnthropic):
             return "Anthropic"
         elif isinstance(llm, ChatGoogleGenerativeAI):
-            return "Gemini"
+            return "Google"
         elif isinstance(llm, LLM):
             if llm.model.split("/")[0] == "openai":
                 return "OpenAI"
             elif llm.model.split("/")[0] == "anthropic":
                 return "Anthropic"
-            elif llm.model.split("/")[0] == "gemini":
-                return "Gemini"
+            elif llm.model.split("/")[0] == "google":
+                return "Google"
         return "Unknown"
 
     def get_large_llm(self, agent_type: AgentType):
@@ -222,36 +222,36 @@ class ProviderService:
                         default_headers=portkey_headers,
                     )
 
-        elif preferred_provider == "gemini":
-            logging.info("Initializing Gemini LLM")
+        elif preferred_provider == "google":
+            logging.info("Initializing Google LLM")
             if os.getenv("isDevelopmentMode") == "enabled":
                 logging.info("Development mode enabled. Using environment variable for API key.")
-                gemini_key = os.getenv("GOOGLE_API_KEY")
+                google_key = os.getenv("GOOGLE_API_KEY")
                 if agent_type == AgentType.CREWAI:
                     self.llm = LLM(
                         model="gemini-pro",
-                        api_key=gemini_key,
+                        api_key=google_key,
                         temperature=0.3,
                     )
                 else:
                     self.llm = ChatGoogleGenerativeAI(
                         model_name="gemini-pro",
                         temperature=0.3,
-                        google_api_key=gemini_key,
+                        google_api_key=google_key,
                     )
             else:
                 try:
-                    secret = SecretManager.get_secret("gemini", self.user_id)
-                    gemini_key = secret.get("api_key")
+                    secret = SecretManager.get_secret("google", self.user_id)
+                    google_key = secret.get("api_key")
                 except Exception as e:
                     if "404" in str(e):
-                        gemini_key = os.getenv("GOOGLE_API_KEY")
+                        google_key = os.getenv("GOOGLE_API_KEY")
                     else:
                         raise e
 
                 portkey_headers = createHeaders(
                     api_key=self.PORTKEY_API_KEY,
-                    provider="gemini",
+                    provider="google",
                     metadata={
                         "_user": self.user_id,
                         "environment": os.environ.get("ENV"),
@@ -261,14 +261,14 @@ class ProviderService:
                 if agent_type == AgentType.CREWAI:
                     self.llm = LLM(
                         model="gemini-pro",
-                        api_key=gemini_key,
+                        api_key=google_key,
                         temperature=0.3,
                     )
                 else:
                     self.llm = ChatGoogleGenerativeAI(
                         model_name="gemini-pro",
                         temperature=0.3,
-                        google_api_key=gemini_key,
+                        google_api_key=google_key,
                         base_url=PORTKEY_GATEWAY_URL,
                         default_headers=portkey_headers,
                     )
@@ -395,41 +395,41 @@ class ProviderService:
                     self.llm = ChatAnthropic(
                         model="claude-3-haiku-20240307",
                         temperature=0.3,
-                        anthropic_api_key=anthropic_key,
+                        api_key=anthropic_key,
                         base_url=PORTKEY_GATEWAY_URL,
                         default_headers=portkey_headers,
                     )
 
-        elif preferred_provider == "gemini":
-            logging.info("Initializing Gemini LLM")
+        elif preferred_provider == "google":
+            logging.info("Initializing Google LLM")
             if os.getenv("isDevelopmentMode") == "enabled":
                 logging.info("Development mode enabled. Using environment variable for API key.")
-                gemini_key = os.getenv("GOOGLE_API_KEY")
+                google_key = os.getenv("GOOGLE_API_KEY")
                 if agent_type == AgentType.CREWAI:
                     self.llm = LLM(
                         model="gemini-pro",
-                        api_key=gemini_key,
+                        api_key=google_key,
                         temperature=0.3,
                     )
                 else:
                     self.llm = ChatGoogleGenerativeAI(
                         model_name="gemini-pro",
                         temperature=0.3,
-                        google_api_key=gemini_key,
+                        google_api_key=google_key,
                     )
             else:
                 try:
-                    secret = SecretManager.get_secret("gemini", self.user_id)
-                    gemini_key = secret.get("api_key")
+                    secret = SecretManager.get_secret("google", self.user_id)
+                    google_key = secret.get("api_key")
                 except Exception as e:
                     if "404" in str(e):
-                        gemini_key = os.getenv("GOOGLE_API_KEY")
+                        google_key = os.getenv("GOOGLE_API_KEY")
                     else:
                         raise e
 
                 portkey_headers = createHeaders(
                     api_key=self.PORTKEY_API_KEY,
-                    provider="gemini",
+                    provider="google",
                     metadata={
                         "_user": self.user_id,
                         "environment": os.environ.get("ENV"),
@@ -439,14 +439,14 @@ class ProviderService:
                 if agent_type == AgentType.CREWAI:
                     self.llm = LLM(
                         model="gemini-pro",
-                        api_key=gemini_key,
+                        api_key=google_key,
                         temperature=0.3,
                     )
                 else:
                     self.llm = ChatGoogleGenerativeAI(
                         model_name="gemini-pro",
                         temperature=0.3,
-                        google_api_key=gemini_key,
+                        google_api_key=google_key,
                         base_url=PORTKEY_GATEWAY_URL,
                         default_headers=portkey_headers,
                     )
