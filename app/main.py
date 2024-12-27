@@ -90,14 +90,37 @@ class MainApp:
         Base.metadata.create_all(bind=engine)
 
     def check_and_set_env_vars(self):
-        required_env_vars = [
-            "OPENAI_API_KEY",
-            "OPENAI_MODEL_REASONING",
-        ]
-        for env_var in required_env_vars:
-            if env_var not in os.environ:
-                value = input(f"Enter value for {env_var}: ")
-                os.environ[env_var] = value
+        provider_keys = {
+            "OPENAI": ["OPENAI_API_KEY"],
+            "ANTHROPIC": ["ANTHROPIC_API_KEY"],
+            "GOOGLE": ["GOOGLE_API_KEY"]
+        }
+        
+        # Check which provider keys are set in the environment
+        available_providers = []
+        for provider, keys in provider_keys.items():
+            if all(key in os.environ and os.environ[key] for key in keys):
+                available_providers.append(provider)
+                logging.info(f"{provider} API key found")
+        
+        # If no provider is configured, prompt for at least one
+        if not available_providers:
+            logging.warning("No API keys found for any provider")
+            print("You need to configure at least one AI provider.")
+            for provider, keys in provider_keys.items():
+                configure = input(f"Would you like to configure {provider}? (y/n): ")
+                if configure.lower() == 'y':
+                    for key in keys:
+                        if key not in os.environ:
+                            value = input(f"Enter value for {key}: ")
+                            os.environ[key] = value
+                    available_providers.append(provider)
+                    break
+        
+        # Set DEFAULT_LLM_PROVIDER if not already set
+        if "DEFAULT_LLM_PROVIDER" not in os.environ and available_providers:
+            os.environ["DEFAULT_LLM_PROVIDER"] = available_providers[0]
+            logging.info(f"Default LLM provider automatically set to {available_providers[0]}")
 
     def include_routers(self):
         self.app.include_router(auth_router, prefix="/api/v1", tags=["Auth"])

@@ -135,11 +135,14 @@ class ParsingService:
 
         finally:
             if (
-                extracted_dir
+                extracted_dir 
                 and os.path.exists(extracted_dir)
-                and extracted_dir.startswith(os.getenv("PROJECT_PATH"))
+                and os.getenv("PROJECT_PATH")
             ):
-                shutil.rmtree(extracted_dir, ignore_errors=True)
+                if not os.getenv("PROJECT_PATH"):
+                    logging.warning("PROJECT_PATH environment variable is not set")
+                if extracted_dir.startswith(os.getenv("PROJECT_PATH")):
+                    shutil.rmtree(extracted_dir, ignore_errors=True)
 
     def create_neo4j_indices(self, graph_manager):
         graph_manager.create_entityId_index()

@@ -52,7 +52,11 @@ class ProviderService:
             ),
         ]
 
-    async def set_global_ai_provider(self, user_id: str, provider: str):
+    async def set_global_ai_provider(self, user_id: str, provider: str = None):
+        # If no provider is specified, check for DEFAULT_LLM_PROVIDER in .env
+        if provider is None:
+            provider = os.getenv("DEFAULT_LLM_PROVIDER", "openai")
+        
         provider = provider.lower()
         # First check if preferences exist
         preferences = self.db.query(UserPreferences).filter_by(user_id=user_id).first()

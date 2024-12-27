@@ -31,19 +31,6 @@ alembic upgrade head
 
 echo Starting momentum application...
 
-REM Check for required environment variables
-if "%OPENAI_API_KEY%"=="" (
-    echo ERROR: OPENAI_API_KEY is not set in your .env file
-    echo Please add OPENAI_API_KEY to your .env file and try again
-    exit /b 1
-)
-
-if "%OPENAI_MODEL_REASONING%"=="" (
-    echo ERROR: OPENAI_MODEL_REASONING is not set in your .env file
-    echo Please add OPENAI_MODEL_REASONING to your .env file and try again
-    exit /b 1
-)
-
 REM Start both services only if all required variables are present
 start /B uvicorn app.main:app --host 0.0.0.0 --port 8001 --log-level debug
 start /B celery -A app.celery.celery_app worker --loglevel=info -Q "%CELERY_QUEUE_NAME%_process_repository" -E --concurrency=1 --pool=solo
