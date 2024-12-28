@@ -1,4 +1,5 @@
 import os
+import asyncio
 from typing import Any, Dict, List
 
 from crewai import Agent, Crew, Process, Task
@@ -26,23 +27,30 @@ class IntegrationTestAgent:
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.user_id = user_id
         self.sql_db = sql_db
+        self._llm = None  # Initialize as None
+        self._llm_provider = ProviderService(sql_db, user_id)
         self.get_code_from_multiple_node_ids = get_code_from_multiple_node_ids_tool(
             sql_db, user_id
         )
         self.get_code_from_probable_node_name = get_code_from_probable_node_name_tool(
             sql_db, user_id
         )
-        self.llm = llm
         self.max_iterations = os.getenv("MAX_ITER", 15)
 
+    async def _get_llm(self):
+        if self._llm is None:
+            self._llm = await self._llm_provider.get_small_llm(agent_type=AgentType.CREWAI)
+        return self._llm
+
     async def create_agents(self):
+        llm = await self._get_llm()  # Use the helper method
         integration_test_agent = Agent(
             role="Integration Test Writer",
             goal="Create a comprehensive integration test suite for the provided codebase. Analyze the code, determine the appropriate testing language and framework, and write tests that cover all major integration points.",
             backstory="You are an expert in writing unit tests for code using latest features of the popular testing libraries for the given programming language.",
             allow_delegation=False,
             verbose=True,
-            llm=self.llm,
+            llm=llm,
         )
 
         return integration_test_agent
@@ -216,7 +224,7 @@ async def kickoff_integration_test_agent(
 
     node_contexts = extract_unique_node_contexts(graph["graph"]["root_node"])
     provider_service = ProviderService(sql_db, user_id)
-    crew_ai_llm = provider_service.get_large_llm(agent_type=AgentType.CREWAI)
+    crew_ai_llm = await provider_service.get_large_llm(agent_type=AgentType.CREWAI)
     integration_test_agent = IntegrationTestAgent(sql_db, crew_ai_llm, user_id)
     result = await integration_test_agent.run(
         project_id, node_contexts, query, graph, history

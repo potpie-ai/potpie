@@ -32,6 +32,7 @@ from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     GetCodeFromNodeIdTool,
 )
+from app.modules.intelligence.provider.provider_service import ProviderService
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +40,18 @@ logger = logging.getLogger(__name__)
 class UnitTestAgent:
     def __init__(self, mini_llm, llm, db: Session):
         self.mini_llm = mini_llm
-        self.llm = llm
+        self._llm = None
+        self._llm_provider = ProviderService(db)
         self.history_manager = ChatHistoryService(db)
         self.prompt_service = PromptService(db)
         self.agents_service = AgentsService(db)
         self.chain = None
         self.db = db
+
+    async def _get_llm(self):
+        if self._llm is None:
+            self._llm = await self._llm_provider.get_small_llm(agent_type=AgentType.LANGCHAIN)
+        return self._llm
 
     @lru_cache(maxsize=2)
     async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
@@ -69,7 +76,8 @@ class UnitTestAgent:
                 HumanMessagePromptTemplate.from_template(human_prompt.text),
             ]
         )
-        return prompt_template | self.llm
+        llm = await self._get_llm()
+        return prompt_template | llm
 
     async def _classify_query(self, query: str, history: List[HumanMessage]):
         prompt = ClassificationPrompts.get_classification_prompt(AgentType.UNIT_TEST)
@@ -80,7 +88,7 @@ class UnitTestAgent:
             template=prompt,
             partial_variables={"format_instructions": parser.get_format_instructions()},
         )
-        chain = prompt_with_parser | self.llm | parser
+        chain = prompt_with_parser | await self._get_llm() | parser
         response = await chain.ainvoke(input=inputs)
 
         return response.classification
@@ -137,7 +145,7 @@ class UnitTestAgent:
                     project_id,
                     node_ids,
                     self.db,
-                    self.llm,
+                    await self._get_llm(),
                     user_id,
                 )
 

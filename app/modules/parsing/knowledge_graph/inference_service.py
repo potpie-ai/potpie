@@ -33,13 +33,17 @@ class InferenceService:
             neo4j_config["uri"],
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
-        self.llm = ProviderService(db, user_id).get_small_llm(
-            agent_type=AgentType.LANGCHAIN
-        )
+        self._llm = None
+        self._llm_provider = ProviderService(db, user_id)
         self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
         self.search_service = SearchService(db)
         self.project_manager = ProjectService(db)
         self.parallel_requests = int(os.getenv("PARALLEL_REQUESTS", 50))
+
+    async def _get_llm(self):
+        if self._llm is None:
+            self._llm = await self._llm_provider.get_small_llm(agent_type=AgentType.LANGCHAIN)
+        return self._llm
 
     def close(self):
         self.driver.close()
@@ -402,7 +406,7 @@ class InferenceService:
                 "format_instructions": output_parser.get_format_instructions()
             },
         )
-        chain = chat_prompt | self.llm | output_parser
+        chain = chat_prompt | await self._get_llm() | output_parser
         result = await chain.ainvoke(input=inputs)
         return result
 
@@ -586,7 +590,7 @@ class InferenceService:
         start_time = time.time()
         logger.info(f"Parsing project {repo_id}: Starting the inference process...")
 
-        chain = chat_prompt | self.llm | output_parser
+        chain = chat_prompt | await self._get_llm() | output_parser
         try:
             result = await chain.ainvoke({"code_snippets": code_snippets})
         except Exception as e:

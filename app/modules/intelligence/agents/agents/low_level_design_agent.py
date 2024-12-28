@@ -61,7 +61,8 @@ class LowLevelDesignAgent:
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.max_iter = int(os.getenv("MAX_ITER", 10))
         self.sql_db = sql_db
-        self.llm = llm
+        self._llm = None  # Initialize as None
+        self._llm_provider = ProviderService(sql_db, user_id)
         self.user_id = user_id
 
         # Initialize tools
@@ -78,7 +79,13 @@ class LowLevelDesignAgent:
             sql_db
         )
 
+    async def _get_llm(self):
+        if self._llm is None:
+            self._llm = await self._llm_provider.get_small_llm(agent_type=AgentType.CREWAI)
+        return self._llm
+
     async def create_agents(self):
+        llm = await self._get_llm()  # Use the helper method
         codebase_analyst = Agent(
             role="Codebase Analyst",
             goal="Analyze the existing codebase and provide insights on the current structure and patterns",
@@ -94,7 +101,7 @@ class LowLevelDesignAgent:
             ],
             allow_delegation=False,
             verbose=True,
-            llm=self.llm,
+            llm=llm,
         )
 
         design_planner = Agent(
@@ -113,7 +120,7 @@ class LowLevelDesignAgent:
             ],
             allow_delegation=True,
             verbose=True,
-            llm=self.llm,
+            llm=llm,
         )
 
         return codebase_analyst, design_planner
@@ -212,7 +219,7 @@ async def create_low_level_design_agent(
     user_id: str,
 ) -> AsyncGenerator[str, None]:
     provider_service = ProviderService(sql_db, user_id)
-    crew_ai_llm = provider_service.get_large_llm(agent_type=AgentType.CREWAI)
+    crew_ai_llm = await provider_service.get_large_llm(agent_type=AgentType.CREWAI)
     design_agent = LowLevelDesignAgent(sql_db, crew_ai_llm, user_id)
     async for chunk in design_agent.run(functional_requirements, project_id):
         yield chunk

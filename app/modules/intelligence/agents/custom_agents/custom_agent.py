@@ -27,36 +27,24 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-
 class CustomAgent:
-    def __init__(self, llm, db: Session, agent_id: str, user_id: str):
-        self.llm = llm
+    def __init__(self, llm_provider, db: Session, agent_id: str, user_id: str):
         self.db = db
         self.agent_id = agent_id
         self.user_id = user_id
+        self._llm = None  # Initialize as None
+        self._llm_provider = llm_provider
         self.history_manager = ChatHistoryService(db)
         self.prompt_service = PromptService(db)
         self.custom_agents_service = CustomAgentsService()
         self.chain = None
         self.base_url = os.getenv("POTPIE_PLUS_BASE_URL")
 
-    async def _get_system_prompt(self) -> str:
-        """Fetch system prompt from POTPIE_PLUS_BASE_URL with HMAC authentication"""
-        try:
-            user_id = self.user_id
-            hmac_signature = AuthService.generate_hmac_signature(user_id)
-            headers = {"X-HMAC-Signature": hmac_signature}
-
-            url = f"{self.base_url}/custom-agents/agents/{self.agent_id}?user_id={user_id}"
-
-            async with httpx.AsyncClient() as client:
-                response = await client.get(url, headers=headers)
-                response.raise_for_status()
-                data = response.json()
-                return data.get("system_prompt")
-        except Exception as e:
-            logger.error(f"Error fetching system prompt: {str(e)}", exc_info=True)
-            raise ValueError(f"Failed to fetch system prompt: {str(e)}")
+    async def _get_llm(self):
+        """Helper method to get or initialize LLM with caching"""
+        if self._llm is None:
+            self._llm = await self._llm_provider.get_small_llm(agent_type=AgentType.LANGCHAIN)
+        return self._llm
 
     async def _create_chain(self) -> RunnableSequence:
         system_prompt = await self._get_system_prompt()
@@ -70,7 +58,9 @@ class CustomAgent:
                 MessagesPlaceholder(variable_name="tool_results"),
             ]
         )
-        return prompt_template | self.llm
+        
+        llm = await self._get_llm()
+        return prompt_template | llm
 
     async def run(
         self,

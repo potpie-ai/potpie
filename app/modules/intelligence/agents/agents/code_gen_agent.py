@@ -321,8 +321,8 @@ async def kickoff_code_generation_crew(
     user_id: str,
 ) -> AsyncGenerator[str, None]:
     provider_service = ProviderService(sql_db, user_id)
-    crew_ai_mini_llm = provider_service.get_small_llm(agent_type=AgentType.CREWAI)
-    crew_ai_llm = provider_service.get_large_llm(agent_type=AgentType.CREWAI)
+    crew_ai_mini_llm = await provider_service.get_small_llm(agent_type=AgentType.CREWAI)
+    crew_ai_llm = await provider_service.get_large_llm(agent_type=AgentType.CREWAI)
     code_gen_agent = CodeGenerationAgent(sql_db, crew_ai_llm, crew_ai_mini_llm, user_id)
     async for chunk in code_gen_agent.run(query, project_id, history, node_ids):
         yield chunk

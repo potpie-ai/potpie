@@ -89,7 +89,7 @@ class SimplifiedAgentSupervisor:
             for agent in available_agents
         }
 
-        self.llm = self.provider_service.get_small_llm(user_id)
+        self.llm = await self.provider_service.get_small_llm(user_id)
 
         self.classifier_prompt = """
         Given the user query and the current agent ID, select the most appropriate agent by comparing the query’s requirements with each agent’s specialties.
@@ -422,7 +422,7 @@ class ConversationService:
                 conversation_id, message_type, user_id
             )
             logger.info(f"Stored message in conversation {conversation_id}")
-            provider_name = self.provider_service.get_llm_provider_name()
+            provider_name = await self.provider_service.get_llm_provider_name()
 
             PostHogClient().send_event(
                 user_id,
@@ -496,7 +496,7 @@ class ConversationService:
     ) -> str:
         agent_type = conversation.agent_ids[0]
 
-        llm = self.provider_service.get_small_llm(agent_type=AgentType.LANGCHAIN)
+        llm = await self.provider_service.get_small_llm(agent_type=AgentType.LANGCHAIN)
         prompt = ChatPromptTemplate.from_template(
             "Given an agent type '{agent_type}' and an initial message '{message}', "
             "generate a concise and relevant title for a conversation. "
