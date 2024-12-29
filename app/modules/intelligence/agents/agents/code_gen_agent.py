@@ -297,7 +297,7 @@ class CodeGenerationAgent:
 
         # Stream the output
         final_answer_streaming = False
-        async with aiofiles.open(read_fd, mode="r") as read_file:
+        async with aiofiles.open(read_fd, mode="r", encoding='utf-8') as read_file:
             async for line in read_file:
                 if not line:
                     break

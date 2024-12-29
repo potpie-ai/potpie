@@ -3,15 +3,6 @@
 REM Load environment variables from .env
 for /F "tokens=*" %%A in (.env) do SET %%A
 
-REM Set up Service Account Credentials
-set GOOGLE_APPLICATION_CREDENTIALS=./service-account.json
-
-REM Check if the credentials file exists
-if not exist "%GOOGLE_APPLICATION_CREDENTIALS%" (
-    echo Error: Service Account Credentials file not found at %GOOGLE_APPLICATION_CREDENTIALS%
-    echo Please ensure the service-account.json file is in the current directory if you are working outside developmentMode
-)
-
 REM Start Docker Compose
 docker compose up -d
 

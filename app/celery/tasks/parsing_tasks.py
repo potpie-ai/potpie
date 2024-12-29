@@ -8,9 +8,11 @@ from app.celery.celery_app import celery_app
 from app.core.database import SessionLocal
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
+from app.modules.utils.rate_limiter import RateLimiter
 
 logger = logging.getLogger(__name__)
 
+rate_limiter = RateLimiter(name="PARSING")
 
 class BaseTask(Task):
     _db = None
@@ -31,6 +33,7 @@ class BaseTask(Task):
     bind=True,
     base=BaseTask,
     name="app.celery.tasks.parsing_tasks.process_parsing",
+    max_retries=3  # Add max retries
 )
 def process_parsing(
     self,
@@ -45,23 +48,28 @@ def process_parsing(
         parsing_service = ParsingService(self.db, user_id)
 
         async def run_parsing():
-            import time
-
-            start_time = time.time()
-
-            await parsing_service.parse_directory(
-                ParsingRequest(**repo_details),
-                user_id,
-                user_email,
-                project_id,
-                cleanup_graph,
-            )
-
-            end_time = time.time()
-            elapsed_time = end_time - start_time
-            logger.info(
-                f"Parsing process took {elapsed_time:.2f} seconds for project {project_id}"
-            )
+            try:
+                await rate_limiter.acquire()
+                await parsing_service.parse_directory(
+                    ParsingRequest(**repo_details),
+                    user_id,
+                    user_email,
+                    project_id,
+                    cleanup_graph,
+                )
+            except Exception as e:
+                if "Failed to acquire rate limit after" in str(e):
+                    # If rate limit failed after retries, retry the whole task
+                    logger.warning(f"Rate limit exceeded, retrying task for project {project_id}")
+                    raise self.retry(
+                        exc=e,
+                        countdown=60 * (self.request.retries + 1),  # Progressive delay
+                        max_retries=3
+                    )
+                logger.error(f"Error during parsing with rate limiter: {str(e)}")
+                raise
+            finally:
+                logger.debug(f"Rate limiter metrics: {rate_limiter.get_metrics()}")
 
         asyncio.run(run_parsing())
         logger.info(f"Parsing process completed for project {project_id}")
