@@ -74,20 +74,22 @@ class SecretManager:
         return {"message": "Secret created successfully"}
 
     @staticmethod
-    def get_secret_id(provider: Literal["openai", "anthropic"], customer_id: str):
+    def get_secret_id(provider: Literal["openai", "anthropic", "google"], customer_id: str):
         if os.getenv("isDevelopmentMode") == "enabled":
             return None
         if provider == "openai":
             secret_id = f"openai-api-key-{customer_id}"
         elif provider == "anthropic":
             secret_id = f"anthropic-api-key-{customer_id}"
+        elif provider == "google":
+            secret_id = f"google-api-key-{customer_id}"
         else:
             raise HTTPException(status_code=400, detail="Invalid provider")
         return secret_id
 
     @router.get("/secrets/{provider}")
     def get_secret_for_provider(
-        provider: Literal["openai", "anthropic"],
+        provider: Literal["openai", "anthropic", "google"],
         user=Depends(AuthService.check_auth),
         db: Session = Depends(get_db),
     ):
@@ -108,7 +110,7 @@ class SecretManager:
         return SecretManager.get_secret(provider, customer_id)
 
     @staticmethod
-    def get_secret(provider: Literal["openai", "anthropic"], customer_id: str):
+    def get_secret(provider: Literal["openai", "anthropic", "google"], customer_id: str):
         if os.getenv("isDevelopmentMode") == "enabled":
             return None
         client, project_id = SecretManager.get_client_and_project()
@@ -159,7 +161,7 @@ class SecretManager:
 
     @router.delete("/secrets/{provider}")
     def delete_secret(
-        provider: Literal["openai", "anthropic"],
+        provider: Literal["openai", "anthropic", "google"],
         user=Depends(AuthService.check_auth),
         db: Session = Depends(get_db),
     ):

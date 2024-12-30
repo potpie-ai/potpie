@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+import asyncio
 from functools import lru_cache
 from typing import AsyncGenerator, Dict, List
 
@@ -31,6 +32,8 @@ from app.modules.intelligence.prompts.classification_prompts import (
 )
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.provider.provider_service import ProviderService
+from app.modules.utils.rate_limiter import RateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +41,37 @@ logger = logging.getLogger(__name__)
 class LLDChatAgent:
     def __init__(self, mini_llm, llm, db: Session):
         self.mini_llm = mini_llm
-        self.llm = llm
+        self._llm = None
+        self._llm_provider = ProviderService(db)
         self.history_manager = ChatHistoryService(db)
         self.prompt_service = PromptService(db)
         self.agents_service = AgentsService(db)
         self.chain = None
         self.db = db
+        self.llm_rate_limiter = RateLimiter(name="LLM_API")
+        logger.debug("Rate limiter initialized for LLDChatAgent")
+
+    async def _get_llm(self):
+        try:
+            await asyncio.wait_for(
+                self.llm_rate_limiter.acquire(),
+                timeout=30
+            )
+            logger.debug("Rate limiter acquired for LLM call")
+            
+            if self._llm is None:
+                self._llm = await self._llm_provider.get_small_llm(agent_type=AgentType.LANGCHAIN)
+            return self._llm
+
+        except asyncio.TimeoutError:
+            logger.error("Timeout waiting for rate limiter")
+            raise Exception("Service is currently overloaded. Please try again later.")
+        except Exception as e:
+            if "429" in str(e) or "quota exceeded" in str(e).lower():
+                self.llm_rate_limiter.handle_quota_exceeded()
+                logger.error("LLM API quota exceeded")
+            logger.error(f"Error getting LLM: {str(e)}", exc_info=True)
+            raise
 
     @lru_cache(maxsize=2)
     async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
@@ -68,21 +96,39 @@ class LLDChatAgent:
                 HumanMessagePromptTemplate.from_template(human_prompt.text),
             ]
         )
-        return prompt_template | self.mini_llm
+        llm = await self._get_llm()
+        return prompt_template | llm
 
     async def _classify_query(self, query: str, history: List[HumanMessage]):
-        prompt = ClassificationPrompts.get_classification_prompt(AgentType.LLD)
-        inputs = {"query": query, "history": [msg.content for msg in history[-10:]]}
+        try:
+            await asyncio.wait_for(
+                self.llm_rate_limiter.acquire(),
+                timeout=30
+            )
+            logger.debug("Rate limiter acquired for classification query")
 
-        parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
-        prompt_with_parser = ChatPromptTemplate.from_template(
-            template=prompt,
-            partial_variables={"format_instructions": parser.get_format_instructions()},
-        )
-        chain = prompt_with_parser | self.llm | parser
-        response = await chain.ainvoke(input=inputs)
+            prompt = ClassificationPrompts.get_classification_prompt(AgentType.LLD)
+            inputs = {"query": query, "history": [msg.content for msg in history[-10:]]}
 
-        return response.classification
+            parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
+            prompt_with_parser = ChatPromptTemplate.from_template(
+                template=prompt,
+                partial_variables={"format_instructions": parser.get_format_instructions()},
+            )
+            chain = prompt_with_parser | self.llm | parser
+            response = await chain.ainvoke(input=inputs)
+
+            return response.classification
+
+        except asyncio.TimeoutError:
+            logger.error("Timeout waiting for rate limiter")
+            raise Exception("Service is currently overloaded. Please try again later.")
+        except Exception as e:
+            if "429" in str(e) or "quota exceeded" in str(e).lower():
+                self.llm_rate_limiter.handle_quota_exceeded()
+                logger.error("LLM API quota exceeded")
+            logger.error(f"Error in classification query: {str(e)}", exc_info=True)
+            raise
 
     class State(TypedDict):
         query: str

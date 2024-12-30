@@ -1,4 +1,5 @@
 import os
+import asyncio
 from typing import Dict, List
 
 from crewai import Agent, Crew, Process, Task
@@ -26,20 +27,27 @@ class BlastRadiusAgent:
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.sql_db = sql_db
         self.user_id = user_id
-        self.llm = llm
+        self._llm = None  # Initialize as None
+        self._llm_provider = ProviderService(sql_db, user_id)
         self.get_nodes_from_tags = get_nodes_from_tags_tool(sql_db, user_id)
         self.ask_knowledge_graph_queries = get_ask_knowledge_graph_queries_tool(
             sql_db, user_id
         )
 
+    async def _get_llm(self):
+        if self._llm is None:
+            self._llm = await self._llm_provider.get_small_llm(agent_type=AgentType.CREWAI)
+        return self._llm
+
     async def create_agents(self):
+        llm = await self._get_llm()  # Use the helper method
         blast_radius_agent = Agent(
             role="Blast Radius Agent",
             goal="Explain the blast radius of the changes made in the code.",
             backstory="You are an expert in understanding the impact of code changes on the codebase.",
             allow_delegation=False,
             verbose=True,
-            llm=self.llm,
+            llm=llm,
         )
 
         return blast_radius_agent
@@ -141,7 +149,7 @@ async def kickoff_blast_radius_agent(
     query: str, project_id: str, node_ids: List[NodeContext], sql_db, user_id, llm
 ) -> Dict[str, str]:
     provider_service = ProviderService(sql_db, user_id)
-    crew_ai_mini_llm = provider_service.get_small_llm(agent_type=AgentType.CREWAI)
+    crew_ai_mini_llm = await provider_service.get_small_llm(agent_type=AgentType.CREWAI)
     blast_radius_agent = BlastRadiusAgent(sql_db, user_id, crew_ai_mini_llm)
     result = await blast_radius_agent.run(project_id, node_ids, query)
     return result

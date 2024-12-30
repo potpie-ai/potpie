@@ -29,6 +29,9 @@ from app.modules.intelligence.prompts.classification_prompts import (
 )
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.provider.provider_service import ProviderService
+import asyncio
+from app.modules.utils.rate_limiter import RateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +39,37 @@ logger = logging.getLogger(__name__)
 class CodeChangesChatAgent:
     def __init__(self, mini_llm, llm, db: Session):
         self.mini_llm = mini_llm
-        self.llm = llm
+        self._llm = None
+        self._llm_provider = ProviderService(db)
         self.history_manager = ChatHistoryService(db)
         self.prompt_service = PromptService(db)
         self.agents_service = AgentsService(db)
         self.chain = None
         self.db = db
+        self.llm_rate_limiter = RateLimiter(name="LLM_API")
+        logger.debug("Rate limiter initialized for CodeChangesChatAgent")
+
+    async def _get_llm(self):
+        try:
+            await asyncio.wait_for(
+                self.llm_rate_limiter.acquire(),
+                timeout=30
+            )
+            logger.debug("Rate limiter acquired for LLM call")
+            
+            if self._llm is None:
+                self._llm = await self._llm_provider.get_small_llm(agent_type=AgentType.LANGCHAIN)
+            return self._llm
+
+        except asyncio.TimeoutError:
+            logger.error("Timeout waiting for rate limiter")
+            raise Exception("Service is currently overloaded. Please try again later.")
+        except Exception as e:
+            if "429" in str(e) or "quota exceeded" in str(e).lower():
+                self.llm_rate_limiter.handle_quota_exceeded()
+                logger.error("LLM API quota exceeded")
+            logger.error(f"Error getting LLM: {str(e)}", exc_info=True)
+            raise
 
     @lru_cache(maxsize=2)
     async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
@@ -66,7 +94,8 @@ class CodeChangesChatAgent:
                 HumanMessagePromptTemplate.from_template(human_prompt.text),
             ]
         )
-        return prompt_template | self.mini_llm
+        llm = await self._get_llm()
+        return prompt_template | llm
 
     async def _classify_query(self, query: str, history: List[HumanMessage]):
         prompt = ClassificationPrompts.get_classification_prompt(AgentType.CODE_CHANGES)

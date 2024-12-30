@@ -56,6 +56,8 @@ class RAGAgent:
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.max_iter = os.getenv("MAX_ITER", 5)
         self.sql_db = sql_db
+        self._llm = None  # Initialize as None
+        self._llm_provider = ProviderService(sql_db, user_id)
         self.get_code_from_node_id = get_code_from_node_id_tool(sql_db, user_id)
         self.get_code_from_multiple_node_ids = get_code_from_multiple_node_ids_tool(
             sql_db, user_id
@@ -71,11 +73,15 @@ class RAGAgent:
             sql_db
         )
         self.get_code_file_structure = get_code_file_structure_tool(sql_db)
-        self.llm = llm
-        self.mini_llm = mini_llm
         self.user_id = user_id
 
+    async def _get_llm(self):
+        if self._llm is None:
+            self._llm = await self._llm_provider.get_small_llm(agent_type=AgentType.CREWAI)
+        return self._llm
+
     async def create_agents(self):
+        llm = await self._get_llm()  # Use the helper method
         query_agent = Agent(
             role="Context curation agent",
             goal=(
@@ -102,7 +108,7 @@ class RAGAgent:
             ],
             allow_delegation=False,
             verbose=True,
-            llm=self.llm,
+            llm=llm,
             max_iter=self.max_iter,
         )
 
@@ -272,8 +278,8 @@ async def kickoff_rag_agent(
     user_id: str,
 ) -> AsyncGenerator[str, None]:
     provider_service = ProviderService(sql_db, user_id)
-    crew_ai_llm = provider_service.get_large_llm(agent_type=AgentType.CREWAI)
-    crew_ai_mini_llm = provider_service.get_small_llm(agent_type=AgentType.CREWAI)
+    crew_ai_llm = await provider_service.get_large_llm(agent_type=AgentType.CREWAI)
+    crew_ai_mini_llm = await provider_service.get_small_llm(agent_type=AgentType.CREWAI)
     rag_agent = RAGAgent(sql_db, crew_ai_llm, crew_ai_mini_llm, user_id)
     file_structure = await CodeProviderService(sql_db).get_project_structure_async(
         project_id

@@ -16,6 +16,7 @@ from app.modules.intelligence.agents.agents.code_gen_agent import (
 from app.modules.intelligence.agents.agents_service import AgentsService
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.provider.provider_service import ProviderService
 
 logger = logging.getLogger(__name__)
 
@@ -23,12 +24,18 @@ logger = logging.getLogger(__name__)
 class CodeGenerationChatAgent:
     def __init__(self, mini_llm, llm, db: Session):
         self.mini_llm = mini_llm
-        self.llm = llm
+        self._llm = None
+        self._llm_provider = ProviderService(db)
         self.history_manager = ChatHistoryService(db)
         self.prompt_service = PromptService(db)
         self.agents_service = AgentsService(db)
         self.chain = None
         self.db = db
+
+    async def _get_llm(self):
+        if self._llm is None:
+            self._llm = await self._llm_provider.get_small_llm(agent_type=AgentType.LANGCHAIN)
+        return self._llm
 
     class State(TypedDict):
         query: str
@@ -70,6 +77,7 @@ class CodeGenerationChatAgent:
             "node_ids": node_ids,
         }
         graph = self._create_graph()
+        llm = await self._get_llm()
         async for chunk in graph.astream(state, stream_mode="custom"):
             yield chunk
 
@@ -99,7 +107,7 @@ class CodeGenerationChatAgent:
                 validated_history[-5:],
                 node_ids,
                 self.db,
-                self.llm,
+                await self._get_llm(),
                 self.mini_llm,
                 user_id,
             ):
