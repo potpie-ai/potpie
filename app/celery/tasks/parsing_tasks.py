@@ -58,9 +58,10 @@ def process_parsing(
                     cleanup_graph,
                 )
             except Exception as e:
-                if "Failed to acquire rate limit after" in str(e):
-                    # If rate limit failed after retries, retry the whole task
-                    logger.warning(f"Rate limit exceeded, retrying task for project {project_id}")
+                if "quota exceeded" in str(e).lower():
+                    rate_limiter.handle_quota_exceeded()
+                    # If quota exceeded, retry the whole task
+                    logger.warning(f"Rate limit quota exceeded, retrying task for project {project_id}")
                     raise self.retry(
                         exc=e,
                         countdown=60 * (self.request.retries + 1),  # Progressive delay

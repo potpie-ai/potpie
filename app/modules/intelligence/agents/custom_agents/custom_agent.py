@@ -22,6 +22,7 @@ from app.modules.intelligence.agents.custom_agents.custom_agents_service import 
 )
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.provider.provider_service import AgentType
 
 logger = logging.getLogger(__name__)
 

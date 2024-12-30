@@ -23,7 +23,6 @@ class AgentType(Enum):
     CREWAI = "CREWAI"
     LANGCHAIN = "LANGCHAIN"
 
-
 class ProviderService:
     def __init__(self, db, user_id: str):
         """Initialize ProviderService with database session and user ID."""
@@ -37,8 +36,8 @@ class ProviderService:
             if not self.PORTKEY_API_KEY:
                 logger.warning("PORTKEY_API_KEY not found in environment variables")
 
-        # Initialize rate limiter
-        self.rate_limiter = RateLimiter("provider")
+        # Initialize rate limiter with a more specific name
+        self.llm_rate_limiter = RateLimiter(name="LLM_API")
         logger.debug("Rate limiter initialized for provider service")
 
     @classmethod
@@ -115,8 +114,14 @@ class ProviderService:
             logger.info(f"Successfully set AI provider to {provider} for user {user_id}")
             return {"message": f"AI provider set to {provider}"}
             
+        except asyncio.TimeoutError:
+            logger.error("Timeout waiting for rate limiter")
+            raise Exception("Service is currently overloaded. Please try again later.")
         except Exception as e:
-            logger.error(f"Error setting global AI provider: {str(e)}", exc_info=True)
+            if "429" in str(e) or "quota exceeded" in str(e).lower():
+                self.llm_rate_limiter.handle_quota_exceeded()
+                logger.error("LLM API quota exceeded")
+            logger.error(f"Error initializing large LLM: {str(e)}", exc_info=True)
             raise
 
     def get_llm_provider_name(self) -> str:
@@ -155,7 +160,10 @@ class ProviderService:
         """Get large language model instance based on user preferences."""
         logger.info(f"Getting large LLM for agent type: {agent_type}")
         try:
-            await self.rate_limiter.acquire()
+            await asyncio.wait_for(
+                self.llm_rate_limiter.acquire(),
+                timeout=30  # 30 seconds timeout
+            )
             logger.debug("Rate limiter acquired")
 
             # Get user preferences from the database
@@ -375,6 +383,9 @@ class ProviderService:
             return self.llm
 
         except Exception as e:
+            if "429" in str(e) or "quota exceeded" in str(e).lower():
+                self.llm_rate_limiter.handle_quota_exceeded()
+                logger.error("LLM API quota exceeded")
             logger.error(f"Error initializing large LLM: {str(e)}", exc_info=True)
             raise
 
@@ -384,7 +395,10 @@ class ProviderService:
         logger.debug(f"Environment DEFAULT_LLM_PROVIDER: {os.getenv('DEFAULT_LLM_PROVIDER')}")
         
         try:
-            await self.rate_limiter.acquire()
+            await asyncio.wait_for(
+                self.llm_rate_limiter.acquire(),
+                timeout=30  # 30 seconds timeout
+            )
             logger.debug("Rate limiter acquired")
 
             # Get user preferences from the database
@@ -612,6 +626,12 @@ class ProviderService:
             logger.info(f"Successfully initialized small LLM with provider: {preferred_provider}")
             return self.llm
 
+        except asyncio.TimeoutError:
+            logger.error("Timeout waiting for rate limiter")
+            raise Exception("Service is currently overloaded. Please try again later.")
         except Exception as e:
-            logger.error(f"Error initializing small LLM: {str(e)}", exc_info=True)
+            if "429" in str(e) or "quota exceeded" in str(e).lower():
+                self.llm_rate_limiter.handle_quota_exceeded()
+                logger.error("LLM API quota exceeded")
+            logger.error(f"Error initializing large LLM: {str(e)}", exc_info=True)
             raise

@@ -1,5 +1,6 @@
 import json
 import logging
+import asyncio
 from functools import lru_cache
 from typing import AsyncGenerator, Dict, List
 
@@ -31,6 +32,8 @@ from app.modules.intelligence.prompts.prompt_schema import PromptResponse, Promp
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.provider_service import ProviderService
 
+from app.modules.utils.rate_limiter import RateLimiter
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,11 +47,30 @@ class IntegrationTestChatAgent:
         self.agents_service = AgentsService(db)
         self.chain = None
         self.db = db
+        self.llm_rate_limiter = RateLimiter(name="LLM_API")
+        logger.debug("Rate limiter initialized for IntegrationTestChatAgent")
 
     async def _get_llm(self):
-        if self._llm is None:
-            self._llm = await self._llm_provider.get_small_llm(agent_type=AgentType.LANGCHAIN)
-        return self._llm
+        try:
+            await asyncio.wait_for(
+                self.llm_rate_limiter.acquire(),
+                timeout=30
+            )
+            logger.debug("Rate limiter acquired for LLM call")
+            
+            if self._llm is None:
+                self._llm = await self._llm_provider.get_small_llm(agent_type=AgentType.LANGCHAIN)
+            return self._llm
+
+        except asyncio.TimeoutError:
+            logger.error("Timeout waiting for rate limiter")
+            raise Exception("Service is currently overloaded. Please try again later.")
+        except Exception as e:
+            if "429" in str(e) or "quota exceeded" in str(e).lower():
+                self.llm_rate_limiter.handle_quota_exceeded()
+                logger.error("LLM API quota exceeded")
+            logger.error(f"Error getting LLM: {str(e)}", exc_info=True)
+            raise
 
     @lru_cache(maxsize=2)
     async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
@@ -77,20 +99,35 @@ class IntegrationTestChatAgent:
         return prompt_template | llm
 
     async def _classify_query(self, query: str, history: List[HumanMessage]):
-        prompt = ClassificationPrompts.get_classification_prompt(
-            AgentType.INTEGRATION_TEST
-        )
-        inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
+        try:
+            await asyncio.wait_for(
+                self.llm_rate_limiter.acquire(),
+                timeout=30
+            )
+            logger.debug("Rate limiter acquired for classification query")
 
-        parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
-        prompt_with_parser = ChatPromptTemplate.from_template(
-            template=prompt,
-            partial_variables={"format_instructions": parser.get_format_instructions()},
-        )
-        chain = prompt_with_parser | self.llm | parser
-        response = await chain.ainvoke(input=inputs)
+            prompt = ClassificationPrompts.get_classification_prompt(AgentType.INTEGRATION_TEST)
+            inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
 
-        return response.classification
+            parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
+            prompt_with_parser = ChatPromptTemplate.from_template(
+                template=prompt,
+                partial_variables={"format_instructions": parser.get_format_instructions()},
+            )
+            chain = prompt_with_parser | self.llm | parser
+            response = await chain.ainvoke(input=inputs)
+
+            return response.classification
+
+        except asyncio.TimeoutError:
+            logger.error("Timeout waiting for rate limiter")
+            raise Exception("Service is currently overloaded. Please try again later.")
+        except Exception as e:
+            if "429" in str(e) or "quota exceeded" in str(e).lower():
+                self.llm_rate_limiter.handle_quota_exceeded()
+                logger.error("LLM API quota exceeded")
+            logger.error(f"Error in classification query: {str(e)}", exc_info=True)
+            raise
 
     async def run(
         self,

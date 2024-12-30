@@ -1,5 +1,6 @@
 import os
 import asyncio
+import random
 from datetime import datetime, timedelta
 from collections import deque
 import logging
@@ -9,11 +10,16 @@ logger = logging.getLogger(__name__)
 class RateLimiter:
     def __init__(self, name: str = "default"):
         self.name = name
-        self.MAX_REQUESTS_PER_MINUTE = int(os.getenv(f"{name.upper()}_MAX_REQUESTS_PER_MINUTE", 0))
-        self.MAX_CONCURRENT_REQUESTS = int(os.getenv(f"{name.upper()}_MAX_CONCURRENT_REQUESTS", 0))
-        self.MAX_RETRIES = 3
+        # Get configurable limits from environment variables with defaults
+        self.MAX_REQUESTS_PER_MINUTE = int(os.getenv(f"{name.upper()}_MAX_REQUESTS_PER_MINUTE", 50))
+        self.MAX_CONCURRENT_REQUESTS = int(os.getenv(f"{name.upper()}_MAX_CONCURRENT_REQUESTS", 5))
+        self.QUOTA_BACKOFF_SECONDS = int(os.getenv(f"{name.upper()}_QUOTA_BACKOFF_SECONDS", 60))
+        self.MAX_QUEUE_SIZE = int(os.getenv(f"{name.upper()}_MAX_QUEUE_SIZE", 1000))
+        self.MAX_FAILURES = int(os.getenv(f"{name.upper()}_MAX_FAILURES", 5))
+        self.CIRCUIT_RESET_TIME = int(os.getenv(f"{name.upper()}_CIRCUIT_RESET_TIME", 300))
+        
         self._request_timestamps = deque()
-        self._request_queue = asyncio.Queue()
+        self._request_queue = asyncio.Queue(maxsize=self.MAX_QUEUE_SIZE)
         self._request_semaphore = asyncio.Semaphore(
             self.MAX_CONCURRENT_REQUESTS if self.MAX_CONCURRENT_REQUESTS > 0 else 1000000
         )
@@ -22,14 +28,21 @@ class RateLimiter:
         self.rate_limited_requests = 0
         self._worker_task = None
         self._processing = True
+        self._last_quota_exceeded = None
+        self._consecutive_failures = 0
+        self._circuit_open = False
+
+        logger.info(
+            f"Initialized rate limiter '{name}' with {self.MAX_REQUESTS_PER_MINUTE} "
+            f"requests/minute, {self.MAX_CONCURRENT_REQUESTS} concurrent requests, "
+            f"and {self.QUOTA_BACKOFF_SECONDS}s quota backoff"
+        )
 
     async def _worker(self):
-        """Background worker to process queued requests"""
         while self._processing:
             try:
                 future = await self._request_queue.get()
                 try:
-                    # Process the request with the semaphore
                     async with self._request_semaphore:
                         result = await self._process_request()
                         future.set_result(result)
@@ -44,26 +57,36 @@ class RateLimiter:
                 continue
 
     async def _process_request(self):
-        """Process a single request with rate limiting"""
-        retry_count = 0
-        last_exception = None
-        
-        while retry_count < self.MAX_RETRIES:
-            try:
-                await self._check_rate_limit()
-                return True
-            except Exception as e:
-                retry_count += 1
-                last_exception = e
-                wait_time = (2 ** retry_count) * 1.5  # Exponential backoff
+        """Process a single request with rate limiting and circuit breaker"""
+        if self._circuit_open:
+            if (datetime.now() - self._last_quota_exceeded).total_seconds() < self.CIRCUIT_RESET_TIME:
+                raise Exception(f"Circuit breaker open for {self.name}")
+            self._circuit_open = False
+            self._consecutive_failures = 0
+
+        # Check if we're in quota backoff period
+        if self._last_quota_exceeded:
+            time_since_quota = (datetime.now() - self._last_quota_exceeded).total_seconds()
+            if time_since_quota < self.QUOTA_BACKOFF_SECONDS:
+                wait_time = self.QUOTA_BACKOFF_SECONDS - time_since_quota
                 logger.warning(
-                    f"Rate limit reached for {self.name}. "
-                    f"Attempt {retry_count}/{self.MAX_RETRIES}. "
-                    f"Waiting {wait_time:.2f} seconds"
+                    f"In quota backoff period for {self.name}. "
+                    f"Waiting {wait_time:.1f} seconds"
                 )
                 await asyncio.sleep(wait_time)
-        
-        raise Exception(f"Failed to acquire rate limit after {self.MAX_RETRIES} attempts: {last_exception}")
+                self._last_quota_exceeded = None
+
+        try:
+            await self._check_rate_limit()
+            self._consecutive_failures = 0
+            return True
+        except Exception as e:
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= self.MAX_FAILURES:
+                self._circuit_open = True
+                self._last_quota_exceeded = datetime.now()
+                logger.error(f"Circuit breaker opened for {self.name} after {self.MAX_FAILURES} failures")
+            raise e
 
     async def acquire(self):
         """Queue request and wait for processing"""
@@ -80,7 +103,7 @@ class RateLimiter:
             raise e
 
     async def _check_rate_limit(self):
-        """Check and enforce rate limits"""
+        """Check and enforce rate limits with improved tracking"""
         if self.MAX_REQUESTS_PER_MINUTE == 0:
             return
 
@@ -90,26 +113,49 @@ class RateLimiter:
             while self._request_timestamps and self._request_timestamps[0] < now - timedelta(minutes=1):
                 self._request_timestamps.popleft()
 
-            # Check if we're at the rate limit
-            if len(self._request_timestamps) >= self.MAX_REQUESTS_PER_MINUTE:
+            # Calculate current rate and capacity
+            current_rate = len(self._request_timestamps)
+            capacity_used = current_rate / self.MAX_REQUESTS_PER_MINUTE
+
+            if current_rate >= self.MAX_REQUESTS_PER_MINUTE:
                 self.rate_limited_requests += 1
                 wait_time = (self._request_timestamps[0] + timedelta(minutes=1) - now).total_seconds()
                 if wait_time > 0:
                     logger.warning(
                         f"Rate limit reached for {self.name}. "
-                        f"Waiting {wait_time:.2f} seconds. "
-                        f"Total requests: {self.total_requests}, "
-                        f"Rate limited: {self.rate_limited_requests}"
+                        f"Waiting {wait_time:.2f}s. "
+                        f"Capacity: {capacity_used*100:.1f}%, "
+                        f"Total: {self.total_requests}, "
+                        f"Limited: {self.rate_limited_requests}"
                     )
                     await asyncio.sleep(wait_time)
 
             # Add current timestamp
             self._request_timestamps.append(now)
             self.total_requests += 1
-            logger.debug(
-                f"Request timestamp added for {self.name}. "
-                f"Current requests in window: {len(self._request_timestamps)}"
+
+    def handle_quota_exceeded(self):
+        """Handle quota exceeded with exponential backoff"""
+        now = datetime.now()
+        if self._last_quota_exceeded:
+            # Calculate exponential backoff with base of 2
+            time_since_last = (now - self._last_quota_exceeded).total_seconds()
+            self.QUOTA_BACKOFF_SECONDS = min(
+                300,  # Max backoff of 5 minutes
+                self.QUOTA_BACKOFF_SECONDS * 2
             )
+        self._last_quota_exceeded = now
+        
+        # Add jitter (±20% randomization)
+        jitter = random.uniform(0.8, 1.2)
+        effective_backoff = self.QUOTA_BACKOFF_SECONDS * jitter
+        
+        logger.warning(
+            f"Quota exceeded for {self.name}. "
+            f"Entering {effective_backoff:.1f}s backoff period "
+            f"(base: {self.QUOTA_BACKOFF_SECONDS}s)"
+        )
+        return effective_backoff
 
     async def shutdown(self):
         """Gracefully shutdown the worker"""
@@ -130,5 +176,8 @@ class RateLimiter:
             "current_window_requests": len(self._request_timestamps),
             "max_requests_per_minute": self.MAX_REQUESTS_PER_MINUTE,
             "max_concurrent_requests": self.MAX_CONCURRENT_REQUESTS,
-            "queue_size": self._request_queue.qsize()
+            "queue_size": self._request_queue.qsize(),
+            "in_backoff": bool(self._last_quota_exceeded),
+            "circuit_open": self._circuit_open,
+            "consecutive_failures": self._consecutive_failures
         }
