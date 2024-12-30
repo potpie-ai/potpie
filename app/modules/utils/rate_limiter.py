@@ -31,6 +31,7 @@ class RateLimiter:
         self._last_quota_exceeded = None
         self._consecutive_failures = 0
         self._circuit_open = False
+        self._processing_lock = asyncio.Lock()
 
         logger.info(
             f"Initialized rate limiter '{name}' with {self.MAX_REQUESTS_PER_MINUTE} "
@@ -56,51 +57,45 @@ class RateLimiter:
                 logger.error(f"Error in worker: {e}")
                 continue
 
+    async def acquire(self):
+        """Queue request and wait for processing"""
+        async with self._processing_lock:  # Ensure sequential processing
+            if self._worker_task is None or self._worker_task.done():
+                self._processing = True
+                self._worker_task = asyncio.create_task(self._worker())
+
+            future = asyncio.Future()
+            await self._request_queue.put(future)
+            
+            try:
+                return await asyncio.wait_for(future, timeout=30)
+            except asyncio.TimeoutError:
+                logger.error(f"Timeout waiting for rate limiter {self.name}")
+                raise Exception("Service is currently overloaded. Please try again later.")
+
     async def _process_request(self):
-        """Process a single request with rate limiting and circuit breaker"""
+        """Process a single request with rate limiting"""
         if self._circuit_open:
             if (datetime.now() - self._last_quota_exceeded).total_seconds() < self.CIRCUIT_RESET_TIME:
                 raise Exception(f"Circuit breaker open for {self.name}")
             self._circuit_open = False
             self._consecutive_failures = 0
 
-        # Check if we're in quota backoff period
-        if self._last_quota_exceeded:
-            time_since_quota = (datetime.now() - self._last_quota_exceeded).total_seconds()
-            if time_since_quota < self.QUOTA_BACKOFF_SECONDS:
-                wait_time = self.QUOTA_BACKOFF_SECONDS - time_since_quota
-                logger.warning(
-                    f"In quota backoff period for {self.name}. "
-                    f"Waiting {wait_time:.1f} seconds"
-                )
-                await asyncio.sleep(wait_time)
-                self._last_quota_exceeded = None
+        async with self._rate_limit_lock:
+            now = datetime.now()
+            # Remove timestamps older than 1 minute
+            while self._request_timestamps and self._request_timestamps[0] < now - timedelta(minutes=1):
+                self._request_timestamps.popleft()
 
-        try:
-            await self._check_rate_limit()
-            self._consecutive_failures = 0
+            if len(self._request_timestamps) >= self.MAX_REQUESTS_PER_MINUTE:
+                wait_time = (self._request_timestamps[0] + timedelta(minutes=1) - now).total_seconds()
+                if wait_time > 0:
+                    logger.warning(f"Rate limit reached. Waiting {wait_time:.2f}s")
+                    await asyncio.sleep(wait_time)
+
+            self._request_timestamps.append(now)
+            self.total_requests += 1
             return True
-        except Exception as e:
-            self._consecutive_failures += 1
-            if self._consecutive_failures >= self.MAX_FAILURES:
-                self._circuit_open = True
-                self._last_quota_exceeded = datetime.now()
-                logger.error(f"Circuit breaker opened for {self.name} after {self.MAX_FAILURES} failures")
-            raise e
-
-    async def acquire(self):
-        """Queue request and wait for processing"""
-        if self._worker_task is None or self._worker_task.done():
-            self._processing = True
-            self._worker_task = asyncio.create_task(self._worker())
-
-        future = asyncio.Future()
-        await self._request_queue.put(future)
-        
-        try:
-            return await future
-        except Exception as e:
-            raise e
 
     async def _check_rate_limit(self):
         """Check and enforce rate limits with improved tracking"""

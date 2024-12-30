@@ -12,6 +12,7 @@ from app.modules.utils.rate_limiter import RateLimiter
 
 logger = logging.getLogger(__name__)
 
+# You can either set these via environment variables or pass them directly
 rate_limiter = RateLimiter(name="PARSING")
 
 class BaseTask(Task):
@@ -28,12 +29,13 @@ class BaseTask(Task):
             self._db.close()
             self._db = None
 
-
 @celery_app.task(
     bind=True,
     base=BaseTask,
     name="app.celery.tasks.parsing_tasks.process_parsing",
-    max_retries=3  # Add max retries
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=300  # 5 minutes max backoff
 )
 def process_parsing(
     self,
@@ -48,35 +50,42 @@ def process_parsing(
         parsing_service = ParsingService(self.db, user_id)
 
         async def run_parsing():
-            try:
-                await rate_limiter.acquire()
-                await parsing_service.parse_directory(
-                    ParsingRequest(**repo_details),
-                    user_id,
-                    user_email,
-                    project_id,
-                    cleanup_graph,
-                )
-            except Exception as e:
-                if "quota exceeded" in str(e).lower():
-                    rate_limiter.handle_quota_exceeded()
-                    # If quota exceeded, retry the whole task
-                    logger.warning(f"Rate limit quota exceeded, retrying task for project {project_id}")
-                    raise self.retry(
-                        exc=e,
-                        countdown=60 * (self.request.retries + 1),  # Progressive delay
-                        max_retries=3
+            retry_count = 0
+            max_retries = 3
+            
+            while retry_count < max_retries:
+                try:
+                    await rate_limiter.acquire()
+                    await parsing_service.parse_directory(
+                        ParsingRequest(**repo_details),
+                        user_id,
+                        user_email,
+                        project_id,
+                        cleanup_graph,
                     )
-                logger.error(f"Error during parsing with rate limiter: {str(e)}")
-                raise
-            finally:
-                logger.debug(f"Rate limiter metrics: {rate_limiter.get_metrics()}")
+                    break  # Success, exit loop
+                    
+                except Exception as e:
+                    if "quota exceeded" in str(e).lower() or "429" in str(e):
+                        retry_count += 1
+                        backoff = rate_limiter.handle_quota_exceeded()
+                        logger.warning(
+                            f"Rate limit exceeded (attempt {retry_count}/{max_retries}), "
+                            f"waiting {backoff}s before retry"
+                        )
+                        if retry_count < max_retries:
+                            await asyncio.sleep(backoff)
+                            continue
+                    raise  # Re-raise other exceptions or if max retries exceeded
 
         asyncio.run(run_parsing())
-        logger.info(f"Parsing process completed for project {project_id}")
+        
     except Exception as e:
         logger.error(f"Error during parsing for project {project_id}: {str(e)}")
         raise
 
+    finally:
+        # Ensure rate limiter is cleaned up
+        asyncio.run(rate_limiter.shutdown())
 
 logger.info("Parsing tasks module loaded")

@@ -162,7 +162,7 @@ class ProviderService:
         try:
             await asyncio.wait_for(
                 self.llm_rate_limiter.acquire(),
-                timeout=30  # 30 seconds timeout
+                timeout=30
             )
             logger.debug("Rate limiter acquired")
 
@@ -397,7 +397,7 @@ class ProviderService:
         try:
             await asyncio.wait_for(
                 self.llm_rate_limiter.acquire(),
-                timeout=30  # 30 seconds timeout
+                timeout=30
             )
             logger.debug("Rate limiter acquired")
 

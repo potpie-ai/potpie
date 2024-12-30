@@ -273,24 +273,40 @@ class InferenceService:
             entry_points_neighbors, docstring_lookup
         )
 
-        semaphore = asyncio.Semaphore(self.parallel_requests)
-
-        async def process_batch(batch):
-            async with semaphore:
-                response = await self.generate_entry_point_response(batch)
-                if isinstance(response, DocstringResponse):
-                    return response
-                else:
-                    return await self.generate_docstrings_for_entry_points(
-                        all_docstrings, entry_points_neighbors
-                    )
-
-        tasks = [process_batch(batch) for batch in entry_point_batches]
-        results = await asyncio.gather(*tasks)
-
+        # Process batches sequentially instead of using semaphore
         updated_docstrings = DocstringResponse(docstrings=[])
-        for result in results:
-            updated_docstrings.docstrings.extend(result.docstrings)
+        
+        for batch_index, batch in enumerate(entry_point_batches):
+            try:
+                logger.info(f"Processing entry point batch {batch_index + 1}/{len(entry_point_batches)}")
+                
+                # First attempt
+                response = await self.generate_entry_point_response(batch)
+                
+                if not isinstance(response, DocstringResponse):
+                    logger.warning("Invalid response from LLM, retrying after delay...")
+                    await asyncio.sleep(12)  # 5 requests/minute = 12 second delay
+                    response = await self.generate_entry_point_response(batch)
+                
+                if isinstance(response, DocstringResponse):
+                    updated_docstrings.docstrings.extend(response.docstrings)
+                    logger.info(f"Successfully processed batch {batch_index + 1}")
+                else:
+                    logger.error(f"Invalid response after retry for batch {batch_index + 1}, skipping")
+                
+                # Add delay between batches
+                await asyncio.sleep(12)
+                
+            except Exception as e:
+                logger.error(f"Error processing entry point batch {batch_index + 1}: {str(e)}")
+                await asyncio.sleep(12)
+                continue
+            
+            # Log progress every 5 batches
+            if (batch_index + 1) % 5 == 0:
+                logger.info(
+                    f"Entry point processing progress: {batch_index + 1}/{len(entry_point_batches)} batches"
+                )
 
         # Update all_docstrings with the new entry point docstrings
         for updated_docstring in updated_docstrings.docstrings:
@@ -307,6 +323,11 @@ class InferenceService:
             else:
                 all_docstrings["docstrings"].append(updated_docstring)
 
+        logger.info(
+            f"Completed entry point processing. "
+            f"Updated {len(updated_docstrings.docstrings)} docstrings"
+        )
+        
         return all_docstrings
 
     def batch_entry_points(
@@ -354,62 +375,6 @@ class InferenceService:
 
         return batches
 
-    async def generate_entry_point_response(
-        self, batch: List[Dict[str, str]]
-    ) -> DocstringResponse:
-        prompt = """
-        You are an expert software architect with deep knowledge of distributed systems and cloud-native applications. Your task is to analyze entry points and their function flows in a codebase.
-
-        For each of the following entry points and their function flows, perform the following task:
-
-        1. **Flow Summary**: Generate a concise yet comprehensive summary of the overall intent and purpose of the entry point and its flow. Follow these guidelines:
-           - Start with a high-level overview of the entry point's purpose.
-           - Detail the main steps or processes involved in the flow.
-           - Highlight key interactions with external systems or services.
-           - Specify ALL API paths, HTTP methods, topic names, database interactions, and critical function calls.
-           - Identify any error handling or edge cases.
-           - Conclude with the expected output or result of the flow.
-
-        Remember, the summary should be technical enough for a senior developer to understand the code's functionality via similarity search, but concise enough to be quickly parsed. Aim for a balance between detail and brevity.
-
-        Here are the entry points and their flows:
-
-        {entry_points}
-
-        Respond with a list of "node_id":"updated docstring" pairs, where the updated docstring includes the original docstring followed by the flow summary. Do not include any tags in your response.
-
-        Before finalizing your response, take a moment to review and refine your summaries. Ensure they are clear, accurate, and provide valuable insights into the code's functionality. Your job depends on it.
-
-        {format_instructions}
-        """
-
-        entry_points_text = "\n\n".join(
-            [
-                f"Entry point: {entry_point['node_id']}\n"
-                f"Flow:\n{entry_point['flow_description']}"
-                f"Entry docstring:\n{entry_point['entry_docstring']}"
-                for entry_point in batch
-            ]
-        )
-
-        formatted_prompt = prompt
-        return await self.generate_llm_response(
-            formatted_prompt, {"entry_points": entry_points_text}
-        )
-
-    async def generate_llm_response(self, prompt: str, inputs: Dict) -> str:
-        output_parser = PydanticOutputParser(pydantic_object=DocstringResponse)
-
-        chat_prompt = ChatPromptTemplate.from_template(
-            template=prompt,
-            partial_variables={
-                "format_instructions": output_parser.get_format_instructions()
-            },
-        )
-        chain = chat_prompt | await self._get_llm() | output_parser
-        result = await chain.ainvoke(input=inputs)
-        return result
-
     async def generate_docstrings(self, repo_id: str) -> Dict[str, DocstringResponse]:
         logger.info(
             f"DEBUGNEO4J: Function: {self.generate_docstrings.__name__}, Repo ID: {repo_id}"
@@ -424,7 +389,7 @@ class InferenceService:
             f"Creating search indices for project {repo_id} with nodes count {len(nodes)}"
         )
 
-        # Prepare a list of nodes for bulk insert
+        # Prepare nodes for indexing
         nodes_to_index = [
             {
                 "project_id": repo_id,
@@ -440,58 +405,71 @@ class InferenceService:
 
         # Perform bulk insert
         await self.search_service.bulk_create_search_indices(nodes_to_index)
-
         logger.info(
             f"Project {repo_id}: Created search indices over {len(nodes_to_index)} nodes"
         )
-
         await self.search_service.commit_indices()
-        # entry_points = self.get_entry_points(repo_id)
-        # logger.info(
-        #     f"DEBUGNEO4J: After get entry points, Repo ID: {repo_id}, Entry points: {len(entry_points)}"
-        # )
-        # self.log_graph_stats(repo_id)
-        # entry_points_neighbors = {}
-        # for entry_point in entry_points:
-        #     neighbors = self.get_neighbours(entry_point, repo_id)
-        #     entry_points_neighbors[entry_point] = neighbors
 
-        # logger.info(
-        #     f"DEBUGNEO4J: After get neighbours, Repo ID: {repo_id}, Entry points neighbors: {len(entry_points_neighbors)}"
-        # )
-        # self.log_graph_stats(repo_id)
+        # Create batches and initialize response dictionary
         batches = self.batch_nodes(nodes)
+        logger.info(f"Batched {len(nodes)} nodes into {len(batches)} batches")
+        logger.info(f"Batch sizes: {[len(batch) for batch in batches]}")
+        
         all_docstrings = {"docstrings": []}
-
-        semaphore = asyncio.Semaphore(self.parallel_requests)
-
-        async def process_batch(batch, batch_index: int):
-            async with semaphore:
-                logger.info(f"Processing batch {batch_index} for project {repo_id}")
+        
+        # Process batches sequentially
+        for batch_index, batch in enumerate(batches):
+            try:
+                logger.info(f"Processing batch {batch_index}/{len(batches)} for project {repo_id}")
+                
+                # First attempt
+                logger.info(f"Parsing project {repo_id}: Starting the inference process...")
                 response = await self.generate_response(batch, repo_id)
+                
+                # Handle invalid response with one retry
                 if not isinstance(response, DocstringResponse):
                     logger.warning(
                         f"Parsing project {repo_id}: Invalid response from LLM. Not an instance of DocstringResponse. Retrying..."
                     )
+                    # Wait before retry
+                    await asyncio.sleep(12)  # 5 requests/minute = 12 seconds between requests
                     response = await self.generate_response(batch, repo_id)
-                else:
+                
+                # Process valid response
+                if isinstance(response, DocstringResponse):
                     self.update_neo4j_with_docstrings(repo_id, response)
-                return response
-
-        tasks = [process_batch(batch, i) for i, batch in enumerate(batches)]
-        results = await asyncio.gather(*tasks)
-
-        for result in results:
-            if not isinstance(result, DocstringResponse):
+                    all_docstrings["docstrings"].extend(response.docstrings)
+                    logger.info(
+                        f"Successfully processed batch {batch_index} with {len(response.docstrings)} docstrings"
+                    )
+                else:
+                    logger.error(
+                        f"Project {repo_id}: Invalid response for batch {batch_index} after retry. Skipping batch."
+                    )
+                
+                # Add delay between batches to respect rate limits
+                await asyncio.sleep(12)  # Ensure we stay within rate limits
+                
+            except Exception as e:
                 logger.error(
-                    f"Project {repo_id}: Invalid response from during inference. Manually verify the project completion."
+                    f"Error processing batch {batch_index} for project {repo_id}: {str(e)}"
+                )
+                # Wait after error before continuing to next batch
+                await asyncio.sleep(12)
+                continue
+            
+            # Log progress
+            if (batch_index + 1) % 5 == 0:
+                logger.info(
+                    f"Progress update: Completed {batch_index + 1}/{len(batches)} batches for project {repo_id}"
                 )
 
-        # updated_docstrings = await self.generate_docstrings_for_entry_points(
-        #     all_docstrings, entry_points_neighbors
-        # )
-        updated_docstrings = all_docstrings
-        return updated_docstrings
+        logger.info(
+            f"Completed docstring generation for project {repo_id}. "
+            f"Generated {len(all_docstrings['docstrings'])} docstrings"
+        )
+        
+        return all_docstrings
 
     async def generate_response(
         self, batch: List[DocstringRequest], repo_id: str
