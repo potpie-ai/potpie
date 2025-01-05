@@ -7,6 +7,7 @@ from crewai import LLM
 from langchain_anthropic import ChatAnthropic
 from langchain_openai.chat_models import ChatOpenAI
 from portkey_ai import PORTKEY_GATEWAY_URL, createHeaders
+from langchain_ollama import Ollama
 
 from app.modules.key_management.secret_manager import SecretManager
 from app.modules.users.user_preferences_model import UserPreferences
@@ -43,6 +44,11 @@ class ProviderService:
                 id="anthropic",
                 name="Anthropic",
                 description="An AI safety-focused company known for models like Claude.",
+            ),
+            ProviderInfo(
+                id="ollama",
+                name="Ollama",
+                description="A provider for running open source models locally.",
             ),
         ]
 
@@ -195,6 +201,12 @@ class ProviderService:
                         default_headers=portkey_headers,
                     )
 
+        elif preferred_provider == "ollama":
+            logging.info("Initializing Ollama LLM")
+            ollama_endpoint = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
+            ollama_model = os.getenv("OLLAMA_MODEL", "llama2")
+            self.llm = Ollama(base_url=ollama_endpoint, model=ollama_model)
+
         else:
             raise ValueError("Invalid LLM provider selected.")
 
@@ -323,6 +335,12 @@ class ProviderService:
                         default_headers=portkey_headers,
                     )
 
+        elif preferred_provider == "ollama":
+            logging.info("Initializing Ollama LLM")
+            ollama_endpoint = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
+            ollama_model = os.getenv("OLLAMA_MODEL", "llama2")
+            self.llm = Ollama(base_url=ollama_endpoint, model=ollama_model)
+
         else:
             raise ValueError("Invalid LLM provider selected.")
 
@@ -337,6 +355,8 @@ class ProviderService:
             return "OpenAI"
         elif isinstance(llm, ChatAnthropic):
             return "Anthropic"
+        elif isinstance(llm, Ollama):
+            return "Ollama"
         elif isinstance(llm, LLM):
             return "OpenAI" if llm.model.split("/")[0] == "openai" else "Anthropic"
         else:

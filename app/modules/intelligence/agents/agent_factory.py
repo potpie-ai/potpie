@@ -24,6 +24,7 @@ from app.modules.intelligence.provider.provider_service import (
     AgentType,
     ProviderService,
 )
+from langchain_ollama import Ollama
 
 
 class AgentFactory:
@@ -69,6 +70,10 @@ class AgentFactory:
             "LLD_agent": lambda: LLDChatAgent(mini_llm, reasoning_llm, self.db),
             "code_generation_agent": lambda: CodeGenerationChatAgent(
                 mini_llm, reasoning_llm, self.db
+            ),
+            "ollama_agent": lambda: Ollama(
+                base_url=self.provider_service.get_ollama_endpoint(),
+                model=self.provider_service.get_ollama_model(),
             ),
         }
 
