@@ -61,7 +61,7 @@ Potpie is an open-source platform that creates AI agents specialized in your cod
 - 🧠 **Deep Code Understanding**: Built-in knowledge graph captures relationships between code components
 - 🤖 **Pre-built & Custom Agents**: Ready-to-use agents for common tasks + build your own
 - 🔄 **Seamless Integration**: Works with your existing development workflow
-- 📈 **Scalable**: Handles codebases of any size with efficient graph-based analysis
+- 📈 **Flexible**: Handles codebases of any size or language
 
 
 
