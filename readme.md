@@ -16,6 +16,10 @@
     <img src="https://img.shields.io/github/stars/potpie-ai/potpie" alt="GitHub Repo stars">
   </a>
 </br>
+<a href="https://discord.gg/ryk5CMD5v6">
+    <img src="https://img.shields.io/badge/Join%20our-Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join our Discord">
+</a>
+</br>
 <a href="https://twitter.com/intent/tweet?text=I%20created%20custom%20engineering%20agents%20for%20my%20codebase%20in%20minutes%20with%20potpie.ai%20@potpiedotai%20!🥧"> 
     <img alt="tweet" src="https://img.shields.io/twitter/url/http/shields.io.svg?style=social"> 
 </a>
