@@ -92,7 +92,6 @@ class MainApp:
     def check_and_set_env_vars(self):
         required_env_vars = [
             "OPENAI_API_KEY",
-            "OPENAI_MODEL_REASONING",
         ]
         for env_var in required_env_vars:
             if env_var not in os.environ:
