@@ -203,7 +203,7 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
 
 - **Testing**: Generate contextually aware unit and integration test plans and test code that understand your codebase's structure and purpose.
 
-## 🛠️ Custom Agents [Upgrade ✨]
+## 🛠️ Custom Agents [Upgrade ✨](https://potpie.ai/pricing)
 
 With Custom Agents, you can design personalized tools that handle repeatable tasks with precision. Key components include:
 - **System Instructions**: Define the agent's task, goal, and expected output
