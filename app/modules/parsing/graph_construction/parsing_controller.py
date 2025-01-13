@@ -33,8 +33,13 @@ class ParsingController:
     async def parse_directory(
         repo_details: ParsingRequest, db: AsyncSession, user: Dict[str, Any]
     ):
+        
+        if "email" not in user:
+            user_email = None
+        else:
+            user_email = user["email"]
+        
         user_id = user["user_id"]
-        user_email = user["email"]
         project_manager = ProjectService(db)
         parse_helper = ParseHelper(db)
         parsing_service = ParsingService(db, user_id)
@@ -138,7 +143,7 @@ class ParsingController:
             # Handle existing projects (including previously duplicated demo projects)
             if project:
                 project_id = project.id
-                is_latest = await parse_helper.check_commit_status(project_id)
+                is_latest = False #await parse_helper.check_commit_status(project_id)
 
                 if not is_latest or project.status != ProjectStatusEnum.READY.value:
                     cleanup_graph = True
@@ -213,6 +218,9 @@ class ParsingController:
         asyncio.create_task(
             CodeProviderService(db).get_project_structure_async(new_project_id)
         )
+        if not user_email:
+            user_email = None
+
         process_parsing.delay(
             repo_details.model_dump(),
             user_id,
@@ -242,7 +250,7 @@ class ParsingController:
                 project_id, user["user_id"]
             )
             if project:
-                is_latest = await parse_helper.check_commit_status(project_id)
+                is_latest = False #await parse_helper.check_commit_status(project_id)
                 return {"status": project["status"], "latest": is_latest}
             else:
                 raise HTTPException(status_code=404, detail="Project not found")
