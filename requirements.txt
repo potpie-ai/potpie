@@ -52,5 +52,5 @@ sentry-sdk[fastapi]==2.19.0
 posthog==3.7.4
 newrelic==9.0.0
 tiktoken==0.7.0
-agentops==0.3.18
+agentops==0.3.23
 pydantic==2.10.3

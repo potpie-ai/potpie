@@ -168,10 +168,15 @@ class SimplifiedAgentSupervisor:
                 update={"response": "Error in classification format"}, goto=END
             )
         if confidence < 0.5 or agent_id not in self.agents:
+            logger.info(
+                f"Streaming AI response for conversation {state['conversation_id']} for user {state['user_id']} using agent {agent_id}"
+            )
             return Command(
                 update={"agent_id": state["agent_id"]}, goto=state["agent_id"]
             )
-
+        logger.info(
+                f"Streaming AI response for conversation {state['conversation_id']} for user {state['user_id']} using agent {agent_id}"
+            )
         return Command(update={"agent_id": agent_id}, goto=agent_id)
 
     async def agent_node(self, state: State, writer: StreamWriter):
