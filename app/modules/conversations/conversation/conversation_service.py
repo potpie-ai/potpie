@@ -78,17 +78,17 @@ class SimplifiedAgentSupervisor:
         self.classifier = None
         self.agents_service = AgentsService(db)
         self.agent_factory = AgentFactory(db, provider_service)
+        self.available_agents = []
 
     async def initialize(self, user_id: str):
         available_agents = await self.agents_service.list_available_agents(
             current_user={"user_id": user_id}, list_system_agents=True
         )
-
+        self.available_agents = available_agents
         self.agents = {
             agent.id: self.agent_factory.get_agent(agent.id, user_id)
             for agent in available_agents
         }
-
         self.llm = self.provider_service.get_small_llm(user_id)
 
         self.classifier_prompt = """
@@ -151,13 +151,19 @@ class SimplifiedAgentSupervisor:
         """Classifies the query and routes to appropriate agent"""
         if not state.get("query"):
             return Command(update={"response": "No query provided"}, goto=END)
+        agent_list = {agent.id:agent.status for agent in self.available_agents}
 
+        #Do not route for custom agents
+        if state["agent_id"] in agent_list and agent_list[state["agent_id"]] != "SYSTEM":
+            return Command(update={"agent_id": state["agent_id"]}, goto=state["agent_id"])
+        
         # Classification using LLM with enhanced prompt
         prompt = self.classifier_prompt.format(
             query=state["query"],
             agent_id=state["agent_id"],
             agent_descriptions=self.agent_descriptions,
         )
+        
         response = await self.llm.ainvoke(prompt)
         response = response.content.strip("`")
         try:
