@@ -2,7 +2,7 @@ import asyncio
 import logging
 from typing import Any, Dict, List
 
-from langchain.tools import StructuredTool
+from langchain_core.tools import StructuredTool, Tool
 from neo4j import GraphDatabase
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -207,7 +207,7 @@ class GetCodeFromProbableNodeNameTool:
 
 def get_code_from_probable_node_name_tool(
     sql_db: Session, user_id: str
-) -> StructuredTool:
+) -> Tool:
     tool_instance = GetCodeFromProbableNodeNameTool(sql_db, user_id)
     return StructuredTool.from_function(
         coroutine=tool_instance.arun,

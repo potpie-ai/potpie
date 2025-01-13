@@ -21,6 +21,7 @@ from app.modules.intelligence.prompts.system_prompt_setup import SystemPromptSet
 from app.modules.intelligence.provider.provider_router import router as provider_router
 from app.modules.intelligence.tools.tool_router import router as tool_router
 from app.modules.key_management.secret_manager import router as secret_manager_router
+from app.api.router import router as potpie_api_router
 from app.modules.parsing.graph_construction.parsing_router import (
     router as parsing_router,
 )
@@ -113,6 +114,9 @@ class MainApp:
         self.app.include_router(provider_router, prefix="/api/v1", tags=["Providers"])
         self.app.include_router(tool_router, prefix="/api/v1", tags=["Tools"])
         self.app.include_router(usage_router, prefix="/api/v1/usage", tags=["Usage"])
+        self.app.include_router(
+            potpie_api_router, prefix="/api/v2", tags=["Potpie API"]
+        )
         if os.getenv("isDevelopmentMode") != "enabled":
             self.app.include_router(
                 secret_manager_router, prefix="/api/v1", tags=["Secret Manager"]

@@ -7,9 +7,11 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
+from app.modules.auth.api_key_service import APIKeyService
 from app.modules.key_management.secrets_schema import (
     CreateSecretRequest,
     UpdateSecretRequest,
+    APIKeyResponse,
 )
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.APIRouter import APIRouter
@@ -21,13 +23,38 @@ router = APIRouter()
 class SecretManager:
     @staticmethod
     def get_client_and_project():
-        if os.getenv("isDevelopmentMode") == "disabled":
+        """Get Secret Manager client and project ID based on environment."""
+        is_dev_mode = os.getenv("isDevelopmentMode", "enabled") == "enabled"
+        if is_dev_mode:
+            return None, None
+
+        project_id = os.environ.get("GCP_PROJECT")
+        if not project_id:
+            raise HTTPException(
+                status_code=500,
+                detail="GCP_PROJECT environment variable is not set"
+            )
+
+        try:
             client = secretmanager.SecretManagerServiceClient()
-            project_id = os.environ.get("GCP_PROJECT")
+            return client, project_id
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to initialize Secret Manager client: {str(e)}"
+            )
+
+    @staticmethod
+    def get_secret_id(provider: Literal["openai", "anthropic"], customer_id: str):
+        if os.getenv("isDevelopmentMode") == "enabled":
+            return None
+        if provider == "openai":
+            secret_id = f"openai-api-key-{customer_id}"
+        elif provider == "anthropic":
+            secret_id = f"anthropic-api-key-{customer_id}"
         else:
-            client = None
-            project_id = None
-        return client, project_id
+            raise HTTPException(status_code=400, detail="Invalid provider")
+        return secret_id
 
     @router.post("/secrets")
     def create_secret(
@@ -72,18 +99,6 @@ class SecretManager:
         )
 
         return {"message": "Secret created successfully"}
-
-    @staticmethod
-    def get_secret_id(provider: Literal["openai", "anthropic"], customer_id: str):
-        if os.getenv("isDevelopmentMode") == "enabled":
-            return None
-        if provider == "openai":
-            secret_id = f"openai-api-key-{customer_id}"
-        elif provider == "anthropic":
-            secret_id = f"anthropic-api-key-{customer_id}"
-        else:
-            raise HTTPException(status_code=400, detail="Invalid provider")
-        return secret_id
 
     @router.get("/secrets/{provider}")
     def get_secret_for_provider(
@@ -189,3 +204,68 @@ class SecretManager:
             return {"message": "Secret deleted successfully"}
         except Exception as e:
             raise HTTPException(status_code=404, detail=f"Secret not found: {str(e)}")
+
+    @router.post("/api-keys", response_model=APIKeyResponse)
+    async def create_api_key(
+        user=Depends(AuthService.check_auth),
+        db: Session = Depends(get_db),
+    ):
+        """Create a new API key for the authenticated user."""
+        try:
+            api_key = await APIKeyService.create_api_key(user["user_id"], db)
+            PostHogClient().send_event(
+                user["user_id"],
+                "api_key_creation",
+                {"success": True}
+            )
+            return {"api_key": api_key}
+        except Exception as e:
+            PostHogClient().send_event(
+                user["user_id"],
+                "api_key_creation",
+                {"success": False, "error": str(e)}
+            )
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create API key: {str(e)}"
+            )
+
+    @router.delete("/api-keys")
+    async def revoke_api_key(
+        user=Depends(AuthService.check_auth),
+        db: Session = Depends(get_db),
+    ):
+        """Revoke the current user's API key."""
+        success = await APIKeyService.revoke_api_key(user["user_id"], db)
+        if not success:
+            raise HTTPException(
+                status_code=404,
+                detail="No API key found for this user"
+            )
+        
+        PostHogClient().send_event(
+            user["user_id"],
+            "api_key_revocation",
+            {"success": True}
+        )
+        return {"message": "API key revoked successfully"}
+
+    @router.get("/api-keys", response_model=APIKeyResponse)
+    async def get_api_key(
+        user=Depends(AuthService.check_auth),
+        db: Session = Depends(get_db),
+    ):
+        """Retrieve the existing API key for the authenticated user."""
+        try:
+            api_key = await APIKeyService.get_api_key(user["user_id"], db)
+            if api_key is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="No API key found for this user"
+                )
+            return {"api_key": api_key}
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to retrieve API key: {str(e)}"
+            )

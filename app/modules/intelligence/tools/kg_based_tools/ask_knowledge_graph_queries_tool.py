@@ -2,7 +2,7 @@ import asyncio
 import os
 from typing import Dict, List
 
-from langchain.tools import StructuredTool
+from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from app.modules.parsing.knowledge_graph.inference_schema import QueryResponse
