@@ -3,7 +3,7 @@ import logging
 from typing import Dict, List
 
 from fastapi import HTTPException
-from langchain.tools import StructuredTool, Tool
+from langchain_core.tools import StructuredTool, Tool
 from pydantic import BaseModel, Field
 from tree_sitter_languages import get_parser
 
