@@ -174,10 +174,15 @@ class SimplifiedAgentSupervisor:
                 update={"response": "Error in classification format"}, goto=END
             )
         if confidence < 0.5 or agent_id not in self.agents:
+            logger.info(
+                f"Streaming AI response for conversation {state['conversation_id']} for user {state['user_id']} using agent {agent_id}"
+            )
             return Command(
                 update={"agent_id": state["agent_id"]}, goto=state["agent_id"]
             )
-
+        logger.info(
+                f"Streaming AI response for conversation {state['conversation_id']} for user {state['user_id']} using agent {agent_id}"
+            )
         return Command(update={"agent_id": agent_id}, goto=agent_id)
 
     async def agent_node(self, state: State, writer: StreamWriter):
@@ -275,6 +280,8 @@ class ConversationService:
     async def check_conversation_access(
         self, conversation_id: str, user_email: str
     ) -> str:
+        if not user_email:
+            return ConversationAccessType.WRITE
         user_service = UserService(self.sql_db)
         user_id = user_service.get_user_id_by_email(user_email)
 
@@ -414,6 +421,7 @@ class ConversationService:
         message: MessageRequest,
         message_type: MessageType,
         user_id: str,
+        stream: bool = True,
     ) -> AsyncGenerator[str, None]:
         try:
             access_level = await self.check_conversation_access(
@@ -459,10 +467,26 @@ class ConversationService:
                         "No project associated with this conversation"
                     )
 
-                async for chunk in self._generate_and_stream_ai_response(
-                    message.content, conversation_id, user_id, message.node_ids
-                ):
-                    yield chunk
+                if stream:
+                    async for chunk in self._generate_and_stream_ai_response(
+                        message.content, conversation_id, user_id, message.node_ids
+                    ):
+                        yield chunk
+                else:
+                    # For non-streaming, collect all chunks and store as a single message
+                    full_response = ""
+                    async for chunk in self._generate_and_stream_ai_response(
+                        message.content, conversation_id, user_id, message.node_ids
+                    ):
+                        full_response += chunk
+                    # # Store the complete response as a single message
+                    # self.history_manager.add_message_chunk(
+                    #     conversation_id, full_response, MessageType.AI, user_id
+                    # )
+                    # self.history_manager.flush_message_buffer(
+                    #     conversation_id, MessageType.AI, user_id
+                    # )
+                    yield full_response
 
         except AccessTypeReadError:
             raise
@@ -526,7 +550,7 @@ class ConversationService:
         self.sql_db.commit()
 
     async def regenerate_last_message(
-        self, conversation_id: str, user_id: str, node_ids: List[NodeContext] = []
+        self, conversation_id: str, user_id: str, node_ids: List[NodeContext] = [], stream: bool = True
     ) -> AsyncGenerator[str, None]:
         try:
             access_level = await self.check_conversation_access(
@@ -547,10 +571,27 @@ class ConversationService:
                 {"conversation_id": conversation_id},
             )
 
-            async for chunk in self._generate_and_stream_ai_response(
-                last_human_message.content, conversation_id, user_id, node_ids
-            ):
-                yield chunk
+            if stream:
+                async for chunk in self._generate_and_stream_ai_response(
+                    last_human_message.content, conversation_id, user_id, node_ids
+                ):
+                    yield chunk
+            else:
+                # For non-streaming, collect all chunks and store as a single message
+                full_response = ""
+                async for chunk in self._generate_and_stream_ai_response(
+                    last_human_message.content, conversation_id, user_id, node_ids
+                ):
+                    full_response += chunk
+                # # Store the complete response as a single message
+                # self.history_manager.add_message_chunk(
+                #     conversation_id, full_response, MessageType.AI, user_id
+                # )
+                # self.history_manager.flush_message_buffer(
+                #     conversation_id, MessageType.AI, user_id
+                # )
+                yield full_response
+
         except AccessTypeReadError:
             raise
         except MessageNotFoundError as e:

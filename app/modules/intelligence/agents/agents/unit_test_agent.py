@@ -19,20 +19,26 @@ from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_n
 
 class UnitTestAgent:
     def __init__(self, sql_db, llm, user_id):
+        self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        self.max_iterations = os.getenv("MAX_ITER", 15)
         self.sql_db = sql_db
+        self.llm = llm
         self.user_id = user_id
+        # Initialize tools with both sql_db and user_id
         self.get_code_from_node_id = get_code_from_node_id_tool(sql_db, user_id)
         self.get_code_from_probable_node_name = get_code_from_probable_node_name_tool(
             sql_db, user_id
         )
-        self.llm = llm
-        self.max_iterations = os.getenv("MAX_ITER", 15)
 
     async def create_agents(self):
         unit_test_agent = Agent(
             role="Test Plan and Unit Test Expert",
             goal="Create test plans and write unit tests based on user requirements",
             backstory="You are a seasoned AI test engineer specializing in creating robust test plans and unit tests. You aim to assist users effectively in generating and refining test plans and unit tests, ensuring they are comprehensive and tailored to the user's project requirements.",
+            tools=[
+                self.get_code_from_probable_node_name,
+                self.get_code_from_node_id
+            ],
             allow_delegation=False,
             verbose=True,
             llm=self.llm,
@@ -117,7 +123,6 @@ class UnitTestAgent:
             expected_output="Outline the test plan and write unit tests for each node based on the test plan.",
             agent=unit_test_agent,
             output_pydantic=self.TestAgentResponse,
-            tools=[self.get_code_from_probable_node_name, self.get_code_from_node_id],
             async_execution=True,
         )
 

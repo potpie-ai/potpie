@@ -2,7 +2,7 @@ import asyncio
 import logging
 from typing import Any, Dict
 
-from langchain.tools import StructuredTool
+from langchain_core.tools import StructuredTool, Tool
 from neo4j import GraphDatabase
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -135,7 +135,7 @@ class GetCodeFromNodeIdTool:
             self.neo4j_driver.close()
 
 
-def get_code_from_node_id_tool(sql_db: Session, user_id: str) -> StructuredTool:
+def get_code_from_node_id_tool(sql_db: Session, user_id: str) -> Tool:
     tool_instance = GetCodeFromNodeIdTool(sql_db, user_id)
     return StructuredTool.from_function(
         coroutine=tool_instance.arun,

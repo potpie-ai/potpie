@@ -45,3 +45,7 @@ class UpdateSecretRequest(BaseSecretRequest):
 
 class CreateSecretRequest(BaseSecretRequest):
     pass
+
+
+class APIKeyResponse(BaseModel):
+    api_key: str

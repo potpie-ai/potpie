@@ -37,6 +37,11 @@ class BlastRadiusAgent:
             role="Blast Radius Agent",
             goal="Explain the blast radius of the changes made in the code.",
             backstory="You are an expert in understanding the impact of code changes on the codebase.",
+            tools=[
+                get_change_detection_tool(self.user_id),
+                self.get_nodes_from_tags,
+                self.ask_knowledge_graph_queries,
+            ],
             allow_delegation=False,
             verbose=True,
             llm=self.llm,
@@ -106,11 +111,6 @@ class BlastRadiusAgent:
             {self.BlastRadiusAgentResponse.model_json_schema()}""",
             expected_output=f"Comprehensive impact analysis of the code changes on the codebase and answers to the users query about them. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model : {self.BlastRadiusAgentResponse.model_json_schema()}",
             agent=blast_radius_agent,
-            tools=[
-                get_change_detection_tool(self.user_id),
-                self.get_nodes_from_tags,
-                self.ask_knowledge_graph_queries,
-            ],
             output_pydantic=self.BlastRadiusAgentResponse,
             async_execution=True,
         )
