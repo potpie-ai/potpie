@@ -51,7 +51,7 @@ Potpie is an open-source platform that creates AI agents specialized in your cod
 - [🚀 Getting Started](#getting-started)
 - [💡 Use Cases](#use-cases)
 - [🛠️ Custom Agents](#custom-agents-upgrade)
-- [🎨️ Accessing Agents via API Key](#accessing-agents-via-api-key)
+- [🗝️ Accessing Agents via API Key](#accessing-agents-via-api-key)
 - [🎨 Make Potpie Your Own](#make-potpie-your-own)
 - [🤝 Contributing](#contributing)
 - [📜 License](#license)
