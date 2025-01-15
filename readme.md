@@ -51,6 +51,7 @@ Potpie is an open-source platform that creates AI agents specialized in your cod
 - [🚀 Getting Started](#getting-started)
 - [💡 Use Cases](#use-cases)
 - [🛠️ Custom Agents](#custom-agents-upgrade)
+- [🎨️ Accessing Agents via API Key](#accessing-agents-via-api-key)
 - [🎨 Make Potpie Your Own](#make-potpie-your-own)
 - [🤝 Contributing](#contributing)
 - [📜 License](#license)
@@ -210,6 +211,16 @@ With Custom Agents, you can design personalized tools that handle repeatable tas
 - **Agent Information**: Metadata about the agent's role and context
 - **Tasks**: Individual steps for job completion
 - **Tools**: Functions for querying the knowledge graph or retrieving code
+
+## 🗝️ Accessing Agents via API Key
+
+You can access Potpie Agents through an API key, enabling integration into CI/CD workflows and other automated processes. For detailed instructions, please refer to the [Potpie API documentation](https://docs.potpie.ai/agents/api-access).
+
+- **Generate an API Key**: Easily create an API key for secure access.
+- **Parse Repositories**: Use the Parse API to analyze code repositories and obtain a project ID.
+- **Monitor Parsing Status**: Check the status of your parsing requests.
+- **Create Conversations**: Initiate conversations with specific agents using project and agent IDs adn get a conversation id.
+- **Send Messages**: Communicate with agents by sending messages within a conversation.
 
 ## 🎨 Make Potpie Your Own
 
