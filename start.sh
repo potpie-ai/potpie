@@ -25,6 +25,9 @@ done
 
 echo "Postgres is up - applying database migrations"
 
+# Install python dependencies in your virtual-env
+pip install -r requirements.txt
+
 # Apply database migrations
 alembic upgrade head
 
