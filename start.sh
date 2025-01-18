@@ -25,8 +25,19 @@ done
 
 echo "Postgres is up - applying database migrations"
 
-# Install python dependencies in your virtual-env
-pip install -r requirements.txt
+
+# Verify virtual environment is active 
+if [ -z "$VIRTUAL_ENV" ]; then 
+ echo "Error: No virtual environment is active. Please activate your virtual environment first." 
+ exit 1 
+fi 
+ 
+# Install python dependencies 
+echo "Installing Python dependencies..." 
+if ! pip install -r requirements.txt; then 
+ echo "Error: Failed to install Python dependencies" 
+ exit 1 
+fi
 
 # Apply database migrations
 alembic upgrade head
