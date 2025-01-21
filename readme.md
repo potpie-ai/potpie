@@ -97,8 +97,13 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
 - Docker installed and running
 - OpenAI API key
 - Git installed (for repository access)
+- Python 3.10.x
 
 ### Setup Steps
+
+**Install Python 3.10**
+   - Download and install Python 3.10 from the official Python website:
+     https://www.python.org/downloads/release/python-3100/
 
 1. **Prepare Your Environment**
    - Create a `.env` file based on the `.env.template`
@@ -108,6 +113,17 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
      ENV=development
      OPENAI_API_KEY=<your-openai-key>
      ```
+   -  Create a Virtual Environment using Python 3.10:
+      ```bash
+      python3.10 -m venv venv
+      source venv/bin/activate
+      ```
+      alternatively, you can also use the `virtualenv` library.
+
+    - Install dependencies in your venv:
+      ```bash
+      pip install -r requirements.txt
+      ```
 
 2. **Start Potpie**
    ```bash
