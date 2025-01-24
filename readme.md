@@ -108,11 +108,21 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
 1. **Prepare Your Environment**
    - Create a `.env` file based on the `.env.template`
    - Add the following required configurations:
-     ```bash
-     isDevelopmentMode=enabled
-     ENV=development
-     OPENAI_API_KEY=<your-openai-key>
-     ```
+      ```bash
+      isDevelopmentMode=enabled
+      ENV=development
+      OPENAI_API_KEY=<your-openai-key>
+      POSTGRES_SERVER=postgresql://postgres:mysecretpassword@localhost:5432/momentum
+      NEO4J_URI=bolt://127.0.0.1:7687
+      NEO4J_USERNAME=neo4j
+      NEO4J_PASSWORD=mysecretpassword
+      REDISHOST=127.0.0.1
+      REDISPORT=6379
+      BROKER_URL=redis://127.0.0.1:6379/0
+      CELERY_QUEUE_NAME=dev
+      defaultUsername=defaultuser
+      PROJECT_PATH=projects #repositories will be downloaded/cloned to this path on your system.
+      ```
    -  Create a Virtual Environment using Python 3.10:
       ```bash
       python3.10 -m venv venv
