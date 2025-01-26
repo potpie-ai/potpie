@@ -16,6 +16,7 @@ from app.modules.intelligence.provider.provider_service import (
     AgentType,
     ProviderService,
 )
+from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 from app.modules.parsing.knowledge_graph.inference_schema import (
     DocstringNode,
     DocstringRequest,
@@ -424,24 +425,26 @@ class InferenceService:
         # Validate and filter nodes needing inference
         nodes_needing_inference = []
         nodes_with_cache = []
+        invalid_hash_count = 0
         
         for node in nodes:
             needs_inference = False
             
-            # Check docstring
-            docstring = node.get("docstring")
-            if not docstring or not isinstance(docstring, str):
-                needs_inference = True
-                
-            # Check embedding
-            embedding = node.get("embedding")
-            if not embedding or not isinstance(embedding, list) or len(embedding) != 384:
-                needs_inference = True
-                
-            # Check if content hash is valid
+            # Check content hash first
             content_hash = node.get("content_hash", "")
-            if not content_hash.startswith("v1:"):  # Version check
+            if not CodeGraphService.validate_content_hash(content_hash):
                 needs_inference = True
+                invalid_hash_count += 1
+            else:
+                # Check docstring
+                docstring = node.get("docstring")
+                if not docstring or not isinstance(docstring, str):
+                    needs_inference = True
+                    
+                # Check embedding
+                embedding = node.get("embedding")
+                if not embedding or not isinstance(embedding, list) or len(embedding) != 384:
+                    needs_inference = True
                 
             if needs_inference:
                 nodes_needing_inference.append(node)
@@ -453,7 +456,8 @@ class InferenceService:
             f"Project {repo_id} cache statistics:\n"
             f"Total nodes: {len(nodes)}\n"
             f"Nodes using cache: {len(nodes_with_cache)} ({cache_hit_rate:.2f}%)\n"
-            f"Nodes needing inference: {len(nodes_needing_inference)}"
+            f"Nodes needing inference: {len(nodes_needing_inference)}\n"
+            f"Nodes with invalid hashes: {invalid_hash_count}"
         )
 
         # Prepare nodes for search index
