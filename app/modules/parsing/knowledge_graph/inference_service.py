@@ -17,6 +17,7 @@ from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.parsing.knowledge_graph.inference_schema import (
+    DocstringNode,
     DocstringRequest,
     DocstringResponse,
 )
@@ -420,7 +421,42 @@ class InferenceService:
             f"Creating search indices for project {repo_id} with nodes count {len(nodes)}"
         )
 
-        # Prepare a list of nodes for bulk insert
+        # Validate and filter nodes needing inference
+        nodes_needing_inference = []
+        nodes_with_cache = []
+        
+        for node in nodes:
+            needs_inference = False
+            
+            # Check docstring
+            docstring = node.get("docstring")
+            if not docstring or not isinstance(docstring, str):
+                needs_inference = True
+                
+            # Check embedding
+            embedding = node.get("embedding")
+            if not embedding or not isinstance(embedding, list) or len(embedding) != 384:
+                needs_inference = True
+                
+            # Check if content hash is valid
+            content_hash = node.get("content_hash", "")
+            if not content_hash.startswith("v1:"):  # Version check
+                needs_inference = True
+                
+            if needs_inference:
+                nodes_needing_inference.append(node)
+            else:
+                nodes_with_cache.append(node)
+        
+        cache_hit_rate = (len(nodes_with_cache) / len(nodes)) * 100 if nodes else 0
+        logger.info(
+            f"Project {repo_id} cache statistics:\n"
+            f"Total nodes: {len(nodes)}\n"
+            f"Nodes using cache: {len(nodes_with_cache)} ({cache_hit_rate:.2f}%)\n"
+            f"Nodes needing inference: {len(nodes_needing_inference)}"
+        )
+
+        # Prepare nodes for search index
         nodes_to_index = [
             {
                 "project_id": repo_id,
@@ -434,60 +470,71 @@ class InferenceService:
             and node.get("name") not in {None, ""}
         ]
 
-        # Perform bulk insert
-        await self.search_service.bulk_create_search_indices(nodes_to_index)
+        # Perform bulk insert for search indices
+        try:
+            await self.search_service.bulk_create_search_indices(nodes_to_index)
+            logger.info(
+                f"Project {repo_id}: Created search indices over {len(nodes_to_index)} nodes"
+            )
+            await self.search_service.commit_indices()
+        except Exception as e:
+            logger.error(f"Error creating search indices: {str(e)}")
+            # Continue with inference even if index creation fails
 
+        # Process nodes needing inference
+        all_docstrings = {"docstrings": []}
+        if nodes_needing_inference:
+            batches = self.batch_nodes(nodes_needing_inference)
+            semaphore = asyncio.Semaphore(self.parallel_requests)
+
+            async def process_batch(batch, batch_index: int):
+                async with semaphore:
+                    logger.info(f"Processing batch {batch_index} for project {repo_id}")
+                    try:
+                        response = await self.generate_response(batch, repo_id)
+                        if not isinstance(response, DocstringResponse):
+                            logger.warning(
+                                f"Parsing project {repo_id}: Invalid response from LLM. Not an instance of DocstringResponse. Retrying..."
+                            )
+                            response = await self.generate_response(batch, repo_id)
+                        
+                        if isinstance(response, DocstringResponse):
+                            self.update_neo4j_with_docstrings(repo_id, response)
+                            return response
+                    except Exception as e:
+                        logger.error(f"Error processing batch {batch_index}: {str(e)}")
+                    return None
+
+            # Process batches in parallel
+            tasks = [process_batch(batch, i) for i, batch in enumerate(batches)]
+            responses = await asyncio.gather(*tasks)
+
+            # Combine valid responses
+            for response in responses:
+                if response and isinstance(response, DocstringResponse):
+                    all_docstrings["docstrings"].extend(response.docstrings)
+
+        # Add cached docstrings to the response
+        for node in nodes_with_cache:
+            all_docstrings["docstrings"].append(
+                DocstringNode(
+                    node_id=node["node_id"],
+                    docstring=node["docstring"],
+                    tags=node.get("tags", [])
+                )
+            )
+
+        # Validate final response
+        final_response = DocstringResponse(**all_docstrings)
+        coverage = (len(final_response.docstrings) / len(nodes)) * 100 if nodes else 0
         logger.info(
-            f"Project {repo_id}: Created search indices over {len(nodes_to_index)} nodes"
+            f"Project {repo_id} final statistics:\n"
+            f"Total nodes: {len(nodes)}\n"
+            f"Nodes with docstrings: {len(final_response.docstrings)}\n"
+            f"Coverage: {coverage:.2f}%"
         )
 
-        await self.search_service.commit_indices()
-        # entry_points = self.get_entry_points(repo_id)
-        # logger.info(
-        #     f"DEBUGNEO4J: After get entry points, Repo ID: {repo_id}, Entry points: {len(entry_points)}"
-        # )
-        # self.log_graph_stats(repo_id)
-        # entry_points_neighbors = {}
-        # for entry_point in entry_points:
-        #     neighbors = self.get_neighbours(entry_point, repo_id)
-        #     entry_points_neighbors[entry_point] = neighbors
-
-        # logger.info(
-        #     f"DEBUGNEO4J: After get neighbours, Repo ID: {repo_id}, Entry points neighbors: {len(entry_points_neighbors)}"
-        # )
-        # self.log_graph_stats(repo_id)
-        batches = self.batch_nodes(nodes)
-        all_docstrings = {"docstrings": []}
-
-        semaphore = asyncio.Semaphore(self.parallel_requests)
-
-        async def process_batch(batch, batch_index: int):
-            async with semaphore:
-                logger.info(f"Processing batch {batch_index} for project {repo_id}")
-                response = await self.generate_response(batch, repo_id)
-                if not isinstance(response, DocstringResponse):
-                    logger.warning(
-                        f"Parsing project {repo_id}: Invalid response from LLM. Not an instance of DocstringResponse. Retrying..."
-                    )
-                    response = await self.generate_response(batch, repo_id)
-                else:
-                    self.update_neo4j_with_docstrings(repo_id, response)
-                return response
-
-        tasks = [process_batch(batch, i) for i, batch in enumerate(batches)]
-        results = await asyncio.gather(*tasks)
-
-        for result in results:
-            if not isinstance(result, DocstringResponse):
-                logger.error(
-                    f"Project {repo_id}: Invalid response from during inference. Manually verify the project completion."
-                )
-
-        # updated_docstrings = await self.generate_docstrings_for_entry_points(
-        #     all_docstrings, entry_points_neighbors
-        # )
-        updated_docstrings = all_docstrings
-        return updated_docstrings
+        return final_response
 
     async def generate_response(
         self, batch: List[DocstringRequest], repo_id: str
@@ -512,7 +559,7 @@ class InferenceService:
             - **Frontend**: Contains UI components, event handling, state management, or styling.
 
         2.2. **Summarize the Purpose**:
-        - Based on the identified type, write a brief (1-2 sentences) summary of the code’s main purpose and functionality.
+        - Based on the identified type, write a brief (1-2 sentences) summary of the code's main purpose and functionality.
         - Focus on what the code does, its role in the system, and any critical operations it performs.
         - If the code snippet is related to **specific roles** like authentication, database access, or UI component, state management, explicitly mention this role.
 

@@ -1,22 +1,47 @@
 import hashlib
 import logging
 import time
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
-from neo4j import GraphDatabase
-from sqlalchemy.orm import Session
+from neo4j import GraphDatabase, Session
+from sqlalchemy.orm import Session as SQLSession
 
 from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
 from app.modules.search.search_service import SearchService
 
+logger = logging.getLogger(__name__)
+
+class CacheMetrics:
+    def __init__(self):
+        self.total_nodes = 0
+        self.cached_nodes = 0
+        self.cache_hits = 0
+        self.cache_misses = 0
+        self.partial_hits = 0  # Has some cached data but not all
+        
+    def log_metrics(self, project_id: str):
+        cache_hit_rate = (self.cached_nodes / self.total_nodes) * 100 if self.total_nodes > 0 else 0
+        partial_hit_rate = (self.partial_hits / self.total_nodes) * 100 if self.total_nodes > 0 else 0
+        
+        logger.info(
+            f"Cache metrics for project {project_id}:\n"
+            f"Total nodes: {self.total_nodes}\n"
+            f"Fully cached nodes: {self.cached_nodes}\n"
+            f"Partial cache hits: {self.partial_hits}\n"
+            f"Cache hit rate: {cache_hit_rate:.2f}%\n"
+            f"Partial hit rate: {partial_hit_rate:.2f}%"
+        )
 
 class CodeGraphService:
-    def __init__(self, neo4j_uri, neo4j_user, neo4j_password, db: Session):
+    HASH_VERSION = "v1"  # For future schema changes
+    
+    def __init__(self, neo4j_uri, neo4j_user, neo4j_password, db: SQLSession):
         self.driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
         self.db = db
+        self.cache_metrics = CacheMetrics()
 
     @staticmethod
-    def generate_node_id(path: str, user_id: str):
+    def generate_node_id(path: str, user_id: str) -> str:
         # Concatenate path and signature
         combined_string = f"{user_id}:{path}"
 
@@ -28,6 +53,126 @@ class CodeGraphService:
         node_id = hash_object.hexdigest()
 
         return node_id
+
+    @staticmethod
+    def generate_content_hash(node_data: Dict) -> str:
+        """Generate a deterministic hash of node content.
+        
+        Args:
+            node_data (Dict): Node data including text, name, type, etc.
+            
+        Returns:
+            str: Version-prefixed SHA-256 hash of node content
+        """
+        # Sort keys for consistent ordering
+        content_parts = []
+        for key in sorted(['text', 'name', 'type', 'file', 'line', 'end_line']):
+            value = node_data.get(key)
+            if value is not None:
+                content_parts.append(str(value))
+            else:
+                content_parts.append('')
+                
+        content_string = '|'.join(content_parts)
+        hash_object = hashlib.sha256()
+        hash_object.update(content_string.encode("utf-8"))
+        return f"{CodeGraphService.HASH_VERSION}:{hash_object.hexdigest()}"
+
+    def validate_cached_data(self, cached_data: Dict) -> Tuple[bool, bool]:
+        """Validate cached node data.
+        
+        Args:
+            cached_data (Dict): Node data from cache
+            
+        Returns:
+            Tuple[bool, bool]: (has_valid_docstring, has_valid_embedding)
+        """
+        has_valid_docstring = bool(cached_data.get("docstring"))
+        
+        embedding = cached_data.get("embedding")
+        has_valid_embedding = (
+            isinstance(embedding, list) and 
+            len(embedding) == 384 and 
+            all(isinstance(x, (int, float)) for x in embedding)
+        )
+        
+        return has_valid_docstring, has_valid_embedding
+
+    def get_existing_node_hashes(self, session: Session, project_id: str) -> Dict:
+        """Fetch and validate existing node hashes and their cached data.
+        
+        Args:
+            session (Session): Neo4j session
+            project_id (str): Project ID to fetch nodes for
+            
+        Returns:
+            Dict: Mapping of node_id to cached data
+        """
+        try:
+            result = session.run(
+                """
+                MATCH (n:NODE {repoId: $project_id})
+                RETURN n.node_id, n.content_hash, n.docstring, n.embedding, n.tags
+                """,
+                project_id=project_id
+            )
+            
+            existing_hashes = {}
+            for record in result:
+                if record["n.content_hash"]:
+                    node_id = record["n.node_id"]
+                    cached_data = {
+                        "hash": record["n.content_hash"],
+                        "docstring": record["n.docstring"],
+                        "embedding": record["n.embedding"],
+                        "tags": record["n.tags"]
+                    }
+                    
+                    # Validate cached data
+                    has_docstring, has_embedding = self.validate_cached_data(cached_data)
+                    
+                    if has_docstring and has_embedding:
+                        self.cache_metrics.cache_hits += 1
+                        existing_hashes[node_id] = cached_data
+                    elif has_docstring or has_embedding:
+                        self.cache_metrics.partial_hits += 1
+                        # Still cache partial data
+                        existing_hashes[node_id] = cached_data
+                    else:
+                        self.cache_metrics.cache_misses += 1
+                        
+            return existing_hashes
+            
+        except Exception as e:
+            logger.error(f"Error fetching existing hashes: {str(e)}")
+            return {}
+
+    def create_content_hash_index(self, session: Session):
+        """Create and verify content hash index."""
+        try:
+            # Create composite index for better performance
+            content_hash_query = """
+                CREATE INDEX content_hash_repo_NODE IF NOT EXISTS 
+                FOR (n:NODE) ON (n.repoId, n.content_hash)
+            """
+            session.run(content_hash_query)
+            logger.info("Successfully created content hash index")
+            
+            # Log index statistics
+            stats_query = """
+                CALL db.indexes() 
+                YIELD name, type, labelsOrTypes, properties, state 
+                WHERE name = 'content_hash_repo_NODE'
+                RETURN *
+            """
+            stats = session.run(stats_query).single()
+            if stats:
+                logger.info(f"Index stats: {dict(stats)}")
+            else:
+                logger.warning("Content hash index not found after creation")
+                
+        except Exception as e:
+            logger.error(f"Error creating content hash index: {str(e)}")
 
     def close(self):
         self.driver.close()
@@ -46,7 +191,14 @@ class CodeGraphService:
         with self.driver.session() as session:
             start_time = time.time()
             node_count = nx_graph.number_of_nodes()
+            self.cache_metrics.total_nodes = node_count
             logging.info(f"Creating {node_count} nodes")
+
+            # Create content hash index
+            self.create_content_hash_index(session)
+
+            # Get existing node hashes
+            existing_hashes = self.get_existing_node_hashes(session, project_id)
 
             # Batch insert nodes
             batch_size = 300
@@ -66,6 +218,10 @@ class CodeGraphService:
                     if node_type in ["FILE", "CLASS", "FUNCTION", "INTERFACE"]:
                         labels.append(node_type)
 
+                    # Generate content hash
+                    content_hash = self.generate_content_hash(node_data)
+                    node_id_str = CodeGraphService.generate_node_id(node_id, user_id)
+
                     # Prepare node data
                     processed_node = {
                         "name": node_data.get(
@@ -75,12 +231,28 @@ class CodeGraphService:
                         "start_line": node_data.get("line", -1),
                         "end_line": node_data.get("end_line", -1),
                         "repoId": project_id,
-                        "node_id": CodeGraphService.generate_node_id(node_id, user_id),
+                        "node_id": node_id_str,
                         "entityId": user_id,
                         "type": node_type,
                         "text": node_data.get("text", ""),
+                        "content_hash": content_hash,
                         "labels": labels,
                     }
+
+                    # Reuse existing node data if hash matches
+                    if node_id_str in existing_hashes and existing_hashes[node_id_str]["hash"] == content_hash:
+                        cached_data = existing_hashes[node_id_str]
+                        has_docstring, has_embedding = self.validate_cached_data(cached_data)
+                        
+                        if has_docstring:
+                            processed_node["docstring"] = cached_data["docstring"]
+                        if has_embedding:
+                            processed_node["embedding"] = cached_data["embedding"]
+                        if cached_data.get("tags"):
+                            processed_node["tags"] = cached_data["tags"]
+                            
+                        if has_docstring and has_embedding:
+                            self.cache_metrics.cached_nodes += 1
 
                     # Remove None values
                     processed_node = {
@@ -88,15 +260,19 @@ class CodeGraphService:
                     }
                     nodes_to_create.append(processed_node)
 
-                # Create nodes with labels
-                session.run(
-                    """
-                    UNWIND $nodes AS node
-                    CALL apoc.create.node(node.labels, node) YIELD node AS n
-                    RETURN count(*) AS created_count
-                    """,
-                    nodes=nodes_to_create,
-                )
+                try:
+                    # Create nodes with labels
+                    session.run(
+                        """
+                        UNWIND $nodes AS node
+                        CALL apoc.create.node(node.labels, node) YIELD node AS n
+                        RETURN count(*) AS created_count
+                        """,
+                        nodes=nodes_to_create,
+                    )
+                except Exception as e:
+                    logger.error(f"Error creating nodes batch: {str(e)}")
+                    continue
 
             relationship_count = nx_graph.number_of_edges()
             logging.info(f"Creating {relationship_count} relationships")
@@ -116,19 +292,27 @@ class CodeGraphService:
                     edge_data = {k: v for k, v in edge_data.items() if v is not None}
                     edges_to_create.append(edge_data)
 
-                session.run(
-                    """
-                    UNWIND $edges AS edge
-                    MATCH (source:NODE {node_id: edge.source_id, repoId: edge.repoId})
-                    MATCH (target:NODE {node_id: edge.target_id, repoId: edge.repoId})
-                    CALL apoc.create.relationship(source, edge.type, {repoId: edge.repoId}, target) YIELD rel
-                    RETURN count(rel) AS created_count
-                    """,
-                    edges=edges_to_create,
-                )
+                try:
+                    session.run(
+                        """
+                        UNWIND $edges AS edge
+                        MATCH (source:NODE {node_id: edge.source_id, repoId: edge.repoId})
+                        MATCH (target:NODE {node_id: edge.target_id, repoId: edge.repoId})
+                        CALL apoc.create.relationship(source, edge.type, {repoId: edge.repoId}, target) YIELD rel
+                        RETURN count(rel) AS created_count
+                        """,
+                        edges=edges_to_create,
+                    )
+                except Exception as e:
+                    logger.error(f"Error creating relationships batch: {str(e)}")
+                    continue
 
             end_time = time.time()
-            logging.info(
+            
+            # Log cache metrics
+            self.cache_metrics.log_metrics(project_id)
+            
+            logger.info(
                 f"Time taken to create graph and search index: {end_time - start_time:.2f} seconds"
             )
 
