@@ -4,6 +4,8 @@ import shutil
 import traceback
 from asyncio import create_task
 from contextlib import contextmanager
+from typing import List, Optional
+import time
 
 from blar_graph.db_managers import Neo4jManager
 from blar_graph.graph_construction.core.graph_builder import GraphConstructor
@@ -20,6 +22,7 @@ from app.modules.parsing.graph_construction.parsing_helper import (
     ParsingServiceError,
 )
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
+from app.modules.parsing.incremental_update_service import IncrementalUpdateService
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
@@ -40,6 +43,15 @@ class ParsingService:
         self.inference_service = InferenceService(db, user_id)
         self.search_service = SearchService(db)
         self.github_service = CodeProviderService(db)
+        
+        # Initialize incremental update service
+        neo4j_config = config_provider.get_neo4j_config()
+        self.incremental_service = IncrementalUpdateService(
+            neo4j_config["uri"],
+            neo4j_config["username"],
+            neo4j_config["password"],
+            db
+        )
 
     @contextmanager
     def change_dir(self, path):
@@ -159,7 +171,12 @@ class ParsingService:
         db,
         language: str,
         user_email: str,
+        changed_files: Optional[List[str]] = None
     ):
+        """
+        Analyze a directory and update the knowledge graph.
+        If changed_files is provided, only those files will be updated incrementally.
+        """
         logger.info(
             f"Parsing project {project_id}: Analyzing directory: {extracted_dir}"
         )
@@ -174,10 +191,59 @@ class ParsingService:
             raise HTTPException(status_code=404, detail="Project not found.")
 
         if language in ["python", "javascript", "typescript"]:
-            graph_manager = Neo4jManager(project_id, user_id)
-            # self.create_neo4j_indices(graph_manager) commented since indices are created already
-
+            if changed_files:
+                # Create snapshot before incremental update
+                snapshot_id = self.incremental_service.create_snapshot(
+                    project_id,
+                    f"pre_update_{int(time.time())}"
+                )
+                logger.info(f"Created snapshot {snapshot_id} before incremental update")
+                
+                # Incremental update for changed files
+                try:
+                    logger.info(f"Performing incremental update for {len(changed_files)} files")
+                    results = await self.incremental_service.update_files(
+                        extracted_dir,
+                        project_id,
+                        changed_files,
+                        user_id
+                    )
+                    
+                    total_nodes = sum(nodes for nodes, _ in results.values())
+                    total_rels = sum(rels for _, rels in results.values())
+                    logger.info(
+                        f"Incremental update complete. Updated {total_nodes} nodes and {total_rels} relationships"
+                    )
+                    
+                    await self.project_service.update_project_status(
+                        project_id, ProjectStatusEnum.READY
+                    )
+                    
+                    return
+                    
+                except Exception as e:
+                    logger.error(f"Incremental update failed: {str(e)}")
+                    logger.info(f"Attempting to restore from snapshot {snapshot_id}")
+                    
+                    # Attempt to restore from snapshot
+                    if self.incremental_service.restore_snapshot(snapshot_id):
+                        logger.info("Successfully restored from snapshot")
+                    else:
+                        logger.error("Failed to restore from snapshot")
+                    
+                    logger.error("Falling back to full parse")
+                    # Fall through to full parse
+            
+            # Full parse if no changed files or incremental update failed
             try:
+                # Create snapshot before full parse
+                snapshot_id = self.incremental_service.create_snapshot(
+                    project_id,
+                    f"pre_full_parse_{int(time.time())}"
+                )
+                logger.info(f"Created snapshot {snapshot_id} before full parse")
+                
+                graph_manager = Neo4jManager(project_id, user_id)
                 graph_constructor = GraphConstructor(graph_manager, user_id)
                 n, r = graph_constructor.build_graph(extracted_dir)
                 graph_manager.create_nodes(n)
@@ -210,6 +276,14 @@ class ParsingService:
             except Exception as e:
                 logger.error(e)
                 logger.error(traceback.format_exc())
+                
+                # Attempt to restore from snapshot
+                logger.info(f"Attempting to restore from snapshot {snapshot_id}")
+                if self.incremental_service.restore_snapshot(snapshot_id):
+                    logger.info("Successfully restored from snapshot")
+                else:
+                    logger.error("Failed to restore from snapshot")
+                
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.ERROR
                 )
@@ -223,6 +297,35 @@ class ParsingService:
                 graph_manager.close()
         elif language != "other":
             try:
+                if changed_files:
+                    # Incremental update for changed files
+                    try:
+                        logger.info(f"Performing incremental update for {len(changed_files)} files")
+                        results = await self.incremental_service.update_files(
+                            extracted_dir,
+                            project_id,
+                            changed_files,
+                            user_id
+                        )
+                        
+                        total_nodes = sum(nodes for nodes, _ in results.values())
+                        total_rels = sum(rels for _, rels in results.values())
+                        logger.info(
+                            f"Incremental update complete. Updated {total_nodes} nodes and {total_rels} relationships"
+                        )
+                        
+                        await self.project_service.update_project_status(
+                            project_id, ProjectStatusEnum.READY
+                        )
+                        
+                        return
+                        
+                    except Exception as e:
+                        logger.error(f"Incremental update failed: {str(e)}")
+                        logger.error("Falling back to full parse")
+                        # Fall through to full parse
+
+                # Full parse if no changed files or incremental update failed
                 neo4j_config = config_provider.get_neo4j_config()
                 service = CodeGraphService(
                     neo4j_config["uri"],
@@ -248,10 +351,19 @@ class ParsingService:
                 )
                 logger.info(f"DEBUGNEO4J: After update project status {project_id}")
                 self.inference_service.log_graph_stats(project_id)
-            finally:
-                service.close()
-                logger.info(f"DEBUGNEO4J: After close service {project_id}")
-                self.inference_service.log_graph_stats(project_id)
+
+            except Exception as e:
+                logger.error(e)
+                logger.error(traceback.format_exc())
+                await self.project_service.update_project_status(
+                    project_id, ProjectStatusEnum.ERROR
+                )
+                await ParseWebhookHelper().send_slack_notification(project_id, str(e))
+                PostHogClient().send_event(
+                    user_id,
+                    "project_status_event",
+                    {"project_id": project_id, "status": "Error"},
+                )
         else:
             await self.project_service.update_project_status(
                 project_id, ProjectStatusEnum.ERROR
@@ -351,3 +463,73 @@ class ParsingService:
             logger.error(
                 f"Error duplicating graph from {old_repo_id} to {new_repo_id}: {e}"
             )
+
+    async def update_files(
+        self,
+        project_id: int,
+        file_paths: List[str],
+        user_id: str,
+        user_email: str
+    ):
+        """Update specific files in the knowledge graph incrementally."""
+        try:
+            project = await self.project_service.get_project_from_db_by_id(project_id)
+            if not project:
+                raise HTTPException(status_code=404, detail="Project not found")
+                
+            repo_dir = project.get("repo_path")
+            if not repo_dir or not os.path.exists(repo_dir):
+                raise HTTPException(status_code=400, detail="Project repository not found")
+            
+            # Create snapshot before update
+            snapshot_id = self.incremental_service.create_snapshot(
+                project_id,
+                f"pre_update_{int(time.time())}"
+            )
+            logger.info(f"Created snapshot {snapshot_id} before update")
+            
+            try:
+                # Perform incremental update
+                results = await self.incremental_service.update_files(
+                    repo_dir,
+                    project_id,
+                    file_paths,
+                    user_id
+                )
+                
+                total_nodes = sum(nodes for nodes, _ in results.values())
+                total_rels = sum(rels for _, rels in results.values())
+                
+                logger.info(
+                    f"Updated {len(file_paths)} files. Modified {total_nodes} nodes and {total_rels} relationships"
+                )
+                
+                return {
+                    "message": "Files updated successfully",
+                    "updated_files": len(file_paths),
+                    "nodes_modified": total_nodes,
+                    "relationships_modified": total_rels,
+                    "snapshot_id": snapshot_id
+                }
+                
+            except Exception as e:
+                logger.error(f"Error during update: {str(e)}")
+                
+                # Attempt to restore from snapshot
+                logger.info(f"Attempting to restore from snapshot {snapshot_id}")
+                if self.incremental_service.restore_snapshot(snapshot_id):
+                    logger.info("Successfully restored from snapshot")
+                else:
+                    logger.error("Failed to restore from snapshot")
+                
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Update failed and restored to previous state: {str(e)}"
+                )
+                
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error updating files: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise HTTPException(status_code=500, detail=str(e))
