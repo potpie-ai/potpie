@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Dict, Any, Optional, Union
 
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -23,9 +23,8 @@ from app.modules.intelligence.prompts.prompt_schema import (
 from app.modules.intelligence.prompts_provider.agent_types import (
     AgentRuntimeLLMType,
 )
-from app.modules.intelligence.prompts_provider.anthropic_system_prompts_provider import (
-    AnthropicSystemPromptsProvider,
-)
+from app.modules.intelligence.prompts_provider.openai_prompts_provider import OpenAIPromptsProvider
+from app.modules.intelligence.prompts_provider.anthropic_prompts_provider import AnthropicPromptsProvider
 
 logger = logging.getLogger(__name__)
 
@@ -325,32 +324,18 @@ class PromptService:
             )
             raise PromptServiceError("Failed to create or update system prompt") from e
 
-    async def get_prompts_by_agent_id_and_types(
-        self, agent_id: str, prompt_types: List[PromptType]
-    ) -> List[PromptResponse]:
-        try:
-            prompts = (
-                self.db.query(Prompt)
-                .join(AgentPromptMapping)
-                .filter(
-                    AgentPromptMapping.agent_id == agent_id,
-                    Prompt.type.in_(prompt_types),
-                )
-                .all()
-            )
+    async def get_prompts(
+    self, 
+    agent_id: str, 
+    prompt_types: List[PromptType] = [PromptType.SYSTEM], 
+    preferred_llm: str = AgentRuntimeLLMType.OPENAI.value.lower(),
+    **kwargs: Dict[str, Any],
+    ) -> Union[Optional[Dict[str, str]], List[PromptResponse]]: 
+        if preferred_llm.lower() == AgentRuntimeLLMType.ANTHROPIC.value.lower():
+            prompt_result = await AnthropicPromptsProvider.get_prompts(agent_id, prompt_types, **kwargs)
+            if not prompt_result:  # checks for empty or None
+                return await OpenAIPromptsProvider.get_prompts(agent_id, prompt_types, **kwargs)
+        else:
+            prompt_result = await OpenAIPromptsProvider.get_prompts(agent_id, prompt_types, **kwargs)
 
-            return [PromptResponse.model_validate(prompt) for prompt in prompts]
-        except SQLAlchemyError as e:
-            raise PromptServiceError(
-                "Failed to get prompts by agent ID and types"
-            ) from e
-
-    async def get_prompts_by_agent_id_and_types_llm_based(
-        self, agent_id: str, prompt_types: List[PromptType], preferred_llm: str
-    ) -> List[PromptResponse]:
-        if preferred_llm == AgentRuntimeLLMType.OPENAI.value.lower():
-            return await self.get_prompts_by_agent_id_and_types(agent_id, prompt_types)
-        elif preferred_llm == AgentRuntimeLLMType.ANTHROPIC.value.lower():
-            return await AnthropicSystemPromptsProvider.get_anthropic_system_prompts(
-                agent_id, prompt_types
-            )
+        return prompt_result

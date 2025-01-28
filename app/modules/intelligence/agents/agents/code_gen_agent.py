@@ -11,6 +11,8 @@ from app.modules.intelligence.llm_provider.llm_provider_service import (
 from app.modules.intelligence.prompts_provider.agent_prompts_provider import (
     AgentPromptsProvider,
 )
+from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.prompts.prompt_schema import PromptType
 from app.modules.intelligence.prompts_provider.agent_types import AgentLLMType
 from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
     get_code_file_structure_tool,
@@ -53,11 +55,20 @@ class CodeGenerationAgent:
         self.llm = llm
         self.mini_llm = mini_llm
         self.user_id = user_id
+        self.prompt_service = PromptService(self.sql_db)
+
 
     async def create_agents(self):
-        agent_prompt = await AgentPromptsProvider.get_agent_prompt(
-            agent_id="code_generator", user_id=self.user_id, db=self.sql_db
+        llm_provider_service = LLMProviderService.create(self.sql_db, self.user_id)
+        preferred_llm, _ = await llm_provider_service.get_preferred_llm(self.user_id)
+        agent_prompt = await self.prompt_service.get_prompts(
+            "code_generator",
+            [PromptType.SYSTEM],
+            preferred_llm,
         )
+        # agent_prompt = await AgentPromptsProvider.get_agent_prompt(
+        #     agent_id="code_generator", user_id=self.user_id, db=self.sql_db
+        # )
         code_generator = Agent(
             role=agent_prompt["role"],
             goal=agent_prompt["goal"],
@@ -88,10 +99,12 @@ class CodeGenerationAgent:
         code_generator,
     ):
         node_ids_list = [node.model_dump() for node in node_ids]
-        task_prompt = await AgentPromptsProvider.get_task_prompt(
-            task_id="code_generation_task",
-            user_id=self.user_id,
-            db=self.sql_db,
+        llm_provider_service = LLMProviderService.create(self.sql_db, self.user_id)
+        preferred_llm, _ = await llm_provider_service.get_preferred_llm(self.user_id)
+        task_prompt = await self.prompt_service.get_prompts(
+            "code_generation_task",
+            [PromptType.SYSTEM],
+            preferred_llm,
             query=query,
             project_id=project_id,
             history=history,
@@ -99,6 +112,17 @@ class CodeGenerationAgent:
             code_results=code_results,
             max_iter=self.max_iter,
         )
+        # task_prompt = await AgentPromptsProvider.get_task_prompt(
+        #     task_id="code_generation_task",
+        #     user_id=self.user_id,
+        #     db=self.sql_db,
+        #     query=query,
+        #     project_id=project_id,
+        #     history=history,
+        #     node_ids=node_ids_list,
+        #     code_results=code_results,
+        #     max_iter=self.max_iter,
+        # )
 
         code_generation_task = Task(
             description=task_prompt,

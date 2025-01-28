@@ -11,6 +11,8 @@ from app.modules.intelligence.llm_provider.llm_provider_service import (
 from app.modules.intelligence.prompts_provider.agent_prompts_provider import (
     AgentPromptsProvider,
 )
+from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.prompts.prompt_schema import PromptType
 from app.modules.intelligence.prompts_provider.agent_types import AgentLLMType
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     get_code_from_node_id_tool,
@@ -30,14 +32,23 @@ class UnitTestAgent:
         )
         self.llm = llm
         self.max_iterations = os.getenv("MAX_ITER", 15)
+        self.prompt_service = PromptService(self.sql_db)
 
     async def create_agents(self):
-        agent_prompt = await AgentPromptsProvider.get_agent_prompt(
-            agent_id="unit_test_agent",
-            user_id=self.user_id,
-            db=self.sql_db,
+        llm_provider_service = LLMProviderService.create(self.sql_db, self.user_id)
+        preferred_llm, _ = await llm_provider_service.get_preferred_llm(self.user_id)
+        agent_prompt = await self.prompt_service.get_prompts(
+            "unit_test_agent",
+            [PromptType.SYSTEM],
+            preferred_llm,
             max_iter=self.max_iterations,
         )
+        # agent_prompt = await AgentPromptsProvider.get_agent_prompt(
+        #     agent_id="unit_test_agent",
+        #     user_id=self.user_id,
+        #     db=self.sql_db,
+        #     max_iter=self.max_iterations,
+        # )
         unit_test_agent = Agent(
             role=agent_prompt["role"],
             goal=agent_prompt["goal"],
@@ -69,10 +80,12 @@ class UnitTestAgent:
     ):
         node_ids_list = [node.node_id for node in node_ids]
 
-        task_prompt = await AgentPromptsProvider.get_task_prompt(
-            task_id="unit_test_task",
-            user_id=self.user_id,
-            db=self.sql_db,
+        llm_provider_service = LLMProviderService.create(self.sql_db, self.user_id)
+        preferred_llm, _ = await llm_provider_service.get_preferred_llm(self.user_id)
+        task_prompt = await self.prompt_service.get_prompts(
+            "unit_test_task",
+            [PromptType.SYSTEM],
+            preferred_llm,
             node_ids_list=node_ids_list,
             project_id=project_id,
             query=query,
@@ -80,6 +93,18 @@ class UnitTestAgent:
             max_iterations=self.max_iterations,
             TestAgentResponse=self.TestAgentResponse,
         )
+
+        # task_prompt = await AgentPromptsProvider.get_task_prompt(
+        #     task_id="unit_test_task",
+        #     user_id=self.user_id,
+        #     db=self.sql_db,
+        #     node_ids_list=node_ids_list,
+        #     project_id=project_id,
+        #     query=query,
+        #     history=history,
+        #     max_iterations=self.max_iterations,
+        #     TestAgentResponse=self.TestAgentResponse,
+        # )
 
         unit_test_task = Task(
             description=task_prompt,

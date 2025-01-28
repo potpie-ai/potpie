@@ -11,6 +11,8 @@ from app.modules.intelligence.llm_provider.llm_provider_service import (
 from app.modules.intelligence.prompts_provider.agent_prompts_provider import (
     AgentPromptsProvider,
 )
+from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.prompts.prompt_schema import PromptType
 from app.modules.intelligence.prompts_provider.agent_types import AgentLLMType
 from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
     get_code_file_structure_tool,
@@ -63,6 +65,8 @@ class LowLevelDesignAgent:
         self.sql_db = sql_db
         self.llm = llm
         self.user_id = user_id
+        self.prompt_service = PromptService(self.sql_db)
+
 
         # Initialize tools
         self.get_code_from_node_id = get_code_from_node_id_tool(sql_db, user_id)
@@ -79,12 +83,21 @@ class LowLevelDesignAgent:
         )
 
     async def create_agents(self):
-        codebase_analyst_prompt = await AgentPromptsProvider.get_agent_prompt(
-            agent_id="codebase_analyst",
-            user_id=self.user_id,
-            db=self.sql_db,
+        print("KILO")
+        llm_provider_service = LLMProviderService.create(self.sql_db, self.user_id)
+        preferred_llm, _ = await llm_provider_service.get_preferred_llm(self.user_id)
+        codebase_analyst_prompt = await self.prompt_service.get_prompts(
+            "codebase_analyst",
+            [PromptType.SYSTEM],
+            preferred_llm,
             max_iter=self.max_iter,
         )
+        # codebase_analyst_prompt = await AgentPromptsProvider.get_agent_prompt(
+        #     agent_id="codebase_analyst",
+        #     user_id=self.user_id,
+        #     db=self.sql_db,
+        #     max_iter=self.max_iter,
+        # )
         codebase_analyst = Agent(
             role=codebase_analyst_prompt["role"],
             goal=codebase_analyst_prompt["goal"],
@@ -132,15 +145,25 @@ class LowLevelDesignAgent:
         project_id: str,
         codebase_analyst,
         design_planner,
-    ):
-        analyze_task_prompt = await AgentPromptsProvider.get_task_prompt(
-            task_id="analyze_codebase_task",
-            user_id=self.user_id,
-            db=self.sql_db,
+    ):  
+        llm_provider_service = LLMProviderService.create(self.sql_db, self.user_id)
+        preferred_llm, _ = await llm_provider_service.get_preferred_llm(self.user_id)
+        analyze_task_prompt = await self.prompt_service.get_prompts(
+            "analyze_codebase_task",
+            [PromptType.SYSTEM],
+            preferred_llm,
             project_id=project_id,
             functional_requirements=functional_requirements,
             max_iter=self.max_iter,
         )
+        # analyze_task_prompt = await AgentPromptsProvider.get_task_prompt(
+        #     task_id="analyze_codebase_task",
+        #     user_id=self.user_id,
+        #     db=self.sql_db,
+        #     project_id=project_id,
+        #     functional_requirements=functional_requirements,
+        #     max_iter=self.max_iter,
+        # )
         analyze_codebase_task = Task(
             description=analyze_task_prompt,
             agent=codebase_analyst,

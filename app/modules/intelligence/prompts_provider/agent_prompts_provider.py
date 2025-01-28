@@ -13,7 +13,7 @@ from app.modules.intelligence.llm_provider.llm_provider_service import (
 )
 from app.modules.intelligence.prompts_provider.agent_types import AgentRuntimeLLMType
 
-
+#deprecated
 class AgentPromptsProvider:
     @classmethod
     async def get_agent_prompt(

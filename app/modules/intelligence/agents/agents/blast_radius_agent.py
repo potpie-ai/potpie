@@ -11,6 +11,8 @@ from app.modules.intelligence.llm_provider.llm_provider_service import (
 from app.modules.intelligence.prompts_provider.agent_prompts_provider import (
     AgentPromptsProvider,
 )
+from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.prompts.prompt_schema import PromptType
 from app.modules.intelligence.prompts_provider.agent_types import AgentLLMType
 from app.modules.intelligence.tools.change_detection.change_detection_tool import (
     ChangeDetectionResponse,
@@ -34,11 +36,20 @@ class BlastRadiusAgent:
         self.ask_knowledge_graph_queries = get_ask_knowledge_graph_queries_tool(
             sql_db, user_id
         )
+        self.prompt_service = PromptService(self.sql_db)
+
 
     async def create_agents(self):
-        agent_prompt = await AgentPromptsProvider.get_agent_prompt(
-            agent_id="blast_radius_agent", user_id=self.user_id, db=self.sql_db
+        llm_provider_service = LLMProviderService.create(self.sql_db, self.user_id)
+        preferred_llm, _ = await llm_provider_service.get_preferred_llm(self.user_id)
+        agent_prompt = await self.prompt_service.get_prompts(
+            "blast_radius_agent",
+            [PromptType.SYSTEM],
+            preferred_llm,
         )
+        # agent_prompt = await AgentPromptsProvider.get_agent_prompt(
+        #     agent_id="blast_radius_agent", user_id=self.user_id, db=self.sql_db
+        # )
         blast_radius_agent = Agent(
             role=agent_prompt["role"],
             goal=agent_prompt["goal"],
@@ -66,15 +77,26 @@ class BlastRadiusAgent:
         query: str,
         blast_radius_agent,
     ):
-        task_prompt = await AgentPromptsProvider.get_task_prompt(
-            task_id="analyze_changes_task",
-            user_id=self.user_id,
-            db=self.sql_db,
+        llm_provider_service = LLMProviderService.create(self.sql_db, self.user_id)
+        preferred_llm, _ = await llm_provider_service.get_preferred_llm(self.user_id)
+        task_prompt = await self.prompt_service.get_prompts(
+            "analyze_changes_task",
+            [PromptType.SYSTEM],
+            preferred_llm,
             project_id=project_id,
             query=query,
             ChangeDetectionResponse=ChangeDetectionResponse,
             BlastRadiusAgentResponse=self.BlastRadiusAgentResponse,
         )
+        # task_prompt = await AgentPromptsProvider.get_task_prompt(
+        #     task_id="analyze_changes_task",
+        #     user_id=self.user_id,
+        #     db=self.sql_db,
+        #     project_id=project_id,
+        #     query=query,
+        #     ChangeDetectionResponse=ChangeDetectionResponse,
+        #     BlastRadiusAgentResponse=self.BlastRadiusAgentResponse,
+        # )
 
         analyze_changes_task = Task(
             description=task_prompt,

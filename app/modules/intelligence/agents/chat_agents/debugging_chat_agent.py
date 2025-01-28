@@ -29,8 +29,7 @@ from app.modules.intelligence.memory.chat_history_service import ChatHistoryServ
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.prompts_provider.agent_types import SystemAgentType
-from app.modules.intelligence.prompts_provider.classification_prompts_provider import (
-    ClassificationPromptsProvider,
+from app.modules.intelligence.prompts_provider.classification_types import (
     ClassificationResponse,
     ClassificationResult,
 )
@@ -52,7 +51,7 @@ class DebuggingChatAgent:
     async def _get_prompts(self, user_id: str) -> Dict[PromptType, PromptResponse]:
         llm_provider_service = LLMProviderService.create(self.db, user_id)
         preferred_llm, _ = await llm_provider_service.get_preferred_llm(user_id)
-        prompts = await self.prompt_service.get_prompts_by_agent_id_and_types_llm_based(
+        prompts = await self.prompt_service.get_prompts(
             "DEBUGGING_AGENT", [PromptType.SYSTEM, PromptType.HUMAN], preferred_llm
         )
         return {
@@ -85,8 +84,8 @@ class DebuggingChatAgent:
     ):
         llm_provider_service = LLMProviderService.create(self.db, user_id)
         preferred_llm, _ = await llm_provider_service.get_preferred_llm(user_id)
-        prompt = ClassificationPromptsProvider.get_classification_prompt(
-            SystemAgentType.DEBUGGING, preferred_llm
+        prompt = await self.prompt_service.get_prompts(
+            SystemAgentType.DEBUGGING, [PromptType.SYSTEM], preferred_llm
         )
         inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
 

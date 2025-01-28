@@ -12,6 +12,8 @@ from app.modules.intelligence.llm_provider.llm_provider_service import (
 from app.modules.intelligence.prompts_provider.agent_prompts_provider import (
     AgentPromptsProvider,
 )
+from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.prompts.prompt_schema import PromptType
 from app.modules.intelligence.prompts_provider.agent_types import AgentLLMType
 from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id_tool import (
     GetCodeGraphFromNodeIdTool,
@@ -37,14 +39,24 @@ class IntegrationTestAgent:
         )
         self.llm = llm
         self.max_iterations = os.getenv("MAX_ITER", 15)
+        self.prompt_service = PromptService(self.sql_db)
+
 
     async def create_agents(self):
-        agent_prompt = await AgentPromptsProvider.get_agent_prompt(
-            agent_id="integration_test_agent",
-            user_id=self.user_id,
-            db=self.sql_db,
+        llm_provider_service = LLMProviderService.create(self.sql_db, self.user_id)
+        preferred_llm, _ = await llm_provider_service.get_preferred_llm(self.user_id)
+        agent_prompt = await self.prompt_service.get_prompts(
+            "integration_test_agent",
+            [PromptType.SYSTEM],
+            preferred_llm,
             max_iter=self.max_iterations,
         )
+        # agent_prompt = await AgentPromptsProvider.get_agent_prompt(
+        #     agent_id="integration_test_agent",
+        #     user_id=self.user_id,
+        #     db=self.sql_db,
+        #     max_iter=self.max_iterations,
+        # )
         integration_test_agent = Agent(
             role=agent_prompt["role"],
             goal=agent_prompt["goal"],
@@ -76,10 +88,12 @@ class IntegrationTestAgent:
     ):
         node_ids = [node.node_id for node in node_ids]
 
-        task_prompt = await AgentPromptsProvider.get_task_prompt(
-            task_id="integration_test_task",
-            user_id=self.user_id,
-            db=self.sql_db,
+        llm_provider_service = LLMProviderService.create(self.sql_db, self.user_id)
+        preferred_llm, _ = await llm_provider_service.get_preferred_llm(self.user_id)
+        task_prompt = await self.prompt_service.get_prompts(
+            "integration_test_task",
+            [PromptType.SYSTEM],
+            preferred_llm,
             graph=graph,
             node_ids=node_ids,
             project_id=project_id,
@@ -88,6 +102,18 @@ class IntegrationTestAgent:
             max_iterations=self.max_iterations,
             TestAgentResponse=self.TestAgentResponse.model_json_schema(),
         )
+        # task_prompt = await AgentPromptsProvider.get_task_prompt(
+        #     task_id="integration_test_task",
+        #     user_id=self.user_id,
+        #     db=self.sql_db,
+        #     graph=graph,
+        #     node_ids=node_ids,
+        #     project_id=project_id,
+        #     query=query,
+        #     history=history,
+        #     max_iterations=self.max_iterations,
+        #     TestAgentResponse=self.TestAgentResponse.model_json_schema(),
+        # )
 
         integration_test_task = Task(
             description=task_prompt,

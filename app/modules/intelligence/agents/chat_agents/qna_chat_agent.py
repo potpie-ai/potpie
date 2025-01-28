@@ -27,8 +27,7 @@ from app.modules.intelligence.memory.chat_history_service import ChatHistoryServ
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.prompts_provider.agent_types import SystemAgentType
-from app.modules.intelligence.prompts_provider.classification_prompts_provider import (
-    ClassificationPromptsProvider,
+from app.modules.intelligence.prompts_provider.classification_types import (
     ClassificationResponse,
     ClassificationResult,
 )
@@ -50,7 +49,8 @@ class QNAChatAgent:
     async def _get_prompts(self, user_id: str) -> Dict[PromptType, PromptResponse]:
         llm_provider_service = LLMProviderService.create(self.db, user_id)
         preferred_llm, _ = await llm_provider_service.get_preferred_llm(user_id)
-        prompts = await self.prompt_service.get_prompts_by_agent_id_and_types_llm_based(
+        
+        prompts = await self.prompt_service.get_prompts(
             "QNA_AGENT", [PromptType.SYSTEM, PromptType.HUMAN], preferred_llm
         )
         return {
@@ -64,7 +64,7 @@ class QNAChatAgent:
         prompts = await self._get_prompts(user_id)
         system_prompt = prompts.get(PromptType.SYSTEM.value)
         human_prompt = prompts.get(PromptType.HUMAN.value)
-
+        
         if not system_prompt or not human_prompt:
             raise ValueError("Required prompts not found for QNA_AGENT")
 
@@ -83,8 +83,8 @@ class QNAChatAgent:
     ):
         llm_provider_service = LLMProviderService.create(self.db, user_id)
         preferred_llm, _ = await llm_provider_service.get_preferred_llm(user_id)
-        prompt = ClassificationPromptsProvider.get_classification_prompt(
-            SystemAgentType.QNA, preferred_llm
+        prompt = await self.prompt_service.get_prompts(
+            SystemAgentType.QNA, [PromptType.SYSTEM], preferred_llm
         )
         inputs = {"query": query, "history": [msg.content for msg in history[-10:]]}
 
@@ -125,6 +125,7 @@ class QNAChatAgent:
             classification = await self._classify_query(
                 query, validated_history, user_id
             )
+            
             classification_duration = (
                 time.time() - classification_start_time
             )  # Calculate duration
