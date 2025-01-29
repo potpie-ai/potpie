@@ -1,7 +1,10 @@
+import asyncio
 import os
-from typing import Any, Dict, List
+from contextlib import redirect_stdout
+from typing import Any, AsyncGenerator, Dict, List
 
 import agentops
+import aiofiles
 from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
 
@@ -171,7 +174,7 @@ class DebugRAGAgent:
         chat_history: List,
         node_ids: List[NodeContext],
         file_structure: str,
-    ) -> str:
+    ) -> AsyncGenerator[str, None]:
         agentops.init(
             os.getenv("AGENTOPS_API_KEY"), default_tags=["openai-gpt-notebook"]
         )
@@ -180,27 +183,47 @@ class DebugRAGAgent:
             code_results = await GetCodeFromMultipleNodeIdsTool(
                 self.sql_db, self.user_id
             ).run_multiple(project_id, [node.node_id for node in node_ids])
-        query_agent = await self.create_agents()
-        query_task = await self.create_tasks(
+        debug_agent = await self.create_agents()
+        debug_task = await self.create_tasks(
             query,
             project_id,
             chat_history,
             node_ids,
             file_structure,
             code_results,
-            query_agent,
+            debug_agent,
         )
 
-        crew = Crew(
-            agents=[query_agent],
-            tasks=[query_task],
-            process=Process.sequential,
-            verbose=False,
-        )
+        read_fd, write_fd = os.pipe()
 
-        result = await crew.kickoff_async()
+        async def kickoff():
+            with os.fdopen(write_fd, "w", buffering=1) as write_file:
+                with redirect_stdout(write_file):
+                    crew = Crew(
+                        agents=[debug_agent],
+                        tasks=[debug_task],
+                        process=Process.sequential,
+                        verbose=True,
+                    )
+                    await crew.kickoff_async()
+
         agentops.end_session("Success")
-        return result
+
+        asyncio.create_task(kickoff())
+
+        # Stream the output
+        final_answer_streaming = False
+        async with aiofiles.open(read_fd, mode="r") as read_file:
+            async for line in read_file:
+                if not line:
+                    break
+                if final_answer_streaming:
+                    if line.endswith("\x1b[00m\n"):
+                        yield line[:-6]
+                    else:
+                        yield line
+                if "## Final Answer:" in line:
+                    final_answer_streaming = True
 
 
 async def kickoff_debug_rag_agent(
@@ -212,15 +235,15 @@ async def kickoff_debug_rag_agent(
     llm,
     mini_llm,
     user_id: str,
-) -> str:
-    provider_service = LLMProviderService(sql_db, user_id)
-    crew_ai_mini_llm = provider_service.get_small_llm(agent_type=AgentLLMType.CREWAI)
-    crew_ai_llm = provider_service.get_large_llm(agent_type=AgentLLMType.CREWAI)
+) -> AsyncGenerator[str, None]:
+    provider_service = ProviderService(sql_db, user_id)
+    crew_ai_llm = provider_service.get_large_llm(agent_type=AgentType.CREWAI)
+    crew_ai_mini_llm = provider_service.get_small_llm(agent_type=AgentType.CREWAI)
     debug_agent = DebugRAGAgent(sql_db, crew_ai_llm, crew_ai_mini_llm, user_id)
     file_structure = await CodeProviderService(sql_db).get_project_structure_async(
         project_id
     )
-    result = await debug_agent.run(
+    async for chunk in debug_agent.run(
         query, project_id, chat_history, node_ids, file_structure
-    )
-    return result
+    ):
+        yield chunk

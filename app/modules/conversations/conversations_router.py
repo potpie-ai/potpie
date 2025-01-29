@@ -80,6 +80,7 @@ class ConversationAPI:
     async def post_message(
         conversation_id: str,
         message: MessageRequest,
+        stream: bool = Query(True, description="Whether to stream the response"),
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
@@ -95,8 +96,15 @@ class ConversationAPI:
         user_id = user["user_id"]
         user_email = user["email"]
         controller = ConversationController(db, user_id, user_email)
-        message_stream = controller.post_message(conversation_id, message)
-        return StreamingResponse(message_stream, media_type="text/event-stream")
+        message_stream = controller.post_message(conversation_id, message, stream)
+        if stream:
+            return StreamingResponse(message_stream, media_type="text/event-stream")
+        else:
+            # Collect all chunks into a complete response
+            full_response = ""
+            async for chunk in message_stream:
+                full_response += chunk
+            return {"content": full_response}
 
     @staticmethod
     @router.post(
@@ -105,16 +113,22 @@ class ConversationAPI:
     async def regenerate_last_message(
         conversation_id: str,
         request: RegenerateRequest,
+        stream: bool = Query(True, description="Whether to stream the response"),
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
         user_email = user["email"]
         controller = ConversationController(db, user_id, user_email)
-        return StreamingResponse(
-            controller.regenerate_last_message(conversation_id, request.node_ids),
-            media_type="text/event-stream",
-        )
+        message_stream = controller.regenerate_last_message(conversation_id, request.node_ids, stream)
+        if stream:
+            return StreamingResponse(message_stream, media_type="text/event-stream")
+        else:
+            # Collect all chunks into a complete response
+            full_response = ""
+            async for chunk in message_stream:
+                full_response += chunk
+            return {"content": full_response}
 
     @staticmethod
     @router.delete("/conversations/{conversation_id}/", response_model=dict)

@@ -1,3 +1,4 @@
+from functools import lru_cache
 import logging
 import os
 from typing import List, Tuple
@@ -70,8 +71,9 @@ class LLMProviderService:
 
         self.db.commit()
         return {"message": f"AI provider set to {provider}"}
-
-    def get_large_llm(self, agent_type: AgentLLMType):
+    
+    @lru_cache(maxsize=3)
+    def get_large_llm(self, agent_type: AgentType):
         # Get user preferences from the database
         user_pref = (
             self.db.query(UserPreferences)

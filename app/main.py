@@ -23,11 +23,13 @@ from app.modules.intelligence.prompts.prompt_router import router as prompt_rout
 from app.modules.intelligence.prompts.system_prompt_setup import SystemPromptSetup
 from app.modules.intelligence.tools.tool_router import router as tool_router
 from app.modules.key_management.secret_manager import router as secret_manager_router
+from app.api.router import router as potpie_api_router
 from app.modules.parsing.graph_construction.parsing_router import (
     router as parsing_router,
 )
 from app.modules.projects.projects_router import router as projects_router
 from app.modules.search.search_router import router as search_router
+from app.modules.usage.usage_router import router as usage_router
 from app.modules.users.user_router import router as user_router
 from app.modules.users.user_service import UserService
 from app.modules.utils.firebase_setup import FirebaseSetup
@@ -93,7 +95,6 @@ class MainApp:
     def check_and_set_env_vars(self):
         required_env_vars = [
             "OPENAI_API_KEY",
-            "OPENAI_MODEL_REASONING",
         ]
         for env_var in required_env_vars:
             if env_var not in os.environ:
@@ -116,6 +117,10 @@ class MainApp:
             llm_provider_router, prefix="/api/v1", tags=["Providers"]
         )
         self.app.include_router(tool_router, prefix="/api/v1", tags=["Tools"])
+        self.app.include_router(usage_router, prefix="/api/v1/usage", tags=["Usage"])
+        self.app.include_router(
+            potpie_api_router, prefix="/api/v2", tags=["Potpie API"]
+        )
         if os.getenv("isDevelopmentMode") != "enabled":
             self.app.include_router(
                 secret_manager_router, prefix="/api/v1", tags=["Secret Manager"]

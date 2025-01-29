@@ -111,8 +111,8 @@ class UnitTestAgent:
     ) -> AsyncGenerator[str, None]:
         try:
             if not self.chain:
-                self.chain = await self._create_chain(user_id)
-
+                self.chain = await self._create_chain()
+            citations = []
             if not node_ids:
                 content = "It looks like there is no context selected. Please type @ followed by file or function name to interact with the unit test agent"
                 self.history_manager.add_message_chunk(

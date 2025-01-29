@@ -33,8 +33,13 @@ class ParsingController:
     async def parse_directory(
         repo_details: ParsingRequest, db: AsyncSession, user: Dict[str, Any]
     ):
+        
+        if "email" not in user:
+            user_email = None
+        else:
+            user_email = user["email"]
+        
         user_id = user["user_id"]
-        user_email = user["email"]
         project_manager = ProjectService(db)
         parse_helper = ParseHelper(db)
         parsing_service = ParsingService(db, user_id)
@@ -202,9 +207,9 @@ class ParsingController:
         }
 
         logger.info(f"Submitting parsing task for new project {new_project_id}")
-
+        repo_name = repo_details.repo_name or repo_details.repo_path.split("/")[-1]
         await project_manager.register_project(
-            repo_details.repo_name,
+            repo_name,
             repo_details.branch_name,
             user_id,
             new_project_id,
@@ -213,6 +218,9 @@ class ParsingController:
         asyncio.create_task(
             CodeProviderService(db).get_project_structure_async(new_project_id)
         )
+        if not user_email:
+            user_email = None
+
         process_parsing.delay(
             repo_details.model_dump(),
             user_id,

@@ -232,7 +232,7 @@ class InferenceService:
 
             if node_tokens > max_tokens:
                 logger.warning(
-                    f"Node {node['node_id']} has exceeded the max_tokens limit. Skipping..."
+                    f"Node {node['node_id']} - {node_tokens} tokens, has exceeded the max_tokens limit. Skipping..."
                 )
                 continue
 

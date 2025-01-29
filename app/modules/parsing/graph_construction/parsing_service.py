@@ -104,7 +104,10 @@ class ParsingService:
                 language = self.parse_helper.detect_repo_language(extracted_dir)
             else:
                 languages = repo.get_languages()
-                language = max(languages, key=languages.get).lower()
+                if languages:
+                    language = max(languages, key=languages.get).lower()
+                else:
+                    language = self.parse_helper.detect_repo_language(extracted_dir)
 
             await self.analyze_directory(
                 extracted_dir, project_id, user_id, self.db, language, user_email

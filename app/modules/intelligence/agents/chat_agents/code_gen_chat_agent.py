@@ -1,10 +1,12 @@
 import json
 import logging
-import time
 from typing import AsyncGenerator, List
 
-from langchain.schema import HumanMessage, SystemMessage
+from langchain.schema import HumanMessage
+from langgraph.graph import END, START, StateGraph
+from langgraph.types import StreamWriter
 from sqlalchemy.orm import Session
+from typing_extensions import TypedDict
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.conversations.message.message_schema import NodeContext
@@ -28,6 +30,30 @@ class CodeGenerationChatAgent:
         self.chain = None
         self.db = db
 
+    class State(TypedDict):
+        query: str
+        project_id: str
+        user_id: str
+        conversation_id: str
+        node_ids: List[NodeContext]
+
+    async def _stream_code_gen_agent(self, state: State, writer: StreamWriter):
+        async for chunk in self.execute(
+            state["query"],
+            state["project_id"],
+            state["user_id"],
+            state["conversation_id"],
+            state["node_ids"],
+        ):
+            writer(chunk)
+
+    def _create_graph(self):
+        graph_builder = StateGraph(CodeGenerationChatAgent.State)
+        graph_builder.add_node("code_gen_agent", self._stream_code_gen_agent)
+        graph_builder.add_edge(START, "code_gen_agent")
+        graph_builder.add_edge("code_gen_agent", END)
+        return graph_builder.compile()
+
     async def run(
         self,
         query: str,
@@ -35,8 +61,26 @@ class CodeGenerationChatAgent:
         user_id: str,
         conversation_id: str,
         node_ids: List[NodeContext],
+    ):
+        state = {
+            "query": query,
+            "project_id": project_id,
+            "user_id": user_id,
+            "conversation_id": conversation_id,
+            "node_ids": node_ids,
+        }
+        graph = self._create_graph()
+        async for chunk in graph.astream(state, stream_mode="custom"):
+            yield chunk
+
+    async def execute(
+        self,
+        query: str,
+        project_id: str,
+        user_id: str,
+        conversation_id: str,
+        node_ids: List[NodeContext],
     ) -> AsyncGenerator[str, None]:
-        start_time = time.time()
         try:
             history = self.history_manager.get_session_history(user_id, conversation_id)
             validated_history = [
@@ -48,12 +92,8 @@ class CodeGenerationChatAgent:
                 for msg in history
             ]
 
-            tool_results = []
             citations = []
-            code_gen_start_time = time.time()
-
-            # Call multi-agent code generation instead of RAG
-            code_gen_result = await kickoff_code_generation_crew(
+            async for chunk in kickoff_code_generation_crew(
                 query,
                 project_id,
                 validated_history[-5:],
@@ -62,45 +102,27 @@ class CodeGenerationChatAgent:
                 self.llm,
                 self.mini_llm,
                 user_id,
-            )
+            ):
+                content = str(chunk)
+                self.history_manager.add_message_chunk(
+                    conversation_id,
+                    content,
+                    MessageType.AI_GENERATED,
+                    citations=citations,
+                )
+                yield json.dumps(
+                    {
+                        "citations": citations,
+                        "message": content,
+                    }
+                )
 
-            code_gen_duration = time.time() - code_gen_start_time
-            logger.info(
-                f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
-                f"Duration of Code Generation: {code_gen_duration:.2f}s"
-            )
-
-            result = code_gen_result.raw
-
-            tool_results = [SystemMessage(content=result)]
-
-            add_chunk_start_time = time.time()
-            self.history_manager.add_message_chunk(
-                conversation_id,
-                tool_results[0].content,
-                MessageType.AI_GENERATED,
-                citations=citations,
-            )
-            add_chunk_duration = time.time() - add_chunk_start_time
-            logger.info(
-                f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
-                f"Duration of adding message chunk: {add_chunk_duration:.2f}s"
-            )
-
-            # Timing for flushing message buffer
-            flush_buffer_start_time = time.time()
             self.history_manager.flush_message_buffer(
                 conversation_id, MessageType.AI_GENERATED
             )
-            flush_buffer_duration = time.time() - flush_buffer_start_time
-            logger.info(
-                f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
-                f"Duration of flushing message buffer: {flush_buffer_duration:.2f}s"
-            )
-
-            yield json.dumps({"citations": citations, "message": result})
 
         except Exception as e:
             logger.error(f"Error in code generation: {str(e)}")
-            error_message = f"An error occurred during code generation: {str(e)}"
-            yield json.dumps({"error": error_message})
+            yield json.dumps(
+                {"error": f"An error occurred during code generation: {str(e)}"}
+            )

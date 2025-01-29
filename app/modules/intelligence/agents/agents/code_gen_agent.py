@@ -1,7 +1,9 @@
+import asyncio
 import os
-from typing import Any, Dict, List
+from contextlib import redirect_stdout
+from typing import Any, AsyncGenerator, Dict, List
 
-import agentops
+import aiofiles
 from crewai import Agent, Crew, Process, Task
 
 from app.modules.conversations.message.message_schema import NodeContext
@@ -138,7 +140,7 @@ class CodeGenerationAgent:
         project_id: str,
         history: str,
         node_ids: List[NodeContext],
-    ) -> str:
+    ) -> AsyncGenerator[str, None]:
         code_results = []
         if len(node_ids) > 0:
             code_results = await GetCodeFromMultipleNodeIdsTool(
@@ -155,16 +157,34 @@ class CodeGenerationAgent:
             code_generator,
         )
 
-        crew = Crew(
-            agents=[code_generator],
-            tasks=[generation_task],
-            process=Process.sequential,
-            verbose=False,
-        )
-        agentops.init(os.getenv("AGENTOPS_API_KEY"))
-        result = await crew.kickoff_async()
-        agentops.end_session("Success")
-        return result
+        read_fd, write_fd = os.pipe()
+
+        async def kickoff():
+            with os.fdopen(write_fd, "w", buffering=1) as write_file:
+                with redirect_stdout(write_file):
+                    crew = Crew(
+                        agents=[code_generator],
+                        tasks=[generation_task],
+                        process=Process.sequential,
+                        verbose=True,
+                    )
+                    await crew.kickoff_async()
+
+        asyncio.create_task(kickoff())
+
+        # Stream the output
+        final_answer_streaming = False
+        async with aiofiles.open(read_fd, mode="r") as read_file:
+            async for line in read_file:
+                if not line:
+                    break
+                if final_answer_streaming:
+                    if line.endswith("\x1b[00m\n"):
+                        yield line[:-6]
+                    else:
+                        yield line
+                if "## Final Answer:" in line:
+                    final_answer_streaming = True
 
 
 async def kickoff_code_generation_crew(
@@ -176,10 +196,10 @@ async def kickoff_code_generation_crew(
     llm,
     mini_llm,
     user_id: str,
-) -> str:
-    provider_service = LLMProviderService(sql_db, user_id)
-    crew_ai_mini_llm = provider_service.get_small_llm(agent_type=AgentLLMType.CREWAI)
-    crew_ai_llm = provider_service.get_large_llm(agent_type=AgentLLMType.CREWAI)
+) -> AsyncGenerator[str, None]:
+    provider_service = ProviderService(sql_db, user_id)
+    crew_ai_mini_llm = provider_service.get_small_llm(agent_type=AgentType.CREWAI)
+    crew_ai_llm = provider_service.get_large_llm(agent_type=AgentType.CREWAI)
     code_gen_agent = CodeGenerationAgent(sql_db, crew_ai_llm, crew_ai_mini_llm, user_id)
-    result = await code_gen_agent.run(query, project_id, history, node_ids)
-    return result
+    async for chunk in code_gen_agent.run(query, project_id, history, node_ids):
+        yield chunk
