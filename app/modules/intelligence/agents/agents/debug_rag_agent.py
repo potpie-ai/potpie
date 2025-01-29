@@ -90,12 +90,7 @@ class DebugRAGAgent:
             preferred_llm,
             max_iter=self.max_iter,
         )
-        # agent_prompt = await AgentPromptsProvider.get_agent_prompt(
-        #     agent_id="debug_rag_query_agent",
-        #     user_id=self.user_id,
-        #     db=self.sql_db,
-        #     max_iter=self.max_iter,
-        # )
+        
         debug_rag_query_agent = Agent(
             role=agent_prompt["role"],
             goal=agent_prompt["goal"],
@@ -144,18 +139,7 @@ class DebugRAGAgent:
             file_structure=file_structure,
             code_results=code_results,
         )
-        # task_prompt = await AgentPromptsProvider.get_task_prompt(
-        #     task_id="combined_task",
-        #     user_id=self.user_id,
-        #     db=self.sql_db,
-        #     max_iter=self.max_iter,
-        #     chat_history=chat_history,
-        #     query=query,
-        #     project_id=project_id,
-        #     node_ids=node_ids_list,
-        #     file_structure=file_structure,
-        #     code_results=code_results,
-        # )
+        
 
         combined_task = Task(
             description=task_prompt,

@@ -46,13 +46,7 @@ class UnitTestAgent:
             [PromptType.SYSTEM],
             preferred_llm,
             max_iter=self.max_iterations,
-        )
-        # agent_prompt = await AgentPromptsProvider.get_agent_prompt(
-        #     agent_id="unit_test_agent",
-        #     user_id=self.user_id,
-        #     db=self.sql_db,
-        #     max_iter=self.max_iterations,
-        # )
+    
         unit_test_agent = Agent(
             role=agent_prompt["role"],
             goal=agent_prompt["goal"],
@@ -97,18 +91,6 @@ class UnitTestAgent:
             max_iterations=self.max_iterations,
             TestAgentResponse=self.TestAgentResponse,
         )
-
-        # task_prompt = await AgentPromptsProvider.get_task_prompt(
-        #     task_id="unit_test_task",
-        #     user_id=self.user_id,
-        #     db=self.sql_db,
-        #     node_ids_list=node_ids_list,
-        #     project_id=project_id,
-        #     query=query,
-        #     history=history,
-        #     max_iterations=self.max_iterations,
-        #     TestAgentResponse=self.TestAgentResponse,
-        # )
 
         unit_test_task = Task(
             description=task_prompt,

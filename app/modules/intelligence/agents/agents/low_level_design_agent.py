@@ -86,7 +86,7 @@ class LowLevelDesignAgent:
         )
 
     async def create_agents(self):
-        print("KILO")
+        
         llm_provider_service = LLMProviderService.create(self.sql_db, self.user_id)
         preferred_llm, _ = await llm_provider_service.get_preferred_llm(self.user_id)
         codebase_analyst_prompt = await self.prompt_service.get_prompts(
@@ -95,12 +95,6 @@ class LowLevelDesignAgent:
             preferred_llm,
             max_iter=self.max_iter,
         )
-        # codebase_analyst_prompt = await AgentPromptsProvider.get_agent_prompt(
-        #     agent_id="codebase_analyst",
-        #     user_id=self.user_id,
-        #     db=self.sql_db,
-        #     max_iter=self.max_iter,
-        # )
         codebase_analyst = Agent(
             role=codebase_analyst_prompt["role"],
             goal=codebase_analyst_prompt["goal"],
@@ -117,12 +111,13 @@ class LowLevelDesignAgent:
             llm=self.llm,
         )
 
-        design_planner_prompt = await AgentPromptsProvider.get_agent_prompt(
-            agent_id="design_planner",
-            user_id=self.user_id,
-            db=self.sql_db,
-            max_iter=self.max_iter,
+        design_planner_prompt = await self.prompt_service.get_prompts(
+        "design_planner",
+        [PromptType.SYSTEM],
+        preferred_llm,
+        max_iter=self.max_iter,
         )
+        
         design_planner = Agent(
             role=design_planner_prompt["role"],
             goal=design_planner_prompt["goal"],
@@ -159,28 +154,21 @@ class LowLevelDesignAgent:
             functional_requirements=functional_requirements,
             max_iter=self.max_iter,
         )
-        # analyze_task_prompt = await AgentPromptsProvider.get_task_prompt(
-        #     task_id="analyze_codebase_task",
-        #     user_id=self.user_id,
-        #     db=self.sql_db,
-        #     project_id=project_id,
-        #     functional_requirements=functional_requirements,
-        #     max_iter=self.max_iter,
-        # )
+        
         analyze_codebase_task = Task(
             description=analyze_task_prompt,
             agent=codebase_analyst,
             expected_output="Codebase analysis report with insights on project structure and patterns",
         )
 
-        design_task_prompt = await AgentPromptsProvider.get_task_prompt(
-            task_id="create_design_plan_task",
-            user_id=self.user_id,
-            db=self.sql_db,
+        design_task_prompt = await self.prompt_service.get_prompts(
+            "create_design_plan_task",
+            [PromptType.SYSTEM],
+            preferred_llm,
             project_id=project_id,
             functional_requirements=functional_requirements,
             max_iter=self.max_iter,
-            LowLevelDesignPlan=self.LowLevelDesignPlan,
+            LowLevelDesignPlan= self.LowLevelDesignPlan,
         )
         create_design_plan_task = Task(
             description=design_task_prompt,

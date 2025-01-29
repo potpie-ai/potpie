@@ -51,12 +51,7 @@ class IntegrationTestAgent:
             preferred_llm,
             max_iter=self.max_iterations,
         )
-        # agent_prompt = await AgentPromptsProvider.get_agent_prompt(
-        #     agent_id="integration_test_agent",
-        #     user_id=self.user_id,
-        #     db=self.sql_db,
-        #     max_iter=self.max_iterations,
-        # )
+        
         integration_test_agent = Agent(
             role=agent_prompt["role"],
             goal=agent_prompt["goal"],
@@ -102,18 +97,7 @@ class IntegrationTestAgent:
             max_iterations=self.max_iterations,
             TestAgentResponse=self.TestAgentResponse.model_json_schema(),
         )
-        # task_prompt = await AgentPromptsProvider.get_task_prompt(
-        #     task_id="integration_test_task",
-        #     user_id=self.user_id,
-        #     db=self.sql_db,
-        #     graph=graph,
-        #     node_ids=node_ids,
-        #     project_id=project_id,
-        #     query=query,
-        #     history=history,
-        #     max_iterations=self.max_iterations,
-        #     TestAgentResponse=self.TestAgentResponse.model_json_schema(),
-        # )
+        
 
         integration_test_task = Task(
             description=task_prompt,

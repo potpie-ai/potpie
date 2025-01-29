@@ -38,20 +38,17 @@ class BasePromptsProvider(ABC):
         if agent_id in [agent_dict_id for agent_dict_id, _ in cls.AGENTS_DICT.items()]:
             prompt =  cls.AGENTS_DICT.get(agent_id, {})
             if prompt and kwargs:
-                print("BEFORE INITIALISATION OF PROMPT", prompt)
                 backstory = prompt.get("backstory", "")
                 if backstory:
-                    print("THIS IS THE BACKSTORY", backstory)
                     backstory = f"""{backstory}"""
                     prompt["backstory"] = backstory.format(**kwargs)
-                print("FINAL PROMPT",prompt)
             return prompt
         elif agent_id in [task_id for task_id, _ in cls.TASK_PROMPTS.items()]:
             description = cls.TASK_PROMPTS.get(agent_id, "")["description"]
 
             if description and kwargs:
                 try:
-                    # Format the description string using the processed kwargs\
+                    # Format the description string using the processed kwargs
                     description = description.format(**kwargs)
                 except KeyError as e:
                     raise ValueError(f"Missing key in kwargs for formatting: {e}")
@@ -62,11 +59,9 @@ class BasePromptsProvider(ABC):
         filtered_prompts = []
         for _, value in unified_prompts.items():
             if value.get("type").value in [pt.value for pt in prompt_types]: 
-                print("ENTERED IF OF FOR", value)
                 if agent_id in [classification_prompt for classification_prompt  in SystemAgentType]:
                     return value.get("text")
                 
                 filtered_prompts.append(value)
-        print([SimpleNamespace(**prompt) for prompt in filtered_prompts])
         return [SimpleNamespace(**prompt) for prompt in filtered_prompts]
 

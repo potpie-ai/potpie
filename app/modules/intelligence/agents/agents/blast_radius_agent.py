@@ -47,9 +47,7 @@ class BlastRadiusAgent:
             [PromptType.SYSTEM],
             preferred_llm,
         )
-        # agent_prompt = await AgentPromptsProvider.get_agent_prompt(
-        #     agent_id="blast_radius_agent", user_id=self.user_id, db=self.sql_db
-        # )
+        
         blast_radius_agent = Agent(
             role=agent_prompt["role"],
             goal=agent_prompt["goal"],
@@ -88,15 +86,7 @@ class BlastRadiusAgent:
             ChangeDetectionResponse=ChangeDetectionResponse,
             BlastRadiusAgentResponse=self.BlastRadiusAgentResponse,
         )
-        # task_prompt = await AgentPromptsProvider.get_task_prompt(
-        #     task_id="analyze_changes_task",
-        #     user_id=self.user_id,
-        #     db=self.sql_db,
-        #     project_id=project_id,
-        #     query=query,
-        #     ChangeDetectionResponse=ChangeDetectionResponse,
-        #     BlastRadiusAgentResponse=self.BlastRadiusAgentResponse,
-        # )
+        
 
         analyze_changes_task = Task(
             description=task_prompt,

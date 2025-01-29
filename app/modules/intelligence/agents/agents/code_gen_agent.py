@@ -68,9 +68,7 @@ class CodeGenerationAgent:
             [PromptType.SYSTEM],
             preferred_llm,
         )
-        # agent_prompt = await AgentPromptsProvider.get_agent_prompt(
-        #     agent_id="code_generator", user_id=self.user_id, db=self.sql_db
-        # )
+        
         code_generator = Agent(
             role=agent_prompt["role"],
             goal=agent_prompt["goal"],
@@ -114,18 +112,7 @@ class CodeGenerationAgent:
             code_results=code_results,
             max_iter=self.max_iter,
         )
-        # task_prompt = await AgentPromptsProvider.get_task_prompt(
-        #     task_id="code_generation_task",
-        #     user_id=self.user_id,
-        #     db=self.sql_db,
-        #     query=query,
-        #     project_id=project_id,
-        #     history=history,
-        #     node_ids=node_ids_list,
-        #     code_results=code_results,
-        #     max_iter=self.max_iter,
-        # )
-
+        
         code_generation_task = Task(
             description=task_prompt,
             expected_output="User-friendly, clearly structured code changes with comprehensive dependency analysis, implementation details for ALL impacted files, and complete verification steps",
