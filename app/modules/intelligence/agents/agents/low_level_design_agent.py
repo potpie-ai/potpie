@@ -236,8 +236,8 @@ async def create_low_level_design_agent(
     llm,
     user_id: str,
 ) -> AsyncGenerator[str, None]:
-    provider_service = ProviderService(sql_db, user_id)
-    crew_ai_llm = provider_service.get_large_llm(agent_type=AgentType.CREWAI)
+    provider_service = LLMProviderService(sql_db, user_id)
+    crew_ai_llm = provider_service.get_large_llm(agent_type=AgentLLMType.CREWAI)
     design_agent = LowLevelDesignAgent(sql_db, crew_ai_llm, user_id)
     async for chunk in design_agent.run(functional_requirements, project_id):
         yield chunk

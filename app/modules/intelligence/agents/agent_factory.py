@@ -20,14 +20,14 @@ from app.modules.intelligence.agents.chat_agents.unit_test_chat_agent import (
     UnitTestAgent,
 )
 from app.modules.intelligence.agents.custom_agents.custom_agent import CustomAgent
-from app.modules.intelligence.provider.provider_service import (
-    AgentType,
-    ProviderService,
+from app.modules.intelligence.llm_provider.llm_provider_service import (
+    LLMProviderService
 )
+from app.modules.intelligence.prompts_provider.agent_types import AgentLLMType
 
 
 class AgentFactory:
-    def __init__(self, db: Session, provider_service: ProviderService):
+    def __init__(self, db: Session, provider_service: LLMProviderService):
         self.db = db
         self.provider_service = provider_service
         self._agent_cache: Dict[str, Any] = {}
@@ -39,9 +39,9 @@ class AgentFactory:
         if cache_key in self._agent_cache:
             return self._agent_cache[cache_key]
 
-        mini_llm = self.provider_service.get_small_llm(agent_type=AgentType.LANGCHAIN)
+        mini_llm = self.provider_service.get_small_llm(agent_type=AgentLLMType.LANGCHAIN)
         reasoning_llm = self.provider_service.get_large_llm(
-            agent_type=AgentType.LANGCHAIN
+            agent_type=AgentLLMType.LANGCHAIN
         )
 
         agent = self._create_agent(agent_id, mini_llm, reasoning_llm, user_id)

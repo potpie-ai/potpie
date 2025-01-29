@@ -73,7 +73,7 @@ class LLMProviderService:
         return {"message": f"AI provider set to {provider}"}
     
     @lru_cache(maxsize=3)
-    def get_large_llm(self, agent_type: AgentType):
+    def get_large_llm(self, agent_type: AgentLLMType):
         # Get user preferences from the database
         user_pref = (
             self.db.query(UserPreferences)

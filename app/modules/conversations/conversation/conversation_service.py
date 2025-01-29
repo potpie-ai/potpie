@@ -658,7 +658,7 @@ class ConversationService:
 
         agent_id = conversation.agent_ids[0]
         project_id = conversation.project_ids[0] if conversation.project_ids else None
-        supervisor = SimplifiedAgentSupervisor(self.sql_db, self.provider_service)
+        supervisor = SimplifiedAgentSupervisor(self.sql_db, self.llm_provider_service)
         await supervisor.initialize(user_id)
         try:
             agent = self.agent_injector_service.get_agent(agent_id)
