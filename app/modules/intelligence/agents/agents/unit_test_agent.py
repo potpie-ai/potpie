@@ -46,7 +46,7 @@ class UnitTestAgent:
             [PromptType.SYSTEM],
             preferred_llm,
             max_iter=self.max_iterations,
-    
+        )
         unit_test_agent = Agent(
             role=agent_prompt["role"],
             goal=agent_prompt["goal"],
