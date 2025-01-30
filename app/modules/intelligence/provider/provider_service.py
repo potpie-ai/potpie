@@ -1,4 +1,3 @@
-from functools import lru_cache
 import logging
 import os
 from enum import Enum
@@ -6,6 +5,7 @@ from typing import List, Tuple
 
 from crewai import LLM
 from langchain_anthropic import ChatAnthropic
+from langchain_deepseek import ChatDeepSeek
 from langchain_openai.chat_models import ChatOpenAI
 from portkey_ai import PORTKEY_GATEWAY_URL, createHeaders
 
@@ -28,6 +28,7 @@ class ProviderService:
         self.user_id = user_id
         if os.getenv("isDevelopmentMode") != "enabled":
             self.PORTKEY_API_KEY = os.environ.get("PORTKEY_API_KEY")
+        self.openrouter_base_url = "https://openrouter.ai/api/v1"
 
     @classmethod
     def create(cls, db, user_id: str):
@@ -44,6 +45,11 @@ class ProviderService:
                 id="anthropic",
                 name="Anthropic",
                 description="An AI safety-focused company known for models like Claude.",
+            ),
+            ProviderInfo(
+                id="deepseek",
+                name="DeepSeek",
+                description="An open-source AI company known for powerful chat and reasoning models.",
             ),
         ]
 
@@ -77,257 +83,163 @@ class ProviderService:
 
         self.db.commit()
         return {"message": f"AI provider set to {provider}"}
-    
-    @lru_cache(maxsize=3)
-    def get_large_llm(self, agent_type: AgentType):
-        # Get user preferences from the database
+
+    # Model configurations for different providers and sizes
+    MODEL_CONFIGS = {
+        "openai": {
+            "small": {
+                "crewai": {"model": "openai/gpt-4o-mini"},
+                "langchain": {
+                    "model": "gpt-4o-mini",
+                    "class": ChatOpenAI,
+                },
+            },
+            "large": {
+                "crewai": {"model": "openai/gpt-4o"},
+                "langchain": {
+                    "model": "gpt-4o",
+                    "class": ChatOpenAI,
+                },
+            },
+        },
+        "anthropic": {
+            "small": {
+                "crewai": {"model": "anthropic/claude-3-5-haiku-20241022"},
+                "langchain": {
+                    "model": "claude-3-5-haiku-20241022",
+                    "class": ChatAnthropic,
+                },
+            },
+            "large": {
+                "crewai": {"model": "anthropic/claude-3-5-sonnet-20241022"},
+                "langchain": {
+                    "model": "claude-3-5-sonnet-20241022",
+                    "class": ChatAnthropic,
+                },
+            },
+        },
+        "deepseek": {
+            "small": {
+                "crewai": {"model": "deepseek/deepseek-chat"},
+                "langchain": {
+                    "model": "deepseek/deepseek-chat",
+                    "class": ChatDeepSeek,
+                },
+            },
+            "large": {
+                "crewai": {"model": "deepseek/deepseek-r1"},
+                "langchain": {
+                    "model": "deepseek/deepseek-r1",
+                    "class": ChatDeepSeek,
+                },
+            },
+        },
+    }
+
+    def _get_provider_config(self, size: str) -> str:
+        """Get the preferred provider and its configuration."""
+        if self.user_id == "dummy":
+            return "openai"
+
         user_pref = (
             self.db.query(UserPreferences)
             .filter(UserPreferences.user_id == self.user_id)
             .first()
         )
-
-        # Determine preferred provider (default to 'openai')
-        preferred_provider = (
+        return (
             user_pref.preferences.get("llm_provider", "openai")
             if user_pref
             else "openai"
         )
 
-        if preferred_provider == "openai":
-            logging.info("Initializing OpenAI LLM")
-            if os.getenv("isDevelopmentMode") == "enabled":
-                logging.info(
-                    "Development mode enabled. Using environment variable for API key."
-                )
-                openai_key = os.getenv("OPENAI_API_KEY")
-                if agent_type == AgentType.CREWAI:
-                    self.llm = LLM(
-                        model="openai/gpt-4o-mini",
-                        api_key=openai_key,
-                        temperature=0.3,
-                    )
-                else:
-                    self.llm = ChatOpenAI(
-                        model_name="gpt-4o",
-                        api_key=openai_key,
-                        temperature=0.3,
-                    )
-            else:
-                try:
-                    secret = SecretManager.get_secret("openai", self.user_id)
-                    openai_key = secret.get("api_key")
-                except Exception as e:
-                    if "404" in str(e):
-                        openai_key = os.getenv("OPENAI_API_KEY")
-                    else:
-                        raise e
+    def _get_api_key(self, provider: str) -> str:
+        """Get API key for the specified provider."""
+        if os.getenv("isDevelopmentMode") == "enabled":
+            logging.info(
+                "Development mode enabled. Using environment variable for API key."
+            )
+            return os.getenv(f"{provider.upper()}_API_KEY")
 
-                portkey_headers = createHeaders(
-                    api_key=self.PORTKEY_API_KEY,
-                    provider="openai",
-                    metadata={
-                        "_user": self.user_id,
-                        "environment": os.environ.get("ENV"),
-                    },
-                )
-                if agent_type == AgentType.CREWAI:
-                    self.llm = LLM(
-                        model="openai/gpt-4o", api_key=openai_key, temperature=0.3
-                    )
-                else:
-                    self.llm = ChatOpenAI(
-                        model_name="gpt-4o",
-                        api_key=openai_key,
-                        temperature=0.3,
-                        base_url=PORTKEY_GATEWAY_URL,
-                        default_headers=portkey_headers,
-                    )
+        try:
+            secret = SecretManager.get_secret(provider, self.user_id)
+            return secret.get("api_key")
+        except Exception as e:
+            if "404" in str(e):
+                return os.getenv(f"{provider.upper()}_API_KEY")
+            raise e
 
-        elif preferred_provider == "anthropic":
-            logging.info("Initializing Anthropic LLM")
-            if os.getenv("isDevelopmentMode") == "enabled":
-                logging.info(
-                    "Development mode enabled. Using environment variable for API key."
-                )
-                anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-                if agent_type == AgentType.CREWAI:
-                    self.llm = LLM(
-                        model="anthropic/claude-3-5-sonnet-20241022",
-                        temperature=0.3,
-                        api_key=anthropic_key,
-                    )
-                else:
-                    self.llm = ChatAnthropic(
-                        model="claude-3-5-sonnet-20241022",
-                        temperature=0.3,
-                        api_key=anthropic_key,
-                    )
-            else:
-                try:
-                    secret = SecretManager.get_secret("anthropic", self.user_id)
-                    anthropic_key = secret.get("api_key")
-                except Exception as e:
-                    if "404" in str(e):
-                        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-                    else:
-                        raise e
+    def _get_portkey_headers(self, provider: str):
+        """Get Portkey headers for the specified provider."""
+        if os.getenv("isDevelopmentMode") == "enabled":
+            return None
 
-                portkey_headers = createHeaders(
-                    api_key=self.PORTKEY_API_KEY,
-                    provider="anthropic",
-                    metadata={
-                        "_user": self.user_id,
-                        "environment": os.environ.get("ENV"),
-                    },
-                )
+        return createHeaders(
+            api_key=self.PORTKEY_API_KEY,
+            provider=provider,
+            metadata={
+                "_user": self.user_id,
+                "environment": os.environ.get("ENV"),
+            },
+        )
 
-                if agent_type == AgentType.CREWAI:
-                    self.llm = LLM(
-                        model="anthropic/claude-3-5-sonnet-20241022",
-                        temperature=0.3,
-                        api_key=anthropic_key,
-                    )
-                else:
-                    self.llm = ChatAnthropic(
-                        model="claude-3-5-sonnet-20241022",
-                        temperature=0.3,
-                        api_key=anthropic_key,
-                        base_url=PORTKEY_GATEWAY_URL,
-                        default_headers=portkey_headers,
-                    )
+    def _initialize_llm(self, provider: str, size: str, agent_type: AgentType):
+        """Initialize LLM based on provider, size, and agent type."""
+        if provider not in self.MODEL_CONFIGS:
+            raise ValueError(f"Invalid LLM provider: {provider}")
 
+        config = self.MODEL_CONFIGS[provider][size]
+        api_key = self._get_api_key(provider)
+        portkey_headers = self._get_portkey_headers(provider)
+
+        common_params = {
+            "temperature": 0.3,
+            "api_key": api_key,
+        }
+
+        if provider == "deepseek":
+            common_params.update(
+                {
+                    "max_tokens": 8000,
+                    "base_url": self.openrouter_base_url,
+                    "api_base": self.openrouter_base_url,
+                }
+            )
+
+        if provider == "anthropic":
+            common_params.update(
+                {
+                    "max_tokens": 8000,
+                }
+            )
+
+        if agent_type == AgentType.CREWAI:
+            return LLM(model=config["crewai"]["model"], **common_params)
         else:
-            raise ValueError("Invalid LLM provider selected.")
+            model_class = config["langchain"]["class"]
+            model_params = {"model_name": config["langchain"]["model"], **common_params}
 
+            if not os.getenv("isDevelopmentMode") == "enabled":
+                model_params.update(
+                    {
+                        "base_url": PORTKEY_GATEWAY_URL,
+                        "default_headers": portkey_headers,
+                    }
+                )
+
+            return model_class(**model_params)
+
+    def get_large_llm(self, agent_type: AgentType):
+        provider = self._get_provider_config("large")
+        logging.info(f"Initializing {provider.capitalize()} LLM")
+        self.llm = self._initialize_llm(provider, "large", agent_type)
         return self.llm
 
     def get_small_llm(self, agent_type: AgentType):
-        # Get user preferences from the database
-        if self.user_id == "dummy":
-            user_pref = UserPreferences(
-                user_id=self.user_id, preferences={"llm_provider": "openai"}
-            )
-
-        user_pref = (
-            self.db.query(UserPreferences)
-            .filter(UserPreferences.user_id == self.user_id)
-            .first()
-        )
-
-        # Determine preferred provider (default to 'openai')
-        preferred_provider = (
-            user_pref.preferences.get("llm_provider", "openai")
-            if user_pref
-            else "openai"
-        )
-
-        if preferred_provider == "openai":
-            if os.getenv("isDevelopmentMode") == "enabled":
-                logging.info(
-                    "Development mode enabled. Using environment variable for API key."
-                )
-                openai_key = os.getenv("OPENAI_API_KEY")
-                if agent_type == AgentType.CREWAI:
-                    self.llm = LLM(
-                        model="openai/gpt-4o-mini",
-                        api_key=openai_key,
-                        temperature=0.3,
-                    )
-                else:
-                    self.llm = ChatOpenAI(
-                        model_name="gpt-4o-mini",
-                        api_key=openai_key,
-                        temperature=0.3,
-                    )
-            else:
-                try:
-                    secret = SecretManager.get_secret("openai", self.user_id)
-                    openai_key = secret.get("api_key")
-                except Exception as e:
-                    if "404" in str(e):
-                        openai_key = os.getenv("OPENAI_API_KEY")
-                    else:
-                        raise e
-
-                portkey_headers = createHeaders(
-                    api_key=self.PORTKEY_API_KEY,
-                    provider="openai",
-                    metadata={
-                        "_user": self.user_id,
-                        "environment": os.environ.get("ENV"),
-                    },
-                )
-                if agent_type == AgentType.CREWAI:
-                    self.llm = LLM(
-                        model="openai/gpt-4o-mini",
-                        api_key=openai_key,
-                        temperature=0.3,
-                    )
-                else:
-                    self.llm = ChatOpenAI(
-                        model_name="gpt-4o-mini",
-                        api_key=openai_key,
-                        temperature=0.3,
-                        base_url=PORTKEY_GATEWAY_URL,
-                        default_headers=portkey_headers,
-                    )
-
-        elif preferred_provider == "anthropic":
-            if os.getenv("isDevelopmentMode") == "enabled":
-                logging.info(
-                    "Development mode enabled. Using environment variable for API key."
-                )
-                anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-                if agent_type == AgentType.CREWAI:
-                    self.llm = LLM(
-                        model="anthropic/claude-3-haiku-20240307",
-                        temperature=0.3,
-                        api_key=anthropic_key,
-                    )
-                else:
-                    self.llm = ChatAnthropic(
-                        model="claude-3-haiku-20240307",
-                        temperature=0.3,
-                        api_key=anthropic_key,
-                    )
-            else:
-                try:
-                    secret = SecretManager.get_secret("anthropic", self.user_id)
-                    anthropic_key = secret.get("api_key")
-                except Exception as e:
-                    if "404" in str(e):
-                        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-                    else:
-                        raise e
-
-                portkey_headers = createHeaders(
-                    api_key=self.PORTKEY_API_KEY,
-                    provider="anthropic",
-                    metadata={
-                        "_user": self.user_id,
-                        "environment": os.environ.get("ENV"),
-                    },
-                )
-
-                if agent_type == AgentType.CREWAI:
-                    self.llm = LLM(
-                        model="anthropic/claude-3-haiku-20240307",
-                        temperature=0.3,
-                        api_key=anthropic_key,
-                    )
-                else:
-                    self.llm = ChatAnthropic(
-                        model="claude-3-haiku-20240307",
-                        temperature=0.3,
-                        api_key=anthropic_key,
-                        base_url=PORTKEY_GATEWAY_URL,
-                        default_headers=portkey_headers,
-                    )
-
-        else:
-            raise ValueError("Invalid LLM provider selected.")
-
+        provider = self._get_provider_config("small")
+        if provider == "deepseek":
+            # temporary
+            provider = "openai"
+        self.llm = self._initialize_llm(provider, "small", agent_type)
         return self.llm
 
     def get_llm_provider_name(self) -> str:
@@ -339,10 +251,29 @@ class ProviderService:
             return "OpenAI"
         elif isinstance(llm, ChatAnthropic):
             return "Anthropic"
+        elif isinstance(llm, ChatDeepSeek):
+            return "DeepSeek"
         elif isinstance(llm, LLM):
-            return "OpenAI" if llm.model.split("/")[0] == "openai" else "Anthropic"
-        else:
-            return "Unknown"
+            if llm.model.split("/")[0] == "openai":
+                return "OpenAI"
+            elif llm.model.split("/")[0] == "anthropic":
+                return "Anthropic"
+            elif llm.model.split("/")[0] == "deepseek":
+                return "DeepSeek"
+        return "Unknown"
+
+    async def get_global_ai_provider(self, user_id: str) -> str:
+        user_pref = (
+            self.db.query(UserPreferences)
+            .filter(UserPreferences.user_id == user_id)
+            .first()
+        )
+
+        return (
+            user_pref.preferences.get("llm_provider", "openai")
+            if user_pref
+            else "openai"
+        )
 
     async def get_preferred_llm(self, user_id: str) -> Tuple[str, str]:
         user_pref = (
@@ -357,8 +288,12 @@ class ProviderService:
             else "openai"
         )
 
-        model_type = (
-            "gpt-4o" if preferred_provider == "openai" else "claude-3-5-sonnet-20241022"
-        )
+        model_type = "gpt-4o"
+        if preferred_provider == "anthropic":
+            model_type = "claude-3-5-sonnet-20241022"
+        elif preferred_provider == "deepseek":
+            # update after custom agent r1 suppport
+            model_type = "gpt-4o"
+            preferred_provider = "openai"
 
         return preferred_provider, model_type

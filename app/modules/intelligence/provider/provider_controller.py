@@ -34,6 +34,15 @@ class ProviderController:
                 status_code=500, detail=f"Error setting AI provider: {str(e)}"
             )
 
+    async def get_global_ai_provider(self, user_id: str):
+        try:
+            provider = await self.service.get_global_ai_provider(user_id)
+            return {"provider": provider}
+        except Exception as e:
+            raise HTTPException(
+                status_code=500, detail=f"Error getting AI provider: {str(e)}"
+            )
+
     async def get_preferred_llm(self, user_id: str) -> GetProviderResponse:
         try:
             preferred_llm, model_type = await self.service.get_preferred_llm(user_id)
