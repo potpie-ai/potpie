@@ -232,6 +232,9 @@ class ProviderService:
 
     def get_small_llm(self, agent_type: AgentType):
         provider = self._get_provider_config("small")
+        if provider == "deepseek":
+            #temporary 
+            provider = "openai"
         self.llm = self._initialize_llm(provider, "small", agent_type)
         return self.llm
 
