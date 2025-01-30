@@ -1,4 +1,4 @@
-fastapi==0.115.6
+fastapi[all]==0.115.6
 instructor==1.5.2
 jiter==0.5.0
 litellm==1.59.9
