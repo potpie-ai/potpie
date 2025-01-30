@@ -1,4 +1,3 @@
-from functools import lru_cache
 import logging
 import os
 from enum import Enum
@@ -223,7 +222,6 @@ class ProviderService:
 
             return model_class(**model_params)
 
-    @lru_cache(maxsize=3)
     def get_large_llm(self, agent_type: AgentType):
         provider = self._get_provider_config("large")
         logging.info(f"Initializing {provider.capitalize()} LLM")
