@@ -6,7 +6,7 @@ from pydantic import BaseModel, field_validator
 
 class BaseSecretRequest(BaseModel):
     api_key: str
-    provider: Literal["openai", "anthropic", "openrouter"]
+    provider: Literal["openai", "anthropic", "deepseek"]
 
     @staticmethod
     def validate_openai_api_key_format(api_key: str) -> bool:
@@ -36,6 +36,9 @@ class BaseSecretRequest(BaseModel):
         elif provider == "anthropic":
             if not api_key.startswith("sk-ant-"):
                 raise ValueError("Invalid Anthropic API key format")
+        elif provider == "deepseek":
+            if not api_key.startswith("sk-or-"):
+                raise ValueError("Invalid OpenRouter API key format")
         else:
             raise ValueError("Invalid provider")
         return provider

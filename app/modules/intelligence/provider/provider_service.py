@@ -48,7 +48,7 @@ class ProviderService:
                 description="An AI safety-focused company known for models like Claude.",
             ),
             ProviderInfo(
-                id="openrouter",
+                id="deepseek",
                 name="DeepSeek",
                 description="An open-source AI company known for powerful chat and reasoning models.",
             ),
@@ -105,9 +105,9 @@ class ProviderService:
         },
         "anthropic": {
             "small": {
-                "crewai": {"model": "anthropic/claude-3-haiku-20240307"},
+                "crewai": {"model": "anthropic/claude-3-5-haiku-20241022"},
                 "langchain": {
-                    "model": "claude-3-haiku-20240307",
+                    "model": "claude-3-5-haiku-20241022",
                     "class": ChatAnthropic,
                 },
             },
@@ -197,6 +197,11 @@ class ProviderService:
                 "base_url": self.openrouter_base_url,
                 "api_base": self.openrouter_base_url,
             })
+        
+        if provider == "anthropic":
+            common_params.update({
+                "max_tokens": 8000,
+            })
 
         if agent_type == AgentType.CREWAI:
             return LLM(
@@ -250,6 +255,15 @@ class ProviderService:
                 return "DeepSeek"
         return "Unknown"
 
+    async def get_global_ai_provider(self, user_id: str) -> str:
+        user_pref = (
+            self.db.query(UserPreferences)
+            .filter(UserPreferences.user_id == user_id)
+            .first()
+        )
+        
+        return user_pref.preferences.get("llm_provider", "openai") if user_pref else "openai"
+
     async def get_preferred_llm(self, user_id: str) -> Tuple[str, str]:
         user_pref = (
             self.db.query(UserPreferences)
@@ -267,6 +281,8 @@ class ProviderService:
         if preferred_provider == "anthropic":
             model_type = "claude-3-5-sonnet-20241022"
         elif preferred_provider == "deepseek":
-            model_type = "deepseek-reasoner"
+            #update after custom agent r1 suppport
+            model_type = "gpt-4o"
+            preferred_provider = "openai"
 
         return preferred_provider, model_type

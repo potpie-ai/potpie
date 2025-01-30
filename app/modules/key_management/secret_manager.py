@@ -45,15 +45,15 @@ class SecretManager:
             )
 
     @staticmethod
-    def get_secret_id(provider: Literal["openai", "anthropic", "openrouter"], customer_id: str):
+    def get_secret_id(provider: Literal["openai", "anthropic", "deepseek"], customer_id: str):
         if os.getenv("isDevelopmentMode") == "enabled":
             return None
         if provider == "openai":
             secret_id = f"openai-api-key-{customer_id}"
         elif provider == "anthropic":
             secret_id = f"anthropic-api-key-{customer_id}"
-        elif provider == "openrouter":
-            secret_id = f"openrouter-api-key-{customer_id}"
+        elif provider == "deepseek":
+            secret_id = f"deepseek-api-key-{customer_id}"
         else:
             raise HTTPException(status_code=400, detail="Invalid provider")
         return secret_id
@@ -104,7 +104,7 @@ class SecretManager:
 
     @router.get("/secrets/{provider}")
     def get_secret_for_provider(
-        provider: Literal["openai", "anthropic"],
+        provider: Literal["openai", "anthropic", "deepseek", "all"],
         user=Depends(AuthService.check_auth),
         db: Session = Depends(get_db),
     ):
@@ -121,11 +121,16 @@ class SecretManager:
             raise HTTPException(
                 status_code=404, detail="Secret not found for this provider"
             )
+        
+        if provider == "all":
+            #because user can only store one key for now
+            provider = user_pref.preferences["llm_provider"]
+
 
         return SecretManager.get_secret(provider, customer_id)
 
     @staticmethod
-    def get_secret(provider: Literal["openai", "anthropic"], customer_id: str):
+    def get_secret(provider: Literal["openai", "anthropic", "deepseek"], customer_id: str):
         if os.getenv("isDevelopmentMode") == "enabled":
             return None
         client, project_id = SecretManager.get_client_and_project()
@@ -135,7 +140,8 @@ class SecretManager:
         try:
             response = client.access_secret_version(request={"name": name})
             api_key = response.payload.data.decode("UTF-8")
-            return {"api_key": api_key}
+            return {"api_key": api_key,
+                    "provider": provider}
         except Exception as e:
             raise HTTPException(
                 status_code=404,
@@ -176,13 +182,44 @@ class SecretManager:
 
     @router.delete("/secrets/{provider}")
     def delete_secret(
-        provider: Literal["openai", "anthropic"],
+        provider: Literal["openai", "anthropic", "deepseek", "all"],
         user=Depends(AuthService.check_auth),
         db: Session = Depends(get_db),
     ):
         if os.getenv("isDevelopmentMode") == "enabled":
             return {"message": "Secret deletion is not allowed in development mode"}
         customer_id = user["user_id"]
+        if provider == "all":
+            provider_list = ["openai", "anthropic", "deepseek"]
+            secret_id = [SecretManager.get_secret_id(provider, customer_id) for provider in provider_list]
+            client, project_id = SecretManager.get_client_and_project()
+            
+            deletion_results = []
+            for provider, secret in zip(provider_list, secret_id):
+                try:
+                    name = f"projects/{project_id}/secrets/{secret}"
+                    client.delete_secret(request={"name": name})
+                    deletion_results.append(f"Successfully deleted {provider} secret")
+                    PostHogClient().send_event(
+                        customer_id,
+                        "secret_deletion_event",
+                        {"provider": provider, "key_removed": "true"},
+                    )
+                except Exception as e:
+                    deletion_results.append(f"Failed to delete {provider} secret: {str(e)}")
+            
+            # Remove provider from user preferences
+            user_pref = (
+                db.query(UserPreferences)
+                .filter(UserPreferences.user_id == customer_id)
+                .first()
+            )
+            if user_pref and "provider" in user_pref.preferences:
+                del user_pref.preferences["provider"]
+                db.commit()
+            
+            return {"message": "All secrets deletion completed", "details": deletion_results}
+
         secret_id = SecretManager.get_secret_id(provider, customer_id)
         client, project_id = SecretManager.get_client_and_project()
         name = f"projects/{project_id}/secrets/{secret_id}"
