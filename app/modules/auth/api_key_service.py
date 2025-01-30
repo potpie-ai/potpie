@@ -1,12 +1,15 @@
+import hashlib
 import os
 import secrets
-import hashlib
 from typing import Optional
+
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
 from google.cloud import secretmanager
-from app.modules.users.user_preferences_model import UserPreferences
 from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from app.modules.users.user_preferences_model import UserPreferences
+
 
 class APIKeyService:
     SECRET_PREFIX = "sk-"
@@ -22,8 +25,7 @@ class APIKeyService:
         project_id = os.environ.get("GCP_PROJECT")
         if not project_id:
             raise HTTPException(
-                status_code=500,
-                detail="GCP_PROJECT environment variable is not set"
+                status_code=500, detail="GCP_PROJECT environment variable is not set"
             )
 
         try:
@@ -32,7 +34,7 @@ class APIKeyService:
         except Exception as e:
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to initialize Secret Manager client: {str(e)}"
+                detail=f"Failed to initialize Secret Manager client: {str(e)}",
             )
 
     @staticmethod
@@ -53,12 +55,14 @@ class APIKeyService:
         hashed_key = APIKeyService.hash_api_key(api_key)
 
         # Store hashed key in user preferences
-        user_pref = db.query(UserPreferences).filter(UserPreferences.user_id == user_id).first()
-        if not user_pref :
+        user_pref = (
+            db.query(UserPreferences).filter(UserPreferences.user_id == user_id).first()
+        )
+        if not user_pref:
             user_pref = UserPreferences(user_id=user_id, preferences={})
             db.add(user_pref)
         if "api_key_hash" not in user_pref.preferences:
-            pref = user_pref.preferences.copy() 
+            pref = user_pref.preferences.copy()
             pref["api_key_hash"] = hashed_key
             user_pref.preferences = pref
         db.commit()
@@ -86,7 +90,9 @@ class APIKeyService:
                 if "api_key_hash" in user_pref.preferences:
                     del user_pref.preferences["api_key_hash"]
                     db.commit()
-                raise HTTPException(status_code=500, detail=f"Failed to store API key: {str(e)}")
+                raise HTTPException(
+                    status_code=500, detail=f"Failed to store API key: {str(e)}"
+                )
 
         return api_key
 
@@ -97,24 +103,26 @@ class APIKeyService:
             return None
 
         hashed_key = APIKeyService.hash_api_key(api_key)
-        
+
         # Find user with matching hashed key using PostgreSQL JSONB operator
-        user_pref = db.query(UserPreferences).filter(
-            text("preferences->>'api_key_hash' = :hashed_key")
-        ).params(hashed_key=hashed_key).first()
+        user_pref = (
+            db.query(UserPreferences)
+            .filter(text("preferences->>'api_key_hash' = :hashed_key"))
+            .params(hashed_key=hashed_key)
+            .first()
+        )
 
         if not user_pref:
             return None
 
-        return {
-            "user_id": user_pref.user_id,
-            "auth_type": "api_key"
-        }
+        return {"user_id": user_pref.user_id, "auth_type": "api_key"}
 
     @staticmethod
     async def revoke_api_key(user_id: str, db: Session) -> bool:
         """Revoke a user's API key."""
-        user_pref = db.query(UserPreferences).filter(UserPreferences.user_id == user_id).first()
+        user_pref = (
+            db.query(UserPreferences).filter(UserPreferences.user_id == user_id).first()
+        )
         if not user_pref:
             return False
 
@@ -141,7 +149,9 @@ class APIKeyService:
     @staticmethod
     async def get_api_key(user_id: str, db: Session) -> Optional[str]:
         """Retrieve the existing API key for a user."""
-        user_pref = db.query(UserPreferences).filter(UserPreferences.user_id == user_id).first()
+        user_pref = (
+            db.query(UserPreferences).filter(UserPreferences.user_id == user_id).first()
+        )
         if not user_pref or "api_key_hash" not in user_pref.preferences:
             return None
 
@@ -157,6 +167,5 @@ class APIKeyService:
             return response.payload.data.decode("UTF-8")
         except Exception as e:
             raise HTTPException(
-                status_code=500,
-                detail=f"Failed to retrieve API key: {str(e)}"
+                status_code=500, detail=f"Failed to retrieve API key: {str(e)}"
             )

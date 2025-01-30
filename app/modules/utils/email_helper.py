@@ -17,7 +17,7 @@ class EmailHelper:
     async def send_email(self, to_address, repo_name, branch_name):
         if not self.transaction_emails_enabled:
             return
-        
+
         if not to_address:
             return
 

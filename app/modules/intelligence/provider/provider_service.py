@@ -5,8 +5,8 @@ from typing import List, Tuple
 
 from crewai import LLM
 from langchain_anthropic import ChatAnthropic
-from langchain_openai.chat_models import ChatOpenAI
 from langchain_deepseek import ChatDeepSeek
+from langchain_openai.chat_models import ChatOpenAI
 from portkey_ai import PORTKEY_GATEWAY_URL, createHeaders
 
 from app.modules.key_management.secret_manager import SecretManager
@@ -83,7 +83,7 @@ class ProviderService:
 
         self.db.commit()
         return {"message": f"AI provider set to {provider}"}
-    
+
     # Model configurations for different providers and sizes
     MODEL_CONFIGS = {
         "openai": {
@@ -146,12 +146,18 @@ class ProviderService:
             .filter(UserPreferences.user_id == self.user_id)
             .first()
         )
-        return user_pref.preferences.get("llm_provider", "openai") if user_pref else "openai"
+        return (
+            user_pref.preferences.get("llm_provider", "openai")
+            if user_pref
+            else "openai"
+        )
 
     def _get_api_key(self, provider: str) -> str:
         """Get API key for the specified provider."""
         if os.getenv("isDevelopmentMode") == "enabled":
-            logging.info("Development mode enabled. Using environment variable for API key.")
+            logging.info(
+                "Development mode enabled. Using environment variable for API key."
+            )
             return os.getenv(f"{provider.upper()}_API_KEY")
 
         try:
@@ -191,34 +197,34 @@ class ProviderService:
         }
 
         if provider == "deepseek":
-            common_params.update({
-                "max_tokens": 8000,
-                "base_url": self.openrouter_base_url,
-                "api_base": self.openrouter_base_url,
-            })
-        
+            common_params.update(
+                {
+                    "max_tokens": 8000,
+                    "base_url": self.openrouter_base_url,
+                    "api_base": self.openrouter_base_url,
+                }
+            )
+
         if provider == "anthropic":
-            common_params.update({
-                "max_tokens": 8000,
-            })
+            common_params.update(
+                {
+                    "max_tokens": 8000,
+                }
+            )
 
         if agent_type == AgentType.CREWAI:
-            return LLM(
-                model=config["crewai"]["model"],
-                **common_params
-            )
+            return LLM(model=config["crewai"]["model"], **common_params)
         else:
             model_class = config["langchain"]["class"]
-            model_params = {
-                "model_name": config["langchain"]["model"],
-                **common_params
-            }
-            
+            model_params = {"model_name": config["langchain"]["model"], **common_params}
+
             if not os.getenv("isDevelopmentMode") == "enabled":
-                model_params.update({
-                    "base_url": PORTKEY_GATEWAY_URL,
-                    "default_headers": portkey_headers,
-                })
+                model_params.update(
+                    {
+                        "base_url": PORTKEY_GATEWAY_URL,
+                        "default_headers": portkey_headers,
+                    }
+                )
 
             return model_class(**model_params)
 
@@ -231,7 +237,7 @@ class ProviderService:
     def get_small_llm(self, agent_type: AgentType):
         provider = self._get_provider_config("small")
         if provider == "deepseek":
-            #temporary 
+            # temporary
             provider = "openai"
         self.llm = self._initialize_llm(provider, "small", agent_type)
         return self.llm
@@ -262,8 +268,12 @@ class ProviderService:
             .filter(UserPreferences.user_id == user_id)
             .first()
         )
-        
-        return user_pref.preferences.get("llm_provider", "openai") if user_pref else "openai"
+
+        return (
+            user_pref.preferences.get("llm_provider", "openai")
+            if user_pref
+            else "openai"
+        )
 
     async def get_preferred_llm(self, user_id: str) -> Tuple[str, str]:
         user_pref = (
@@ -282,7 +292,7 @@ class ProviderService:
         if preferred_provider == "anthropic":
             model_type = "claude-3-5-sonnet-20241022"
         elif preferred_provider == "deepseek":
-            #update after custom agent r1 suppport
+            # update after custom agent r1 suppport
             model_type = "gpt-4o"
             preferred_provider = "openai"
 

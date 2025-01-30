@@ -6,12 +6,12 @@ from google.cloud import secretmanager
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.modules.auth.auth_service import AuthService
 from app.modules.auth.api_key_service import APIKeyService
+from app.modules.auth.auth_service import AuthService
 from app.modules.key_management.secrets_schema import (
+    APIKeyResponse,
     CreateSecretRequest,
     UpdateSecretRequest,
-    APIKeyResponse,
 )
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.APIRouter import APIRouter
@@ -31,8 +31,7 @@ class SecretManager:
         project_id = os.environ.get("GCP_PROJECT")
         if not project_id:
             raise HTTPException(
-                status_code=500,
-                detail="GCP_PROJECT environment variable is not set"
+                status_code=500, detail="GCP_PROJECT environment variable is not set"
             )
 
         try:
@@ -41,11 +40,13 @@ class SecretManager:
         except Exception as e:
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to initialize Secret Manager client: {str(e)}"
+                detail=f"Failed to initialize Secret Manager client: {str(e)}",
             )
 
     @staticmethod
-    def get_secret_id(provider: Literal["openai", "anthropic", "deepseek"], customer_id: str):
+    def get_secret_id(
+        provider: Literal["openai", "anthropic", "deepseek"], customer_id: str
+    ):
         if os.getenv("isDevelopmentMode") == "enabled":
             return None
         if provider == "openai":
@@ -121,16 +122,17 @@ class SecretManager:
             raise HTTPException(
                 status_code=404, detail="Secret not found for this provider"
             )
-        
-        if provider == "all":
-            #because user can only store one key for now
-            provider = user_pref.preferences["llm_provider"]
 
+        if provider == "all":
+            # because user can only store one key for now
+            provider = user_pref.preferences["llm_provider"]
 
         return SecretManager.get_secret(provider, customer_id)
 
     @staticmethod
-    def get_secret(provider: Literal["openai", "anthropic", "deepseek"], customer_id: str):
+    def get_secret(
+        provider: Literal["openai", "anthropic", "deepseek"], customer_id: str
+    ):
         if os.getenv("isDevelopmentMode") == "enabled":
             return None
         client, project_id = SecretManager.get_client_and_project()
@@ -140,8 +142,7 @@ class SecretManager:
         try:
             response = client.access_secret_version(request={"name": name})
             api_key = response.payload.data.decode("UTF-8")
-            return {"api_key": api_key,
-                    "provider": provider}
+            return {"api_key": api_key, "provider": provider}
         except Exception as e:
             raise HTTPException(
                 status_code=404,
@@ -191,9 +192,12 @@ class SecretManager:
         customer_id = user["user_id"]
         if provider == "all":
             provider_list = ["openai", "anthropic", "deepseek"]
-            secret_id = [SecretManager.get_secret_id(provider, customer_id) for provider in provider_list]
+            secret_id = [
+                SecretManager.get_secret_id(provider, customer_id)
+                for provider in provider_list
+            ]
             client, project_id = SecretManager.get_client_and_project()
-            
+
             deletion_results = []
             for provider, secret in zip(provider_list, secret_id):
                 try:
@@ -206,8 +210,10 @@ class SecretManager:
                         {"provider": provider, "key_removed": "true"},
                     )
                 except Exception as e:
-                    deletion_results.append(f"Failed to delete {provider} secret: {str(e)}")
-            
+                    deletion_results.append(
+                        f"Failed to delete {provider} secret: {str(e)}"
+                    )
+
             # Remove provider from user preferences
             user_pref = (
                 db.query(UserPreferences)
@@ -217,8 +223,11 @@ class SecretManager:
             if user_pref and "provider" in user_pref.preferences:
                 del user_pref.preferences["provider"]
                 db.commit()
-            
-            return {"message": "All secrets deletion completed", "details": deletion_results}
+
+            return {
+                "message": "All secrets deletion completed",
+                "details": deletion_results,
+            }
 
         secret_id = SecretManager.get_secret_id(provider, customer_id)
         client, project_id = SecretManager.get_client_and_project()
@@ -253,20 +262,15 @@ class SecretManager:
         try:
             api_key = await APIKeyService.create_api_key(user["user_id"], db)
             PostHogClient().send_event(
-                user["user_id"],
-                "api_key_creation",
-                {"success": True}
+                user["user_id"], "api_key_creation", {"success": True}
             )
             return {"api_key": api_key}
         except Exception as e:
             PostHogClient().send_event(
-                user["user_id"],
-                "api_key_creation",
-                {"success": False, "error": str(e)}
+                user["user_id"], "api_key_creation", {"success": False, "error": str(e)}
             )
             raise HTTPException(
-                status_code=500,
-                detail=f"Failed to create API key: {str(e)}"
+                status_code=500, detail=f"Failed to create API key: {str(e)}"
             )
 
     @router.delete("/api-keys")
@@ -278,14 +282,11 @@ class SecretManager:
         success = await APIKeyService.revoke_api_key(user["user_id"], db)
         if not success:
             raise HTTPException(
-                status_code=404,
-                detail="No API key found for this user"
+                status_code=404, detail="No API key found for this user"
             )
-        
+
         PostHogClient().send_event(
-            user["user_id"],
-            "api_key_revocation",
-            {"success": True}
+            user["user_id"], "api_key_revocation", {"success": True}
         )
         return {"message": "API key revoked successfully"}
 
@@ -299,12 +300,10 @@ class SecretManager:
             api_key = await APIKeyService.get_api_key(user["user_id"], db)
             if api_key is None:
                 raise HTTPException(
-                    status_code=404,
-                    detail="No API key found for this user"
+                    status_code=404, detail="No API key found for this user"
                 )
             return {"api_key": api_key}
         except Exception as e:
             raise HTTPException(
-                status_code=500,
-                detail=f"Failed to retrieve API key: {str(e)}"
+                status_code=500, detail=f"Failed to retrieve API key: {str(e)}"
             )

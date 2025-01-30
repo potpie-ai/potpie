@@ -151,19 +151,24 @@ class SimplifiedAgentSupervisor:
         """Classifies the query and routes to appropriate agent"""
         if not state.get("query"):
             return Command(update={"response": "No query provided"}, goto=END)
-        agent_list = {agent.id:agent.status for agent in self.available_agents}
+        agent_list = {agent.id: agent.status for agent in self.available_agents}
 
-        #Do not route for custom agents
-        if state["agent_id"] in agent_list and agent_list[state["agent_id"]] != "SYSTEM":
-            return Command(update={"agent_id": state["agent_id"]}, goto=state["agent_id"])
-        
+        # Do not route for custom agents
+        if (
+            state["agent_id"] in agent_list
+            and agent_list[state["agent_id"]] != "SYSTEM"
+        ):
+            return Command(
+                update={"agent_id": state["agent_id"]}, goto=state["agent_id"]
+            )
+
         # Classification using LLM with enhanced prompt
         prompt = self.classifier_prompt.format(
             query=state["query"],
             agent_id=state["agent_id"],
             agent_descriptions=self.agent_descriptions,
         )
-        
+
         response = await self.llm.ainvoke(prompt)
         response = response.content.strip("`")
         try:
@@ -181,8 +186,8 @@ class SimplifiedAgentSupervisor:
                 update={"agent_id": state["agent_id"]}, goto=state["agent_id"]
             )
         logger.info(
-                f"Streaming AI response for conversation {state['conversation_id']} for user {state['user_id']} using agent {agent_id}"
-            )
+            f"Streaming AI response for conversation {state['conversation_id']} for user {state['user_id']} using agent {agent_id}"
+        )
         return Command(update={"agent_id": agent_id}, goto=agent_id)
 
     async def agent_node(self, state: State, writer: StreamWriter):
@@ -550,7 +555,11 @@ class ConversationService:
         self.sql_db.commit()
 
     async def regenerate_last_message(
-        self, conversation_id: str, user_id: str, node_ids: List[NodeContext] = [], stream: bool = True
+        self,
+        conversation_id: str,
+        user_id: str,
+        node_ids: List[NodeContext] = [],
+        stream: bool = True,
     ) -> AsyncGenerator[str, None]:
         try:
             access_level = await self.check_conversation_access(
