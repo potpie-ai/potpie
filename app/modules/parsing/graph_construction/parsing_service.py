@@ -182,7 +182,6 @@ class ParsingService:
                 n, r = graph_constructor.build_graph()
                 graph_manager.create_nodes(n)
                 graph_manager.create_edges(r)
-                graph_manager.close()
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.PARSED
                 )
