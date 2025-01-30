@@ -1,7 +1,6 @@
 from functools import lru_cache
 import logging
 import os
-from enum import Enum
 from typing import List, Tuple
 
 from crewai import LLM
@@ -9,19 +8,14 @@ from langchain_anthropic import ChatAnthropic
 from langchain_openai.chat_models import ChatOpenAI
 from portkey_ai import PORTKEY_GATEWAY_URL, createHeaders
 
+from app.modules.intelligence.llm_provider.llm_provider_schema import LLMProviderInfo
+from app.modules.intelligence.prompts_provider.agent_types import AgentLLMType
 from app.modules.key_management.secret_manager import SecretManager
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.posthog_helper import PostHogClient
 
-from .provider_schema import ProviderInfo
 
-
-class AgentType(Enum):
-    CREWAI = "CREWAI"
-    LANGCHAIN = "LANGCHAIN"
-
-
-class ProviderService:
+class LLMProviderService:
     def __init__(self, db, user_id: str):
         self.db = db
         self.llm = None
@@ -33,14 +27,14 @@ class ProviderService:
     def create(cls, db, user_id: str):
         return cls(db, user_id)
 
-    async def list_available_llms(self) -> List[ProviderInfo]:
+    async def list_available_llms(self) -> List[LLMProviderInfo]:
         return [
-            ProviderInfo(
+            LLMProviderInfo(
                 id="openai",
                 name="OpenAI",
                 description="A leading LLM provider, known for GPT models like GPT-3, GPT-4.",
             ),
-            ProviderInfo(
+            LLMProviderInfo(
                 id="anthropic",
                 name="Anthropic",
                 description="An AI safety-focused company known for models like Claude.",
@@ -79,7 +73,7 @@ class ProviderService:
         return {"message": f"AI provider set to {provider}"}
     
     @lru_cache(maxsize=3)
-    def get_large_llm(self, agent_type: AgentType):
+    def get_large_llm(self, agent_type: AgentLLMType):
         # Get user preferences from the database
         user_pref = (
             self.db.query(UserPreferences)
@@ -101,7 +95,7 @@ class ProviderService:
                     "Development mode enabled. Using environment variable for API key."
                 )
                 openai_key = os.getenv("OPENAI_API_KEY")
-                if agent_type == AgentType.CREWAI:
+                if agent_type == AgentLLMType.CREWAI:
                     self.llm = LLM(
                         model="openai/gpt-4o-mini",
                         api_key=openai_key,
@@ -131,7 +125,7 @@ class ProviderService:
                         "environment": os.environ.get("ENV"),
                     },
                 )
-                if agent_type == AgentType.CREWAI:
+                if agent_type == AgentLLMType.CREWAI:
                     self.llm = LLM(
                         model="openai/gpt-4o", api_key=openai_key, temperature=0.3
                     )
@@ -151,7 +145,7 @@ class ProviderService:
                     "Development mode enabled. Using environment variable for API key."
                 )
                 anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-                if agent_type == AgentType.CREWAI:
+                if agent_type == AgentLLMType.CREWAI:
                     self.llm = LLM(
                         model="anthropic/claude-3-5-sonnet-20241022",
                         temperature=0.3,
@@ -182,7 +176,7 @@ class ProviderService:
                     },
                 )
 
-                if agent_type == AgentType.CREWAI:
+                if agent_type == AgentLLMType.CREWAI:
                     self.llm = LLM(
                         model="anthropic/claude-3-5-sonnet-20241022",
                         temperature=0.3,
@@ -202,7 +196,7 @@ class ProviderService:
 
         return self.llm
 
-    def get_small_llm(self, agent_type: AgentType):
+    def get_small_llm(self, agent_type: AgentLLMType):
         # Get user preferences from the database
         if self.user_id == "dummy":
             user_pref = UserPreferences(
@@ -228,7 +222,7 @@ class ProviderService:
                     "Development mode enabled. Using environment variable for API key."
                 )
                 openai_key = os.getenv("OPENAI_API_KEY")
-                if agent_type == AgentType.CREWAI:
+                if agent_type == AgentLLMType.CREWAI:
                     self.llm = LLM(
                         model="openai/gpt-4o-mini",
                         api_key=openai_key,
@@ -258,7 +252,7 @@ class ProviderService:
                         "environment": os.environ.get("ENV"),
                     },
                 )
-                if agent_type == AgentType.CREWAI:
+                if agent_type == AgentLLMType.CREWAI:
                     self.llm = LLM(
                         model="openai/gpt-4o-mini",
                         api_key=openai_key,
@@ -279,7 +273,7 @@ class ProviderService:
                     "Development mode enabled. Using environment variable for API key."
                 )
                 anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-                if agent_type == AgentType.CREWAI:
+                if agent_type == AgentLLMType.CREWAI:
                     self.llm = LLM(
                         model="anthropic/claude-3-haiku-20240307",
                         temperature=0.3,
@@ -310,7 +304,7 @@ class ProviderService:
                     },
                 )
 
-                if agent_type == AgentType.CREWAI:
+                if agent_type == AgentLLMType.CREWAI:
                     self.llm = LLM(
                         model="anthropic/claude-3-haiku-20240307",
                         temperature=0.3,
@@ -332,7 +326,7 @@ class ProviderService:
 
     def get_llm_provider_name(self) -> str:
         """Returns the name of the LLM provider based on the LLM instance."""
-        llm = self.get_small_llm(agent_type=AgentType.LANGCHAIN)
+        llm = self.get_small_llm(agent_type=AgentLLMType.LANGCHAIN)
 
         # Check the type of the LLM to determine the provider
         if isinstance(llm, ChatOpenAI):

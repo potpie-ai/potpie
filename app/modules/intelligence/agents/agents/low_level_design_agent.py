@@ -8,10 +8,15 @@ from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
 
 # Import necessary tools (assuming they're available in your project)
-from app.modules.intelligence.provider.provider_service import (
-    AgentType,
-    ProviderService,
+from app.modules.intelligence.llm_provider.llm_provider_service import (
+    LLMProviderService,
 )
+from app.modules.intelligence.prompts_provider.agent_prompts_provider import (
+    AgentPromptsProvider,
+)
+from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.prompts.prompt_schema import PromptType
+from app.modules.intelligence.prompts_provider.agent_types import AgentLLMType
 from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
     get_code_file_structure_tool,
 )
@@ -63,6 +68,8 @@ class LowLevelDesignAgent:
         self.sql_db = sql_db
         self.llm = llm
         self.user_id = user_id
+        self.prompt_service = PromptService(self.sql_db)
+
 
         # Initialize tools
         self.get_code_from_node_id = get_code_from_node_id_tool(sql_db, user_id)
@@ -79,12 +86,19 @@ class LowLevelDesignAgent:
         )
 
     async def create_agents(self):
+        
+        llm_provider_service = LLMProviderService.create(self.sql_db, self.user_id)
+        preferred_llm, _ = await llm_provider_service.get_preferred_llm(self.user_id)
+        codebase_analyst_prompt = await self.prompt_service.get_prompts(
+            "codebase_analyst",
+            [PromptType.SYSTEM],
+            preferred_llm,
+            max_iter=self.max_iter,
+        )
         codebase_analyst = Agent(
-            role="Codebase Analyst",
-            goal="Analyze the existing codebase and provide insights on the current structure and patterns",
-            backstory="""You are an expert in analyzing complex codebases. Your task is to understand the
-            current project structure, identify key components, and provide insights that will help in
-            planning new feature implementations.""",
+            role=codebase_analyst_prompt["role"],
+            goal=codebase_analyst_prompt["goal"],
+            backstory=codebase_analyst_prompt["backstory"],
             tools=[
                 self.get_nodes_from_tags,
                 self.ask_knowledge_graph_queries,
@@ -97,12 +111,17 @@ class LowLevelDesignAgent:
             llm=self.llm,
         )
 
+        design_planner_prompt = await self.prompt_service.get_prompts(
+        "design_planner",
+        [PromptType.SYSTEM],
+        preferred_llm,
+        max_iter=self.max_iter,
+        )
+        
         design_planner = Agent(
-            role="Design Planner",
-            goal="Create a detailed low-level design plan for implementing new features",
-            backstory="""You are a senior software architect specializing in creating detailed,
-            actionable design plans. Your expertise lies in breaking down complex features into
-            manageable steps and providing clear guidance for implementation.""",
+            role=design_planner_prompt["role"],
+            goal=design_planner_prompt["goal"],
+            backstory=design_planner_prompt["backstory"],
             tools=[
                 self.get_nodes_from_tags,
                 self.ask_knowledge_graph_queries,
@@ -124,41 +143,35 @@ class LowLevelDesignAgent:
         project_id: str,
         codebase_analyst,
         design_planner,
-    ):
+    ):  
+        llm_provider_service = LLMProviderService.create(self.sql_db, self.user_id)
+        preferred_llm, _ = await llm_provider_service.get_preferred_llm(self.user_id)
+        analyze_task_prompt = await self.prompt_service.get_prompts(
+            "analyze_codebase_task",
+            [PromptType.SYSTEM],
+            preferred_llm,
+            project_id=project_id,
+            functional_requirements=functional_requirements,
+            max_iter=self.max_iter,
+        )
+        
         analyze_codebase_task = Task(
-            description=f"""
-            Analyze the existing codebase for repo id {project_id} to understand its structure and patterns.
-            Focus on the following:
-            1. Identify the main components and their relationships.
-            2. Determine the current architecture and design patterns in use.
-            3. Locate areas that might be affected by the new feature described in: {functional_requirements}
-            4. Identify any existing similar features or functionality that could be leveraged.
-
-            Use the provided tools to query the knowledge graph and retrieve relevant code snippets as needed.
-            You can use the probable node name tool to get the code for a node by providing a partial file or function name.
-            Provide a comprehensive analysis that will aid in creating a low-level design plan.
-            """,
+            description=analyze_task_prompt,
             agent=codebase_analyst,
             expected_output="Codebase analysis report with insights on project structure and patterns",
         )
 
+        design_task_prompt = await self.prompt_service.get_prompts(
+            "create_design_plan_task",
+            [PromptType.SYSTEM],
+            preferred_llm,
+            project_id=project_id,
+            functional_requirements=functional_requirements,
+            max_iter=self.max_iter,
+            LowLevelDesignPlan= self.LowLevelDesignPlan,
+        )
         create_design_plan_task = Task(
-            description=f"""
-
-            Based on the codebase analysis of repo id {project_id} and the following functional requirements: {functional_requirements}
-            Create a detailed low-level design plan for implementing the new feature. Your plan should include:
-            1. A high-level overview of the implementation approach.
-            2. Detailed steps for implementing the feature, including:
-               - Specific files that need to be modified or created.
-               - Proposed code changes or additions for each file.
-               - Any new classes, methods, or functions that need to be implemented.
-            3. Potential challenges or considerations for the implementation.
-            4. Any suggestions for maintaining code consistency with the existing codebase.
-
-            Use the provided tools to query the knowledge graph and retrieve or propose code snippets as needed.
-            You can use the probable node name tool to get the code for a node by providing a partial file or function name.
-            Ensure your output follows the structure defined in the LowLevelDesignPlan Pydantic model.
-            """,
+            description=design_task_prompt,
             agent=design_planner,
             context=[analyze_codebase_task],
             expected_output="Low-level design plan for implementing the new feature",
@@ -211,8 +224,8 @@ async def create_low_level_design_agent(
     llm,
     user_id: str,
 ) -> AsyncGenerator[str, None]:
-    provider_service = ProviderService(sql_db, user_id)
-    crew_ai_llm = provider_service.get_large_llm(agent_type=AgentType.CREWAI)
+    provider_service = LLMProviderService(sql_db, user_id)
+    crew_ai_llm = provider_service.get_large_llm(agent_type=AgentLLMType.CREWAI)
     design_agent = LowLevelDesignAgent(sql_db, crew_ai_llm, user_id)
     async for chunk in design_agent.run(functional_requirements, project_id):
         yield chunk

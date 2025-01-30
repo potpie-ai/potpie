@@ -24,16 +24,16 @@ from app.modules.intelligence.agents.custom_agents.custom_agent import CustomAge
 from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
     CustomAgentsService,
 )
-from app.modules.intelligence.provider.provider_service import (
-    AgentType,
-    ProviderService,
+from app.modules.intelligence.llm_provider.llm_provider_service import (
+    LLMProviderService,
 )
+from app.modules.intelligence.prompts_provider.agent_types import AgentLLMType
 
 logger = logging.getLogger(__name__)
 
 
 class AgentInjectorService:
-    def __init__(self, db: Session, provider_service: ProviderService, user_id: str):
+    def __init__(self, db: Session, provider_service: LLMProviderService, user_id: str):
         self.sql_db = db
         self.provider_service = provider_service
         self.custom_agent_service = CustomAgentsService()
@@ -41,9 +41,11 @@ class AgentInjectorService:
         self.user_id = user_id
 
     def _initialize_agents(self) -> Dict[str, Any]:
-        mini_llm = self.provider_service.get_small_llm(agent_type=AgentType.LANGCHAIN)
+        mini_llm = self.provider_service.get_small_llm(
+            agent_type=AgentLLMType.LANGCHAIN
+        )
         reasoning_llm = self.provider_service.get_large_llm(
-            agent_type=AgentType.LANGCHAIN
+            agent_type=AgentLLMType.LANGCHAIN
         )
         return {
             "debugging_agent": DebuggingChatAgent(mini_llm, reasoning_llm, self.sql_db),
@@ -66,7 +68,7 @@ class AgentInjectorService:
             return self.agents[agent_id]
         else:
             reasoning_llm = self.provider_service.get_large_llm(
-                agent_type=AgentType.LANGCHAIN
+                agent_type=AgentLLMType.LANGCHAIN
             )
             return CustomAgent(
                 llm=reasoning_llm,

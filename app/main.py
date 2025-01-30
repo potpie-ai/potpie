@@ -16,9 +16,11 @@ from app.modules.conversations.conversations_router import (
     router as conversations_router,
 )
 from app.modules.intelligence.agents.agents_router import router as agent_router
+from app.modules.intelligence.llm_provider.llm_provider_router import (
+    router as llm_provider_router,
+)
 from app.modules.intelligence.prompts.prompt_router import router as prompt_router
 from app.modules.intelligence.prompts.system_prompt_setup import SystemPromptSetup
-from app.modules.intelligence.provider.provider_router import router as provider_router
 from app.modules.intelligence.tools.tool_router import router as tool_router
 from app.modules.key_management.secret_manager import router as secret_manager_router
 from app.api.router import router as potpie_api_router
@@ -111,7 +113,9 @@ class MainApp:
         self.app.include_router(search_router, prefix="/api/v1", tags=["Search"])
         self.app.include_router(github_router, prefix="/api/v1", tags=["Github"])
         self.app.include_router(agent_router, prefix="/api/v1", tags=["Agents"])
-        self.app.include_router(provider_router, prefix="/api/v1", tags=["Providers"])
+        self.app.include_router(
+            llm_provider_router, prefix="/api/v1", tags=["Providers"]
+        )
         self.app.include_router(tool_router, prefix="/api/v1", tags=["Tools"])
         self.app.include_router(usage_router, prefix="/api/v1/usage", tags=["Usage"])
         self.app.include_router(
