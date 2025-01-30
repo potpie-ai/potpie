@@ -45,13 +45,15 @@ class SecretManager:
             )
 
     @staticmethod
-    def get_secret_id(provider: Literal["openai", "anthropic"], customer_id: str):
+    def get_secret_id(provider: Literal["openai", "anthropic", "openrouter"], customer_id: str):
         if os.getenv("isDevelopmentMode") == "enabled":
             return None
         if provider == "openai":
             secret_id = f"openai-api-key-{customer_id}"
         elif provider == "anthropic":
             secret_id = f"anthropic-api-key-{customer_id}"
+        elif provider == "openrouter":
+            secret_id = f"openrouter-api-key-{customer_id}"
         else:
             raise HTTPException(status_code=400, detail="Invalid provider")
         return secret_id
