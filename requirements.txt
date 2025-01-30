@@ -64,4 +64,4 @@ posthog==3.7.4
 newrelic==9.0.0
 tiktoken==0.7.0
 agentops==0.3.26
-pydantic==2.10.3
+pydantic[email]==2.10.3
