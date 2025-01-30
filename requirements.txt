@@ -24,7 +24,7 @@ langchain-community==0.3.16
 langchain-core==0.3.32
 langchain-openai==0.3.2
 langchain-postgres==0.0.12
-langgraph
+langgraph==0.2.58
 firebase-admin==6.6.0
 portkey-ai==1.9.7
 gitPython==3.1.43
