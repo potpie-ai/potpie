@@ -120,14 +120,14 @@ class ProviderService:
         },
         "deepseek": {
             "small": {
-                "crewai": {"model": "deepseek/deepseek-chat"},
+                "crewai": {"model": "deepseek/deepseek/deepseek-chat"},
                 "langchain": {
                     "model": "deepseek/deepseek-chat",
                     "class": ChatDeepSeek,
                 },
             },
             "large": {
-                "crewai": {"model": "deepseek/deepseek-r1"},
+                "crewai": {"model": "deepseek/deepseek/deepseek-r1"},
                 "langchain": {
                     "model": "deepseek/deepseek-r1",
                     "class": ChatDeepSeek,
@@ -196,7 +196,7 @@ class ProviderService:
             "api_key": api_key,
         }
 
-        if provider == "deepseek":
+        if provider == "deepseek" and size == "large":
             common_params.update(
                 {
                     "max_tokens": 8000,
