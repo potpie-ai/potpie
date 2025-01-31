@@ -20,6 +20,7 @@ aiohttp==3.11.9
 langchain==0.3.16
 langchain-anthropic==0.3.4
 langchain-deepseek-official==0.1.0
+langchain-google-genai==2.0.9
 langchain-community==0.3.16
 langchain-core==0.3.32
 langchain-openai==0.3.2
@@ -55,3 +56,4 @@ newrelic==9.0.0
 tiktoken==0.7.0
 agentops==0.3.26
 pydantic==2.10.3
+email_validator==2.2.0

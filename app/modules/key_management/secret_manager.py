@@ -45,7 +45,7 @@ class SecretManager:
 
     @staticmethod
     def get_secret_id(
-        provider: Literal["openai", "anthropic", "deepseek"], customer_id: str
+        provider: Literal["openai", "anthropic", "deepseek", "google"], customer_id: str
     ):
         if os.getenv("isDevelopmentMode") == "enabled":
             return None
@@ -55,6 +55,8 @@ class SecretManager:
             secret_id = f"anthropic-api-key-{customer_id}"
         elif provider == "deepseek":
             secret_id = f"deepseek-api-key-{customer_id}"
+        elif provider == "google":
+            secret_id = f"google-api-key-{customer_id}"
         else:
             raise HTTPException(status_code=400, detail="Invalid provider")
         return secret_id

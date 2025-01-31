@@ -2,7 +2,9 @@
 .vscode
 *__pycache__
 .venv
+potpievenv
 firebase_service_account.json
+service_account.json
 firebase_service_account.json:Zone.Identifier
 cli/dist
 cli/.venv

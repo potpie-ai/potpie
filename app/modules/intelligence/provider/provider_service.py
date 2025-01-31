@@ -1,3 +1,4 @@
+from functools import lru_cache
 import logging
 import os
 from enum import Enum
@@ -7,6 +8,7 @@ from crewai import LLM
 from langchain_anthropic import ChatAnthropic
 from langchain_deepseek import ChatDeepSeek
 from langchain_openai.chat_models import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from portkey_ai import PORTKEY_GATEWAY_URL, createHeaders
 
 from app.modules.key_management.secret_manager import SecretManager
@@ -50,6 +52,11 @@ class ProviderService:
                 id="deepseek",
                 name="DeepSeek",
                 description="An open-source AI company known for powerful chat and reasoning models.",
+            ),
+            ProviderInfo(
+                id="google",
+                name="Google",
+                description="Offers Gemini AI models with advanced capabilities.",
             ),
         ]
 
@@ -134,12 +141,28 @@ class ProviderService:
                 },
             },
         },
+        "google": {
+            "small": {
+                "crewai": {"model": "gemini/gemini-1.5-flash"},
+                "langchain": {
+                    "model": "gemini-1.5-flash",
+                    "class": ChatGoogleGenerativeAI,
+                },
+            },
+            "large": {
+                "crewai": {"model": "gemini/gemini-1.5-pro"},
+                "langchain": {
+                    "model": "gemini-1.5-pro",
+                    "class": ChatGoogleGenerativeAI,
+                },
+            },
+        },
     }
 
     def _get_provider_config(self, size: str) -> str:
         """Get the preferred provider and its configuration."""
         if self.user_id == "dummy":
-            return "openai"
+            return "google"
 
         user_pref = (
             self.db.query(UserPreferences)
@@ -147,9 +170,9 @@ class ProviderService:
             .first()
         )
         return (
-            user_pref.preferences.get("llm_provider", "openai")
+            user_pref.preferences.get("llm_provider", "google")
             if user_pref
-            else "openai"
+            else "google"
         )
 
     def _get_api_key(self, provider: str) -> str:
@@ -212,11 +235,18 @@ class ProviderService:
                 }
             )
 
+        if provider == "google":
+            common_params.update(
+                {
+                    "google_api_key": api_key,
+                }
+            )
+
         if agent_type == AgentType.CREWAI:
             return LLM(model=config["crewai"]["model"], **common_params)
         else:
             model_class = config["langchain"]["class"]
-            model_params = {"model_name": config["langchain"]["model"], **common_params}
+            model_params = {"model": config["langchain"]["model"], **common_params}
 
             if not os.getenv("isDevelopmentMode") == "enabled":
                 model_params.update(
@@ -253,6 +283,8 @@ class ProviderService:
             return "Anthropic"
         elif isinstance(llm, ChatDeepSeek):
             return "DeepSeek"
+        elif isinstance(llm, ChatGoogleGenerativeAI):
+            return "Google"
         elif isinstance(llm, LLM):
             if llm.model.split("/")[0] == "openai":
                 return "OpenAI"
@@ -260,6 +292,8 @@ class ProviderService:
                 return "Anthropic"
             elif llm.model.split("/")[0] == "deepseek":
                 return "DeepSeek"
+            elif "gemini" in llm.model:
+                return "Google"
         return "Unknown"
 
     async def get_global_ai_provider(self, user_id: str) -> str:
@@ -270,9 +304,9 @@ class ProviderService:
         )
 
         return (
-            user_pref.preferences.get("llm_provider", "openai")
+            user_pref.preferences.get("llm_provider", "google")
             if user_pref
-            else "openai"
+            else "google"
         )
 
     async def get_preferred_llm(self, user_id: str) -> Tuple[str, str]:
@@ -283,9 +317,9 @@ class ProviderService:
         )
 
         preferred_provider = (
-            user_pref.preferences.get("llm_provider", "openai")
+            user_pref.preferences.get("llm_provider", "google")
             if user_pref
-            else "openai"
+            else "google"
         )
 
         model_type = "gpt-4o"
@@ -295,5 +329,7 @@ class ProviderService:
             # update after custom agent r1 suppport
             model_type = "gpt-4o"
             preferred_provider = "openai"
+        elif preferred_provider == "google":
+            model_type = "gemini-1.5-flash"
 
         return preferred_provider, model_type

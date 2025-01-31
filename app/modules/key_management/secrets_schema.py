@@ -39,6 +39,9 @@ class BaseSecretRequest(BaseModel):
         elif provider == "deepseek":
             if not api_key.startswith("sk-or-"):
                 raise ValueError("Invalid OpenRouter API key format")
+        elif provider == "google":
+            if "AI" not in api_key:
+                raise ValueError("Invalid Gemini API key format")
         else:
             raise ValueError("Invalid provider")
         return provider
