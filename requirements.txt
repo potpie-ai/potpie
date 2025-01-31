@@ -1,4 +1,12 @@
-fastapi==0.115.6
+fastapi[all]==0.115.6
+instructor==1.5.2
+jiter==0.5.0
+litellm==1.59.9
+joblib==1.4.2
+json_repair==0.35.0
+langsmith==0.3.3
+json5==0.9.28
+kombu==5.4.2
 uvicorn==0.32.1
 sqlalchemy==2.0.36
 alembic==1.14.0
@@ -24,6 +32,8 @@ langchain-google-genai==2.0.9
 langchain-community==0.3.16
 langchain-core==0.3.32
 langchain-openai==0.3.2
+langgraph-checkpoint==2.0.10
+langgraph-sdk==0.1.51
 langchain-postgres==0.0.12
 langgraph==0.2.58
 firebase-admin==6.6.0
@@ -55,5 +65,4 @@ posthog==3.7.4
 newrelic==9.0.0
 tiktoken==0.7.0
 agentops==0.3.26
-pydantic==2.10.3
-email_validator==2.2.0
+pydantic[email]==2.10.3
