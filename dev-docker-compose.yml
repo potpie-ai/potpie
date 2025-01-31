@@ -1,0 +1,99 @@
+services:
+  postgres:
+    image: postgres:latest
+    container_name: potpie_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: mysecretpassword
+      POSTGRES_DB: momentum
+    ports:
+      - "5432:5432"
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  neo4j:
+    image: neo4j:latest
+    container_name: potpie_neo4j
+    environment:
+      NEO4J_AUTH: neo4j/mysecretpassword
+      NEO4JLABS_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: 'apoc.*'
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    networks:
+      - app-network
+
+  redis:
+    image: redis:latest
+    container_name: potpie_redis_broker
+    ports:
+      - "6379:6379"
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Devdockerfile 
+    container_name: potpie_app
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /app/service-account.json
+      CELERY_QUEUE_NAME: staging
+      POSTGRES_SERVER: postgresql://postgres:mysecretpassword@postgres:5432/momentum
+      REDISHOST: redis
+      REDISPORT: 6379
+      BROKER_URL: redis://redis:6379/0
+    volumes:
+      - .:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      neo4j:
+        condition: service_started
+    ports:
+      - "8001:8001"
+    networks:
+      - app-network
+    command: >
+      bash -c "
+        alembic upgrade head && 
+        gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app 
+      "
+
+  celery:
+    build: 
+      context: .
+      dockerfile: Devdockerfile 
+    container_name: potpie_celery
+    environment:
+      CELERY_QUEUE_NAME: staging
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    volumes:
+      - .:/app
+    depends_on:
+      redis:
+        condition: service_healthy
+      app:
+        condition: service_started
+    networks:
+      - app-network
+    command: >
+      celery -A app.celery.celery_app worker --loglevel=debug -Q "staging_process_repository" -E --concurrency=1 --pool=solo
+
+networks:
+  app-network:
+    driver: bridge
