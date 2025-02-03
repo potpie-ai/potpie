@@ -205,9 +205,7 @@ class GetCodeFromProbableNodeNameTool:
             self.neo4j_driver.close()
 
 
-def get_code_from_probable_node_name_tool(
-    sql_db: Session, user_id: str
-) -> Tool:
+def get_code_from_probable_node_name_tool(sql_db: Session, user_id: str) -> Tool:
     tool_instance = GetCodeFromProbableNodeNameTool(sql_db, user_id)
     return StructuredTool.from_function(
         coroutine=tool_instance.arun,
