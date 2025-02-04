@@ -40,7 +40,7 @@ class BaseSecretRequest(BaseModel):
             if not api_key.startswith("sk-or-"):
                 raise ValueError("Invalid OpenRouter API key format")
         elif provider == "google":
-            if "AI" not in api_key:
+            if not api_key.startswith("AIza"):
                 raise ValueError("Invalid Gemini API key format")
         else:
             raise ValueError("Invalid provider")

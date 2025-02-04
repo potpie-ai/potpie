@@ -5,13 +5,6 @@ from celery import Celery
 from dotenv import load_dotenv
 from kombu import Queue
 
-'''
- Celery suggests using Kombu to handle queue management.
-(https://docs.celeryq.dev/en/stable/reference/celery.app.task.html)
-queue (str, kombu.Queue) – The queue to route the task to.
- - Sujal
-'''
-
 from app.core.models import *  # noqa #This will import and initialize all models
 
 # Load environment variables from a .env file if present
@@ -46,6 +39,7 @@ except Exception as e:
 
 # Hardcoded queue name to "dev" (Allows for easier development in WSL;) - Sujal
 def configure_celery():
+    queue_name = os.getenv("CELERY_QUEUE_NAME", "dev_process_repository")
     celery_app.conf.update(
         task_serializer="json",
         accept_content=["json"],
@@ -54,11 +48,11 @@ def configure_celery():
         enable_utc=True,
         task_routes={
             "app.celery.tasks.parsing_tasks.process_parsing": {
-                "queue": "dev_process_repository"
+                "queue": queue_name
             },
         },
         task_queues=[
-            Queue("dev_process_repository")  # Hardcoded
+            Queue(queue_name)
         ],
         worker_prefetch_multiplier=1,
         task_acks_late=True,
