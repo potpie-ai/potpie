@@ -16,7 +16,7 @@ load_dotenv()
 
 class CustomAgentsService:
     def __init__(self):
-        self.base_url = os.getenv("POTPIE_PLUS_BASE_URL")
+        self.base_url = os.getenv("POTPIE_PLUS_BASE_URL", "http://localhost:8000")
 
     async def run_agent(
         self,
@@ -25,12 +25,14 @@ class CustomAgentsService:
         conversation_id: str,
         user_id: str,
         node_ids: List[NodeContext] = None,
+        project_id: str = None,
     ) -> Dict[str, Any]:
-        run_url = f"{self.base_url}/custom-agents/agents/{agent_id}/query"
+        run_url = f"{self.base_url}/custom-agents/agents/{agent_id}/v2/query"
         payload = {
             "user_id": user_id,
             "query": query,
             "conversation_id": conversation_id,
+            "project_id": project_id,
         }
 
         if node_ids:
