@@ -38,7 +38,7 @@ class CustomAgent:
         self.prompt_service = PromptService(db)
         self.custom_agents_service = CustomAgentsService()
         self.chain = None
-        self.base_url = os.getenv("POTPIE_PLUS_BASE_URL")
+        self.base_url = os.getenv("POTPIE_PLUS_BASE_URL", "http://localhost:8000")
 
     async def _get_system_prompt(self) -> str:
         """Fetch system prompt from POTPIE_PLUS_BASE_URL with HMAC authentication"""
@@ -94,7 +94,7 @@ class CustomAgent:
                 for msg in history
             ]
             custom_agent_result = await self.custom_agents_service.run_agent(
-                self.agent_id, query, conversation_id, user_id, node_ids
+                self.agent_id, query, conversation_id, user_id, node_ids, project_id
             )
 
             tool_results = [
