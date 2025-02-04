@@ -23,6 +23,11 @@ services:
       NEO4J_AUTH: neo4j/mysecretpassword
       NEO4JLABS_PLUGINS: '["apoc"]'
       NEO4J_dbms_security_procedures_unrestricted: 'apoc.*'
+    healthcheck:
+      test: ["CMD", "neo4j", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     ports:
       - "7474:7474"
       - "7687:7687"
