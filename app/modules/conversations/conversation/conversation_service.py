@@ -245,8 +245,6 @@ class SimplifiedAgentSupervisor:
         }
 
         graph = self.build_graph()
-        print("GRAPH")
-        print("Nodes in Graph:", graph.get_graph().nodes)
         async for chunk in graph.astream(state, stream_mode="custom"):
             yield chunk
 
