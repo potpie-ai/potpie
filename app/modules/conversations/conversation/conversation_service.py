@@ -147,42 +147,45 @@ class SimplifiedAgentSupervisor:
         if not state.get("query"):
             return Command(update={"response": "No query provided"}, goto=END)
 
-        agent_list = {agent.id:agent.status for agent in self.available_agents}
-
-        # If we already have the right agent, reuse it
-        if self.agent and self.current_agent_id == state["agent_id"]:
+        agent_list = {agent.id: agent.status for agent in self.available_agents}
+        
+        # First check - if this is a custom agent (non-SYSTEM), route directly
+        if state["agent_id"] in agent_list and agent_list[state["agent_id"]] != "SYSTEM":
+            # Initialize the agent if needed
+            if not self.agent or self.current_agent_id != state["agent_id"]:
+                try:
+                    self.agent = self.agent_factory.get_agent(state["agent_id"], state["user_id"])
+                    self.current_agent_id = state["agent_id"]
+                except Exception as e:
+                    logger.error(f"Failed to create agent {state['agent_id']}: {e}")
+                    return Command(update={"response": "Failed to initialize agent"}, goto=END)
             return Command(update={"agent_id": state["agent_id"]}, goto="agent_node")
 
-        # custom agent case
-        if state["agent_id"] in agent_list and agent_list[state["agent_id"]] != "SYSTEM":
+        # For system agents, perform classification
+        prompt = self.classifier_prompt.format(
+            query=state["query"],
+            agent_id=state["agent_id"],
+            agent_descriptions=self.agent_descriptions,
+        )
+        
+        response = await self.llm.ainvoke(prompt)
+        response = response.content.strip("`")
+        try:
+            agent_id, confidence = response.split("|")
+            confidence = float(confidence)
+            selected_agent_id = agent_id if confidence >= 0.5 and agent_id in agent_list else state["agent_id"]
+        except (ValueError, TypeError):
+            logger.error("Classification format error, falling back to current agent")
             selected_agent_id = state["agent_id"]
-        else:
-            
-            prompt = self.classifier_prompt.format(
-                query=state["query"],
-                agent_id=state["agent_id"],
-                agent_descriptions=self.agent_descriptions,
-            )
-            
-            response = await self.llm.ainvoke(prompt)
-            response = response.content.strip("`")
-            try:
-                agent_id, confidence = response.split("|")
-                confidence = float(confidence)
-                selected_agent_id = agent_id if confidence >= 0.5 and agent_id in agent_list else state["agent_id"]
-            except (ValueError, TypeError):
-                logger.error("Classification format error, falling back to current agent")
-                selected_agent_id = state["agent_id"]
 
+        # Initialize the selected system agent
         if not self.agent or self.current_agent_id != selected_agent_id:
             try:
                 self.agent = self.agent_factory.get_agent(selected_agent_id, state["user_id"])
                 self.current_agent_id = selected_agent_id
             except Exception as e:
                 logger.error(f"Failed to create agent {selected_agent_id}: {e}")
-                return Command(
-                    update={"response": "Failed to initialize agent"}, goto=END
-                )
+                return Command(update={"response": "Failed to initialize agent"}, goto=END)
 
         logger.info(
             f"Streaming AI response for conversation {state['conversation_id']} "
@@ -245,8 +248,7 @@ class SimplifiedAgentSupervisor:
         }
 
         graph = self.build_graph()
-        print("GRAPH")
-        print("Nodes in Graph:", graph.get_graph().nodes)
+
         async for chunk in graph.astream(state, stream_mode="custom"):
             yield chunk
 
