@@ -248,7 +248,6 @@ class SimplifiedAgentSupervisor:
         }
 
         graph = self.build_graph()
-
         async for chunk in graph.astream(state, stream_mode="custom"):
             yield chunk
 
