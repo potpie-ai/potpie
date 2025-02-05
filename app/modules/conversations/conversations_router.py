@@ -1,7 +1,7 @@
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -26,6 +26,7 @@ from .conversation.conversation_schema import (
     RenameConversationRequest,
 )
 from .message.message_schema import MessageRequest, MessageResponse, RegenerateRequest
+import json
 
 router = APIRouter()
 
@@ -100,11 +101,12 @@ class ConversationAPI:
         if stream:
             return StreamingResponse(message_stream, media_type="text/event-stream")
         else:
-            # Collect all chunks into a complete response
+            # TODO: fix this, add types. In below stream we have only one output.
+            # no need of stream here
             full_response = ""
             async for chunk in message_stream:
                 full_response += chunk
-            return {"content": full_response}
+            return json.loads(full_response)
 
     @staticmethod
     @router.post(
@@ -126,11 +128,12 @@ class ConversationAPI:
         if stream:
             return StreamingResponse(message_stream, media_type="text/event-stream")
         else:
-            # Collect all chunks into a complete response
+            # TODO: fix this, add types. In below stream we have only one output.
+            # no need of stream here
             full_response = ""
             async for chunk in message_stream:
                 full_response += chunk
-            return {"content": full_response}
+            return json.loads(full_response)
 
     @staticmethod
     @router.delete("/conversations/{conversation_id}/", response_model=dict)

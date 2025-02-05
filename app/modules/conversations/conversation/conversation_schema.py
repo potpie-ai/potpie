@@ -45,6 +45,10 @@ class ConversationInfoResponse(BaseModel):
 
     class Config:
         from_attributes = True
+        
+class ChatMessageResponse(BaseModel):
+    message: str
+    citations: List[str]
 
 
 # Resolve forward references

@@ -21,6 +21,7 @@ from app.modules.conversations.conversation.conversation_schema import (
     ConversationAccessType,
     ConversationInfoResponse,
     CreateConversationRequest,
+    ChatMessageResponse
 )
 from app.modules.conversations.message.message_model import (
     Message,
@@ -46,6 +47,7 @@ from app.modules.intelligence.provider.provider_service import (
 from app.modules.projects.projects_service import ProjectService
 from app.modules.users.user_service import UserService
 from app.modules.utils.posthog_helper import PostHogClient
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -478,12 +480,21 @@ class ConversationService:
                     ):
                         yield chunk
                 else:
-                    # For non-streaming, collect all chunks and store as a single message
-                    full_response = ""
+                    full_message = ""
+                    all_citations = []
+                    
                     async for chunk in self._generate_and_stream_ai_response(
                         message.content, conversation_id, user_id, message.node_ids
                     ):
-                        full_response += chunk
+                        data = json.loads(chunk)
+                    
+                        # Extract the 'message' and 'citations'
+                        message: str = data.get('message', '')
+                        citations: List[str] = data.get('citations', [])
+                        
+                        full_message += message
+                        all_citations = all_citations + citations
+                            
                     # # Store the complete response as a single message
                     # self.history_manager.add_message_chunk(
                     #     conversation_id, full_response, MessageType.AI, user_id
@@ -491,7 +502,7 @@ class ConversationService:
                     # self.history_manager.flush_message_buffer(
                     #     conversation_id, MessageType.AI, user_id
                     # )
-                    yield full_response
+                    yield ChatMessageResponse(message=full_message,citations=all_citations).json()
 
         except AccessTypeReadError:
             raise
@@ -587,11 +598,21 @@ class ConversationService:
                     yield chunk
             else:
                 # For non-streaming, collect all chunks and store as a single message
-                full_response = ""
+                full_message = ""
+                all_citations = []
+                
                 async for chunk in self._generate_and_stream_ai_response(
                     last_human_message.content, conversation_id, user_id, node_ids
                 ):
-                    full_response += chunk
+                    data = json.loads(chunk)
+                
+                    # Extract the 'message' and 'citations'
+                    message: str = data.get('message', '')
+                    citations: List[str] = data.get('citations', [])
+                    
+                    full_message += message
+                    all_citations = all_citations + citations
+                        
                 # # Store the complete response as a single message
                 # self.history_manager.add_message_chunk(
                 #     conversation_id, full_response, MessageType.AI, user_id
@@ -599,7 +620,7 @@ class ConversationService:
                 # self.history_manager.flush_message_buffer(
                 #     conversation_id, MessageType.AI, user_id
                 # )
-                yield full_response
+                yield ChatMessageResponse(message=full_message,citations=all_citations).json()
 
         except AccessTypeReadError:
             raise
