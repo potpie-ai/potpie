@@ -4,15 +4,24 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.modules.conversations.conversation.conversation_schema import (
-    ChatMessageResponse, ConversationInfoResponse, CreateConversationRequest,
-    CreateConversationResponse)
+    ChatMessageResponse,
+    ConversationInfoResponse,
+    CreateConversationRequest,
+    CreateConversationResponse,
+)
 from app.modules.conversations.conversation.conversation_service import (
-    AccessTypeNotFoundError, AccessTypeReadError, ConversationNotFoundError,
-    ConversationService, ConversationServiceError)
+    AccessTypeNotFoundError,
+    AccessTypeReadError,
+    ConversationNotFoundError,
+    ConversationService,
+    ConversationServiceError,
+)
 from app.modules.conversations.message.message_model import MessageType
-from app.modules.conversations.message.message_schema import (MessageRequest,
-                                                              MessageResponse,
-                                                              NodeContext)
+from app.modules.conversations.message.message_schema import (
+    MessageRequest,
+    MessageResponse,
+    NodeContext,
+)
 
 
 class ConversationController:

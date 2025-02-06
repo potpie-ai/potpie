@@ -14,26 +14,37 @@ from uuid6 import uuid7
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.conversations.conversation.conversation_model import (
-    Conversation, ConversationStatus, Visibility)
+    Conversation,
+    ConversationStatus,
+    Visibility,
+)
 from app.modules.conversations.conversation.conversation_schema import (
-    ChatMessageResponse, ConversationAccessType, ConversationInfoResponse,
-    CreateConversationRequest)
-from app.modules.conversations.message.message_model import (Message,
-                                                             MessageStatus,
-                                                             MessageType)
-from app.modules.conversations.message.message_schema import (MessageRequest,
-                                                              MessageResponse,
-                                                              NodeContext)
+    ChatMessageResponse,
+    ConversationAccessType,
+    ConversationInfoResponse,
+    CreateConversationRequest,
+)
+from app.modules.conversations.message.message_model import (
+    Message,
+    MessageStatus,
+    MessageType,
+)
+from app.modules.conversations.message.message_schema import (
+    MessageRequest,
+    MessageResponse,
+    NodeContext,
+)
 from app.modules.intelligence.agents.agent_factory import AgentFactory
-from app.modules.intelligence.agents.agent_injector_service import \
-    AgentInjectorService
+from app.modules.intelligence.agents.agent_injector_service import AgentInjectorService
 from app.modules.intelligence.agents.agents_service import AgentsService
-from app.modules.intelligence.agents.custom_agents.custom_agents_service import \
-    CustomAgentsService
-from app.modules.intelligence.memory.chat_history_service import \
-    ChatHistoryService
+from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
+    CustomAgentsService,
+)
+from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import (
-    AgentType, ProviderService)
+    AgentType,
+    ProviderService,
+)
 from app.modules.projects.projects_service import ProjectService
 from app.modules.users.user_service import UserService
 from app.modules.utils.posthog_helper import PostHogClient
@@ -613,14 +624,8 @@ class ConversationService:
                 async for chunk in self._generate_and_stream_ai_response(
                     last_human_message.content, conversation_id, user_id, node_ids
                 ):
-                    data = json.loads(chunk)
-
-                    # Extract the 'message' and 'citations'
-                    message: str = data.get("message", "")
-                    citations: List[str] = data.get("citations", [])
-
-                    full_message += message
-                    all_citations = all_citations + citations
+                    full_message += chunk.message
+                    all_citations = all_citations + chunk.citations
                 # # Store the complete response as a single message
                 # self.history_manager.add_message_chunk(
                 #     conversation_id, full_response, MessageType.AI, user_id
@@ -628,9 +633,7 @@ class ConversationService:
                 # self.history_manager.flush_message_buffer(
                 #     conversation_id, MessageType.AI, user_id
                 # )
-                yield ChatMessageResponse(
-                    message=full_message, citations=all_citations
-                ).json()
+                yield ChatMessageResponse(message=full_message, citations=all_citations)
 
         except AccessTypeReadError:
             raise

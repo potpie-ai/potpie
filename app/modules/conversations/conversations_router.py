@@ -1,6 +1,4 @@
-import json
-from typing import List
-
+from typing import List, AsyncGenerator, Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -8,20 +6,33 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
 from app.modules.conversations.access.access_schema import (
-    RemoveAccessRequest, ShareChatRequest, ShareChatResponse)
+    RemoveAccessRequest,
+    ShareChatRequest,
+    ShareChatResponse,
+)
 from app.modules.conversations.access.access_service import (
-    ShareChatService, ShareChatServiceError)
-from app.modules.conversations.conversation.conversation_controller import \
-    ConversationController
+    ShareChatService,
+    ShareChatServiceError,
+)
+from app.modules.conversations.conversation.conversation_controller import (
+    ConversationController,
+)
 
-from .conversation.conversation_schema import (ConversationInfoResponse,
-                                               CreateConversationRequest,
-                                               CreateConversationResponse,
-                                               RenameConversationRequest)
-from .message.message_schema import (MessageRequest, MessageResponse,
-                                     RegenerateRequest)
+from .conversation.conversation_schema import (
+    ConversationInfoResponse,
+    CreateConversationRequest,
+    CreateConversationResponse,
+    RenameConversationRequest,
+)
+from .message.message_schema import MessageRequest, MessageResponse, RegenerateRequest
+import json
 
 router = APIRouter()
+
+
+async def get_stream(data_stream: AsyncGenerator[Any, None]):
+    async for chunk in data_stream:
+        yield json.dumps(chunk.dict())
 
 
 class ConversationAPI:
@@ -92,14 +103,13 @@ class ConversationAPI:
         controller = ConversationController(db, user_id, user_email)
         message_stream = controller.post_message(conversation_id, message, stream)
         if stream:
-            return StreamingResponse(message_stream, media_type="text/event-stream")
+            return StreamingResponse(
+                get_stream(message_stream), media_type="text/event-stream"
+            )
         else:
             # TODO: fix this, add types. In below stream we have only one output.
-            # no need of stream here
-            full_response = ""
             async for chunk in message_stream:
-                full_response += chunk
-            return json.loads(full_response)
+                return chunk
 
     @staticmethod
     @router.post(
@@ -119,14 +129,12 @@ class ConversationAPI:
             conversation_id, request.node_ids, stream
         )
         if stream:
-            return StreamingResponse(message_stream, media_type="text/event-stream")
+            return StreamingResponse(
+                get_stream(message_stream), media_type="text/event-stream"
+            )
         else:
-            # TODO: fix this, add types. In below stream we have only one output.
-            # no need of stream here
-            full_response = ""
             async for chunk in message_stream:
-                full_response += chunk
-            return json.loads(full_response)
+                return chunk
 
     @staticmethod
     @router.delete("/conversations/{conversation_id}/", response_model=dict)
