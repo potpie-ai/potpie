@@ -1,32 +1,25 @@
+import json
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
 from app.modules.conversations.access.access_schema import (
-    RemoveAccessRequest,
-    ShareChatRequest,
-    ShareChatResponse,
-)
+    RemoveAccessRequest, ShareChatRequest, ShareChatResponse)
 from app.modules.conversations.access.access_service import (
-    ShareChatService,
-    ShareChatServiceError,
-)
-from app.modules.conversations.conversation.conversation_controller import (
-    ConversationController,
-)
+    ShareChatService, ShareChatServiceError)
+from app.modules.conversations.conversation.conversation_controller import \
+    ConversationController
 
-from .conversation.conversation_schema import (
-    ConversationInfoResponse,
-    CreateConversationRequest,
-    CreateConversationResponse,
-    RenameConversationRequest,
-)
-from .message.message_schema import MessageRequest, MessageResponse, RegenerateRequest
-import json
+from .conversation.conversation_schema import (ConversationInfoResponse,
+                                               CreateConversationRequest,
+                                               CreateConversationResponse,
+                                               RenameConversationRequest)
+from .message.message_schema import (MessageRequest, MessageResponse,
+                                     RegenerateRequest)
 
 router = APIRouter()
 

@@ -4,7 +4,8 @@ from typing import List
 
 from pydantic import BaseModel
 
-from app.modules.conversations.conversation.conversation_model import ConversationStatus
+from app.modules.conversations.conversation.conversation_model import \
+    ConversationStatus
 
 
 class CreateConversationRequest(BaseModel):
@@ -46,9 +47,11 @@ class ConversationInfoResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 class ChatMessageResponse(BaseModel):
     message: str
     citations: List[str]
+
 
 # Resolve forward references
 ConversationInfoResponse.update_forward_refs()
