@@ -685,7 +685,11 @@ class ConversationService:
             ) from e
 
     def parse_str_to_message(self, chunk: str) -> ChatMessageResponse:
-        data = json.loads(chunk)
+        try:
+            data = json.loads(chunk)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse chunk as JSON: {e}")
+            raise ConversationServiceError("Failed to parse AI response") from e
 
         # Extract the 'message' and 'citations'
         message: str = data.get("message", "")
