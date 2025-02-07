@@ -35,10 +35,7 @@ class UnitTestAgent:
             role="Test Plan and Unit Test Expert",
             goal="Create test plans and write unit tests based on user requirements",
             backstory="You are a seasoned AI test engineer specializing in creating robust test plans and unit tests. You aim to assist users effectively in generating and refining test plans and unit tests, ensuring they are comprehensive and tailored to the user's project requirements.",
-            tools=[
-                self.get_code_from_probable_node_name,
-                self.get_code_from_node_id
-            ],
+            tools=[self.get_code_from_probable_node_name, self.get_code_from_node_id],
             allow_delegation=False,
             verbose=True,
             llm=self.llm,

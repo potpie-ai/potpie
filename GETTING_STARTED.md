@@ -93,7 +93,7 @@ Potpie uses Google Secret Manager to securely manage API keys. If you created a 
 Follow these steps to set up the Secret Manager and Application Default Credentials (ADC) for Potpie:
 1. Install gcloud CLI. Follow the official installation guide:
    https://cloud.google.com/sdk/docs/install
-   
+
    After installation, initialize gcloud CLI:
    ```bash
    gcloud init

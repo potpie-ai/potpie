@@ -37,6 +37,16 @@ class ProviderAPI:
         )
 
     @staticmethod
+    @router.get("/get-global-ai-provider/")
+    async def get_global_ai_provider(
+        db: Session = Depends(get_db),
+        user=Depends(AuthService.check_auth),
+    ):
+        user_id = user["user_id"]
+        controller = ProviderController(db, user_id)
+        return await controller.get_global_ai_provider(user_id)
+
+    @staticmethod
     @router.get("/get-preferred-llm/", response_model=GetProviderResponse)
     async def get_preferred_llm(
         user_id: str,

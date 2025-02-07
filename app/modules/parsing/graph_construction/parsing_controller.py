@@ -33,12 +33,11 @@ class ParsingController:
     async def parse_directory(
         repo_details: ParsingRequest, db: AsyncSession, user: Dict[str, Any]
     ):
-        
         if "email" not in user:
             user_email = None
         else:
             user_email = user["email"]
-        
+
         user_id = user["user_id"]
         project_manager = ProjectService(db)
         parse_helper = ParseHelper(db)

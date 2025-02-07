@@ -96,7 +96,10 @@ class ConversationController:
             raise HTTPException(status_code=500, detail=str(e))
 
     async def regenerate_last_message(
-        self, conversation_id: str, node_ids: List[NodeContext] = [], stream: bool = True
+        self,
+        conversation_id: str,
+        node_ids: List[NodeContext] = [],
+        stream: bool = True,
     ) -> AsyncGenerator[str, None]:
         try:
             async for chunk in self.service.regenerate_last_message(
