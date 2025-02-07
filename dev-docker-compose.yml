@@ -50,7 +50,7 @@ services:
   app:
     build:
       context: .
-      dockerfile: Devdockerfile 
+      dockerfile: dev-dockerfile 
     container_name: potpie_app
     environment:
       GOOGLE_APPLICATION_CREDENTIALS: /app/service-account.json
@@ -81,7 +81,7 @@ services:
   celery:
     build: 
       context: .
-      dockerfile: Devdockerfile 
+      dockerfile: dev-dockerfile 
     container_name: potpie_celery
     environment:
       CELERY_QUEUE_NAME: staging
