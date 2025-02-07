@@ -36,6 +36,8 @@ from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool impo
     GetNodesFromTags,
 )
 from app.modules.intelligence.tools.tool_schema import ToolInfo
+from langchain_ollama import ChatOllama
+from app.core.config_provider import config_provider
 
 
 class ToolService:
@@ -65,7 +67,16 @@ class ToolService:
             "get_node_neighbours_from_node_id": GetNodeNeighboursFromNodeIdTool(
                 self.db
             ),
+            "ollama_tool": ChatOllama(
+                base_url=self._get_ollama_endpoint(),
+                model=self._get_ollama_model(),
+            ),
         }
+    def _get_ollama_endpoint(self) -> str:
+        return config_provider.get_ollama_config()["endpoint"]
+
+    def _get_ollama_model(self) -> str:
+        return config_provider.get_ollama_config()["model"]
 
     async def run_tool(self, tool_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
         tool = self.tools.get(tool_id)

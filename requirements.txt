@@ -5,6 +5,10 @@ litellm==1.59.9
 joblib==1.4.2
 json_repair==0.35.0
 langsmith==0.3.3
+langchain_ollama==0.2.2
+langchain-core==0.3.32
+ollama==0.4.7
+sentry_sdk==2.20.0
 json5==0.9.28
 kombu==5.4.2
 uvicorn==0.32.1
