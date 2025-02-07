@@ -8,9 +8,6 @@ from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.llm_provider.llm_provider_service import (
     LLMProviderService,
 )
-from app.modules.intelligence.prompts_provider.agent_prompts_provider import (
-    AgentPromptsProvider,
-)
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.prompts.prompt_schema import PromptType
 from app.modules.intelligence.prompts_provider.agent_types import AgentLLMType
@@ -34,8 +31,6 @@ class UnitTestAgent:
         self.get_code_from_probable_node_name = get_code_from_probable_node_name_tool(
             sql_db, user_id
         )
-        self.llm = llm
-        self.max_iterations = os.getenv("MAX_ITER", 15)
         self.prompt_service = PromptService(self.sql_db)
 
     async def create_agents(self):

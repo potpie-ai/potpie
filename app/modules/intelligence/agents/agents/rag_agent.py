@@ -13,9 +13,6 @@ from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.llm_provider.llm_provider_service import (
     LLMProviderService,
 )
-from app.modules.intelligence.prompts_provider.agent_prompts_provider import (
-    AgentPromptsProvider,
-)
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.prompts.prompt_schema import PromptType
 from app.modules.intelligence.prompts_provider.agent_types import AgentLLMType
@@ -85,7 +82,7 @@ class RAGAgent:
         llm_provider_service = LLMProviderService.create(self.sql_db, self.user_id)
         preferred_llm, _ = await llm_provider_service.get_preferred_llm(self.user_id)
         agent_prompt = await self.prompt_service.get_prompts(
-            "debug_rag_query_agent",
+            "design_planner",
             [PromptType.SYSTEM],
             preferred_llm,
             max_iter=6,

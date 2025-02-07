@@ -11,9 +11,6 @@ from pydantic import BaseModel, Field
 from app.modules.intelligence.llm_provider.llm_provider_service import (
     LLMProviderService,
 )
-from app.modules.intelligence.prompts_provider.agent_prompts_provider import (
-    AgentPromptsProvider,
-)
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.prompts.prompt_schema import PromptType
 from app.modules.intelligence.prompts_provider.agent_types import AgentLLMType

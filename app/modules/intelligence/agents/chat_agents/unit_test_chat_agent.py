@@ -89,6 +89,8 @@ class UnitTestAgent:
         prompt = await self.prompt_service.get_prompts(
             SystemAgentType.UNIT_TEST, [PromptType.SYSTEM], preferred_llm
         )
+        if not prompt:
+            raise ValueError("Classification prompt not found for UNIT_TEST")
         inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
 
         parser = PydanticOutputParser(pydantic_object=ClassificationResponse)

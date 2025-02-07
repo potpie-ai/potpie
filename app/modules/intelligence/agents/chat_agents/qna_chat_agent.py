@@ -89,6 +89,8 @@ class QNAChatAgent:
         prompt = await self.prompt_service.get_prompts(
             SystemAgentType.QNA, [PromptType.SYSTEM], preferred_llm
         )
+        if not prompt:
+            raise ValueError("Classification prompt not found for QNA_AGENT")
         inputs = {"query": query, "history": [msg.content for msg in history[-10:]]}
 
         parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
