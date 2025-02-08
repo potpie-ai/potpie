@@ -5,6 +5,7 @@ import random
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
 
+import aiohttp
 import chardet
 import requests
 from fastapi import HTTPException
@@ -187,23 +188,71 @@ class GithubService:
 
             auth = AppAuth(app_id=app_id, private_key=private_key)
             jwt = auth.create_jwt()
-            installations_url = "https://api.github.com/app/installations"
+
+            # Fetch all installations with pagination
+            all_installations = []
+            base_url = "https://api.github.com/app/installations"
             headers = {
                 "Accept": "application/vnd.github+json",
                 "Authorization": f"Bearer {jwt}",
                 "X-GitHub-Api-Version": "2022-11-28",
             }
 
-            response = requests.get(installations_url, headers=headers)
+            async with aiohttp.ClientSession() as session:
+                # Get first page to determine total pages
+                async with session.get(base_url, headers=headers) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        logger.error(f"Failed to get installations. Response: {error_text}")
+                        raise HTTPException(
+                            status_code=response.status,
+                            detail=f"Failed to get installations: {error_text}",
+                        )
 
-            if response.status_code != 200:
-                logger.error(f"Failed to get installations. Response: {response.text}")
-                raise HTTPException(
-                    status_code=response.status_code,
-                    detail=f"Failed to get installations: {response.text}",
-                )
+                    # Extract last page number from Link header
+                    last_page = 1
+                    if "Link" in response.headers:
+                        link_header = response.headers["Link"]
+                        links = requests.utils.parse_header_links(link_header)
+                        for link in links:
+                            if link["rel"] == "last":
+                                last_page = int(link["url"].split("page=")[-1])
+                                break
 
-            all_installations = response.json()
+                    # Add first page's data
+                    first_page_data = await response.json()
+                    all_installations.extend(first_page_data)
+
+                logger.info(f"Total pages to fetch: {last_page}")
+
+                # Generate remaining page URLs (skip page 1 since we already have it)
+                page_urls = [f"{base_url}?page={page}" for page in range(2, last_page + 1)]
+
+                # Process URLs in batches of 10
+                async def fetch_page(url):
+                    try:
+                        async with session.get(url, headers=headers) as response:
+                            if response.status == 200:
+                                installations = await response.json()
+                                logger.info(f"Fetched {len(installations)} installations from {url}")
+                                return installations
+                            else:
+                                error_text = await response.text()
+                                logger.error(f"Failed to fetch page {url}. Response: {error_text}")
+                                return []
+                    except Exception as e:
+                        logger.error(f"Error fetching page {url}: {str(e)}")
+                        return []
+
+                # Process URLs in batches of 10
+                for i in range(0, len(page_urls), 10):
+                    batch = page_urls[i:i + 10]
+                    batch_tasks = [fetch_page(url) for url in batch]
+                    batch_results = await asyncio.gather(*batch_tasks)
+                    for installations in batch_results:
+                        all_installations.extend(installations)
+
+            logger.info(f"Final number of installations collected: {len(all_installations)}")
 
             # Filter installations: user's personal installation + org installations where user is a member
             user_installations = []
@@ -217,20 +266,35 @@ class GithubService:
                 elif account_type == "Organization" and account_login in org_logins:
                     user_installations.append(installation)
 
+
             repos = []
             for installation in user_installations:
                 app_auth = auth.get_installation_auth(installation["id"])
                 github = Github(auth=app_auth)
                 repos_url = installation["repositories_url"]
-                repos_response = requests.get(
-                    repos_url, headers={"Authorization": f"Bearer {app_auth.token}"}
-                )
-                if repos_response.status_code == 200:
-                    repos.extend(repos_response.json().get("repositories", []))
-                else:
-                    logger.error(
-                        f"Failed to fetch repositories for installation ID {installation['id']}. Response: {repos_response.text}"
+                
+                # Handle pagination for repositories as well
+                next_repos_url = repos_url
+                while next_repos_url:
+                    repos_response = requests.get(
+                        next_repos_url, 
+                        headers={"Authorization": f"Bearer {app_auth.token}"}
                     )
+                    
+                    if repos_response.status_code == 200:
+                        repos.extend(repos_response.json().get("repositories", []))
+                        
+                        # Check for next page in Link header
+                        next_repos_url = None
+                        if "links" in repos_response.__dict__:
+                            for link in repos_response.links.values():
+                                if link.get("rel") == "next":
+                                    next_repos_url = link.get("url")
+                                    break
+                    else:
+                        logger.error(
+                            f"Failed to fetch repositories for installation ID {installation['id']}. Response: {repos_response.text}"
+                        )
 
             # Remove duplicate repositories if any
             unique_repos = {repo["id"]: repo for repo in repos}.values()
