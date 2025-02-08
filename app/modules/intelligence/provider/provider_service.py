@@ -162,7 +162,7 @@ class ProviderService:
     def _get_provider_config(self, size: str) -> str:
         """Get the preferred provider and its configuration."""
         if self.user_id == "dummy":
-            return "google"
+            return "openai"
 
         user_pref = (
             self.db.query(UserPreferences)
@@ -170,9 +170,9 @@ class ProviderService:
             .first()
         )
         return (
-            user_pref.preferences.get("llm_provider", "google")
+            user_pref.preferences.get("llm_provider", "openai")
             if user_pref
-            else "google"
+            else "openai"
         )
 
     def _get_api_key(self, provider: str) -> str:
@@ -304,9 +304,9 @@ class ProviderService:
         )
 
         return (
-            user_pref.preferences.get("llm_provider", "google")
+            user_pref.preferences.get("llm_provider", "openai")
             if user_pref
-            else "google"
+            else "openai"
         )
 
     async def get_preferred_llm(self, user_id: str) -> Tuple[str, str]:
@@ -317,9 +317,9 @@ class ProviderService:
         )
 
         preferred_provider = (
-            user_pref.preferences.get("llm_provider", "google")
+            user_pref.preferences.get("llm_provider", "openai")
             if user_pref
-            else "google"
+            else "openai"
         )
 
         model_type = "gpt-4o"
