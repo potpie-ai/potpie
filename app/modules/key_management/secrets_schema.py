@@ -6,7 +6,7 @@ from pydantic import BaseModel, field_validator
 
 class BaseSecretRequest(BaseModel):
     api_key: str
-    provider: Literal["openai", "anthropic", "deepseek"]
+    provider: Literal["openai", "anthropic", "deepseek", "google"]
 
     @staticmethod
     def validate_openai_api_key_format(api_key: str) -> bool:
