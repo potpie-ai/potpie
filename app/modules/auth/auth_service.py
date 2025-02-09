@@ -3,15 +3,17 @@ import hmac
 import json
 import logging
 import os
-from typing import Union
+from typing import Union, Callable
 
 import requests
 from dotenv import load_dotenv
-from fastapi import Depends, HTTPException, Request, Response, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import HTTPException, Request, Response, status
+
 from firebase_admin import auth
 from firebase_admin.auth import UserRecord
 from abc import ABC, abstractmethod
+from app.modules.auth.auth_schema import User
+from starlette.types import ASGIApp
 
 load_dotenv(override=True)
 
@@ -27,21 +29,30 @@ class AuthService(ABC):
     def signup(self, email: str, password: str, name: str):
         pass
 
-    async def authenticate(
-        self, request: Request, res: Response, credential: HTTPAuthorizationCredentials
-    ):
+    @abstractmethod
+    async def authenticate(self, token: str) -> User:
         pass
 
 
 def get_auth_middleware(auth_service: AuthService):
     async def authenticate(
         request: Request,
-        res: Response,
-        credential: HTTPAuthorizationCredentials = Depends(
-            HTTPBearer(auto_error=False)
-        ),
+        call_next: Callable[[Request], Response],
     ):
-        return await auth_service.authenticate(request, res, credential)
+        credential = request.headers.get("Authorization")
+        if not credential:
+            raise HTTPException(
+                status_code=401, detail="Bearer authentication is needed"
+            )
+        try:
+            token = credential.split("Bearer ")[1]
+            user = await auth_service.authenticate(token)
+            request.state.user = user
+        except Exception as err:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        response = await call_next(request)
+        return response
 
     return authenticate
 
@@ -77,12 +88,10 @@ class GoogleIdentityAuthService(AuthService):
     async def authenticate(
         request: Request,
         res: Response,
-        credential: HTTPAuthorizationCredentials = Depends(
-            HTTPBearer(auto_error=False)
-        ),
+        token: str,
     ):
         # Check if the application is in debug mode
-        if os.getenv("isDevelopmentMode") == "enabled" and credential is None:
+        if os.getenv("isDevelopmentMode") == "enabled" and token is None:
             request.state.user = {"user_id": os.getenv("defaultUsername")}
             logging.info("Development mode enabled. Using Mock Authentication.")
             return {
@@ -90,7 +99,7 @@ class GoogleIdentityAuthService(AuthService):
                 "email": "defaultuser@potpie.ai",
             }
         else:
-            if credential is None:
+            if token is None:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Bearer authentication is needed",

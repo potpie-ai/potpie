@@ -7,11 +7,13 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from starlette.middleware.base import BaseHTTPMiddleware
 from app.api.router import router as potpie_api_router
 from app.core.base_model import Base
 from app.core.database import SessionLocal, engine
 from app.core.models import *  # noqa #necessary for models to not give import errors
 from app.modules.auth.auth_router import auth_router
+from app.modules.auth.auth_service import get_auth_middleware, GoogleIdentityAuthService
 from app.modules.code_provider.github.github_router import router as github_router
 from app.modules.conversations.conversations_router import (
     router as conversations_router,
@@ -101,6 +103,13 @@ class MainApp:
 
     def include_routers(self):
         self.app.include_router(auth_router, prefix="/api/v1", tags=["Auth"])
+
+        self.app.add_middleware(
+            BaseHTTPMiddleware,
+            dispatch=get_auth_middleware(
+                GoogleIdentityAuthService(os.getenv("FIREBASE_API_KEY"))
+            ),
+        )
         self.app.include_router(user_router, prefix="/api/v1", tags=["User"])
         self.app.include_router(parsing_router, prefix="/api/v1", tags=["Parsing"])
         self.app.include_router(
