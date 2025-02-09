@@ -10,18 +10,52 @@ from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth
+from firebase_admin.auth import UserRecord
+from abc import ABC, abstractmethod
 
 load_dotenv(override=True)
 
 
-class AuthService:
-    def login(self, email, password):
-        log_prefix = "AuthService::login:"
-        identity_tool_kit_id = os.getenv("GOOGLE_IDENTITY_TOOL_KIT_KEY")
-        identity_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={identity_tool_kit_id}"
+class AuthService(ABC):
+    """Inteface for authentication service, auth service will be implemented by different providers."""
+
+    @abstractmethod
+    def login(self, email: str, password: str) -> str:
+        pass
+
+    @abstractmethod
+    def signup(self, email: str, password: str, name: str):
+        pass
+
+    async def authenticate(
+        self, request: Request, res: Response, credential: HTTPAuthorizationCredentials
+    ):
+        pass
+
+
+def get_auth_middleware(auth_service: AuthService):
+    async def authenticate(
+        request: Request,
+        res: Response,
+        credential: HTTPAuthorizationCredentials = Depends(
+            HTTPBearer(auto_error=False)
+        ),
+    ):
+        return await auth_service.authenticate(request, res, credential)
+
+    return authenticate
+
+
+class GoogleIdentityAuthService(AuthService):
+
+    def __init__(self, identity_toolkit_key: str) -> None:
+        self.identity_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={identity_toolkit_key}"
+
+    def login(self, email: str, password: str) -> str:
+        log_prefix = "AuthService:GoogleIdentity::login"
 
         user_auth_response = requests.post(
-            url=identity_url,
+            url=self.identity_url,
             json={
                 "email": email,
                 "password": password,
@@ -31,18 +65,16 @@ class AuthService:
 
         try:
             user_auth_response.raise_for_status()
-            return user_auth_response.json()
+            return user_auth_response.json().get("idToken")
         except Exception as e:
             logging.exception(f"{log_prefix} {str(e)}")
             raise Exception(user_auth_response.json())
 
-    def signup(self, email, password, name):
+    def signup(self, email: str, password: str, name: str) -> UserRecord:
         user = auth.create_user(email=email, password=password, display_name=name)
         return user
 
-    @classmethod
-    @staticmethod
-    async def check_auth(
+    async def authenticate(
         request: Request,
         res: Response,
         credential: HTTPAuthorizationCredentials = Depends(
@@ -76,10 +108,15 @@ class AuthService:
             res.headers["WWW-Authenticate"] = 'Bearer realm="auth_required"'
             return decoded_token
 
-    @staticmethod
-    def generate_hmac_signature(message: str) -> str:
+
+class HMACService:
+
+    def __init__(self, hmac_key: str) -> None:
+        self.hmac_key = hmac_key
+
+    def generate_hmac_signature(self, message: str) -> str:
         """Generate HMAC signature for a message string"""
-        hmac_key = AuthService.get_hmac_secret_key()
+        hmac_key = self.get_hmac_secret_key()
         if not hmac_key:
             raise ValueError("HMAC secret key not configured")
         hmac_obj = hmac.new(
@@ -87,12 +124,11 @@ class AuthService:
         )
         return hmac_obj.hexdigest()
 
-    @staticmethod
     def verify_hmac_signature(
-        payload_body: Union[str, dict], hmac_signature: str
+        self, payload_body: Union[str, dict], hmac_signature: str
     ) -> bool:
         """Verify HMAC signature matches the payload"""
-        hmac_key = AuthService.get_hmac_secret_key()
+        hmac_key = self.get_hmac_secret_key()
         if not hmac_key:
             raise ValueError("HMAC secret key not configured")
         payload_str = (
@@ -105,13 +141,13 @@ class AuthService:
         ).hexdigest()
         return hmac.compare_digest(hmac_signature, expected_signature)
 
-    @staticmethod
-    def get_hmac_secret_key() -> bytes:
+    def get_hmac_secret_key(self) -> bytes:
         """Get HMAC secret key from environment"""
-        key = os.getenv("POTPIE_PLUS_HMAC_KEY", "")
-        if not key:
+
+        if not self.hmac_key:
             return b""
-        return key.encode("utf-8")
+        return self.hmac_key.encode("utf-8")
 
 
-auth_handler = AuthService()
+# Use mock if GOOGLE_IDENTITY_TOOLKIT_KEY is not set or in dev mode
+auth_handler = GoogleIdentityAuthService(os.getenv("GOOGLE_IDENTITY_TOOLKIT_KEY") or "")

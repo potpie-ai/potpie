@@ -34,9 +34,8 @@ class AuthAPI:
         email, password = login_request.email, login_request.password
 
         try:
-            res = auth_handler.login(email=email, password=password)
-            id_token = res.get("idToken")
-            return JSONResponse(content={"token": id_token}, status_code=200)
+            token = auth_handler.login(email=email, password=password)
+            return JSONResponse(content={"token": token}, status_code=200)
         except Exception as e:
             return JSONResponse(content={"error": f"ERROR: {str(e)}"}, status_code=400)
 
