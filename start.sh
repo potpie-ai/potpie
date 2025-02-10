@@ -33,8 +33,9 @@ if [ -z "$VIRTUAL_ENV" ]; then
 fi
 
 # Install python dependencies
+# Using the legacy resolver because startup takes too much time otherwise; -Sujal
 echo "Installing Python dependencies..."
-if ! pip install -r requirements.txt; then
+if ! pip install -r requirements.txt --use-deprecated=legacy-resolver; then
  echo "Error: Failed to install Python dependencies"
  exit 1
 fi
@@ -46,5 +47,4 @@ echo "Starting momentum application..."
 gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app &
 
 echo "Starting Celery worker"
-# Start Celery worker with the new setup
-celery -A app.celery.celery_app worker --loglevel=debug -Q "${CELERY_QUEUE_NAME}_process_repository" -E --concurrency=1 --pool=solo &
+celery -A app.celery.celery_app worker --loglevel=debug -Q "${Celery_QUEUE_NAME}_process_repository" -E --concurrency=1 --pool=solo &

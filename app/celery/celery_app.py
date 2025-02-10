@@ -3,17 +3,18 @@ import os
 
 from celery import Celery
 from dotenv import load_dotenv
+from kombu import Queue
 
 from app.core.models import *  # noqa #This will import and initialize all models
 
 # Load environment variables from a .env file if present
 load_dotenv()
+
 # Redis configuration
 redishost = os.getenv("REDISHOST", "localhost")
 redisport = int(os.getenv("REDISPORT", 6379))
 redisuser = os.getenv("REDISUSER", "")
 redispassword = os.getenv("REDISPASSWORD", "")
-queue_name = os.getenv("CELERY_QUEUE_NAME", "staging")
 
 # Construct the Redis URL
 if redisuser and redispassword:
@@ -36,8 +37,9 @@ try:
 except Exception as e:
     logger.error(f"Failed to connect to Redis: {str(e)}")
 
-
-def configure_celery(queue_prefix: str):
+# Hardcoded queue name to "dev" (Allows for easier development in WSL;) - Sujal
+def configure_celery():
+    queue_name = os.getenv("CELERY_QUEUE_NAME", "dev_process_repository")
     celery_app.conf.update(
         task_serializer="json",
         accept_content=["json"],
@@ -46,23 +48,22 @@ def configure_celery(queue_prefix: str):
         enable_utc=True,
         task_routes={
             "app.celery.tasks.parsing_tasks.process_parsing": {
-                "queue": f"{queue_prefix}_process_repository"
+                "queue": queue_name
             },
         },
+        task_queues=[
+            Queue(queue_name)
+        ],
         worker_prefetch_multiplier=1,
         task_acks_late=True,
         task_track_started=True,
-        # Add the task_time_limit configuration
-        task_time_limit=5400,  # 90 minutes in seconds
+        task_time_limit=5400,
     )
 
-
-configure_celery(queue_name)
-
-# Import the lock decorator
+configure_celery()
 
 # Import the lock decorator
 from celery.contrib.abortable import AbortableTask  # noqa
 
 # Import tasks to ensure they are registered
-import app.celery.tasks.parsing_tasks  # noqa # Ensure the task module is imported
+import app.celery.tasks.parsing_tasks  # noqa  # Ensure the task module is imported

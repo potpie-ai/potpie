@@ -10,6 +10,8 @@ from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
 
 logger = logging.getLogger(__name__)
+logger.propagate = True
+#Better to set logger.propogate = true when dealing with background+async processses. -Sujal
 
 
 class BaseTask(Task):
@@ -43,7 +45,7 @@ def process_parsing(
     logger.info(f"Task received: Starting parsing process for project {project_id}")
     try:
         parsing_service = ParsingService(self.db, user_id)
-
+        logger.info(f"Given userID is: {user_id}")
         async def run_parsing():
             import time
 

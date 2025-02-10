@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.router import router as potpie_api_router
 from app.core.base_model import Base
 from app.core.database import SessionLocal, engine
 from app.core.models import *  # noqa #necessary for models to not give import errors
@@ -22,6 +21,7 @@ from app.modules.intelligence.prompts.system_prompt_setup import SystemPromptSet
 from app.modules.intelligence.provider.provider_router import router as provider_router
 from app.modules.intelligence.tools.tool_router import router as tool_router
 from app.modules.key_management.secret_manager import router as secret_manager_router
+from app.api.router import router as potpie_api_router
 from app.modules.parsing.graph_construction.parsing_router import (
     router as parsing_router,
 )
