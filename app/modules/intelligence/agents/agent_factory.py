@@ -61,7 +61,7 @@ class AgentFactory:
         """Create a new agent instance"""
         agent_map = {
             "debugging_agent": lambda: DebuggingChatAgent(
-                mini_llm, reasoning_llm, self.db
+                mini_llm, reasoning_llm, self.db, self.ai_observability_service
             ),
             "codebase_qna_agent": lambda: QNAChatAgent(
                 mini_llm, reasoning_llm, self.db
@@ -73,7 +73,9 @@ class AgentFactory:
             "code_changes_agent": lambda: CodeChangesChatAgent(
                 mini_llm, reasoning_llm, self.db
             ),
-            "LLD_agent": lambda: LLDChatAgent(mini_llm, reasoning_llm, self.db),
+            "LLD_agent": lambda: LLDChatAgent(
+                mini_llm, reasoning_llm, self.db, self.ai_observability_service
+            ),
             "code_generation_agent": lambda: CodeGenerationChatAgent(
                 mini_llm, reasoning_llm, self.db
             ),

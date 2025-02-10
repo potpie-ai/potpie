@@ -54,7 +54,9 @@ class AgentInjectorService:
             agent_type=AgentType.LANGCHAIN
         )
         return {
-            "debugging_agent": DebuggingChatAgent(mini_llm, reasoning_llm, self.sql_db),
+            "debugging_agent": DebuggingChatAgent(
+                mini_llm, reasoning_llm, self.sql_db, self.ai_observability_service
+            ),
             "codebase_qna_agent": QNAChatAgent(mini_llm, reasoning_llm, self.sql_db),
             "unit_test_agent": UnitTestAgent(mini_llm, reasoning_llm, self.sql_db),
             "integration_test_agent": IntegrationTestChatAgent(

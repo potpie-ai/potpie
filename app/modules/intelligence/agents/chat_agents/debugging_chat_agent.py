@@ -32,12 +32,19 @@ from app.modules.intelligence.prompts.classification_prompts import (
 )
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.core.dependencies import AiObservabilityService
 
 logger = logging.getLogger(__name__)
 
 
 class DebuggingChatAgent:
-    def __init__(self, mini_llm, reasoning_llm, db: Session):
+    def __init__(
+        self,
+        mini_llm,
+        reasoning_llm,
+        db: Session,
+        ai_observability_service: AiObservabilityService,
+    ):
         self.mini_llm = mini_llm
         self.llm = reasoning_llm
         self.history_manager = ChatHistoryService(db)
@@ -45,6 +52,7 @@ class DebuggingChatAgent:
         self.agents_service = AgentsService(db)
         self.chain = None
         self.db = db
+        self.ai_observability_service = ai_observability_service
 
     @lru_cache(maxsize=2)
     async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
@@ -180,6 +188,7 @@ class DebuggingChatAgent:
                     self.llm,
                     self.mini_llm,
                     user_id,
+                    self.ai_observability_service,
                 ):
                     content = str(chunk)
                     self.history_manager.add_message_chunk(
