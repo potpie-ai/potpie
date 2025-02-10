@@ -6,10 +6,12 @@
 
 <br/>
 <p align="center">
-
+<a href="https://trendshift.io/repositories/12918" target="_blank"><img src="https://trendshift.io/api/badge/repositories/12918" alt="potpie-ai%2Fpotpie | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+</br>
   <br />
   <a href="https://app.potpie.ai" rel="dofollow">App</a> | <a href="https://docs.potpie.ai" rel="dofollow">Documentation</a> | <a href="https://docs.potpie.ai/open-source"  rel="dofollow">API Reference</a> | <a href="https://app.potpie.ai/newchat?repo=potpie-ai/potpie&branch=main" rel="dofollow">Chat with 🥧 Repo</a>
   <br />
+
   </p>
 
 <p align="center">
@@ -21,7 +23,10 @@
   <a href="https://github.com/potpie-ai/potpie">
     <img src="https://img.shields.io/github/stars/potpie-ai/potpie" alt="GitHub Repo stars">
   </a>
+  
 </br>
+
+
 <a href="https://discord.gg/ryk5CMD5v6">
     <img src="https://img.shields.io/badge/Join%20our-Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join our Discord">
 </a>
