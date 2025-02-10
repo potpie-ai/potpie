@@ -45,7 +45,10 @@ class SecretManager:
 
     @staticmethod
     def get_secret_id(
+    def get_secret(
         provider: Literal["openai", "anthropic", "deepseek", "google"], customer_id: str
+    ):
+        ...
     ):
         if os.getenv("isDevelopmentMode") == "enabled":
             return None
