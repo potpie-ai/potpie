@@ -8,7 +8,7 @@ from app.celery.celery_app import celery_app
 from app.core.database import SessionLocal
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
-from app.core.dependencies import get_analytics_service
+from app.core.dependencies import init_analytics_service
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ def process_parsing(
 ) -> None:
     logger.info(f"Task received: Starting parsing process for project {project_id}")
     try:
-        analytics_service = get_analytics_service()
+        analytics_service = init_analytics_service()
         parsing_service = ParsingService(self.db, user_id, analytics_service)
 
         async def run_parsing():
