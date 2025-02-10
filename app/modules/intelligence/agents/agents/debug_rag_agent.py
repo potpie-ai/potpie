@@ -3,7 +3,6 @@ import os
 from contextlib import redirect_stdout
 from typing import Any, AsyncGenerator, Dict, List
 
-import agentops
 import aiofiles
 from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
@@ -36,6 +35,7 @@ from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_n
 from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool import (
     get_nodes_from_tags_tool,
 )
+from app.core.dependencies import AiObservabilityService
 
 
 class NodeResponse(BaseModel):
@@ -52,7 +52,14 @@ class RAGResponse(BaseModel):
 
 
 class DebugRAGAgent:
-    def __init__(self, sql_db, llm, mini_llm, user_id):
+    def __init__(
+        self,
+        sql_db,
+        llm,
+        mini_llm,
+        user_id,
+        ai_observability_service: AiObservabilityService,
+    ):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.max_iter = os.getenv("MAX_ITER", 5)
         self.sql_db = sql_db
@@ -74,6 +81,7 @@ class DebugRAGAgent:
         self.llm = llm
         self.mini_llm = mini_llm
         self.user_id = user_id
+        self.ai_observability_service = ai_observability_service
 
     async def create_agents(self):
         query_agent = Agent(
@@ -231,9 +239,7 @@ class DebugRAGAgent:
         node_ids: List[NodeContext],
         file_structure: str,
     ) -> AsyncGenerator[str, None]:
-        agentops.init(
-            os.getenv("AGENTOPS_API_KEY"), default_tags=["openai-gpt-notebook"]
-        )
+        self.ai_observability_service.start_session()
         code_results = []
         if len(node_ids) > 0:
             code_results = await GetCodeFromMultipleNodeIdsTool(
@@ -263,7 +269,7 @@ class DebugRAGAgent:
                     )
                     await crew.kickoff_async()
 
-        agentops.end_session("Success")
+        self.ai_observability_service.end_session("Success")
 
         asyncio.create_task(kickoff())
 

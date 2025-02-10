@@ -28,17 +28,25 @@ from app.modules.intelligence.provider.provider_service import (
     AgentType,
     ProviderService,
 )
+from app.core.dependencies import AiObservabilityService
 
 logger = logging.getLogger(__name__)
 
 
 class AgentInjectorService:
-    def __init__(self, db: Session, provider_service: ProviderService, user_id: str):
+    def __init__(
+        self,
+        db: Session,
+        provider_service: ProviderService,
+        user_id: str,
+        ai_observability_service: AiObservabilityService,
+    ):
         self.sql_db = db
         self.provider_service = provider_service
         self.custom_agent_service = CustomAgentsService()
         self.agents = self._initialize_agents()
         self.user_id = user_id
+        self.ai_observability_service = ai_observability_service
 
     def _initialize_agents(self) -> Dict[str, Any]:
         mini_llm = self.provider_service.get_small_llm(agent_type=AgentType.LANGCHAIN)
@@ -55,7 +63,9 @@ class AgentInjectorService:
             "code_changes_agent": CodeChangesChatAgent(
                 mini_llm, reasoning_llm, self.sql_db
             ),
-            "LLD_agent": LLDChatAgent(mini_llm, reasoning_llm, self.sql_db),
+            "LLD_agent": LLDChatAgent(
+                mini_llm, reasoning_llm, self.sql_db, self.ai_observability_service
+            ),
             "code_generation_agent": CodeGenerationChatAgent(
                 mini_llm, reasoning_llm, self.sql_db
             ),

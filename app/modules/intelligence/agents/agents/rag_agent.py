@@ -36,6 +36,7 @@ from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_n
 from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool import (
     get_nodes_from_tags_tool,
 )
+from app.core.dependencies import AiObservabilityService
 
 
 class NodeResponse(BaseModel):
@@ -52,7 +53,14 @@ class RAGResponse(BaseModel):
 
 
 class RAGAgent:
-    def __init__(self, sql_db, llm, mini_llm, user_id):
+    def __init__(
+        self,
+        sql_db,
+        llm,
+        mini_llm,
+        user_id,
+        ai_observability_service: AiObservabilityService,
+    ):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.max_iter = os.getenv("MAX_ITER", 5)
         self.sql_db = sql_db
@@ -74,6 +82,7 @@ class RAGAgent:
         self.llm = llm
         self.mini_llm = mini_llm
         self.user_id = user_id
+        self.ai_observability_service = ai_observability_service
 
     async def create_agents(self):
         query_agent = Agent(
@@ -232,7 +241,7 @@ class RAGAgent:
         node_ids: List[NodeContext],
         file_structure: str,
     ) -> str:
-        agentops.init(os.getenv("AGENTOPS_API_KEY"))
+        self.ai_observability_service.start_session()
         code_results = []
         if node_ids:  # Check if node_ids is not None and not empty
             code_results = await GetCodeFromMultipleNodeIdsTool(
@@ -257,7 +266,7 @@ class RAGAgent:
         )
 
         result = await crew.kickoff_async()
-        agentops.end_session("Success")
+        self.ai_observability_service.end_session()
         return result
 
 

@@ -1,5 +1,4 @@
 import logging
-import os
 
 from posthog import Posthog
 from abc import ABC, abstractmethod

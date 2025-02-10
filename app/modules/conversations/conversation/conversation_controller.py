@@ -21,7 +21,7 @@ from app.modules.conversations.message.message_schema import (
     MessageResponse,
     NodeContext,
 )
-from app.core.dependencies import AnalyticsService
+from app.core.dependencies import AnalyticsService, AiObservabilityService
 
 
 class ConversationController:
@@ -31,10 +31,11 @@ class ConversationController:
         user_id: str,
         user_email: str,
         analytics_service: AnalyticsService,
+        ai_observability_service: AiObservabilityService,
     ):
         self.user_email = user_email
         self.service = ConversationService.create(
-            db, user_id, user_email, analytics_service
+            db, user_id, user_email, analytics_service, ai_observability_service
         )
         self.user_id = user_id
         self.analytics_service = analytics_service

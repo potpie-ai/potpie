@@ -45,7 +45,7 @@ from app.modules.intelligence.provider.provider_service import (
 )
 from app.modules.projects.projects_service import ProjectService
 from app.modules.users.user_service import UserService
-from app.core.dependencies import AnalyticsService
+from app.core.dependencies import AnalyticsService, AiObservabilityService
 
 logger = logging.getLogger(__name__)
 
@@ -71,14 +71,18 @@ class AccessTypeReadError(ConversationServiceError):
 
 
 class SimplifiedAgentSupervisor:
-    def __init__(self, db, provider_service):
+    def __init__(
+        self, db, provider_service, ai_observability_service: AiObservabilityService
+    ):
         self.db = db
         self.provider_service = provider_service
         self.agent = None
         self.current_agent_id = None
         self.classifier = None
         self.agents_service = AgentsService(db)
-        self.agent_factory = AgentFactory(db, provider_service)
+        self.agent_factory = AgentFactory(
+            db, provider_service, ai_observability_service
+        )
         self.available_agents = []
 
     async def initialize(self, user_id: str):
@@ -279,6 +283,7 @@ class ConversationService:
         agent_injector_service: AgentInjectorService,
         custom_agent_service: CustomAgentsService,
         analytics_service: AnalyticsService,
+        ai_observability_service: AiObservabilityService,
     ):
         self.sql_db = db
         self.user_id = user_id
@@ -289,6 +294,7 @@ class ConversationService:
         self.agent_injector_service = agent_injector_service
         self.custom_agent_service = custom_agent_service
         self.analytics_service = analytics_service
+        self.ai_observability_service = ai_observability_service
 
     @classmethod
     def create(
@@ -297,11 +303,14 @@ class ConversationService:
         user_id: str,
         user_email: str,
         analytics_service: AnalyticsService,
+        ai_observability_service: AiObservabilityService,
     ):
         project_service = ProjectService(db)
         history_manager = ChatHistoryService(db)
         provider_service = ProviderService(db, user_id)
-        agent_injector_service = AgentInjectorService(db, provider_service, user_id)
+        agent_injector_service = AgentInjectorService(
+            db, provider_service, user_id, ai_observability_service
+        )
         custom_agent_service = CustomAgentsService()
         return cls(
             db,
@@ -313,6 +322,7 @@ class ConversationService:
             agent_injector_service,
             custom_agent_service,
             analytics_service,
+            ai_observability_service,
         )
 
     async def check_conversation_access(
@@ -700,7 +710,9 @@ class ConversationService:
 
         agent_id = conversation.agent_ids[0]
         project_id = conversation.project_ids[0] if conversation.project_ids else None
-        supervisor = SimplifiedAgentSupervisor(self.sql_db, self.provider_service)
+        supervisor = SimplifiedAgentSupervisor(
+            self.sql_db, self.provider_service, self.ai_observability_service
+        )
         await supervisor.initialize(user_id)
         try:
             agent = self.agent_injector_service.get_agent(agent_id)

@@ -24,13 +24,20 @@ from app.modules.intelligence.provider.provider_service import (
     AgentType,
     ProviderService,
 )
+from app.core.dependencies import AiObservabilityService
 
 
 class AgentFactory:
-    def __init__(self, db: Session, provider_service: ProviderService):
+    def __init__(
+        self,
+        db: Session,
+        provider_service: ProviderService,
+        ai_observability_service: AiObservabilityService,
+    ):
         self.db = db
         self.provider_service = provider_service
         self._agent_cache: Dict[str, Any] = {}
+        self.ai_observability_service = ai_observability_service
 
     def get_agent(self, agent_id: str, user_id: str) -> Any:
         """Get or create an agent instance"""

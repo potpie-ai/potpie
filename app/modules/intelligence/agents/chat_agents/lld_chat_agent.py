@@ -31,12 +31,19 @@ from app.modules.intelligence.prompts.classification_prompts import (
 )
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.core.dependencies import AiObservabilityService
 
 logger = logging.getLogger(__name__)
 
 
 class LLDChatAgent:
-    def __init__(self, mini_llm, llm, db: Session):
+    def __init__(
+        self,
+        mini_llm,
+        llm,
+        db: Session,
+        ai_observability_service: AiObservabilityService,
+    ):
         self.mini_llm = mini_llm
         self.llm = llm
         self.history_manager = ChatHistoryService(db)
@@ -44,6 +51,7 @@ class LLDChatAgent:
         self.agents_service = AgentsService(db)
         self.chain = None
         self.db = db
+        self.ai_observability_service = ai_observability_service
 
     @lru_cache(maxsize=2)
     async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
