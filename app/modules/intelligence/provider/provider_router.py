@@ -8,6 +8,7 @@ from app.modules.auth.auth_service import AuthService
 
 from .provider_controller import ProviderController
 from .provider_schema import GetProviderResponse, ProviderInfo, SetProviderRequest
+from app.core.dependencies import get_analytics_service, AnalyticsService
 
 router = APIRouter()
 
@@ -28,13 +29,16 @@ class ProviderAPI:
     async def set_global_ai_provider(
         provider_request: SetProviderRequest,
         db: Session = Depends(get_db),
+        analytics_service: AnalyticsService = Depends(get_analytics_service),
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
         controller = ProviderController(db, user_id)
-        return await controller.set_global_ai_provider(
-            user["user_id"], provider_request
+        res = await controller.set_global_ai_provider(user["user_id"], provider_request)
+        analytics_service.capture_event(
+            user_id, "provider_change_event", {"provider": res["provider"]}
         )
+        return res
 
     @staticmethod
     @router.get("/get-global-ai-provider/")

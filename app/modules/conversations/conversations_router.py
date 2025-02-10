@@ -26,6 +26,7 @@ from .conversation.conversation_schema import (
     RenameConversationRequest,
 )
 from .message.message_schema import MessageRequest, MessageResponse, RegenerateRequest
+from app.core.dependencies import AnalyticsService, get_analytics_service
 
 router = APIRouter()
 
@@ -36,11 +37,12 @@ class ConversationAPI:
     async def create_conversation(
         conversation: CreateConversationRequest,
         db: Session = Depends(get_db),
+        analytics_service: AnalyticsService = Depends(get_analytics_service),
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
         user_email = user["email"]
-        controller = ConversationController(db, user_id, user_email)
+        controller = ConversationController(db, user_id, user_email, analytics_service)
         return await controller.create_conversation(conversation)
 
     @staticmethod
@@ -51,11 +53,12 @@ class ConversationAPI:
     async def get_conversation_info(
         conversation_id: str,
         db: Session = Depends(get_db),
+        analytics_service: AnalyticsService = Depends(get_analytics_service),
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
         user_email = user["email"]
-        controller = ConversationController(db, user_id, user_email)
+        controller = ConversationController(db, user_id, user_email, analytics_service)
         return await controller.get_conversation_info(conversation_id)
 
     @staticmethod
@@ -68,11 +71,12 @@ class ConversationAPI:
         start: int = Query(0, ge=0),
         limit: int = Query(10, ge=1),
         db: Session = Depends(get_db),
+        analytics_service: AnalyticsService = Depends(get_analytics_service),
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
         user_email = user["email"]
-        controller = ConversationController(db, user_id, user_email)
+        controller = ConversationController(db, user_id, user_email, analytics_service)
         return await controller.get_conversation_messages(conversation_id, start, limit)
 
     @staticmethod
@@ -81,6 +85,7 @@ class ConversationAPI:
         conversation_id: str,
         message: MessageRequest,
         stream: bool = Query(True, description="Whether to stream the response"),
+        analytics_service: AnalyticsService = Depends(get_analytics_service),
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
@@ -95,7 +100,7 @@ class ConversationAPI:
 
         user_id = user["user_id"]
         user_email = user["email"]
-        controller = ConversationController(db, user_id, user_email)
+        controller = ConversationController(db, user_id, user_email, analytics_service)
         message_stream = controller.post_message(conversation_id, message, stream)
         if stream:
             return StreamingResponse(message_stream, media_type="text/event-stream")
@@ -115,11 +120,12 @@ class ConversationAPI:
         request: RegenerateRequest,
         stream: bool = Query(True, description="Whether to stream the response"),
         db: Session = Depends(get_db),
+        analytics_service: AnalyticsService = Depends(get_analytics_service),
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
         user_email = user["email"]
-        controller = ConversationController(db, user_id, user_email)
+        controller = ConversationController(db, user_id, user_email, analytics_service)
         message_stream = controller.regenerate_last_message(
             conversation_id, request.node_ids, stream
         )
@@ -137,11 +143,12 @@ class ConversationAPI:
     async def delete_conversation(
         conversation_id: str,
         db: Session = Depends(get_db),
+        analytics_service: AnalyticsService = Depends(get_analytics_service),
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
         user_email = user["email"]
-        controller = ConversationController(db, user_id, user_email)
+        controller = ConversationController(db, user_id, user_email, analytics_service)
         return await controller.delete_conversation(conversation_id)
 
     @staticmethod
@@ -149,11 +156,12 @@ class ConversationAPI:
     async def stop_generation(
         conversation_id: str,
         db: Session = Depends(get_db),
+        analytics_service: AnalyticsService = Depends(get_analytics_service),
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
         user_email = user["email"]
-        controller = ConversationController(db, user_id, user_email)
+        controller = ConversationController(db, user_id, user_email, analytics_service)
         return await controller.stop_generation(conversation_id)
 
     @staticmethod
@@ -162,11 +170,12 @@ class ConversationAPI:
         conversation_id: str,
         request: RenameConversationRequest,
         db: Session = Depends(get_db),
+        analytics_service: AnalyticsService = Depends(get_analytics_service),
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
         user_email = user["email"]
-        controller = ConversationController(db, user_id, user_email)
+        controller = ConversationController(db, user_id, user_email, analytics_service)
         return await controller.rename_conversation(conversation_id, request.title)
 
 

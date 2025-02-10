@@ -20,6 +20,7 @@ from app.modules.conversations.message.message_schema import MessageRequest
 from app.modules.parsing.graph_construction.parsing_controller import ParsingController
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.utils.APIRouter import APIRouter
+from app.core.dependencies import get_analytics_service, AnalyticsService
 
 router = APIRouter()
 
@@ -55,6 +56,7 @@ async def get_api_key_user(
 async def create_conversation(
     conversation: SimpleConversationRequest,
     db: Session = Depends(get_db),
+    analytics_service: AnalyticsService = Depends(get_analytics_service),
     user=Depends(get_api_key_user),
 ):
     user_id = user["user_id"]
@@ -67,7 +69,7 @@ async def create_conversation(
         agent_ids=conversation.agent_ids,
     )
 
-    controller = ConversationController(db, user_id, None)
+    controller = ConversationController(db, user_id, None, analytics_service)
     return await controller.create_conversation(full_request)
 
 
@@ -75,9 +77,12 @@ async def create_conversation(
 async def parse_directory(
     repo_details: ParsingRequest,
     db: Session = Depends(get_db),
+    analytics_service: AnalyticsService = Depends(get_analytics_service),
     user=Depends(get_api_key_user),
 ):
-    return await ParsingController.parse_directory(repo_details, db, user)
+    return await ParsingController.parse_directory(
+        repo_details, db, user, analytics_service
+    )
 
 
 @router.get("/parsing-status/{project_id}")
@@ -94,6 +99,7 @@ async def post_message(
     conversation_id: str,
     message: MessageRequest,
     db: Session = Depends(get_db),
+    analytics_service: AnalyticsService = Depends(get_analytics_service),
     user=Depends(get_api_key_user),
 ):
     if message.content == "" or message.content is None or message.content.isspace():
@@ -101,6 +107,6 @@ async def post_message(
 
     user_id = user["user_id"]
     # Note: email is no longer available with API key auth
-    controller = ConversationController(db, user_id, None)
+    controller = ConversationController(db, user_id, None, analytics_service)
     message_stream = controller.post_message(conversation_id, message, stream=False)
     return StreamingResponse(message_stream, media_type="text/event-stream")

@@ -45,7 +45,7 @@ from app.modules.intelligence.provider.provider_service import (
 )
 from app.modules.projects.projects_service import ProjectService
 from app.modules.users.user_service import UserService
-from app.modules.utils.posthog_helper import PostHogClient
+from app.core.dependencies import AnalyticsService
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ class SimplifiedAgentSupervisor:
         self.db = db
         self.provider_service = provider_service
         self.agent = None
-        self.current_agent_id = None  
+        self.current_agent_id = None
         self.classifier = None
         self.agents_service = AgentsService(db)
         self.agent_factory = AgentFactory(db, provider_service)
@@ -148,17 +148,24 @@ class SimplifiedAgentSupervisor:
             return Command(update={"response": "No query provided"}, goto=END)
 
         agent_list = {agent.id: agent.status for agent in self.available_agents}
-        
+
         # First check - if this is a custom agent (non-SYSTEM), route directly
-        if state["agent_id"] in agent_list and agent_list[state["agent_id"]] != "SYSTEM":
+        if (
+            state["agent_id"] in agent_list
+            and agent_list[state["agent_id"]] != "SYSTEM"
+        ):
             # Initialize the agent if needed
             if not self.agent or self.current_agent_id != state["agent_id"]:
                 try:
-                    self.agent = self.agent_factory.get_agent(state["agent_id"], state["user_id"])
+                    self.agent = self.agent_factory.get_agent(
+                        state["agent_id"], state["user_id"]
+                    )
                     self.current_agent_id = state["agent_id"]
                 except Exception as e:
                     logger.error(f"Failed to create agent {state['agent_id']}: {e}")
-                    return Command(update={"response": "Failed to initialize agent"}, goto=END)
+                    return Command(
+                        update={"response": "Failed to initialize agent"}, goto=END
+                    )
             return Command(update={"agent_id": state["agent_id"]}, goto="agent_node")
 
         # For system agents, perform classification
@@ -167,13 +174,17 @@ class SimplifiedAgentSupervisor:
             agent_id=state["agent_id"],
             agent_descriptions=self.agent_descriptions,
         )
-        
+
         response = await self.llm.ainvoke(prompt)
         response = response.content.strip("`")
         try:
             agent_id, confidence = response.split("|")
             confidence = float(confidence)
-            selected_agent_id = agent_id if confidence >= 0.5 and agent_id in agent_list else state["agent_id"]
+            selected_agent_id = (
+                agent_id
+                if confidence >= 0.5 and agent_id in agent_list
+                else state["agent_id"]
+            )
         except (ValueError, TypeError):
             logger.error("Classification format error, falling back to current agent")
             selected_agent_id = state["agent_id"]
@@ -181,11 +192,15 @@ class SimplifiedAgentSupervisor:
         # Initialize the selected system agent
         if not self.agent or self.current_agent_id != selected_agent_id:
             try:
-                self.agent = self.agent_factory.get_agent(selected_agent_id, state["user_id"])
+                self.agent = self.agent_factory.get_agent(
+                    selected_agent_id, state["user_id"]
+                )
                 self.current_agent_id = selected_agent_id
             except Exception as e:
                 logger.error(f"Failed to create agent {selected_agent_id}: {e}")
-                return Command(update={"response": "Failed to initialize agent"}, goto=END)
+                return Command(
+                    update={"response": "Failed to initialize agent"}, goto=END
+                )
 
         logger.info(
             f"Streaming AI response for conversation {state['conversation_id']} "
@@ -198,7 +213,7 @@ class SimplifiedAgentSupervisor:
         if not self.agent:
             logger.error("Agent not initialized before agent_node execution")
             return Command(update={"response": "Agent not initialized"}, goto=END)
-            
+
         try:
             async for chunk in self.agent.run(
                 query=state["query"],
@@ -263,6 +278,7 @@ class ConversationService:
         provider_service: ProviderService,
         agent_injector_service: AgentInjectorService,
         custom_agent_service: CustomAgentsService,
+        analytics_service: AnalyticsService,
     ):
         self.sql_db = db
         self.user_id = user_id
@@ -272,9 +288,16 @@ class ConversationService:
         self.provider_service = provider_service
         self.agent_injector_service = agent_injector_service
         self.custom_agent_service = custom_agent_service
+        self.analytics_service = analytics_service
 
     @classmethod
-    def create(cls, db: Session, user_id: str, user_email: str):
+    def create(
+        cls,
+        db: Session,
+        user_id: str,
+        user_email: str,
+        analytics_service: AnalyticsService,
+    ):
         project_service = ProjectService(db)
         history_manager = ChatHistoryService(db)
         provider_service = ProviderService(db, user_id)
@@ -289,6 +312,7 @@ class ConversationService:
             provider_service,
             agent_injector_service,
             custom_agent_service,
+            analytics_service,
         )
 
     async def check_conversation_access(
@@ -395,7 +419,7 @@ class ConversationService:
             f"Project id : {conversation.project_ids[0]} Created new conversation with ID: {conversation_id}, title: {title}, user_id: {user_id}, agent_id: {conversation.agent_ids[0]}"
         )
         provider_name = self.provider_service.get_llm_provider_name()
-        PostHogClient().send_event(
+        self.analytics_service.capture_event(
             user_id,
             "create Conversation Event",
             {
@@ -452,7 +476,7 @@ class ConversationService:
             logger.info(f"Stored message in conversation {conversation_id}")
             provider_name = self.provider_service.get_llm_provider_name()
 
-            PostHogClient().send_event(
+            self.analytics_service.capture_event(
                 user_id,
                 "message post event",
                 {"conversation_id": conversation_id, "llm": provider_name},
@@ -583,7 +607,7 @@ class ConversationService:
             await self._archive_subsequent_messages(
                 conversation_id, last_human_message.created_at
             )
-            PostHogClient().send_event(
+            self.analytics_service.capture_event(
                 user_id,
                 "regenerate_conversation_event",
                 {"conversation_id": conversation_id},
@@ -740,7 +764,7 @@ class ConversationService:
             # If we get here, commit the transaction
             self.sql_db.commit()
 
-            PostHogClient().send_event(
+            self.analytics_service.capture_event(
                 user_id,
                 "delete_conversation_event",
                 {"conversation_id": conversation_id},

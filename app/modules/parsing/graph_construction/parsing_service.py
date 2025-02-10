@@ -25,7 +25,7 @@ from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
 from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.parse_webhook_helper import ParseWebhookHelper
-from app.modules.utils.posthog_helper import PostHogClient
+from app.core.dependencies import AnalyticsService
 
 from .parsing_schema import ParsingRequest
 
@@ -33,13 +33,14 @@ logger = logging.getLogger(__name__)
 
 
 class ParsingService:
-    def __init__(self, db: Session, user_id: str):
+    def __init__(self, db: Session, user_id: str, analytics_service: AnalyticsService):
         self.db = db
         self.parse_helper = ParseHelper(db)
         self.project_service = ProjectService(db)
         self.inference_service = InferenceService(db, user_id)
         self.search_service = SearchService(db)
         self.github_service = CodeProviderService(db)
+        self.analytics_service = analytics_service
 
     @contextmanager
     def change_dir(self, path):
@@ -185,7 +186,7 @@ class ParsingService:
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.PARSED
                 )
-                PostHogClient().send_event(
+                self.analytics_service.capture_event(
                     user_id,
                     "project_status_event",
                     {"project_id": project_id, "status": "Parsed"},
@@ -201,7 +202,7 @@ class ParsingService:
                 create_task(
                     EmailHelper().send_email(user_email, repo_name, branch_name)
                 )
-                PostHogClient().send_event(
+                self.analytics_service.capture_event(
                     user_id,
                     "project_status_event",
                     {"project_id": project_id, "status": "Ready"},
@@ -213,7 +214,7 @@ class ParsingService:
                     project_id, ProjectStatusEnum.ERROR
                 )
                 await ParseWebhookHelper().send_slack_notification(project_id, str(e))
-                PostHogClient().send_event(
+                self.analytics_service.capture_event(
                     user_id,
                     "project_status_event",
                     {"project_id": project_id, "status": "Error"},

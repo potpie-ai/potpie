@@ -31,10 +31,19 @@ from app.modules.usage.usage_router import router as usage_router
 from app.modules.users.user_router import router as user_router
 from app.modules.users.user_service import UserService
 from app.modules.utils.firebase_setup import FirebaseSetup
+from contextlib import asynccontextmanager
+from app.core.dependencies import init_state, init_analytics_service
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state = init_state(app.state)
+    yield
+    # service closing logic goes here
 
 
 class MainApp:
@@ -49,7 +58,7 @@ class MainApp:
             )
             exit(1)
         self.setup_sentry()
-        self.app = FastAPI()
+        self.app = FastAPI(lifespan=lifespan)
         self.setup_cors()
         self.initialize_database()
         self.check_and_set_env_vars()

@@ -11,7 +11,6 @@ from portkey_ai import PORTKEY_GATEWAY_URL, createHeaders
 
 from app.modules.key_management.secret_manager import SecretManager
 from app.modules.users.user_preferences_model import UserPreferences
-from app.modules.utils.posthog_helper import PostHogClient
 
 from .provider_schema import ProviderInfo
 
@@ -77,12 +76,8 @@ class ProviderService:
                 {"preferences": preferences.preferences}
             )
 
-        PostHogClient().send_event(
-            user_id, "provider_change_event", {"provider": provider}
-        )
-
         self.db.commit()
-        return {"message": f"AI provider set to {provider}"}
+        return {"message": f"AI provider set to {provider}", "provider": provider}
 
     # Model configurations for different providers and sizes
     MODEL_CONFIGS = {

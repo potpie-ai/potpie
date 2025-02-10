@@ -20,7 +20,7 @@ from app.modules.parsing.graph_construction.parsing_validator import (
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.utils.email_helper import EmailHelper
-from app.modules.utils.posthog_helper import PostHogClient
+from app.core.dependencies import AnalyticsService
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,10 @@ class ParsingController:
     @staticmethod
     @validate_parsing_input
     async def parse_directory(
-        repo_details: ParsingRequest, db: AsyncSession, user: Dict[str, Any]
+        repo_details: ParsingRequest,
+        db: AsyncSession,
+        user: Dict[str, Any],
+        analytics_service: AnalyticsService,
     ):
         if "email" not in user:
             user_email = None
@@ -41,7 +44,7 @@ class ParsingController:
         user_id = user["user_id"]
         project_manager = ProjectService(db)
         parse_helper = ParseHelper(db)
-        parsing_service = ParsingService(db, user_id)
+        parsing_service = ParsingService(db, user_id, analytics_service)
         repo_name = repo_details.repo_name or repo_details.repo_path.split("/")[-1]
         if not repo_details.repo_name:
             repo_details.repo_name = repo_name
@@ -61,6 +64,7 @@ class ParsingController:
                     new_project_id,
                     project_manager,
                     db,
+                    analytics_service,
                 )
 
         demo_repos = [
@@ -137,6 +141,7 @@ class ParsingController:
                         new_project_id,
                         project_manager,
                         db,
+                        analytics_service,
                     )
 
             # Handle existing projects (including previously duplicated demo projects)
@@ -160,7 +165,7 @@ class ParsingController:
                     await project_manager.update_project_status(
                         project_id, ProjectStatusEnum.SUBMITTED
                     )
-                    PostHogClient().send_event(
+                    analytics_service.capture_event(
                         user_id,
                         "parsed_repo_event",
                         {
@@ -185,6 +190,7 @@ class ParsingController:
                     new_project_id,
                     project_manager,
                     db,
+                    analytics_service,
                 )
 
         except Exception as e:
@@ -199,6 +205,7 @@ class ParsingController:
         new_project_id: str,
         project_manager: ProjectService,
         db: AsyncSession,
+        analytics_service: AnalyticsService,
     ):
         response = {
             "project_id": new_project_id,
@@ -227,9 +234,9 @@ class ParsingController:
             new_project_id,
             False,
         )
-        PostHogClient().send_event(
+        analytics_service.capture_event(
             user_id,
-            "repo_parsed_event",
+            "parsed_repo_event",
             {
                 "repo_name": repo_details.repo_name,
                 "branch": repo_details.branch_name,
