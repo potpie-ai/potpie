@@ -15,7 +15,7 @@ from app.modules.key_management.secrets_schema import (
 )
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.APIRouter import APIRouter
-from app.modules.utils.posthog_helper import PostHogClient
+from app.core.dependencies import get_analytics_service, AnalyticsService
 
 router = APIRouter()
 
@@ -63,6 +63,7 @@ class SecretManager:
     def create_secret(
         request: CreateSecretRequest,
         user=Depends(AuthService.check_auth),
+        analytics_service: AnalyticsService = Depends(get_analytics_service),
         db: Session = Depends(get_db),
     ):
         if os.getenv("isDevelopmentMode") == "enabled":
@@ -95,7 +96,7 @@ class SecretManager:
         client.add_secret_version(
             request={"parent": response.name, "payload": version["payload"]}
         )
-        PostHogClient().send_event(
+        analytics_service.capture_event(
             customer_id,
             "secret_creation_event",
             {"provider": request.provider, "key_added": "true"},
@@ -185,6 +186,7 @@ class SecretManager:
     def delete_secret(
         provider: Literal["openai", "anthropic", "deepseek", "all"],
         user=Depends(AuthService.check_auth),
+        analytics_service: AnalyticsService = Depends(get_analytics_service),
         db: Session = Depends(get_db),
     ):
         if os.getenv("isDevelopmentMode") == "enabled":
@@ -204,7 +206,7 @@ class SecretManager:
                     name = f"projects/{project_id}/secrets/{secret}"
                     client.delete_secret(request={"name": name})
                     deletion_results.append(f"Successfully deleted {provider} secret")
-                    PostHogClient().send_event(
+                    analytics_service.capture_event(
                         customer_id,
                         "secret_deletion_event",
                         {"provider": provider, "key_removed": "true"},
@@ -244,7 +246,7 @@ class SecretManager:
             if user_pref and "provider" in user_pref.preferences:
                 del user_pref.preferences["provider"]
                 db.commit()
-            PostHogClient().send_event(
+            analytics_service.capture_event(
                 customer_id,
                 "secret_deletion_event",
                 {"provider": provider, "key_removed": "true"},
@@ -256,17 +258,18 @@ class SecretManager:
     @router.post("/api-keys", response_model=APIKeyResponse)
     async def create_api_key(
         user=Depends(AuthService.check_auth),
+        analytics_service: AnalyticsService = Depends(get_analytics_service),
         db: Session = Depends(get_db),
     ):
         """Create a new API key for the authenticated user."""
         try:
             api_key = await APIKeyService.create_api_key(user["user_id"], db)
-            PostHogClient().send_event(
+            analytics_service.capture_event(
                 user["user_id"], "api_key_creation", {"success": True}
             )
             return {"api_key": api_key}
         except Exception as e:
-            PostHogClient().send_event(
+            analytics_service.capture_event(
                 user["user_id"], "api_key_creation", {"success": False, "error": str(e)}
             )
             raise HTTPException(
@@ -276,6 +279,7 @@ class SecretManager:
     @router.delete("/api-keys")
     async def revoke_api_key(
         user=Depends(AuthService.check_auth),
+        analytics_service: AnalyticsService = Depends(get_analytics_service),
         db: Session = Depends(get_db),
     ):
         """Revoke the current user's API key."""
@@ -285,7 +289,7 @@ class SecretManager:
                 status_code=404, detail="No API key found for this user"
             )
 
-        PostHogClient().send_event(
+        analytics_service.capture_event(
             user["user_id"], "api_key_revocation", {"success": True}
         )
         return {"message": "API key revoked successfully"}

@@ -14,7 +14,7 @@ from app.modules.auth.auth_service import auth_handler
 from app.modules.users.user_schema import CreateUser
 from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
-from app.modules.utils.posthog_helper import PostHogClient
+from app.core.dependencies import get_analytics_service, AnalyticsService
 
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", None)
 
@@ -41,7 +41,11 @@ class AuthAPI:
             return JSONResponse(content={"error": f"ERROR: {str(e)}"}, status_code=400)
 
     @auth_router.post("/signup")
-    async def signup(request: Request, db: Session = Depends(get_db)):
+    async def signup(
+        request: Request,
+        db: Session = Depends(get_db),
+        analytics_service: AnalyticsService = Depends(get_analytics_service),
+    ):
         body = json.loads(await request.body())
         uid = body["uid"]
         oauth_token = body["accessToken"]
@@ -73,8 +77,8 @@ class AuthAPI:
                 f"New signup: {body['email']} ({body['displayName']})"
             )
 
-            PostHogClient().send_event(
-                uid,
+            analytics_service.capture_event(
+                f"{uid}",
                 "signup_event",
                 {
                     "email": body["email"],

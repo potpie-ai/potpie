@@ -21,13 +21,23 @@ from app.modules.conversations.message.message_schema import (
     MessageResponse,
     NodeContext,
 )
+from app.core.dependencies import AnalyticsService
 
 
 class ConversationController:
-    def __init__(self, db: Session, user_id: str, user_email: str):
+    def __init__(
+        self,
+        db: Session,
+        user_id: str,
+        user_email: str,
+        analytics_service: AnalyticsService,
+    ):
         self.user_email = user_email
-        self.service = ConversationService.create(db, user_id, user_email)
+        self.service = ConversationService.create(
+            db, user_id, user_email, analytics_service
+        )
         self.user_id = user_id
+        self.analytics_service = analytics_service
 
     async def create_conversation(
         self, conversation: CreateConversationRequest

@@ -6,6 +6,8 @@ from app.modules.auth.auth_service import AuthService
 from app.modules.parsing.graph_construction.parsing_controller import ParsingController
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.utils.APIRouter import APIRouter
+from app.core.dependencies import get_analytics_service, AnalyticsService
+
 
 router = APIRouter()
 
@@ -14,6 +16,7 @@ router = APIRouter()
 async def parse_directory(
     repo_details: ParsingRequest,
     db: Session = Depends(get_db),
+    analytics_service: AnalyticsService = Depends(get_analytics_service),
     user=Depends(AuthService.check_auth),
 ):
     return await ParsingController.parse_directory(repo_details, db, user)
