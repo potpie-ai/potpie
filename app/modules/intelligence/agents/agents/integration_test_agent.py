@@ -154,8 +154,7 @@ class IntegrationTestAgent:
             tools=[
                 self.get_code_from_probable_node_name,
                 self.get_code_from_multiple_node_ids,
-                self.webpage_extractor_tool,
-            ],
+            ]+ ([self.webpage_extractor_tool] if os.getenv("FIRECRAWL_API_KEY") else []),
             async_execution=True,
         )
 

@@ -65,3 +65,4 @@ newrelic==9.0.0
 tiktoken==0.7.0
 agentops==0.3.26
 pydantic[email]==2.10.3
+firecrawl-py==1.11.1
