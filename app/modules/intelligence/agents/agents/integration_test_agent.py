@@ -19,6 +19,9 @@ from app.modules.intelligence.tools.kg_based_tools.get_code_from_multiple_node_i
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_name_tool import (
     get_code_from_probable_node_name_tool,
 )
+from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import (
+    webpage_extractor_tool
+)
 
 
 class IntegrationTestAgent:
@@ -32,6 +35,8 @@ class IntegrationTestAgent:
         self.get_code_from_probable_node_name = get_code_from_probable_node_name_tool(
             sql_db, user_id
         )
+        if os.getenv("FIRECRAWL_API_KEY"):
+            self.webpage_extractor_tool = webpage_extractor_tool(sql_db, user_id)
         self.llm = llm
         self.max_iterations = os.getenv("MAX_ITER", 15)
 
@@ -149,6 +154,7 @@ class IntegrationTestAgent:
             tools=[
                 self.get_code_from_probable_node_name,
                 self.get_code_from_multiple_node_ids,
+                self.webpage_extractor_tool,
             ],
             async_execution=True,
         )

@@ -30,6 +30,9 @@ from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_n
 from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool import (
     get_nodes_from_tags_tool,
 )
+from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import (
+    webpage_extractor_tool
+)
 
 
 class CodeGenerationAgent:
@@ -49,6 +52,8 @@ class CodeGenerationAgent:
         )
         self.get_nodes_from_tags = get_nodes_from_tags_tool(sql_db, user_id)
         self.get_file_structure = get_code_file_structure_tool(sql_db)
+        if os.getenv("FIRECRAWL_API_KEY"):
+            self.webpage_extractor_tool = webpage_extractor_tool(sql_db, user_id)
         self.llm = llm
         self.mini_llm = mini_llm
         self.user_id = user_id
@@ -80,6 +85,7 @@ class CodeGenerationAgent:
                 self.query_knowledge_graph,
                 self.get_nodes_from_tags,
                 self.get_file_structure,
+                self.webpage_extractor_tool,
             ],
             allow_delegation=False,
             verbose=True,
