@@ -59,7 +59,7 @@ def configure_celery(queue_prefix: str):
         worker_max_memory_per_child=2000000,  # Restart worker if using more than 2GB
         task_default_rate_limit='10/m',  # Limit tasks to 10 per minute per worker
         task_reject_on_worker_lost=True,  # Requeue tasks if worker dies
-        broker_transport_options={'visibility_timeout': 2700},  # 45 minutes visibility timeout
+        broker_transport_options={'visibility_timeout': 5400},  # 45 minutes visibility timeout
     )
 
 
