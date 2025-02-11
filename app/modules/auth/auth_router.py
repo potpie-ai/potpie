@@ -52,7 +52,10 @@ class AuthAPI:
             if error:
                 return Response(content=message, status_code=400)
             else:
-                return Response(content=json.dumps({"uid": uid}), status_code=200)
+                return Response(
+                    content=json.dumps({"uid": uid, "exists": True}),
+                    status_code=200,
+                )
         else:
             first_login = datetime.utcnow()
             provider_info = body["providerData"][0]
@@ -84,4 +87,7 @@ class AuthAPI:
             )
             if error:
                 return Response(content=message, status_code=400)
-            return Response(content=json.dumps({"uid": uid}), status_code=201)
+            return Response(
+                content=json.dumps({"uid": uid, "exists": False}),
+                status_code=201,
+            )
