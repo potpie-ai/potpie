@@ -14,7 +14,7 @@ class ConfigProvider:
         }
         self.github_key = os.getenv("GITHUB_PRIVATE_KEY")
         self.ollama_endpoint = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
-        self.ollama_model = os.getenv("OLLAMA_MODEL", "deepseek-r1:8b")
+        self.ollama_model = os.getenv("OLLAMA_MODEL", "deepseek-r1:3b")
     def get_neo4j_config(self):
         return self.neo4j_config
 
