@@ -51,7 +51,9 @@ async def get_api_key_user(
     return user
 
 
-@router.post("/conversations/", response_model=CreateConversationResponse)
+@router.post(
+    "/conversations/", response_model=CreateConversationResponse, status_code=201
+)
 async def create_conversation(
     conversation: SimpleConversationRequest,
     db: Session = Depends(get_db),

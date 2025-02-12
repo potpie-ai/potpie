@@ -10,7 +10,7 @@ from app.modules.utils.APIRouter import APIRouter
 router = APIRouter()
 
 
-@router.post("/parse")
+@router.post("/parse", status_code=201)
 async def parse_directory(
     repo_details: ParsingRequest,
     db: Session = Depends(get_db),
