@@ -2,12 +2,13 @@ import os
 import asyncio
 import logging
 import requests
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from langchain_core.tools import StructuredTool, Tool
 from github import Github
 from github.Auth import AppAuth
+from github.GithubException import UnknownObjectException
 
 from app.core.config_provider import config_provider
 
@@ -101,62 +102,75 @@ class GithubTool:
             if issue_number is None:
                 # Fetch all issues/PRs
                 if is_pull_request:
-                    items = list(repo.get_pulls(state='all')[:10])  # Limit to 10 most recent
+                    items = list(repo.get_pulls(state="all")[:10])  # Limit to 10 most recent
                 else:
-                    items = list(repo.get_issues(state='all')[:10])  # Limit to 10 most recent
+                    items = list(repo.get_issues(state="all")[:10])  # Limit to 10 most recent
 
                 return {
                     "success": True,
-                    "content": [{
-                        "number": item.number,
-                        "title": item.title,
-                        "state": item.state,
-                        "created_at": item.created_at.isoformat(),
-                        "updated_at": item.updated_at.isoformat(),
-                        "body": item.body,
-                        "url": item.html_url,
-                    } for item in items],
+                    "content": [
+                        {
+                            "number": item.number,
+                            "title": item.title,
+                            "state": item.state,
+                            "created_at": item.created_at.isoformat(),
+                            "updated_at": item.updated_at.isoformat(),
+                            "body": item.body,
+                            "url": item.html_url,
+                        }
+                        for item in items
+                    ],
                     "metadata": {
                         "repo": repo_name,
                         "type": "pull_requests" if is_pull_request else "issues",
-                        "count": len(items)
-                    }
+                        "count": len(items),
+                    },
                 }
             else:
-                # Fetch specific issue/PR
-                if is_pull_request:
-                    item = repo.get_pull(issue_number)
-                    diff = item.get_files()
-                    changes = [{
-                        "filename": file.filename,
-                        "status": file.status,
-                        "additions": file.additions,
-                        "deletions": file.deletions,
-                        "changes": file.changes,
-                        "patch": file.patch if file.patch else None
-                    } for file in diff]
-                else:
-                    item = repo.get_issue(issue_number)
-                    changes = None
+                try:
+                    # Fetch specific issue/PR
+                    if is_pull_request:
+                        item = repo.get_pull(issue_number)
+                        diff = item.get_files()
+                        changes = [
+                            {
+                                "filename": file.filename,
+                                "status": file.status,
+                                "additions": file.additions,
+                                "deletions": file.deletions,
+                                "changes": file.changes,
+                                "patch": file.patch if file.patch else None,
+                            }
+                            for file in diff
+                        ]
+                    else:
+                        item = repo.get_issue(issue_number)
+                        changes = None
 
-                return {
-                    "success": True,
-                    "content": {
-                        "number": item.number,
-                        "title": item.title,
-                        "state": item.state,
-                        "created_at": item.created_at.isoformat(),
-                        "updated_at": item.updated_at.isoformat(),
-                        "body": item.body,
-                        "url": item.html_url,
-                        "changes": changes
-                    },
-                    "metadata": {
-                        "repo": repo_name,
-                        "type": "pull_request" if is_pull_request else "issue",
-                        "number": issue_number
+                    return {
+                        "success": True,
+                        "content": {
+                            "number": item.number,
+                            "title": item.title,
+                            "state": item.state,
+                            "created_at": item.created_at.isoformat(),
+                            "updated_at": item.updated_at.isoformat(),
+                            "body": item.body,
+                            "url": item.html_url,
+                            "changes": changes,
+                        },
+                        "metadata": {
+                            "repo": repo_name,
+                            "type": "pull_request" if is_pull_request else "issue",
+                            "number": issue_number,
+                        },
                     }
-                }
+                except UnknownObjectException:
+                    return {
+                        "success": False,
+                        "error": f"{'Pull request' if is_pull_request else 'Issue'} #{issue_number} not found in {repo_name}",
+                        "content": None,
+                    }
 
         except Exception as e:
             logging.error(f"Error fetching GitHub content: {str(e)}")
