@@ -51,7 +51,7 @@ class UnitTestAgent:
             allow_delegation=False,
             verbose=True,
             llm=self.llm,
-            max_iterations=self.max_iterations,
+            max_iter=self.max_iterations,
         )
 
         return unit_test_agent
