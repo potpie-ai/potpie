@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "potpie"
+version = "0.0.1"
+description = "Prompt-To-Agent : Create custom engineering agents for your codebase with the cli"
+readme = "README.md"
+authors = [
+  {name = "Deepesh Kalura", email = "deepeshkalurs@gmail.com"},
+]
+maintainers = [
+  {name = "Dhiren Mathur", email = "dhiru17398@gmail.com"}
+]
+requires-python = ">=3.8"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = ["potpie", "Artificial Intelligence", "AI Agent", "Custom Engineering Agents"]
+
+dependencies = [
+  "requests",
+  "click",
+  "tabulate",
+  "python-dotenv",
+  "aiohttp"
+]
+
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-aiohttp"
+]
+
+[project.scripts]
+potpie = "potpie.main:cli"
+
+[project.urls]
+Homepage = "https://potpie.ai/"
+Documentation = "https://docs.potpie.ai/introduction"
+Repository = "https://github.com/potpie-ai/potpie"
+Issues = "https://github.com/potpie-ai/potpie/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["potpie"]
