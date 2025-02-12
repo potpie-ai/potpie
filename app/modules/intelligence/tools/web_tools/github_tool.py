@@ -1,8 +1,9 @@
 import os
 import asyncio
 import logging
+import random
 import requests
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from langchain_core.tools import StructuredTool, Tool
@@ -43,10 +44,26 @@ class GithubTool:
 
         Returns dictionary containing the issue/PR content, metadata, and success status.
         """
+    
+    gh_token_list: List[str] = []
+
+    @classmethod
+    def initialize_tokens(cls):
+        token_string = os.getenv("GH_TOKEN_LIST", "")
+        cls.gh_token_list = [
+            token.strip() for token in token_string.split(",") if token.strip()
+        ]
+        if not cls.gh_token_list:
+            raise ValueError(
+                "GitHub token list is empty or not set in environment variables"
+            )
+        logging.info(f"Initialized {len(cls.gh_token_list)} GitHub tokens")
 
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db
         self.user_id = user_id
+        if not GithubTool.gh_token_list:
+            GithubTool.initialize_tokens()
 
     async def arun(self, repo_name: str, issue_number: Optional[int] = None, is_pull_request: bool = False) -> Dict[str, Any]:
         return await asyncio.to_thread(self.run, repo_name, issue_number, is_pull_request)
@@ -70,29 +87,46 @@ class GithubTool:
                 "content": None
             }
 
+    @classmethod
+    def get_public_github_instance(cls):
+        if not cls.gh_token_list:
+            cls.initialize_tokens()
+        token = random.choice(cls.gh_token_list)
+        return Github(token)
+
     def _get_github_client(self, repo_name: str) -> Github:
-        private_key = (
-            "-----BEGIN RSA PRIVATE KEY-----\n"
-            + config_provider.get_github_key()
-            + "\n-----END RSA PRIVATE KEY-----\n"
-        )
-        app_id = os.environ["GITHUB_APP_ID"]
-        auth = AppAuth(app_id=app_id, private_key=private_key)
-        jwt = auth.create_jwt()
+        try:
+            # Try authenticated access first
+            private_key = (
+                "-----BEGIN RSA PRIVATE KEY-----\n"
+                + config_provider.get_github_key()
+                + "\n-----END RSA PRIVATE KEY-----\n"
+            )
+            app_id = os.environ["GITHUB_APP_ID"]
+            auth = AppAuth(app_id=app_id, private_key=private_key)
+            jwt = auth.create_jwt()
 
-        # Get installation ID
-        url = f"https://api.github.com/repos/{repo_name}/installation"
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "Authorization": f"Bearer {jwt}",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
-        response = requests.get(url, headers=headers)
-        if response.status_code != 200:
-            raise Exception(f"Failed to get installation ID for {repo_name}")
+            # Get installation ID
+            url = f"https://api.github.com/repos/{repo_name}/installation"
+            headers = {
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {jwt}",
+                "X-GitHub-Api-Version": "2022-11-28",
+            }
+            response = requests.get(url, headers=headers)
+            if response.status_code != 200:
+                raise Exception(f"Failed to get installation ID for {repo_name}")
 
-        app_auth = auth.get_installation_auth(response.json()["id"])
-        return Github(auth=app_auth)
+            app_auth = auth.get_installation_auth(response.json()["id"])
+            return Github(auth=app_auth)
+        except Exception as private_error:
+            logging.info(f"Failed to access private repo: {str(private_error)}")
+            # If authenticated access fails, try public access
+            try:
+                return self.get_public_github_instance()
+            except Exception as public_error:
+                logging.error(f"Failed to access public repo: {str(public_error)}")
+                raise Exception(f"Repository {repo_name} not found or inaccessible on GitHub")
 
     def _fetch_github_content(self, repo_name: str, issue_number: Optional[int], is_pull_request: bool) -> Optional[Dict[str, Any]]:
         try:
@@ -201,4 +235,4 @@ def github_tool(sql_db: Session, user_id: str) -> Optional[Tool]:
 
         Returns dictionary containing the issue/PR content, metadata, and success status.""",
         args_schema=GithubToolInput,
-    ) 
+    )
