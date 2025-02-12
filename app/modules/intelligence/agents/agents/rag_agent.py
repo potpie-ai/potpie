@@ -36,6 +36,9 @@ from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_n
 from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool import (
     get_nodes_from_tags_tool,
 )
+from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import (
+    webpage_extractor_tool
+)
 
 
 class NodeResponse(BaseModel):
@@ -71,6 +74,8 @@ class RAGAgent:
             sql_db
         )
         self.get_code_file_structure = get_code_file_structure_tool(sql_db)
+        if os.getenv("FIRECRAWL_API_KEY"):
+            self.webpage_extractor_tool = webpage_extractor_tool(sql_db, user_id)
         self.llm = llm
         self.mini_llm = mini_llm
         self.user_id = user_id
@@ -99,7 +104,7 @@ class RAGAgent:
                 self.get_code_from_probable_node_name,
                 self.get_node_neighbours_from_node_id,
                 self.get_code_file_structure,
-            ],
+            ]+ ([self.webpage_extractor_tool] if os.getenv("FIRECRAWL_API_KEY") else []),
             allow_delegation=False,
             verbose=True,
             llm=self.llm,
