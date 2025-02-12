@@ -37,6 +37,7 @@ from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool impo
 )
 from app.modules.intelligence.tools.tool_schema import ToolInfo
 from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import webpage_extractor_tool
+from app.modules.intelligence.tools.web_tools.github_tool import github_tool
 
 
 class ToolService:
@@ -44,6 +45,7 @@ class ToolService:
         self.db = db
         self.user_id = user_id
         self.webpage_extractor_tool = webpage_extractor_tool(db, user_id)
+        self.github_tool = github_tool(db, user_id)
         self.tools = self._initialize_tools()
 
     def _initialize_tools(self) -> Dict[str, Any]:
@@ -71,6 +73,9 @@ class ToolService:
         
         if self.webpage_extractor_tool:
             tools["webpage_extractor"] = self.webpage_extractor_tool
+            
+        if self.github_tool:
+            tools["github_tool"] = self.github_tool
 
         return tools
 

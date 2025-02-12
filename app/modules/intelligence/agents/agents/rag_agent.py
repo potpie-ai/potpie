@@ -39,6 +39,7 @@ from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool impo
 from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import (
     webpage_extractor_tool
 )
+from app.modules.intelligence.tools.web_tools.github_tool import github_tool
 
 
 class NodeResponse(BaseModel):
@@ -76,6 +77,8 @@ class RAGAgent:
         self.get_code_file_structure = get_code_file_structure_tool(sql_db)
         if os.getenv("FIRECRAWL_API_KEY"):
             self.webpage_extractor_tool = webpage_extractor_tool(sql_db, user_id)
+        if os.getenv("GITHUB_APP_ID"):
+            self.github_tool = github_tool(sql_db, user_id)
         self.llm = llm
         self.mini_llm = mini_llm
         self.user_id = user_id
@@ -104,7 +107,8 @@ class RAGAgent:
                 self.get_code_from_probable_node_name,
                 self.get_node_neighbours_from_node_id,
                 self.get_code_file_structure,
-            ]+ ([self.webpage_extractor_tool] if os.getenv("FIRECRAWL_API_KEY") else []),
+            ] + ([self.webpage_extractor_tool] if hasattr(self, 'webpage_extractor_tool') else [])
+              + ([self.github_tool] if hasattr(self, 'github_tool') else []),
             allow_delegation=False,
             verbose=True,
             llm=self.llm,
