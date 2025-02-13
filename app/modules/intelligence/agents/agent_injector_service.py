@@ -61,7 +61,7 @@ class AgentInjectorService:
             ),
             "ollama_agent": ChatOllama(
                 base_url="http://localhost:11434",
-                model="deepseek-r1:3b",
+                model="deepseek-r1:1.5b",
             ),
         }
 

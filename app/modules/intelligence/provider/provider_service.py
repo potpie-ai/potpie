@@ -59,7 +59,7 @@ class ProviderService:
     def _initialize_llm(self, size: str):
         """Initialize local Ollama model."""
         ollama_endpoint = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
-        ollama_model = os.getenv("OLLAMA_MODEL", "deepseek-r1:3b")  # Default to a local model
+        ollama_model = os.getenv("OLLAMA_MODEL", "deepseek-r1:1.5b")  # Default to a local model
         
         logging.info(f"Initializing Ollama LLM with model {ollama_model}")
         self.llm = ChatOllama(base_url=ollama_endpoint, model=ollama_model)
@@ -81,4 +81,4 @@ class ProviderService:
         return "ollama"
 
     async def get_preferred_llm(self, user_id: str) -> Tuple[str, str]:
-        return "ollama", os.getenv("OLLAMA_MODEL", "deepseek-r1:3b")
+        return "ollama", os.getenv("OLLAMA_MODEL", "deepseek-r1:1.5b")
