@@ -32,11 +32,12 @@ dev = [
     "black",
     "pytest",
     "pytest-asyncio",
-    "pytest-aiohttp"
+    "pytest-aiohttp",
+    "build"
 ]
 
 [project.scripts]
-potpie = "potpie.main:cli"
+potpie = "src.potpie.main:cli"
 
 [project.urls]
 Homepage = "https://potpie.ai/"
@@ -45,4 +46,10 @@ Repository = "https://github.com/potpie-ai/potpie"
 Issues = "https://github.com/potpie-ai/potpie/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["potpie"]
+packages = ["src"]
+
+[tool.pytest.ini_options]
+addopts = [
+    "--import-mode=importlib",
+]
+pythonpath = ["src"]
