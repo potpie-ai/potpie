@@ -1,10 +1,68 @@
-import sys
-import os
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
 import pytest
+import os
+from pathlib import Path
 from potpie.utility import Utility
+
+
+def test_log_file_creation():
+    utility = Utility()
+    assert os.path.exists(utility.log_file)
+    assert utility.log_file.endswith("potpie.log")
+
+
+def test_pid_file_creation(monkeypatch):
+    monkeypatch.setattr(os, "name", "posix")
+
+    def mock_home(*args):
+        return "/home/user"
+
+    monkeypatch.setattr(Path, "home", mock_home)
+    monkeypatch.setattr(
+        Path,
+        "mkdir",
+    )
+
+    pid_file = Utility.create_path_of_pid_file()
+    assert pid_file == "/home/user/.config/potpie/potpie.pid"
+
+
+@pytest.mark.parametrize(
+    "test_params",
+    [
+        {
+            "os_name": "posix",
+            "home_path": "/home/testuser",
+            "local_appdata": None,
+            "expected_path": "/home/testuser/.config/potpie/potpie.pid",
+        }
+    ],
+)
+def test_pid_file_creation(monkeypatch, test_params):
+    monkeypatch.setattr(os, "name", test_params["os_name"])
+
+    def mock_home() -> Path:
+        return Path(test_params["home_path"])
+
+    monkeypatch.setattr(Path, "home", mock_home)
+
+    def mock_getenv(key: str) -> str:
+        if key == "LOCALAPPDATA":
+            return test_params["local_appdata"]
+        return ""
+
+    monkeypatch.setattr(os, "getenv", mock_getenv)
+
+    def mock_mkdir(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr(Path, "mkdir", mock_mkdir)
+
+    pid_file = Utility.create_path_of_pid_file()
+
+    expected_path = Path(test_params["expected_path"]).as_posix()
+    actual_path = Path(pid_file).as_posix()
+
+    assert actual_path == expected_path
 
 
 @pytest.mark.parametrize(
