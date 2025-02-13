@@ -4,6 +4,7 @@
 
 ## Endpoints
 
+
 ### 1. Parse Directory
 - **Endpoint**: `/parse`
 - **Method**: `POST`
