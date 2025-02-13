@@ -1,7 +1,7 @@
 import json
 import logging
 import time
-from typing import Generator, List
+from typing import List
 import requests
 import aiohttp
 import asyncio
