@@ -4,8 +4,8 @@ services:
     container_name: potpie_postgres
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: oGxDeZWeNtKpqPnqaHBAgJAxGHnAjhKm
-      POSTGRES_DB: railway
+      POSTGRES_PASSWORD: 12345
+      POSTGRES_DB: momentum
     ports:
       - "5432:5432"
     networks:
