@@ -1,13 +1,11 @@
 import logging
 import os
-from typing import Union
 
 import requests
 from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth
-
 
 load_dotenv(override=True)
 
@@ -73,5 +71,6 @@ class AuthService:
                 )
             res.headers["WWW-Authenticate"] = 'Bearer realm="auth_required"'
             return decoded_token
+
 
 auth_handler = AuthService()

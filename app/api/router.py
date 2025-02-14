@@ -2,7 +2,6 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import Depends, Header, HTTPException
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -17,8 +16,8 @@ from app.modules.conversations.conversation.conversation_schema import (
     CreateConversationResponse,
 )
 from app.modules.conversations.message.message_schema import (
-    MessageRequest,
     DirectMessageRequest,
+    MessageRequest,
 )
 from app.modules.parsing.graph_construction.parsing_controller import ParsingController
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest

@@ -1,5 +1,4 @@
 from typing import Any, Dict, List
-from pydantic import BaseModel
 
 from sqlalchemy.orm import Session
 
@@ -37,8 +36,10 @@ from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool impo
     get_nodes_from_tags_tool,
 )
 from app.modules.intelligence.tools.tool_schema import ToolInfo, ToolInfoWithParameters
-from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import webpage_extractor_tool
 from app.modules.intelligence.tools.web_tools.github_tool import github_tool
+from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import (
+    webpage_extractor_tool,
+)
 
 
 class ToolService:
@@ -62,19 +63,23 @@ class ToolService:
                 self.db, self.user_id
             ),
             "get_nodes_from_tags": get_nodes_from_tags_tool(self.db, self.user_id),
-            "get_code_from_node_name": get_code_from_node_name_tool(self.db, self.user_id),
+            "get_code_from_node_name": get_code_from_node_name_tool(
+                self.db, self.user_id
+            ),
             "get_code_graph_from_node_id": get_code_graph_from_node_id_tool(self.db),
-            "get_code_graph_from_node_name": get_code_graph_from_node_name_tool(self.db),
+            "get_code_graph_from_node_name": get_code_graph_from_node_name_tool(
+                self.db
+            ),
             "change_detection": get_change_detection_tool(self.user_id),
             "get_code_file_structure": get_code_file_structure_tool(self.db),
             "get_node_neighbours_from_node_id": get_node_neighbours_from_node_id_tool(
                 self.db
             ),
         }
-        
+
         if self.webpage_extractor_tool:
             tools["webpage_extractor"] = self.webpage_extractor_tool
-            
+
         if self.github_tool:
             tools["github_tool"] = self.github_tool
 
@@ -86,17 +91,17 @@ class ToolService:
                 id=tool_id,
                 name=tool.name,
                 description=tool.description,
-                # parameters=self._get_tool_parameters(tool),
             )
             for tool_id, tool in self.tools.items()
         ]
 
-    def list_tools_with_parameters(self) -> List[ToolInfoWithParameters]:
+    def list_tools_with_parameters(self) -> Dict[str, ToolInfoWithParameters]:
         return {
             tool_id: ToolInfoWithParameters(
                 id=tool_id,
                 name=tool.name,
                 description=tool.description,
                 args_schema=tool.args_schema.schema(),
-            ) for tool_id, tool in self.tools.items()
+            )
+            for tool_id, tool in self.tools.items()
         }

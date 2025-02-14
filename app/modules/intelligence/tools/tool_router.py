@@ -1,15 +1,11 @@
 from typing import List
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
-from app.modules.intelligence.tools.tool_schema import (
-    ToolInfo,
-    ToolRequest,
-    ToolResponse,
-)
+from app.modules.intelligence.tools.tool_schema import ToolInfo
 from app.modules.intelligence.tools.tool_service import ToolService
 
 router = APIRouter()
@@ -23,5 +19,3 @@ async def list_tools(
     user_id = user["user_id"]
     tool_service = ToolService(db, user_id)
     return tool_service.list_tools()
-
-

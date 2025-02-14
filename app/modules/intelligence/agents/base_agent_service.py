@@ -1,7 +1,6 @@
 import os
 from typing import List
 
-from app.modules.intelligence.agents.agents_schema import AgentInfo
 from app.modules.intelligence.prompts.prompt_service import PromptService
 
 
@@ -19,4 +18,4 @@ class BaseAgentService:
                 if self.project_path in citation
                 else citation
             )
-        return cleaned_citations 
+        return cleaned_citations

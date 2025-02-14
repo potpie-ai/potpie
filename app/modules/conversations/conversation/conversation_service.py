@@ -511,7 +511,6 @@ class ConversationService:
                     async for chunk in self._generate_and_stream_ai_response(
                         message.content, conversation_id, user_id, message.node_ids
                     ):
-
                         full_message += chunk.message
                         all_citations = all_citations + chunk.citations
 
@@ -728,7 +727,7 @@ class ConversationService:
             if isinstance(agent, CustomAgent):
                 # Custom agent doesn't support streaming, so we'll yield the entire response at once
                 response = await CustomAgentService(self.sql_db).execute_agent_runtime(
-                    agent_id,user_id,query, node_ids,project_id,  conversation.id
+                    agent_id, user_id, query, node_ids, project_id, conversation.id
                 )
                 yield ChatMessageResponse(message=response["message"], citations=[])
             else:

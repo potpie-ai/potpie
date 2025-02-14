@@ -1,13 +1,13 @@
 from typing import List
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
 
 from .provider_controller import ProviderController
-from .provider_schema import GetProviderResponse, ProviderInfo, SetProviderRequest
+from .provider_schema import ProviderInfo, SetProviderRequest
 
 router = APIRouter()
 

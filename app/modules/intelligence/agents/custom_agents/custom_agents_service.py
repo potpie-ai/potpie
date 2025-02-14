@@ -1,16 +1,17 @@
-import logging
+import json
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
-import json
 
-from sqlalchemy.orm import Session
-from sqlalchemy.exc import SQLAlchemyError
 from fastapi import HTTPException
-from app.modules.intelligence.agents.custom_agents.runtime_agent import RuntimeAgent
-from app.modules.conversations.message.message_schema import NodeContext
+from langchain.chains import LLMChain
+from langchain.prompts import PromptTemplate
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+
 from app.modules.intelligence.agents.base_agent_service import BaseAgentService
-from app.modules.intelligence.agents.custom_agents.agent_executor import AgentExecutor
-from app.modules.intelligence.agents.custom_agents.custom_agent_model import CustomAgent as CustomAgentModel
+from app.modules.intelligence.agents.custom_agents.custom_agent_model import (
+    CustomAgent as CustomAgentModel,
+)
 from app.modules.intelligence.agents.custom_agents.custom_agent_schema import (
     Agent,
     AgentCreate,
@@ -18,29 +19,35 @@ from app.modules.intelligence.agents.custom_agents.custom_agent_schema import (
     Task,
     TaskCreate,
 )
-from app.modules.intelligence.provider.provider_service import AgentType, ProviderService
+from app.modules.intelligence.agents.custom_agents.runtime_agent import RuntimeAgent
+from app.modules.intelligence.provider.provider_service import (
+    AgentType,
+    ProviderService,
+)
 from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.key_management.secret_manager import SecretManager
 from app.modules.utils.logger import setup_logger
-from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
-from langchain_openai import ChatOpenAI
-from langchain_anthropic import ChatAnthropic
 
 logger = setup_logger(__name__)
+
 
 class CustomAgentService(BaseAgentService):
     def __init__(self, db: Session):
         super().__init__(db)
         self.secret_manager = SecretManager()
 
-    async def _get_agent_by_id_and_user(self, agent_id: str, user_id: str) -> Optional[CustomAgentModel]:
+    async def _get_agent_by_id_and_user(
+        self, agent_id: str, user_id: str
+    ) -> Optional[CustomAgentModel]:
         """Fetch a custom agent by ID and user ID"""
         try:
-            agent = self.db.query(CustomAgentModel).filter(
-                CustomAgentModel.id == agent_id,
-                CustomAgentModel.user_id == user_id
-            ).first()
+            agent = (
+                self.db.query(CustomAgentModel)
+                .filter(
+                    CustomAgentModel.id == agent_id, CustomAgentModel.user_id == user_id
+                )
+                .first()
+            )
             return agent
         except SQLAlchemyError as e:
             logger.error(f"Database error while fetching agent {agent_id}: {str(e)}")
@@ -54,7 +61,9 @@ class CustomAgentService(BaseAgentService):
                 try:
                     expected_output = json.loads(expected_output)
                 except json.JSONDecodeError:
-                    raise ValueError("Invalid JSON format for expected_output in a task.")
+                    raise ValueError(
+                        "Invalid JSON format for expected_output in a task."
+                    )
             task_schemas.append(
                 Task(
                     id=i,
@@ -75,7 +84,11 @@ class CustomAgentService(BaseAgentService):
             deployment_url=custom_agent.deployment_url,
             created_at=custom_agent.created_at,
             updated_at=custom_agent.updated_at,
-            deployment_status=custom_agent.deployment_status if custom_agent.deployment_status else "STOPPED",
+            deployment_status=(
+                custom_agent.deployment_status
+                if custom_agent.deployment_status
+                else "STOPPED"
+            ),
         )
 
     async def create_agent(self, user_id: str, agent_data: AgentCreate) -> Agent:
@@ -88,7 +101,9 @@ class CustomAgentService(BaseAgentService):
 
             # Validate tools
             available_tools = await self.fetch_available_tools(user_id)
-            invalid_tools = [tool_id for tool_id in tool_ids if tool_id not in available_tools]
+            invalid_tools = [
+                tool_id for tool_id in tool_ids if tool_id not in available_tools
+            ]
             if invalid_tools:
                 raise HTTPException(
                     status_code=400,
@@ -98,10 +113,7 @@ class CustomAgentService(BaseAgentService):
             # Enhance task descriptions
             tasks_dict = [task.dict() for task in agent_data.tasks]
             enhanced_tasks = await self.enhance_task_descriptions(
-                tasks_dict,
-                agent_data.goal,
-                available_tools,
-                user_id
+                tasks_dict, agent_data.goal, available_tools, user_id
             )
 
             agent_id = str(uuid4())
@@ -112,9 +124,9 @@ class CustomAgentService(BaseAgentService):
                 goal=agent_data.goal,
                 backstory=agent_data.backstory,
                 system_prompt=agent_data.system_prompt,
-                tasks=enhanced_tasks
+                tasks=enhanced_tasks,
             )
-            
+
             self.db.add(agent_model)
             self.db.commit()
             self.db.refresh(agent_model)
@@ -127,7 +139,9 @@ class CustomAgentService(BaseAgentService):
             logger.error(f"Error creating agent: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
 
-    async def update_agent(self, agent_id: str, user_id: str, agent_data: AgentUpdate) -> Optional[Agent]:
+    async def update_agent(
+        self, agent_id: str, user_id: str, agent_data: AgentUpdate
+    ) -> Optional[Agent]:
         """Update an existing custom agent"""
         try:
             agent = await self._get_agent_by_id_and_user(agent_id, user_id)
@@ -158,7 +172,10 @@ class CustomAgentService(BaseAgentService):
 
             self.db.delete(agent)
             self.db.commit()
-            return {"success": True, "message": f"Agent {agent_id} successfully deleted"}
+            return {
+                "success": True,
+                "message": f"Agent {agent_id} successfully deleted",
+            }
         except SQLAlchemyError as e:
             self.db.rollback()
             logger.error(f"Database error while deleting agent {agent_id}: {str(e)}")
@@ -172,9 +189,11 @@ class CustomAgentService(BaseAgentService):
     def list_agents(self, user_id: str) -> List[Agent]:
         """List all custom agents for a user"""
         try:
-            agents = self.db.query(CustomAgentModel).filter(
-                CustomAgentModel.user_id == user_id
-            ).all()
+            agents = (
+                self.db.query(CustomAgentModel)
+                .filter(CustomAgentModel.user_id == user_id)
+                .all()
+            )
             return [self._convert_to_agent_schema(agent) for agent in agents]
         except SQLAlchemyError as e:
             logger.error(f"Database error while listing agents: {str(e)}")
@@ -187,13 +206,16 @@ class CustomAgentService(BaseAgentService):
         query: str,
         node_ids: Optional[List[str]] = None,
         project_id: Optional[str] = None,
-        conversation_id: Optional[str] = None
+        conversation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Execute an agent at runtime without deployment"""
-        agent_model = self.db.query(CustomAgentModel).filter(
-            CustomAgentModel.id == agent_id,
-            CustomAgentModel.user_id == user_id
-        ).first()
+        agent_model = (
+            self.db.query(CustomAgentModel)
+            .filter(
+                CustomAgentModel.id == agent_id, CustomAgentModel.user_id == user_id
+            )
+            .first()
+        )
 
         if not agent_model:
             raise HTTPException(status_code=404, detail="Agent not found")
@@ -204,16 +226,17 @@ class CustomAgentService(BaseAgentService):
             "goal": agent_model.goal,
             "backstory": agent_model.backstory,
             "system_prompt": agent_model.system_prompt,
-            "tasks": agent_model.tasks
+            "tasks": agent_model.tasks,
         }
         llm = ProviderService(self.db, user_id).get_large_llm(AgentType.LANGCHAIN)
         runtime_agent = RuntimeAgent(llm, self.db, agent_config, self.secret_manager)
         try:
-            result = await runtime_agent.run(agent_id, query, project_id, conversation_id, node_ids)
+            result = await runtime_agent.run(
+                agent_id, query, project_id, conversation_id, node_ids
+            )
             return {"message": result["response"]}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-        
 
     async def create_agent_plan_chain(self, user_id: str):
         """Create a LangChain for generating agent plans from prompts"""
@@ -250,12 +273,9 @@ Your final output must be a single, valid JSON object with the following structu
 
 Ensure that your response is a properly formatted JSON object that can be parsed directly, with no extraneous text."""
 
-        prompt = PromptTemplate(
-            input_variables=["prompt", "tools"],
-            template=template
-        )
+        prompt = PromptTemplate(input_variables=["prompt", "tools"], template=template)
 
-        llm =  ProviderService(self.db, user_id).get_large_llm(AgentType.LANGCHAIN)
+        llm = ProviderService(self.db, user_id).get_large_llm(AgentType.LANGCHAIN)
         return LLMChain(llm=llm, prompt=prompt)
 
     async def create_agent_from_prompt(
@@ -266,26 +286,25 @@ Ensure that your response is a properly formatted JSON object that can be parsed
         """Create a custom agent from a natural language prompt"""
         # Create the planning chain
         chain = await self.create_agent_plan_chain(user_id)
-        
+
         # Get available tools
         try:
             available_tools = ToolService(self.db, user_id).list_tools()
         except Exception as e:
             logger.error(f"Error fetching available tools: {str(e)}")
-            raise HTTPException(status_code=500, detail="Failed to fetch available tools")
-        
+            raise HTTPException(
+                status_code=500, detail="Failed to fetch available tools"
+            )
+
         # Generate the agent plan
         try:
-            result = await chain.ainvoke({
-                "prompt": prompt,
-                "tools": available_tools
-            })
-           
+            result = await chain.ainvoke({"prompt": prompt, "tools": available_tools})
+
             # Extract the response text
             response_text = result.get("text", result)
             if not isinstance(response_text, str):
                 response_text = str(response_text)
-            
+
             # Clean up the response text and parse JSON
             response_text = response_text.strip()
             try:
@@ -293,24 +312,28 @@ Ensure that your response is a properly formatted JSON object that can be parsed
                 plan_dict = json.loads(response_text)
             except json.JSONDecodeError:
                 # If that fails, try to find JSON content between curly braces
-                start_idx = response_text.find('{')
-                end_idx = response_text.rindex('}') + 1
+                start_idx = response_text.find("{")
+                end_idx = response_text.rindex("}") + 1
                 if start_idx != -1 and end_idx != -1:
                     json_content = response_text[start_idx:end_idx]
                     plan_dict = json.loads(json_content)
                 else:
                     raise ValueError("Could not find valid JSON content in response")
-            
+
             # Validate required fields
             required_fields = ["role", "goal", "backstory", "system_prompt", "tasks"]
-            missing_fields = [field for field in required_fields if field not in plan_dict]
+            missing_fields = [
+                field for field in required_fields if field not in plan_dict
+            ]
             if missing_fields:
-                raise ValueError(f"Missing required fields in response: {', '.join(missing_fields)}")
-            
+                raise ValueError(
+                    f"Missing required fields in response: {', '.join(missing_fields)}"
+                )
+
             # Validate tasks structure
             if not isinstance(plan_dict["tasks"], list):
                 raise ValueError("Tasks must be a list")
-            
+
             for task in plan_dict["tasks"]:
                 if not isinstance(task, dict):
                     raise ValueError("Each task must be an object")
@@ -320,20 +343,22 @@ Ensure that your response is a properly formatted JSON object that can be parsed
                     raise ValueError("Each task must have a tools list")
                 if "expected_output" not in task:
                     task["expected_output"] = {"result": "string"}
-            
+
             # Create the agent using the existing method
             agent_data = AgentCreate(
                 role=plan_dict["role"],
                 goal=plan_dict["goal"],
                 backstory=plan_dict["backstory"],
                 system_prompt=plan_dict["system_prompt"],
-                tasks=[TaskCreate(**task) for task in plan_dict["tasks"]]
+                tasks=[TaskCreate(**task) for task in plan_dict["tasks"]],
             )
-            
+
             return await self.create_agent(user_id, agent_data)
-            
+
         except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing error: {str(e)}\nResponse text: {response_text}")
+            logger.error(
+                f"JSON parsing error: {str(e)}\nResponse text: {response_text}"
+            )
             raise ValueError(f"Failed to parse agent plan: {str(e)}")
         except ValueError as e:
             logger.error(f"Validation error: {str(e)}\nResponse text: {response_text}")
@@ -351,7 +376,7 @@ Ensure that your response is a properly formatted JSON object that can be parsed
 
         Analyze the task and create an enhanced description that:
         1. Shows understanding of the task's intent
-        2. Provides step-by-step execution strategy 
+        2. Provides step-by-step execution strategy
         3. Specifies when and how to use each tool
         4. Includes validation steps
 
@@ -388,24 +413,23 @@ Ensure that your response is a properly formatted JSON object that can be parsed
         String with the following format:
         1. Analysis & Intent
         2. Step-by-Step Plan
-        3. Tool Usage Guide 
+        3. Tool Usage Guide
         """
 
         prompt = PromptTemplate(
-            input_variables=["description", "goal", "tools"],
-            template=template
+            input_variables=["description", "goal", "tools"], template=template
         )
 
-        llm =  ProviderService(self.db, user_id).get_large_llm(AgentType.LANGCHAIN)
+        llm = ProviderService(self.db, user_id).get_large_llm(AgentType.LANGCHAIN)
 
         return LLMChain(llm=llm, prompt=prompt)
 
     async def enhance_task_descriptions(
-            self,
-            tasks: List[Dict[str, Any]], 
-            goal: str,
-            available_tools: List[str],
-            user_id: str
+        self,
+        tasks: List[Dict[str, Any]],
+        goal: str,
+        available_tools: List[str],
+        user_id: str,
     ) -> List[Dict[str, Any]]:
         chain = self.create_task_enhancement_chain(user_id)
         enhanced_tasks = []
@@ -416,12 +440,10 @@ Ensure that your response is a properly formatted JSON object that can be parsed
                 for tool_id in task.get("tools", [])
                 if tool_id in available_tools
             ]
-            
-            enhanced_description = await chain.ainvoke({
-                "description": task["description"],
-                "goal": goal,
-                "tools": task_tools
-            })
+
+            enhanced_description = await chain.ainvoke(
+                {"description": task["description"], "goal": goal, "tools": task_tools}
+            )
             enhanced_task = task.copy()
             if "text" in enhanced_description:
                 enhanced_task["description"] = enhanced_description["text"]
@@ -438,4 +460,6 @@ Ensure that your response is a properly formatted JSON object that can be parsed
             return [tool.id for tool in tools]
         except Exception as e:
             logger.error(f"Error fetching available tools: {str(e)}")
-            raise HTTPException(status_code=500, detail="Failed to fetch available tools")
+            raise HTTPException(
+                status_code=500, detail="Failed to fetch available tools"
+            )

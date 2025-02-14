@@ -1,13 +1,14 @@
 import os
 from typing import List
 
-import aiohttp
-
-from app.modules.auth.auth_service import AuthService
 from app.modules.intelligence.agents.agents_schema import AgentInfo
-from app.modules.intelligence.agents.custom_agents.custom_agents_service import CustomAgentService
+from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
+    CustomAgentService,
+)
 from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.utils.logger import setup_logger
 
+logger = setup_logger(__name__)
 
 class AgentsService:
     def __init__(self, db):
@@ -64,8 +65,11 @@ class AgentsService:
         ]
 
         try:
-            custom_agents = CustomAgentService(self.db).list_agents(current_user["user_id"])
-        except Exception:
+            custom_agents = CustomAgentService(self.db).list_agents(
+                current_user["user_id"]
+            )
+        except Exception as e:
+            logger.error(f"Failed to fetch custom agents for user {current_user['user_id']}: {e}")
             custom_agents = []
         agent_info_list = [
             AgentInfo(
@@ -73,7 +77,8 @@ class AgentsService:
                 name=agent.role,
                 description=agent.goal,
                 status=agent.deployment_status,
-            ) for agent in custom_agents
+            )
+            for agent in custom_agents
         ]
 
         if list_system_agents:

@@ -6,10 +6,12 @@ from app.core.base_model import Base
 from app.modules.conversations.conversation.conversation_model import (  # noqa
     Conversation,
 )
+from app.modules.intelligence.agents.custom_agents.custom_agent_model import (  # noqa
+    CustomAgent,
+)
 from app.modules.intelligence.prompts.prompt_model import Prompt  # noqa
 from app.modules.projects.projects_model import Project  # noqa
 from app.modules.users.user_preferences_model import UserPreferences  # noqa
-from app.modules.intelligence.agents.custom_agents.custom_agent_model import CustomAgent  # noqa
 
 
 class User(Base):

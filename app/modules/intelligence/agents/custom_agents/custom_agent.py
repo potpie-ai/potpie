@@ -10,7 +10,7 @@
 
 # class CustomAgent:
 #     """A custom agent that can be configured with a specific role, goal, and system prompt."""
-    
+
 #     def __init__(self, llm: Any, db: Session, system_prompt: str, user_id: str):
 #         self.llm = llm
 #         self.db = db
@@ -46,15 +46,11 @@
 #             raise
 
 import json
-import logging
-import os
-from typing import Dict, List, Any
+from typing import Any, Dict, List
 
-import httpx
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 
-from app.modules.auth.auth_service import AuthService
 from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.agents.custom_agents.agent_executor import AgentExecutor
 from app.modules.utils.logger import setup_logger
@@ -62,6 +58,7 @@ from app.modules.utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 load_dotenv()
+
 
 class CustomAgent:
     def __init__(self, llm: Any, db: Session, agent_id: str, user_id: str):
@@ -73,7 +70,10 @@ class CustomAgent:
 
     async def _get_system_prompt(self) -> str:
         """Fetch system prompt using the get_agent method"""
-        from app.modules.intelligence.agents.custom_agents.custom_agents_service import CustomAgentService
+        from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
+            CustomAgentService,
+        )
+
         agent = await CustomAgentService(self.db).get_agent(self.agent_id, self.user_id)
         if not agent:
             raise ValueError(f"Agent {self.agent_id} not found for user {self.user_id}")
@@ -86,11 +86,7 @@ class CustomAgent:
             if not system_prompt:
                 raise ValueError(f"System prompt not found for agent {self.agent_id}")
             self.executor = AgentExecutor(
-                self.llm,
-                self.db,
-                system_prompt,
-                self.user_id,
-                agent_id=self.agent_id
+                self.llm, self.db, system_prompt, self.user_id, agent_id=self.agent_id
             )
 
     async def run(
@@ -104,22 +100,19 @@ class CustomAgent:
         """Run the agent with the given query"""
         try:
             await self._initialize_executor()
-            
+
             full_response = ""
             async for chunk in self.executor.run(
                 agent_id=agent_id,
                 query=query,
                 project_id=project_id,
                 conversation_id=conversation_id,
-                node_ids=node_ids
+                node_ids=node_ids,
             ):
                 response_data = json.loads(chunk)
                 full_response += response_data["message"]
 
-            return {
-                "response": full_response,
-                "conversation_id": conversation_id
-            }
+            return {"response": full_response, "conversation_id": conversation_id}
         except Exception as e:
             logger.error(f"Error running custom agent: {str(e)}")
             raise

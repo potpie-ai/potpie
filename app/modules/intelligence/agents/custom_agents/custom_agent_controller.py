@@ -1,21 +1,21 @@
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List
+
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.modules.auth.auth_service import auth_handler
-from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.agents.custom_agents.custom_agent_schema import (
     Agent,
     AgentCreate,
     AgentUpdate,
-    QueryRequest,
-    QueryResponse,
 )
-from app.modules.intelligence.agents.custom_agents.custom_agents_service import CustomAgentService
+from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
+    CustomAgentService,
+)
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
 
 class CustomAgentController:
     def __init__(self, db: Session = Depends(get_db)):
@@ -30,17 +30,19 @@ class CustomAgentController:
             logger.error(f"Error creating custom agent: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to create custom agent: {str(e)}"
+                detail=f"Failed to create custom agent: {str(e)}",
             )
 
-    async def update_agent(self, agent_id: str, user_id: str, agent_data: AgentUpdate) -> Agent:
+    async def update_agent(
+        self, agent_id: str, user_id: str, agent_data: AgentUpdate
+    ) -> Agent:
         """Update an existing custom agent"""
         try:
             agent = await self.service.update_agent(agent_id, user_id, agent_data)
             if not agent:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Agent {agent_id} not found"
+                    detail=f"Agent {agent_id} not found",
                 )
             return agent
         except HTTPException:
@@ -49,7 +51,7 @@ class CustomAgentController:
             logger.error(f"Error updating custom agent {agent_id}: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to update custom agent: {str(e)}"
+                detail=f"Failed to update custom agent: {str(e)}",
             )
 
     async def delete_agent(self, agent_id: str, user_id: str) -> Dict[str, Any]:
@@ -58,8 +60,7 @@ class CustomAgentController:
             result = await self.service.delete_agent(agent_id, user_id)
             if not result["success"]:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=result["message"]
+                    status_code=status.HTTP_404_NOT_FOUND, detail=result["message"]
                 )
             return result
         except HTTPException:
@@ -68,7 +69,7 @@ class CustomAgentController:
             logger.error(f"Error deleting custom agent {agent_id}: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to delete custom agent: {str(e)}"
+                detail=f"Failed to delete custom agent: {str(e)}",
             )
 
     async def get_agent(self, agent_id: str, user_id: str) -> Agent:
@@ -78,7 +79,7 @@ class CustomAgentController:
             if not agent:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Agent {agent_id} not found"
+                    detail=f"Agent {agent_id} not found",
                 )
             return agent
         except HTTPException:
@@ -87,7 +88,7 @@ class CustomAgentController:
             logger.error(f"Error fetching custom agent {agent_id}: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to fetch custom agent: {str(e)}"
+                detail=f"Failed to fetch custom agent: {str(e)}",
             )
 
     async def list_agents(self, user_id: str) -> List[Agent]:
@@ -98,9 +99,8 @@ class CustomAgentController:
             logger.error(f"Error listing custom agents: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to list custom agents: {str(e)}"
+                detail=f"Failed to list custom agents: {str(e)}",
             )
-
 
     async def create_agent_from_prompt(
         self,
@@ -117,5 +117,5 @@ class CustomAgentController:
             logger.error(f"Error creating agent from prompt: {str(e)}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to create agent from prompt: {str(e)}"
-            ) 
+                detail=f"Failed to create agent from prompt: {str(e)}",
+            )

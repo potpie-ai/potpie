@@ -1,6 +1,5 @@
 import json
-import logging
-from typing import AsyncGenerator, List, Any
+from typing import Any, AsyncGenerator, List
 
 from langchain.schema import HumanMessage, SystemMessage
 from langchain_core.prompts import (
@@ -19,8 +18,16 @@ from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+
 class AgentExecutor:
-    def __init__(self, llm: Any, db: Session, system_prompt: str, user_id: str, agent_id: str = None):
+    def __init__(
+        self,
+        llm: Any,
+        db: Session,
+        system_prompt: str,
+        user_id: str,
+        agent_id: str = None,
+    ):
         self.llm = llm
         self.db = db
         self.user_id = user_id
@@ -34,7 +41,10 @@ class AgentExecutor:
     @property
     def custom_agent_service(self):
         if self._custom_agent_service is None and self.agent_id:
-            from app.modules.intelligence.agents.custom_agents.custom_agents_service import CustomAgentService
+            from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
+                CustomAgentService,
+            )
+
             self._custom_agent_service = CustomAgentService(self.db)
         return self._custom_agent_service
 
@@ -66,7 +76,9 @@ class AgentExecutor:
             if not self.chain:
                 self.chain = await self._create_chain()
 
-            history = self.history_manager.get_session_history(self.user_id, conversation_id)
+            history = self.history_manager.get_session_history(
+                self.user_id, conversation_id
+            )
             validated_history = [
                 (
                     HumanMessage(content=str(msg))
@@ -79,17 +91,21 @@ class AgentExecutor:
             # Get tool results from custom agent service
             tool_results = []
             if self.agent_id and self.custom_agent_service:
-                custom_agent_result = await self.custom_agent_service.execute_agent_runtime(
-                    agent_id=self.agent_id,
-                    query=query,
-                    conversation_id=conversation_id,
-                    user_id=self.user_id,
-                    node_ids=node_ids,
-                    project_id=project_id
+                custom_agent_result = (
+                    await self.custom_agent_service.execute_agent_runtime(
+                        agent_id=self.agent_id,
+                        query=query,
+                        conversation_id=conversation_id,
+                        user_id=self.user_id,
+                        node_ids=node_ids,
+                        project_id=project_id,
+                    )
                 )
                 if custom_agent_result:
                     tool_results.append(
-                        SystemMessage(content=f"Custom Agent result: {json.dumps(custom_agent_result)}")
+                        SystemMessage(
+                            content=f"Custom Agent result: {json.dumps(custom_agent_result)}"
+                        )
                     )
 
             # Add project context
@@ -97,7 +113,9 @@ class AgentExecutor:
 
             if node_ids:
                 tool_results.append(
-                    SystemMessage(content=f"Context nodes: {json.dumps([n.dict() for n in node_ids])}")
+                    SystemMessage(
+                        content=f"Context nodes: {json.dumps([n.dict() for n in node_ids])}"
+                    )
                 )
 
             inputs = {
@@ -126,4 +144,6 @@ class AgentExecutor:
 
         except Exception as e:
             logger.error(f"Error during agent execution: {str(e)}", exc_info=True)
-            yield json.dumps({"message": f"An error occurred: {str(e)}", "citations": []}) 
+            yield json.dumps(
+                {"message": f"An error occurred: {str(e)}", "citations": []}
+            )

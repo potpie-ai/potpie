@@ -1,4 +1,3 @@
-import logging
 from typing import Any, Dict
 
 from sqlalchemy.orm import Session
@@ -84,4 +83,6 @@ class AgentInjectorService:
 
     async def validate_agent_id(self, user_id: str, agent_id: str) -> bool:
         """Validate if an agent ID is valid"""
-        return agent_id in self.agents or await validate_agent(self.sql_db, user_id, agent_id)
+        return agent_id in self.agents or await validate_agent(
+            self.sql_db, user_id, agent_id
+        )

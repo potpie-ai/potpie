@@ -1,15 +1,16 @@
-import os
 import asyncio
 import logging
+import os
 import random
+from typing import Any, Dict, List, Optional
+
 import requests
-from typing import Dict, Any, Optional, List
-from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
-from langchain_core.tools import StructuredTool, Tool
 from github import Github
 from github.Auth import AppAuth
 from github.GithubException import UnknownObjectException
+from langchain_core.tools import StructuredTool, Tool
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 
@@ -19,12 +20,11 @@ class GithubToolInput(BaseModel):
         description="The full repository name in format 'owner/repo' WITHOUT any quotes"
     )
     issue_number: Optional[int] = Field(
-        description="The issue or pull request number to fetch",
-        default=None
+        description="The issue or pull request number to fetch", default=None
     )
     is_pull_request: bool = Field(
         description="Whether to fetch a pull request (True) or issue (False)",
-        default=False
+        default=False,
     )
 
 
@@ -44,7 +44,7 @@ class GithubTool:
 
         Returns dictionary containing the issue/PR content, metadata, and success status.
         """
-    
+
     gh_token_list: List[str] = []
 
     @classmethod
@@ -65,18 +65,32 @@ class GithubTool:
         if not GithubTool.gh_token_list:
             GithubTool.initialize_tokens()
 
-    async def arun(self, repo_name: str, issue_number: Optional[int] = None, is_pull_request: bool = False) -> Dict[str, Any]:
-        return await asyncio.to_thread(self.run, repo_name, issue_number, is_pull_request)
+    async def arun(
+        self,
+        repo_name: str,
+        issue_number: Optional[int] = None,
+        is_pull_request: bool = False,
+    ) -> Dict[str, Any]:
+        return await asyncio.to_thread(
+            self.run, repo_name, issue_number, is_pull_request
+        )
 
-    def run(self, repo_name: str, issue_number: Optional[int] = None, is_pull_request: bool = False) -> Dict[str, Any]:
+    def run(
+        self,
+        repo_name: str,
+        issue_number: Optional[int] = None,
+        is_pull_request: bool = False,
+    ) -> Dict[str, Any]:
         try:
             repo_name = repo_name.strip('"')
-            content = self._fetch_github_content(repo_name, issue_number, is_pull_request)
+            content = self._fetch_github_content(
+                repo_name, issue_number, is_pull_request
+            )
             if not content:
                 return {
                     "success": False,
                     "error": "Failed to fetch GitHub content",
-                    "content": None
+                    "content": None,
                 }
             return content
         except Exception as e:
@@ -84,7 +98,7 @@ class GithubTool:
             return {
                 "success": False,
                 "error": f"An unexpected error occurred: {str(e)}",
-                "content": None
+                "content": None,
             }
 
     @classmethod
@@ -126,9 +140,13 @@ class GithubTool:
                 return self.get_public_github_instance()
             except Exception as public_error:
                 logging.error(f"Failed to access public repo: {str(public_error)}")
-                raise Exception(f"Repository {repo_name} not found or inaccessible on GitHub")
+                raise Exception(
+                    f"Repository {repo_name} not found or inaccessible on GitHub"
+                )
 
-    def _fetch_github_content(self, repo_name: str, issue_number: Optional[int], is_pull_request: bool) -> Optional[Dict[str, Any]]:
+    def _fetch_github_content(
+        self, repo_name: str, issue_number: Optional[int], is_pull_request: bool
+    ) -> Optional[Dict[str, Any]]:
         try:
             github = self._get_github_client(repo_name)
             repo = github.get_repo(repo_name)
@@ -136,9 +154,13 @@ class GithubTool:
             if issue_number is None:
                 # Fetch all issues/PRs
                 if is_pull_request:
-                    items = list(repo.get_pulls(state="all")[:10])  # Limit to 10 most recent
+                    items = list(
+                        repo.get_pulls(state="all")[:10]
+                    )  # Limit to 10 most recent
                 else:
-                    items = list(repo.get_issues(state="all")[:10])  # Limit to 10 most recent
+                    items = list(
+                        repo.get_issues(state="all")[:10]
+                    )  # Limit to 10 most recent
 
                 return {
                     "success": True,
@@ -213,7 +235,9 @@ class GithubTool:
 
 def github_tool(sql_db: Session, user_id: str) -> Optional[Tool]:
     if not os.getenv("GITHUB_APP_ID") or not config_provider.get_github_key():
-        logging.warning("GitHub app credentials not set, GitHub tool will not be initialized")
+        logging.warning(
+            "GitHub app credentials not set, GitHub tool will not be initialized"
+        )
         return None
 
     tool_instance = GithubTool(sql_db, user_id)
