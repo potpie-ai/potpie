@@ -218,16 +218,30 @@ class SimplifiedAgentSupervisor:
             return Command(update={"response": "Agent not initialized"}, goto=END)
 
         try:
-            async for chunk in await self.agent.run(
-                query=state["query"],
-                project_id=state["project_id"],
-                conversation_id=state["conversation_id"],
-                user_id=state["user_id"],
-                agent_id=state["agent_id"],
-                node_ids=state["node_ids"],
-            ):
-                if isinstance(chunk, str):
-                    writer(chunk)
+            system_agents = [
+            agent.id for agent in self.available_agents if agent.status == "SYSTEM"
+        ]
+            if state["agent_id"] in system_agents:
+                async for chunk in self.agent.run(
+                    query=state["query"],
+                    project_id=state["project_id"],
+                    conversation_id=state["conversation_id"],
+                    user_id=state["user_id"],
+                    node_ids=state["node_ids"],
+                ):
+                    if isinstance(chunk, str):
+                        writer(chunk)   
+            else:
+                async for chunk in await self.agent.run(
+                    query=state["query"],
+                    project_id=state["project_id"],
+                    conversation_id=state["conversation_id"],
+                    user_id=state["user_id"],
+                    agent_id=state["agent_id"],
+                    node_ids=state["node_ids"],
+                ):
+                    if isinstance(chunk, str):
+                        writer(chunk)
         except Exception as e:
             logger.error(f"Error in agent execution: {e}")
             writer("An error occurred while processing your request")
