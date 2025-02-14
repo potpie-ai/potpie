@@ -1,6 +1,6 @@
 import logging
 from typing import Any, Dict
-
+import os
 from sqlalchemy.orm import Session
 
 from app.modules.intelligence.agents.chat_agents.code_changes_chat_agent import (
@@ -20,6 +20,7 @@ from app.modules.intelligence.agents.chat_agents.qna_chat_agent import QNAChatAg
 from app.modules.intelligence.agents.chat_agents.unit_test_chat_agent import (
     UnitTestAgent,
 )
+from langchain_community.chat_models import ChatLiteLLM
 from app.modules.intelligence.agents.custom_agents.custom_agent import CustomAgent
 from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
     CustomAgentsService,
@@ -28,11 +29,11 @@ from app.modules.intelligence.provider.provider_service import (
     AgentType,
     ProviderService,
 )
-
+from langchain_ollama import ChatOllama
 logger = logging.getLogger(__name__)
-
-
+litellm_model = os.getenv("LITELLM_MODEL")
 class AgentInjectorService:
+    
     def __init__(self, db: Session, provider_service: ProviderService, user_id: str):
         self.sql_db = db
         self.provider_service = provider_service
@@ -58,6 +59,9 @@ class AgentInjectorService:
             "LLD_agent": LLDChatAgent(mini_llm, reasoning_llm, self.sql_db),
             "code_generation_agent": CodeGenerationChatAgent(
                 mini_llm, reasoning_llm, self.sql_db
+            ),
+            "lite_llm_agent": ChatLiteLLM(
+                model=litellm_model,
             ),
         }
 

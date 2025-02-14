@@ -8,7 +8,8 @@ from app.modules.auth.auth_service import AuthService
 
 from .provider_controller import ProviderController
 from .provider_schema import GetProviderResponse, ProviderInfo, SetProviderRequest
-
+import os
+litellm_provider = os.getenv("LITELLM_PROVIDER")
 router = APIRouter()
 
 
@@ -33,7 +34,7 @@ class ProviderAPI:
         user_id = user["user_id"]
         controller = ProviderController(db, user_id)
         return await controller.set_global_ai_provider(
-            user["user_id"], provider_request
+            user["user_id"], litellm_provider
         )
 
     @staticmethod

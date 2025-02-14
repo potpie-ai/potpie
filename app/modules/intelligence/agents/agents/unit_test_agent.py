@@ -23,7 +23,7 @@ from app.modules.intelligence.tools.web_tools.github_tool import github_tool
 
 class UnitTestAgent:
     def __init__(self, sql_db, llm, user_id):
-        self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        # self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.max_iterations = os.getenv("MAX_ITER", 15)
         self.sql_db = sql_db
         self.llm = llm
