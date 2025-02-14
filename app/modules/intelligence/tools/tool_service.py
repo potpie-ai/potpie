@@ -36,18 +36,19 @@ from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool impo
     GetNodesFromTags,
 )
 from app.modules.intelligence.tools.tool_schema import ToolInfo
-from langchain_ollama import ChatOllama
-from app.core.config_provider import config_provider
+
 
 
 class ToolService:
     def __init__(self, db: Session, user_id: str):
         self.db = db
         self.user_id = user_id
+        self.webpage_extractor_tool = webpage_extractor_tool(db, user_id)
+        self.github_tool = github_tool(db, user_id)
         self.tools = self._initialize_tools()
 
     def _initialize_tools(self) -> Dict[str, Any]:
-        return {
+        tools = {
             "get_code_from_probable_node_name": GetCodeFromProbableNodeNameTool(
                 self.db, self.user_id
             ),
@@ -72,11 +73,6 @@ class ToolService:
                 model=self._get_ollama_model(),
             ),
         }
-    def _get_ollama_endpoint(self) -> str:
-        return config_provider.get_ollama_config()["endpoint"]
-
-    def _get_ollama_model(self) -> str:
-        return config_provider.get_ollama_config()["model"]
 
     async def run_tool(self, tool_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
         tool = self.tools.get(tool_id)

@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.modules.conversations.conversation.conversation_schema import (
+    ChatMessageResponse,
     ConversationInfoResponse,
     CreateConversationRequest,
     CreateConversationResponse,
@@ -82,7 +83,7 @@ class ConversationController:
 
     async def post_message(
         self, conversation_id: str, message: MessageRequest, stream: bool = True
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[ChatMessageResponse, None]:
         try:
             async for chunk in self.service.store_message(
                 conversation_id, message, MessageType.HUMAN, self.user_id, stream
@@ -100,7 +101,7 @@ class ConversationController:
         conversation_id: str,
         node_ids: List[NodeContext] = [],
         stream: bool = True,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[ChatMessageResponse, None]:
         try:
             async for chunk in self.service.regenerate_last_message(
                 conversation_id, self.user_id, node_ids, stream

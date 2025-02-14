@@ -19,6 +19,10 @@ from app.modules.intelligence.tools.kg_based_tools.get_code_from_multiple_node_i
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_name_tool import (
     get_code_from_probable_node_name_tool,
 )
+from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import (
+    webpage_extractor_tool
+)
+from app.modules.intelligence.tools.web_tools.github_tool import github_tool
 
 
 class IntegrationTestAgent:
@@ -32,10 +36,20 @@ class IntegrationTestAgent:
         self.get_code_from_probable_node_name = get_code_from_probable_node_name_tool(
             sql_db, user_id
         )
+        if os.getenv("FIRECRAWL_API_KEY"):
+            self.webpage_extractor_tool = webpage_extractor_tool(sql_db, user_id)
+        if os.getenv("GITHUB_APP_ID"):
+            self.github_tool = github_tool(sql_db, user_id)
         self.llm = llm
         self.max_iterations = os.getenv("MAX_ITER", 15)
 
     async def create_agents(self):
+        tools = [
+            self.get_code_from_probable_node_name,
+            self.get_code_from_multiple_node_ids,
+        ] + ([self.webpage_extractor_tool] if hasattr(self, 'webpage_extractor_tool') else []) \
+          + ([self.github_tool] if hasattr(self, 'github_tool') else [])
+
         integration_test_agent = Agent(
             role="Integration Test Writer",
             goal="Create a comprehensive integration test suite for the provided codebase. Analyze the code, determine the appropriate testing language and framework, and write tests that cover all major integration points.",
@@ -43,6 +57,7 @@ class IntegrationTestAgent:
             allow_delegation=False,
             verbose=True,
             llm=self.llm,
+            tools=tools,
         )
 
         return integration_test_agent
@@ -146,10 +161,6 @@ class IntegrationTestAgent:
             expected_output=f"Write COMPLETE CODE for integration tests for each node based on the test plan. Ensure that your output ALWAYS follows the structure outlined in the following pydantic model:\n{self.TestAgentResponse.model_json_schema()}",
             agent=integration_test_agent,
             output_pydantic=self.TestAgentResponse,
-            tools=[
-                self.get_code_from_probable_node_name,
-                self.get_code_from_multiple_node_ids,
-            ],
             async_execution=True,
         )
 

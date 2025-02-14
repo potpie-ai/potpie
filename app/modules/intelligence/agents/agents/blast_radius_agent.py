@@ -16,10 +16,17 @@ from app.modules.intelligence.tools.change_detection.change_detection_tool impor
 from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import (
     get_ask_knowledge_graph_queries_tool,
 )
+from app.modules.intelligence.tools.kg_based_tools.get_code_from_multiple_node_ids_tool import (
+    GetCodeFromMultipleNodeIdsTool,
+    get_code_from_multiple_node_ids_tool,
+)
 from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool import (
     get_nodes_from_tags_tool,
 )
-
+from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import (
+    webpage_extractor_tool
+)
+from app.modules.intelligence.tools.web_tools.github_tool import github_tool
 
 class BlastRadiusAgent:
     def __init__(self, sql_db, user_id, llm):
@@ -31,17 +38,24 @@ class BlastRadiusAgent:
         self.ask_knowledge_graph_queries = get_ask_knowledge_graph_queries_tool(
             sql_db, user_id
         )
+        self.get_code_from_multiple_node_ids = get_code_from_multiple_node_ids_tool(sql_db, user_id)
+        if os.getenv("FIRECRAWL_API_KEY"):
+            self.webpage_extractor_tool = webpage_extractor_tool(sql_db, user_id)
+        if os.getenv("GITHUB_APP_ID"):
+            self.github_tool = github_tool(sql_db, user_id)
 
     async def create_agents(self):
         blast_radius_agent = Agent(
-            role="Blast Radius Agent",
-            goal="Explain the blast radius of the changes made in the code.",
-            backstory="You are an expert in understanding the impact of code changes on the codebase.",
+            role="Blast Radius Analyzer",
+            goal="Analyze the impact of code changes",
+            backstory="You are an AI expert in analyzing how code changes affect the rest of the codebase.",
             tools=[
+                self.get_code_from_multiple_node_ids,
                 get_change_detection_tool(self.user_id),
                 self.get_nodes_from_tags,
                 self.ask_knowledge_graph_queries,
-            ],
+            ] + ([self.webpage_extractor_tool] if hasattr(self, 'webpage_extractor_tool') else [])
+              + ([self.github_tool] if hasattr(self, 'github_tool') else []),
             allow_delegation=False,
             verbose=True,
             llm=self.llm,

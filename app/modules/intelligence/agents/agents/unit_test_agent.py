@@ -15,6 +15,10 @@ from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool im
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_name_tool import (
     get_code_from_probable_node_name_tool,
 )
+from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import (
+    webpage_extractor_tool
+)
+from app.modules.intelligence.tools.web_tools.github_tool import github_tool
 
 
 class UnitTestAgent:
@@ -29,13 +33,21 @@ class UnitTestAgent:
         self.get_code_from_probable_node_name = get_code_from_probable_node_name_tool(
             sql_db, user_id
         )
+        if os.getenv("FIRECRAWL_API_KEY"):
+            self.webpage_extractor_tool = webpage_extractor_tool(sql_db, user_id)
+        if os.getenv("GITHUB_APP_ID"):
+            self.github_tool = github_tool(sql_db, user_id)
 
     async def create_agents(self):
         unit_test_agent = Agent(
             role="Test Plan and Unit Test Expert",
             goal="Create test plans and write unit tests based on user requirements",
             backstory="You are a seasoned AI test engineer specializing in creating robust test plans and unit tests. You aim to assist users effectively in generating and refining test plans and unit tests, ensuring they are comprehensive and tailored to the user's project requirements.",
-            tools=[self.get_code_from_probable_node_name, self.get_code_from_node_id],
+            tools=[
+                self.get_code_from_node_id,
+                self.get_code_from_probable_node_name,
+            ] + ([self.webpage_extractor_tool] if hasattr(self, 'webpage_extractor_tool') else [])
+              + ([self.github_tool] if hasattr(self, 'github_tool') else []),
             allow_delegation=False,
             verbose=True,
             llm=self.llm,
