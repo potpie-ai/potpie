@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 import git
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
+from typing import Optional, Union, List
 
 from app.modules.projects.projects_service import ProjectService
 
@@ -15,13 +16,14 @@ logger = logging.getLogger(__name__)
 
 
 class LocalRepoService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session,base_path: str = "."):
         self.db = db
         self.project_manager = ProjectService(db)
         self.projects_dir = os.path.join(os.getcwd(), "projects")
         self.max_workers = 10
         self.max_depth = 4
         self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
+        self.base_path = os.path.abspath(base_path)
 
     def get_repo(self, repo_path: str) -> git.Repo:
         if not os.path.exists(repo_path):
@@ -137,12 +139,12 @@ class LocalRepoService:
             current_depth = len(path.split("/")) if path else 0
 
         # If we've reached max depth, return truncated indicator
-        if current_depth >= self.max_depth:
-            return {
-                "type": "directory",
-                "name": path.split("/")[-1] or repo.name,
-                "children": [{"type": "file", "name": "...", "path": "truncated"}],
-            }
+        # if current_depth >= self.max_depth:
+        #     return {
+        #         "type": "directory",
+        #         "name": path.split("/")[-1] or repo.name,
+        #         "children": [{"type": "file", "name": "...", "path": "truncated"}],
+        #     }
 
         structure = {
             "type": "directory",
@@ -152,7 +154,7 @@ class LocalRepoService:
 
         try:
             contents = await asyncio.get_event_loop().run_in_executor(
-                self.executor, repo.get_contents, path
+                self.executor, self._get_contents, path
             )
 
             if not isinstance(contents, list):
@@ -160,22 +162,22 @@ class LocalRepoService:
 
             # Filter out files with excluded extensions
             contents = [
-                item
-                for item in contents
-                if item.type == "dir"
-                or not any(item.name.endswith(ext) for ext in exclude_extensions)
-            ]
+                        item
+                        for item in contents
+                        if item['type'] == "dir"
+                        or not any(item['name'].endswith(ext) for ext in exclude_extensions)
+                    ]
 
             tasks = []
             for item in contents:
                 # Only process items within the base_path if it's specified
-                if base_path and not item.path.startswith(base_path):
+                if base_path and not item['path'].startswith(base_path):
                     continue
 
-                if item.type == "dir":
+                if item['type'] == "dir":
                     task = self._fetch_repo_structure_async(
                         repo,
-                        item.path,
+                        item['path'],
                         current_depth=current_depth,
                         base_path=base_path,
                     )
@@ -184,8 +186,8 @@ class LocalRepoService:
                     structure["children"].append(
                         {
                             "type": "file",
-                            "name": item.name,
-                            "path": item.path,
+                            "name": item['name'],
+                            "path": item['path'],
                         }
                     )
 
@@ -270,3 +272,72 @@ class LocalRepoService:
             patches_dict[current_file] = "\n".join(patch_lines)
 
         return patches_dict
+
+    def _get_contents(self, path: str, ref: Optional[str] = None) -> Union[List[dict], dict]:
+        """
+        When the path is a directory, it returns a list of dictionaries,
+        each representing a file or subdirectory. For files in a directory, content is not read
+        immediately (simulating lazy loading). When the path is a file, its content is read and returned.
+        
+        :param path: Relative or absolute path within the local repository.
+        :param ref: Optional reference (ignored in this local implementation).
+        :return: A dict if the path is a file (with file content loaded), or a list of dicts if the path is a directory.
+        """
+        # Ensure the provided path is a string.
+        if not isinstance(path, str):
+            raise TypeError(f"Expected path to be a string, got {type(path).__name__}")
+
+        # Normalize the root path: treat "/" as the repository root.
+        if path == "/":
+            path = ""
+        
+        # Compute the absolute path.
+        abs_path = os.path.abspath(path)
+        
+        if not os.path.exists(abs_path):
+            raise FileNotFoundError(f"Path '{abs_path}' does not exist.")
+        
+        # If the path is a directory, list its contents.
+        if os.path.isdir(abs_path):
+            contents = []
+            for item in os.listdir(abs_path):
+                item_path = os.path.join(abs_path, item)
+                if os.path.isdir(item_path):
+                    contents.append({
+                        "path": item_path,
+                        "name": item,
+                        "type": "dir",
+                        "content": None,
+                        "completed": True
+                    })
+                elif os.path.isfile(item_path):
+                    contents.append({
+                        "path": item_path,
+                        "name": item,
+                        "type": "file",
+                        "content": None,  
+                        "completed": False
+                    })
+                else:
+                    contents.append({
+                        "path": item_path,
+                        "name": item,
+                        "type": "other",
+                        "content": None,
+                        "completed": True
+                    })
+            return contents
+        
+        # If the path is a file, read and return its content.
+        elif os.path.isfile(abs_path):
+            with open(abs_path, "r", encoding="utf-8") as file:
+                file_content = file.read()
+            return {
+                "path": abs_path,
+                "name": os.path.basename(abs_path),
+                "type": "file",
+                "content": file_content,
+                "completed": True
+            }
+
+        
