@@ -37,7 +37,7 @@ from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool impo
 )
 from app.modules.intelligence.tools.tool_schema import ToolInfo
 
-
+from litellm import completion
 
 class ToolService:
     def __init__(self, db: Session, user_id: str):
@@ -68,9 +68,8 @@ class ToolService:
             "get_node_neighbours_from_node_id": GetNodeNeighboursFromNodeIdTool(
                 self.db
             ),
-            "ollama_tool": ChatOllama(
-                base_url=self._get_ollama_endpoint(),
-                model=self._get_ollama_model(),
+            "Lite_LLM": completion(
+                model=""
             ),
         }
 

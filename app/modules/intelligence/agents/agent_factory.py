@@ -1,7 +1,7 @@
 from typing import Any, Dict
 
 from sqlalchemy.orm import Session
-
+import os
 from app.modules.intelligence.agents.chat_agents.code_changes_chat_agent import (
     CodeChangesChatAgent,
 )
@@ -25,8 +25,9 @@ from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from langchain_ollama import ChatOllama
+from langchain_community.chat_models import ChatLiteLLM
 
-
+litellm_model = os.getenv("LITELLM_MODEL")
 class AgentFactory:
     def __init__(self, db: Session, provider_service: ProviderService):
         self.db = db
@@ -71,9 +72,8 @@ class AgentFactory:
             "code_generation_agent": lambda: CodeGenerationChatAgent(
                 mini_llm, reasoning_llm, self.db
             ),
-            "ollama_agent": lambda: ChatOllama(
-                base_url=self.provider_service.get_ollama_endpoint(),
-                model=self.provider_service.get_ollama_model(),
+            "lite_llm_agent": ChatLiteLLM(
+                model=litellm_model,
             ),
         }
         

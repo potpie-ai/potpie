@@ -3,7 +3,7 @@ import os
 from enum import Enum
 from typing import List, Tuple
 
-from langchain_ollama import ChatOllama
+from langchain_community.chat_models import ChatLiteLLM
 
 from app.modules.key_management.secret_manager import SecretManager
 from app.modules.users.user_preferences_model import UserPreferences
@@ -28,20 +28,20 @@ class ProviderService:
     async def list_available_llms(self) -> List[ProviderInfo]:
         return [
             ProviderInfo(
-                id="ollama",
-                name="Ollama",
-                description="A provider for running open source models locally.",
+                id="litelm",
+                name="LiteLLM",
+                description="A provider for running open source models locally using LiteLLM.",
             )
         ]
 
     async def set_global_ai_provider(self, user_id: str, provider: str):
-        provider = "ollama"  # Force all users to use Ollama
+        provider = "litelm"  # Force all users to use LiteLLM
         
         preferences = self.db.query(UserPreferences).filter_by(user_id=user_id).first()
 
         if not preferences:
             preferences = UserPreferences(
-                user_id=user_id, preferences={"llm_provider": "ollama"}
+                user_id=user_id, preferences={"llm_provider": "litelm"}
             )
             self.db.add(preferences)
         else:
@@ -57,28 +57,28 @@ class ProviderService:
         return {"message": f"AI provider set to {provider}"}
 
     def _initialize_llm(self, size: str):
-        """Initialize local Ollama model."""
-        ollama_endpoint = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
-        ollama_model = os.getenv("OLLAMA_MODEL", "llama3.2")  # Default to a local model
-        
-        logging.info(f"Initializing Ollama LLM with model {ollama_model}")
-        self.llm = ChatOllama(base_url=ollama_endpoint, model=ollama_model)
+        """Initialize LiteLLM model with OpenRouter as the provider."""
+        litellm_model = os.getenv("LITELLM_MODEL")
+        provider = os.getenv("LITELLM_PROVIDER", "openrouter")
+        logging.info(f"Initializing LiteLLM with model {litellm_model} and provider {provider}")
+        self.llm = ChatLiteLLM(model=litellm_model)
         return self.llm
+
 
     def get_large_llm(self, agent_type: AgentType):
         self.llm = self._initialize_llm("large")
         return self.llm
 
-    def get_small_llm(self,agent_type: AgentType):
+    def get_small_llm(self, agent_type: AgentType):
         self.llm = self._initialize_llm("small")
         return self.llm
 
     def get_llm_provider_name(self) -> str:
-        """Returns the name of the LLM provider, which is always Ollama."""
-        return "Ollama"
+        """Returns the name of the LLM provider, which is always LiteLLM."""
+        return "LiteLLM"
 
     async def get_global_ai_provider(self, user_id: str) -> str:
-        return "ollama"
+        return "litelm"
 
     async def get_preferred_llm(self, user_id: str) -> Tuple[str, str]:
-        return "ollama", os.getenv("OLLAMA_MODEL", "llama3.2")
+        return "litelm", os.getenv("LITELLM_MODEL")
