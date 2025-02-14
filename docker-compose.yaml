@@ -4,8 +4,8 @@ services:
     container_name: potpie_postgres
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: mysecretpassword
-      POSTGRES_DB: momentum
+      POSTGRES_PASSWORD: oGxDeZWeNtKpqPnqaHBAgJAxGHnAjhKm
+      POSTGRES_DB: railway
     ports:
       - "5432:5432"
     networks:
@@ -20,7 +20,7 @@ services:
     image: neo4j:latest
     container_name: potpie_neo4j
     environment:
-      NEO4J_AUTH: neo4j/mysecretpassword
+      NEO4J_AUTH: neo4j/o7sODlqFQuNRwMNnVv9Pjf7pqkAgKiBnAZnpJymkQQQ
       NEO4JLABS_PLUGINS: '["apoc"]' # Add this line to include APOC plugin
       NEO4J_dbms_security_procedures_unrestricted: 'apoc.*' # Allow APOC procedures
       NEO4J_dbms_memory_transaction_total_max: 0

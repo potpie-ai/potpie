@@ -28,7 +28,7 @@ from app.modules.intelligence.provider.provider_service import (
     AgentType,
     ProviderService,
 )
-
+from langchain_ollama import ChatOllama
 logger = logging.getLogger(__name__)
 
 
@@ -58,6 +58,10 @@ class AgentInjectorService:
             "LLD_agent": LLDChatAgent(mini_llm, reasoning_llm, self.sql_db),
             "code_generation_agent": CodeGenerationChatAgent(
                 mini_llm, reasoning_llm, self.sql_db
+            ),
+            "ollama_agent": ChatOllama(
+                base_url="http://localhost:11434",
+                model="llama3.2",
             ),
         }
 
