@@ -138,12 +138,12 @@ class LocalRepoService:
             current_depth = len(path.split("/")) if path else 0
 
         # If we've reached max depth, return truncated indicator
-        # if current_depth >= self.max_depth:
-        #     return {
-        #         "type": "directory",
-        #         "name": path.split("/")[-1] or repo.name,
-        #         "children": [{"type": "file", "name": "...", "path": "truncated"}],
-        #     }
+        if current_depth >= self.max_depth:
+            return {
+                "type": "directory",
+                "name": path.split("/")[-1] or repo.name,
+                "children": [{"type": "file", "name": "...", "path": "truncated"}],
+            }
 
         structure = {
             "type": "directory",
