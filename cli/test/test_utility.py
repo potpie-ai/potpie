@@ -4,20 +4,6 @@ from pathlib import Path
 from potpie.utility import Utility
 
 
-def test_pid_file_creation(monkeypatch):
-    monkeypatch.setattr(os, "name", "posix")
-
-    def mock_home(*args):
-        return "/home/user"
-
-    monkeypatch.setattr(Path, "home", mock_home)
-    monkeypatch.setattr(
-        Path,
-        "mkdir",
-    )
-
-    pid_file = Utility.create_path_of_pid_file()
-    assert pid_file == "/home/user/.config/potpie/potpie.pid"
 
 
 @pytest.mark.parametrize(

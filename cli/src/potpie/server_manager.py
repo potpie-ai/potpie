@@ -238,7 +238,8 @@ class ServerManager:
                         stderr=logout,
                     )
                 if(celery_process.returncode != 0):
-                    raise StartServerError(f" Start Celery Failed: {e}")
+                    raise StartServerError(f" Start Celery Failed: Return Code: {celery_process.returncode} with error: {celery_process.stderr}")
+
 
                 with open(self.pid_file, "a+") as f:
                     f.write(str(celery_process.pid))
@@ -271,14 +272,16 @@ class ServerManager:
                 )
             
                 if(server_process.returncode != 0):
-                    raise StartServerError(f" Start Server Failed: {e}")
+
+                    raise StartServerError(f" Start Celery Failed: Return Code: {server_process.returncode} with error: {server_process.stderr}")
+
 
                 with open(self.pid_file, "w") as f:
                     f.write(str(server_process.pid))
                     f.write("\n")
 
         except Exception as e:
-            StartServerError(f" Start Server Failed: {e}")
+            raise StartServerError(f" Start Server Failed: {e}")
             
     
             

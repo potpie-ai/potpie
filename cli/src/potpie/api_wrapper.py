@@ -6,7 +6,6 @@ import requests
 import aiohttp
 import asyncio
 from potpie.utility import Utility
-import random
 
 
 class ApiWrapper:
@@ -125,6 +124,7 @@ class ApiWrapper:
                             yield data["message"]
                         except json.JSONDecodeError as e:
                             # Ignore this because they are just empty man
+                            logging.debug("Received empty or invalid JSON chunk, skipping")  
                             continue
 
                         await asyncio.sleep(0)
@@ -135,76 +135,3 @@ class ApiWrapper:
             except Exception as e:
                 logging.error(f"Unexpected error: {e}")
                 raise
-
-
-#     def conversation_history():
-#         pass
-
-
-def first_try(api: ApiWrapper):
-
-    project_id = api.parse_project(
-        repo_path="/home/deepesh/Development/public/opensource/test-mongo"
-    )
-
-    print(project_id)
-
-    while True:
-
-        a = api.parse_status(project_id)
-
-        if a in ["ready", "error"]:
-            break
-
-        print(a)
-        time.sleep(4)
-
-    agents = api.available_agents()
-
-    selected_agent = random.choice([agent["id"] for agent in agents])
-    print(selected_agent)
-
-    conversation_id = api.create_conversation(
-        agent_id_list=[selected_agent],
-        project_id_list=[project_id],
-        title="My first Conversation",
-    )
-
-    print(conversation_id)
-
-    while True:
-        a = input("Enter the message chat with bots, quite or q to quit: ")
-
-        if a in ["q", "quit"]:
-            break
-
-        print(a)
-        asyncio.run(
-            api.interact_with_agent(
-                conversation_id="conversation_id",
-                content=a,
-            )
-        )
-
-
-def second_try(api: ApiWrapper):
-
-    while True:
-        a = input("Enter the message chat with bots, quite or q to quit: ")
-
-        if a in ["q", "quit"]:
-            break
-
-        print(a)
-        asyncio.run(
-            api.interact_with_agent(
-                conversation_id="0194f9a0-8402-7687-ba25-aac7e860aea2",
-                content=a,
-            )
-        )
-
-
-if __name__ == "__main__":
-    api = ApiWrapper()
-
-    second_try(api)
