@@ -57,7 +57,6 @@ class RAGResponse(BaseModel):
 
 class DebugRAGAgent:
     def __init__(self, sql_db, llm, mini_llm, user_id):
-        self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.max_iter = os.getenv("MAX_ITER", 5)
         self.sql_db = sql_db
         self.get_code_from_node_id = get_code_from_node_id_tool(sql_db, user_id)

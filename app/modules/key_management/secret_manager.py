@@ -45,13 +45,11 @@ class SecretManager:
 
     @staticmethod
     def get_secret_id(
-        provider: Literal["openai", "anthropic", "deepseek"], customer_id: str
+        provider: Literal[ "anthropic", "deepseek"], customer_id: str
     ):
         if os.getenv("isDevelopmentMode") == "enabled":
             return None
-        if provider == "openai":
-            secret_id = f"openai-api-key-{customer_id}"
-        elif provider == "anthropic":
+        if provider == "anthropic":
             secret_id = f"anthropic-api-key-{customer_id}"
         elif provider == "deepseek":
             secret_id = f"deepseek-api-key-{customer_id}"
@@ -105,7 +103,7 @@ class SecretManager:
 
     @router.get("/secrets/{provider}")
     def get_secret_for_provider(
-        provider: Literal["openai", "anthropic", "deepseek", "all"],
+        provider: Literal[ "anthropic", "deepseek", "all"],
         user=Depends(AuthService.check_auth),
         db: Session = Depends(get_db),
     ):
@@ -131,7 +129,7 @@ class SecretManager:
 
     @staticmethod
     def get_secret(
-        provider: Literal["openai", "anthropic", "deepseek"], customer_id: str
+        provider: Literal[ "anthropic", "deepseek"], customer_id: str
     ):
         if os.getenv("isDevelopmentMode") == "enabled":
             return None
@@ -183,7 +181,7 @@ class SecretManager:
 
     @router.delete("/secrets/{provider}")
     def delete_secret(
-        provider: Literal["openai", "anthropic", "deepseek", "all"],
+        provider: Literal[ "anthropic", "deepseek", "all"],
         user=Depends(AuthService.check_auth),
         db: Session = Depends(get_db),
     ):
@@ -191,7 +189,7 @@ class SecretManager:
             return {"message": "Secret deletion is not allowed in development mode"}
         customer_id = user["user_id"]
         if provider == "all":
-            provider_list = ["openai", "anthropic", "deepseek"]
+            provider_list = [ "anthropic", "deepseek"]
             secret_id = [
                 SecretManager.get_secret_id(provider, customer_id)
                 for provider in provider_list

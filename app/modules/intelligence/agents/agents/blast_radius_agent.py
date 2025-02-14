@@ -30,7 +30,6 @@ from app.modules.intelligence.tools.web_tools.github_tool import github_tool
 
 class BlastRadiusAgent:
     def __init__(self, sql_db, user_id, llm):
-        self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.sql_db = sql_db
         self.user_id = user_id
         self.llm = llm

@@ -62,7 +62,7 @@ class LowLevelDesignPlan(BaseModel):
 
 class LowLevelDesignAgent:
     def __init__(self, sql_db, llm, user_id):
-        self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        # self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.max_iter = int(os.getenv("MAX_ITER", 10))
         self.sql_db = sql_db
         self.llm = llm

@@ -13,17 +13,15 @@ class ConfigProvider:
             "password": os.getenv("NEO4J_PASSWORD"),
         }
         self.github_key = os.getenv("GITHUB_PRIVATE_KEY")
-        self.ollama_endpoint = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
-        self.ollama_model = os.getenv("OLLAMA_MODEL", "llama3.2")
+        self.lite_llm_Model = os.getenv("LITELLM_MODEL")
     def get_neo4j_config(self):
         return self.neo4j_config
 
     def get_github_key(self):
         return self.github_key
-    def get_ollama_config(self):
+    def get_litellm_config(self):
         return {
-            "endpoint": self.ollama_endpoint,
-            "model": self.ollama_model,
+            "model": self.lite_llm_Model,
         }
     def get_demo_repo_list(self):
         return [

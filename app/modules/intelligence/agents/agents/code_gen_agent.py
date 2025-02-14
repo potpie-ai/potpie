@@ -38,7 +38,6 @@ from app.modules.intelligence.tools.web_tools.github_tool import github_tool
 
 class CodeGenerationAgent:
     def __init__(self, sql_db, llm, mini_llm, user_id):
-        self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.max_iter = os.getenv("MAX_ITER", 15)
         self.sql_db = sql_db
         self.get_code_from_multiple_node_ids = get_code_from_multiple_node_ids_tool(
