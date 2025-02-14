@@ -13,21 +13,22 @@ load_dotenv(find_dotenv(), override=True)
 
 class ServerManagerException(Exception):
     """Base class for exceptions in this module."""
-    pass
+
 
 
 class StartServerError(ServerManagerException):
     def __init__(self, message="Starting the server has an error"):
         self.message = message
         super().__init__(self.message)
-    
+
+
 class StopServerError(ServerManagerException):
     def __init__(self, message="Stopping the server has an error"):
         self.message = message
         super().__init__(self.message)
 
 
-class EnvironmentError(ServerManagerException):
+class CustomEnvironmentError(ServerManagerException):
     """Exception raised for errors in the environment."""
 
     def __init__(self, message="Invalid environment"):
@@ -217,14 +218,14 @@ class ServerManager:
             )
 
     def run_celery(self):
-            """Run Celery worker"""
-            try:
-                with open(self.celery_log, "a+") as logout:
-                    celery_queue_name = os.getenv("CELERY_QUEUE_NAME", "dev")
-                    celery_process = subprocess.Popen(
-                        [
-                            "celery",
-                            "-A",
+        """Run Celery worker"""
+        try:
+            with open(self.celery_log, "a+") as logout:
+                celery_queue_name = os.getenv("CELERY_QUEUE_NAME", "dev")
+                celery_process = subprocess.Popen(
+                    [
+                        "celery",
+                        "-A",
                         "app.celery.celery_app",
                         "worker",
                         "--loglevel=info",
@@ -233,20 +234,21 @@ class ServerManager:
                         "-E",
                         "--concurrency=1",
                         "--pool=solo",
-                        ],
-                        stdout=logout,
-                        stderr=logout,
-                    )
-                if(celery_process.returncode != 0):
-                    raise StartServerError(f" Start Celery Failed: Return Code: {celery_process.returncode} with error: {celery_process.stderr}")
+                    ],
+                    stdout=logout,
+                    stderr=logout,
+                )
+            if celery_process.returncode != 0:
+                raise StartServerError(
+                    f" Start Celery Failed: Return Code: {celery_process.returncode} with error: {celery_process.stderr}"
+                )
 
+            with open(self.pid_file, "a+") as f:
+                f.write(str(celery_process.pid))
+        except Exception as e:
+            logging.error(f"Failed to start Celery worker: {e}")
+            raise StartServerError(f"Failed to start Celery worker: {e}")
 
-                with open(self.pid_file, "a+") as f:
-                    f.write(str(celery_process.pid))
-            except Exception as e:
-                logging.error(f"Failed to start Celery worker: {e}")
-                raise StartServerError(f"Failed to start Celery worker: {e}")
-            
     def run_server(self):
         """Run the server using uvicorn"""
         try:
@@ -270,11 +272,12 @@ class ServerManager:
                     stdout=logout,
                     stderr=logout,
                 )
-            
-                if(server_process.returncode != 0):
 
-                    raise StartServerError(f" Start Celery Failed: Return Code: {server_process.returncode} with error: {server_process.stderr}")
+                if server_process.returncode != 0:
 
+                    raise StartServerError(
+                        f" Start Celery Failed: Return Code: {server_process.returncode} with error: {server_process.stderr}"
+                    )
 
                 with open(self.pid_file, "w") as f:
                     f.write(str(server_process.pid))
@@ -282,9 +285,7 @@ class ServerManager:
 
         except Exception as e:
             raise StartServerError(f" Start Server Failed: {e}")
-            
-    
-            
+
     def start_server(self):
         if os.path.exists(self.pid_file):
             logging.warning("Server is already running")
@@ -317,8 +318,6 @@ class ServerManager:
                 logging.warning(f"StopServerError during rollback: {stop_error}")
             raise StartServerError(f"Startup failed: {e}")  # Ensure correct exception
 
-
-    
     def stop_server(self):
         """Stop all services in reverse order"""
         if not os.path.exists(self.pid_file):

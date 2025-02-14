@@ -174,25 +174,50 @@ def test_run_migrations(
         assert server_manager.run_migrations() is None
 
 
-
 @pytest.mark.parametrize(
     "scenario, expected_exception",
     [
-        ("server_running", None),  
-        ("server_already_running", StartServerError),  
-        ("docker_failure", StartServerError),  
-        ("postgres_failure", StartServerError),  
-        ("migration_failure", StartServerError),  
+        ("server_running", None),
+        ("server_already_running", StartServerError),
+        ("docker_failure", StartServerError),
+        ("postgres_failure", StartServerError),
+        ("migration_failure", StartServerError),
     ],
 )
 def test_start_server(server_manager, monkeypatch, scenario, expected_exception):
 
     # Mock necessary methods
-    monkeypatch.setattr(ServerManager, "start_docker", lambda self: None if scenario != "docker_failure" else (_ for _ in ()).throw(DockerError("Docker failed")))
-    monkeypatch.setattr(ServerManager, "check_postgres", lambda self: True if scenario != "postgres_failure" else (_ for _ in ()).throw(PostgresError("Postgres failed")))
-    monkeypatch.setattr(ServerManager, "run_migrations", lambda self: None if scenario != "migration_failure" else (_ for _ in ()).throw(MigrationError("Migration failed")))
+    monkeypatch.setattr(
+        ServerManager,
+        "start_docker",
+        lambda self: (
+            None
+            if scenario != "docker_failure"
+            else (_ for _ in ()).throw(DockerError("Docker failed"))
+        ),
+    )
+    monkeypatch.setattr(
+        ServerManager,
+        "check_postgres",
+        lambda self: (
+            True
+            if scenario != "postgres_failure"
+            else (_ for _ in ()).throw(PostgresError("Postgres failed"))
+        ),
+    )
+    monkeypatch.setattr(
+        ServerManager,
+        "run_migrations",
+        lambda self: (
+            None
+            if scenario != "migration_failure"
+            else (_ for _ in ()).throw(MigrationError("Migration failed"))
+        ),
+    )
 
-    monkeypatch.setattr(os.path, "exists", lambda path: scenario == "server_already_running")
+    monkeypatch.setattr(
+        os.path, "exists", lambda path: scenario == "server_already_running"
+    )
 
     class MockProcess:
         def __init__(self):
@@ -233,7 +258,10 @@ def test_start_server(server_manager, monkeypatch, scenario, expected_exception)
     "scenario, expected_exception",
     [
         ("server_not_running", StopServerError),  # PID file missing
-        ("process_termination_failure", StopServerError),  # Process cannot be terminated
+        (
+            "process_termination_failure",
+            StopServerError,
+        ),  # Process cannot be terminated
         ("docker_stop_failure", StopServerError),  # Docker fails to stop
         ("successful_shutdown", None),  # Everything works fine
     ],
@@ -242,7 +270,9 @@ def test_stop_server(server_manager, monkeypatch, scenario, expected_exception):
 
     pid_file_content = "1234\n5678"
 
-    monkeypatch.setattr(os.path, "exists", lambda path: scenario != "server_not_running")
+    monkeypatch.setattr(
+        os.path, "exists", lambda path: scenario != "server_not_running"
+    )
 
     def mock_open(*args, **kwargs):
         class MockFile:
@@ -273,7 +303,7 @@ def test_stop_server(server_manager, monkeypatch, scenario, expected_exception):
 
     monkeypatch.setattr(os, "remove", lambda path: None)
 
-    if expected_exception!=None:
+    if expected_exception != None:
         with pytest.raises(expected_exception):
             server_manager.stop_server()
     else:

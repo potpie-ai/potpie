@@ -4,8 +4,6 @@ from pathlib import Path
 from potpie.utility import Utility
 
 
-
-
 @pytest.mark.parametrize(
     "test_params",
     [

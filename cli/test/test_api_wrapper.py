@@ -182,3 +182,64 @@ def test_available_agents(
             len(api_wrapper.available_agents(system_agent=system_agents))
             == numbers_system_agents
         )
+
+
+@pytest.mark.parametrize(
+    "status_code, expected, should_raise",
+    [
+        (
+            200,
+            [
+                {
+                    "project_id": 1,
+                    "name": "sdsd",
+                    "status": "submitted",
+                    "created_at": "2021-09-01T00:00:00",
+                    "updated_at": "2021-09-01T00:00:00",
+                }
+            ],
+            False,
+        ),
+        (422, Exception, True),
+    ],
+)
+def test_get_list_of_projects(
+    api_wrapper, monkeypatch, status_code, expected, should_raise
+):
+    class MockGetListOfProjectsResponse:
+
+        def __init__(self):
+            self.status_code = status_code
+
+        @staticmethod
+        def json():
+            if status_code == 200:
+                return [
+                    {
+                        "project_id": 1,
+                        "name": "sdsd",
+                        "status": "submitted",
+                        "created_at": "2021-09-01T00:00:00",
+                        "updated_at": "2021-09-01T00:00:00",
+                    }
+                ]
+            elif status_code == 422:
+                return {
+                    "detail": [
+                        {"loc": ["<string>"], "msg": "<string>", "type": "<string>"}
+                    ]
+                }
+            else:
+                return None
+
+    def mock_get(*args, **kwargs):
+        return MockGetListOfProjectsResponse()
+
+    monkeypatch.setattr(requests, "get", mock_get)
+
+    if should_raise:
+        with pytest.raises(Exception):
+            api_wrapper.get_list_of_projects()
+
+    else:
+        api_wrapper.get_list_of_projects() == expected
