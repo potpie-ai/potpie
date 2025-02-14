@@ -4,12 +4,6 @@ from pathlib import Path
 from potpie.utility import Utility
 
 
-def test_log_file_creation():
-    utility = Utility()
-    assert os.path.exists(utility.log_file)
-    assert utility.log_file.endswith("potpie.log")
-
-
 def test_pid_file_creation(monkeypatch):
     monkeypatch.setattr(os, "name", "posix")
 

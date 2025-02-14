@@ -11,11 +11,16 @@ class Utility:
 
     def __init__(self):
         if not hasattr(self, "log_file"):
-            self._log_file = self._create_logs_files()
+            self._server_log_file = self._create_logs_files("server.log")
+            self._celery_log_file = self._create_logs_files("celery.log")
 
     @property
-    def log_file(self):
-        return self._log_file
+    def server_log_file(self):
+        return self._server_log_file
+
+    @property
+    def celery_log_file(self):
+        return self._celery_log_file
 
     @staticmethod
     def base_url() -> str:
@@ -25,7 +30,7 @@ class Utility:
     def get_user_id() -> str:
         return os.getenv("defaultUsername", "defaultuser")
 
-    def _create_logs_files(self) -> str:
+    def _create_logs_files(self, filename) -> str:
         """Create log files for server communications"""
 
         if os.name == "nt":
@@ -35,7 +40,7 @@ class Utility:
 
         Path(log_dir).mkdir(parents=True, exist_ok=True)
 
-        log_file = os.path.join(log_dir, "potpie.log")
+        log_file = os.path.join(log_dir, filename)
 
         if not os.path.exists(log_file):
             with open(log_file, "w") as _:
