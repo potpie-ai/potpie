@@ -1,4 +1,4 @@
-from typing import Any, Dict, Union
+from typing import Any, Dict, Type, Union
 
 from pydantic import BaseModel
 
@@ -24,3 +24,8 @@ class ToolInfo(BaseModel):
     name: str
     description: Union[str, tuple]
     # parameters: List[ToolParameter]
+
+class ToolInfoWithParameters(BaseModel):
+    name: str
+    description: Union[str, tuple]
+    args_schema: dict

@@ -51,7 +51,6 @@ class KnowledgeGraphQueryTool:
         """
 
     def __init__(self, sql_db, user_id):
-        self.kg_query_url = os.getenv("KNOWLEDGE_GRAPH_URL")
         self.headers = {"Content-Type": "application/json"}
         self.user_id = user_id
         self.sql_db = sql_db

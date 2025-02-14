@@ -45,15 +45,3 @@ class ProviderAPI:
         user_id = user["user_id"]
         controller = ProviderController(db, user_id)
         return await controller.get_global_ai_provider(user_id)
-
-    @staticmethod
-    @router.get("/get-preferred-llm/", response_model=GetProviderResponse)
-    async def get_preferred_llm(
-        user_id: str,
-        db: Session = Depends(get_db),
-        hmac_signature: str = Header(..., alias="X-HMAC-Signature"),
-    ):
-        if not AuthService.verify_hmac_signature(user_id, hmac_signature):
-            raise HTTPException(status_code=401, detail="Unauthorized")
-        controller = ProviderController(db, user_id)
-        return await controller.get_preferred_llm(user_id)

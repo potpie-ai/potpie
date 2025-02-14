@@ -9,6 +9,7 @@ from app.modules.conversations.conversation.conversation_model import (  # noqa
 from app.modules.intelligence.prompts.prompt_model import Prompt  # noqa
 from app.modules.projects.projects_model import Project  # noqa
 from app.modules.users.user_preferences_model import UserPreferences  # noqa
+from app.modules.intelligence.agents.custom_agents.custom_agent_model import CustomAgent  # noqa
 
 
 class User(Base):
@@ -28,3 +29,4 @@ class User(Base):
     conversations = relationship("Conversation", back_populates="user")
     created_prompts = relationship("Prompt", back_populates="creator")
     preferences = relationship("UserPreferences", back_populates="user", uselist=False)
+    custom_agents = relationship("CustomAgent", back_populates="user")
