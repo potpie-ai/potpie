@@ -3,12 +3,11 @@ import logging
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import git
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from typing import Optional, Union, List
 
 from app.modules.projects.projects_service import ProjectService
 
@@ -273,31 +272,25 @@ class LocalRepoService:
 
         return patches_dict
 
-    def _get_contents(self, path: str, ref: Optional[str] = None) -> Union[List[dict], dict]:
+    def _get_contents(self, path: str) -> Union[List[dict], dict]:
         """
-        When the path is a directory, it returns a list of dictionaries,
-        each representing a file or subdirectory. For files in a directory, content is not read
-        immediately (simulating lazy loading). When the path is a file, its content is read and returned.
+        If the path is a directory, it returns a list of dictionaries,
+        each representing a file or subdirectory. If the path is a file, its content is read and returned.
         
         :param path: Relative or absolute path within the local repository.
-        :param ref: Optional reference (ignored in this local implementation).
         :return: A dict if the path is a file (with file content loaded), or a list of dicts if the path is a directory.
         """
-        # Ensure the provided path is a string.
         if not isinstance(path, str):
             raise TypeError(f"Expected path to be a string, got {type(path).__name__}")
 
-        # Normalize the root path: treat "/" as the repository root.
         if path == "/":
             path = ""
         
-        # Compute the absolute path.
         abs_path = os.path.abspath(path)
         
         if not os.path.exists(abs_path):
             raise FileNotFoundError(f"Path '{abs_path}' does not exist.")
         
-        # If the path is a directory, list its contents.
         if os.path.isdir(abs_path):
             contents = []
             for item in os.listdir(abs_path):
@@ -307,7 +300,7 @@ class LocalRepoService:
                         "path": item_path,
                         "name": item,
                         "type": "dir",
-                        "content": None,
+                        "content": None, #path is a dir, content is not loaded
                         "completed": True
                     })
                 elif os.path.isfile(item_path):
@@ -328,7 +321,6 @@ class LocalRepoService:
                     })
             return contents
         
-        # If the path is a file, read and return its content.
         elif os.path.isfile(abs_path):
             with open(abs_path, "r", encoding="utf-8") as file:
                 file_content = file.read()
@@ -336,7 +328,7 @@ class LocalRepoService:
                 "path": abs_path,
                 "name": os.path.basename(abs_path),
                 "type": "file",
-                "content": file_content,
+                "content": file_content, #path is a file, content is loaded
                 "completed": True
             }
 
