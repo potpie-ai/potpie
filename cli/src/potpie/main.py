@@ -60,13 +60,15 @@ def start():
 
 
 @cli.command()
+@handle_api_error
 def stop():
     """Stop the server and all related services"""
+    click.secho("Stopping Poitre server...", fg="blue", bold=True)
     try:
         server_manager.stop_server()
+        click.secho("Poitre server stopped successfully.", fg="green", bold=True)
     except Exception as e:
         logging.error("Error during shutdown: %s", e)
-
 
 @cli.command()
 @click.argument("repo")
