@@ -36,8 +36,7 @@ from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool impo
     GetNodesFromTags,
 )
 from app.modules.intelligence.tools.tool_schema import ToolInfo
-from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import webpage_extractor_tool
-from app.modules.intelligence.tools.web_tools.github_tool import github_tool
+
 
 
 class ToolService:
@@ -69,15 +68,11 @@ class ToolService:
             "get_node_neighbours_from_node_id": GetNodeNeighboursFromNodeIdTool(
                 self.db
             ),
+            "ollama_tool": ChatOllama(
+                base_url=self._get_ollama_endpoint(),
+                model=self._get_ollama_model(),
+            ),
         }
-        
-        if self.webpage_extractor_tool:
-            tools["webpage_extractor"] = self.webpage_extractor_tool
-            
-        if self.github_tool:
-            tools["github_tool"] = self.github_tool
-
-        return tools
 
     async def run_tool(self, tool_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
         tool = self.tools.get(tool_id)
