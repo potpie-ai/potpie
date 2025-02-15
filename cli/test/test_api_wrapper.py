@@ -242,4 +242,4 @@ def test_get_list_of_projects(
             api_wrapper.get_list_of_projects()
 
     else:
-        api_wrapper.get_list_of_projects() == expected
+        assert api_wrapper.get_list_of_projects() == expected
