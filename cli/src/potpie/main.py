@@ -283,24 +283,18 @@ def create(title, max_length):
         logging.error(f"An unexpected error occurred: {e}")
 
 @conversation.command(name="list")
+@handle_api_error
 def list_conversations():
     """List all conversations"""
-    try:
-        conversations = api_wrapper.get_conversation()
-
-        table_data = [
-            [conversation["id"], conversation["title"], conversation["status"]]
-            for conversation in conversations
-        ]
-        table = tabulate(
-            table_data, headers=["ID", "Title", "Status"], tablefmt="fancy_grid"
-        )
-        click.echo(table)
-    except requests.RequestException as e:
-        logging.error("Network error occurred: %s", e)
-    except Exception as e:
-        logging.error("An unexpected error occurred: %s", e)
-
+    conversations = api_wrapper.get_conversation()
+    table_data = [
+        [conversation["id"], conversation["title"], conversation["status"]]
+        for conversation in conversations
+    ]
+    table = tabulate(
+        table_data, headers=["ID", "Title", "Status"], tablefmt="fancy_grid"
+    )
+    click.echo(table)
 
 @conversation.command()
 def message():
