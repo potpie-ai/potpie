@@ -132,8 +132,12 @@ class SimplifiedAgentSupervisor:
         - Overlapping domains, choose more specialized: `choose_higher_expertise_agent|0.80`
         """
 
+        # We'll only use system agents in classifier
+        system_agents = [
+            agent for agent in self.available_agents if agent.status == "SYSTEM"
+        ]
         self.agent_descriptions = "\n".join(
-            [f"- {agent.id}: {agent.description}" for agent in self.available_agents]
+            [f"- {agent.id}: {agent.description}" for agent in system_agents]
         )
 
     class State(TypedDict):

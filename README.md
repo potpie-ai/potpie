@@ -70,6 +70,14 @@ Potpie is an open-source platform that creates AI agents specialized in your cod
 - 📈 **Flexible**: Handles codebases of any size or language
 
 
+## 🔌 VSCode Extension
+
+Bring the power of Potpie's AI agents directly into your development environment with our VSCode extension:
+
+- **Direct Integration**: Access all Potpie agents without leaving your editor
+- **Quick Setup**: Install directly from the [VSCode Marketplace](https://marketplace.visualstudio.com/items?itemName=PotpieAI.potpie-vscode-extension)
+- **Seamless Workflow**: Ask questions, get explanations, and implement suggestions right where you code
+
 
 ## 🤖 Potpie's Prebuilt Agents
 
