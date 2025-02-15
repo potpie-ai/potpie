@@ -102,7 +102,6 @@ class ServerManager:
                 ["docker", "--version"],
                 capture_output=True,
                 text=True,
-                check=True,
             )
 
             if result.returncode == 0:
@@ -129,12 +128,11 @@ class ServerManager:
             raise DockerError("Docker is not installed")
 
         try:
-            with subprocess.Popen(
+            subprocess.Popen(
                 ["docker", "compose", "up", "-d"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-            ) as process:
-                logging.info("Docker Process is started...")
+            )
 
             max_attempts: int = 30
             attempt: int = 0
@@ -143,7 +141,6 @@ class ServerManager:
                     ["docker", "compose", "ps", "--format", "json"],
                     capture_output=True,
                     text=True,
-                    check=True,
                 )
 
                 containers = [
@@ -217,7 +214,6 @@ class ServerManager:
 
             result = subprocess.run(
                 [alembic_path, "upgrade", "head"],
-                check=True,
                 capture_output=True,
                 text=True,
             )
@@ -365,7 +361,7 @@ class ServerManager:
 
             logging.info("Stopping Docker containers...")
             try:
-                subprocess.run(["docker", "compose", "down"], check=True)
+                subprocess.run(["docker", "compose", "down"], )
                 logging.info("Docker containers stopped")
             except subprocess.CalledProcessError as e:
                 logging.error("Failed to stop Docker containers: %s", e)

@@ -7,6 +7,7 @@ and handling configuration paths.
 
 """
 
+import logging
 import os
 from pathlib import Path
 from dotenv import load_dotenv, find_dotenv
@@ -55,16 +56,14 @@ class Utility:
         log_file = os.path.join(log_dir, filename)
 
         if not os.path.exists(log_file):
-            with open(
-                log_file, "w", encoding="utf-8"
-            ) as _:  # Explicitly specify encoding
+            with open(log_file, "w", encoding="utf-8") as _:
                 pass
 
         return log_file
 
     @staticmethod
     def create_path_of_pid_file() -> str:
-        """Create and return the path for the PID file."""
+
         if os.name == "nt":
             config_dir = os.path.join(Path(os.getenv("LOCALAPPDATA")), "potpie")
         else:
@@ -73,5 +72,5 @@ class Utility:
         Path(config_dir).mkdir(parents=True, exist_ok=True)
 
         pid_file = os.path.join(config_dir, "potpie.pid")
-        print(pid_file)
+        logging.debug("Created PID file at: %s", pid_file)
         return pid_file

@@ -353,7 +353,7 @@ async def _message():
                 conversation_id=conversation_id, content=user_input
             ):
                 click.echo(message, nl=False)
-            
+
             print("\n")
 
         except KeyboardInterrupt:
