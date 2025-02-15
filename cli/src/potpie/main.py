@@ -183,10 +183,30 @@ def conversation():
     pass
 
 
+def handle_api_error(func):
+    """Decorator for handling API errors"""
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except requests.RequestException as e:
+            logging.error("Network error occurred: %s", e)
+        except Exception as e:
+            logging.error("An unexpected error occurred: %s", e)
+    return wrapper
+
 @conversation.command()
 @click.argument("title")
-def create(title):
+@click.option("--max-length", default=100, help="Maximum title length")
+@handle_api_error
+def create(title, max_length):
     """Create a new conversation"""
+    if not title.strip():
+        click.secho("Title cannot be empty", fg="red")
+        return
+    if len(title) > max_length:
+        click.secho(f"Title exceeds maximum length of {max_length} characters", fg="red")
+        return
+
     # Sees that user_id is used as the defaultUsername
     project_ids = None
     agent_id = None
@@ -215,10 +235,8 @@ def create(title):
             click.echo("Invalid project selection.")
     except ValueError:
         click.echo("Invalid input. Please enter a valid project number.")
-
     except requests.RequestException as e:
         logging.error("Network error occurred: %s", e)
-
     except Exception as e:
         logging.error("An unexpected error occurred: %s", e)
 
@@ -244,10 +262,8 @@ def create(title):
 
         else:
             click.echo("Invalid agent selection.")
-
     except requests.RequestException as e:
         logging.error(f"Network error occurred: {e}")
-
     except Exception as e:
         logging.error(f"An unexpected error occurred: {e}")
 
@@ -258,14 +274,11 @@ def create(title):
             agent_id_list=[agent_id],
         )
         click.secho("Conversation created successfully.", fg="green", bold=True)
-
         print(f"Conversation {conversation}")
-
     except requests.RequestException as e:
         logging.error(f"Network error occurred: {e}")
     except Exception as e:
         logging.error(f"An unexpected error occurred: {e}")
-
 
 @conversation.command(name="list")
 def list_conversations():
