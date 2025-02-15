@@ -1,3 +1,12 @@
+"""
+Utility Module for Potpie
+
+This module provides utility functions and configurations for the Potpie application.
+It includes functionalities for managing log files, retrieving environment variables,
+and handling configuration paths.
+
+"""
+
 import os
 from pathlib import Path
 from dotenv import load_dotenv, find_dotenv

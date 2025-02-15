@@ -1,15 +1,25 @@
-import itertools
-import click
-import logging
-import signal
-import sys
+"""
+Potpie CLI Tool
+
+This module provides a command-line interface (CLI) for managing and interacting with
+the Potpie application. Potpie allows users to parse repositories, manage projects,
+start conversations, and communicate with AI agents.
+
+"""
+
+import asyncio
 import os
+import sys
+import logging
+import itertools
 import time
+import signal
+
+import click
 import requests
 from tabulate import tabulate
 from dotenv import load_dotenv, find_dotenv
 
-from potpie.utility import Utility
 from potpie.server_manager import ServerManager
 from potpie.api_wrapper import ApiWrapper
 
@@ -34,7 +44,6 @@ def loading_animation(message: str):
 @click.group()
 def cli():
     """CLI tool for managing the potpie application"""
-    pass
 
 
 @cli.command()
@@ -47,14 +56,16 @@ def start():
         server_manager.start_server()
         click.secho("Poitre server started successfully.", fg="green", bold=True)
     except Exception as e:
-        logging.error(f"Error during startup: {e}")
-        sys.exit(1)
+        logging.error("Error during startup: %s", e)
 
 
 @cli.command()
 def stop():
     """Stop the server and all related services"""
-    server_manager.stop_server()
+    try:
+        server_manager.stop_server()
+    except Exception as e:
+        logging.error("Error during startup: %s", e)
 
 
 @cli.command()
@@ -105,7 +116,6 @@ def parse(repo, branch):
 
     except Exception as e:
         logging.error(f"Error during parsing: {e}")
-        exit(1)
 
 
 @cli.command()
@@ -141,19 +151,20 @@ def projects(delete):
                     selected_project_id = selected_project["id"]
 
                     confirm = click.confirm(
-                        f"Are you sure you want to delete project {selected_project['repo_name']} (ID: {selected_project_id})?"
+                        f"Delete {selected_project['repo_name']} with (ID: {selected_project_id})?"
                     )
 
                     if confirm:
                         status_code = api_wrapper.delete_project(selected_project_id)
 
                         if status_code == 200:
+                            click.echo(f"Project {selected_project['repo_name']}")
                             click.echo(
-                                f"Project {selected_project['repo_name']} (ID: {selected_project_id}) deleted successfully."
+                                f"ID: {selected_project_id}) deleted successfully."
                             )
                         else:
                             click.echo(
-                                f"Failed to delete project. Status code: {status_code.status_code}"
+                                f"Failed to delete project. Status code: {status_code}"
                             )
                 else:
                     click.echo("Invalid project selection.")
@@ -176,10 +187,7 @@ def conversation():
 @click.argument("title")
 def create(title):
     """Create a new conversation"""
-    base_url: str = Utility.base_url()
     # Sees that user_id is used as the defaultUsername
-    user_id = os.getenv("defaultUsername", "defaultuser")
-    status = "active"
     project_ids = None
     agent_id = None
 
@@ -197,7 +205,7 @@ def create(title):
             selected_project_id: str = selected_project["id"]
 
             confirm = click.confirm(
-                f"Are you sure you want to start conversation with {selected_project['repo_name']} (ID: {selected_project_id})?"
+                f"Wanna start conversation with {selected_project['repo_name']} ?"
             )
 
             if confirm:
@@ -209,10 +217,10 @@ def create(title):
         click.echo("Invalid input. Please enter a valid project number.")
 
     except requests.RequestException as e:
-        logging.error(f"Network error occurred: {e}")
+        logging.error("Network error occurred: %s", e)
 
     except Exception as e:
-        logging.error(f"An unexpected error occurred: {e}")
+        logging.error("An unexpected error occurred: %s", e)
 
     try:
         agents = api_wrapper.available_agents(system_agent=True)
@@ -228,7 +236,7 @@ def create(title):
             selected_agent_id: str = selected_agent["id"]
 
             confirm = click.confirm(
-                f"Are you sure you want to choose {selected_agent['name']} (ID: {selected_agent_id})?"
+                f"Wanna choose this {selected_agent['name']} agent?"
             )
 
             if confirm:
@@ -245,11 +253,9 @@ def create(title):
 
     try:
         conversation = api_wrapper.create_conversation(
-            title,
-            user_id,
-            status,
-            [project_ids],
-            [agent_id],
+            title=title,
+            project_id_list=[project_ids],
+            agent_id_list=[agent_id],
         )
         click.secho("Conversation created successfully.", fg="green", bold=True)
 
@@ -261,8 +267,8 @@ def create(title):
         logging.error(f"An unexpected error occurred: {e}")
 
 
-@conversation.command()
-def list():
+@conversation.command(name="list")
+def list_conversations():
     """List all conversations"""
     try:
         conversations = api_wrapper.get_conversation()
@@ -276,58 +282,62 @@ def list():
         )
         click.echo(table)
     except requests.RequestException as e:
-        logging.error(f"Network error occurred: {e}")
+        logging.error("Network error occurred: %s", e)
     except Exception as e:
-        logging.error(f"An unexpected error occurred: {e}")
+        logging.error("An unexpected error occurred: %s", e)
 
 
 @conversation.command()
-async def message():
+def message():
     """Communicate with the agent"""
+    asyncio.run(_message())
 
-    conversation_id = None
+
+async def _message():
+    """Actual async function for message handling"""
+    conversation_id: str = ""
 
     try:
-        conversations = api_wrapper.get_conversation()
+        conversations: dict = api_wrapper.get_conversation()
 
         for idx, conversation in enumerate(conversations, 1):
-            click.echo(f"{idx}. {conversation['title']} (ID: {conversation['id']})")
+            click.echo(
+                f"{idx}. {conversation.get('title')} (ID: {conversation.get('id')})"
+            )
 
         selection = click.prompt(
             "Enter the number of the conversation to start messaging with", type=int
         )
         if 1 <= selection <= len(conversations):
             selected_conversation = conversations[selection - 1]
-            selected_conversation_id = selected_conversation["id"]
+            selected_conversation_id: str = selected_conversation["id"]
 
             confirm = click.confirm(
-                f"Are you sure you want to start messaging with {selected_conversation['title']} (ID: {selected_conversation_id})?"
+                f"Wanna start messaging with {selected_conversation['title']}?"
             )
 
             if confirm:
                 conversation_id = selected_conversation_id
 
     except requests.RequestException as e:
-        logging.error(f"Network error occurred: {e}")
+        logging.error("Network error occurred: %s", e)
 
     except Exception as e:
-        logging.error(f"An unexpected error occurred: {e}")
+        logging.error("An unexpected error occurred: %s", e)
 
     # Interactive chat loop
 
     while True:
 
         try:
-            user_input = input("You: ")
+            user_input: str = input("You: ")
 
             if user_input.lower() in ["exit", "quit"]:
                 click.echo("Exiting chat session.")
                 break
 
-            message_details = {"content": user_input}
-
             async for message in api_wrapper.interact_with_agent(
-                conversation_id, message_details
+                conversation_id=conversation_id, content=user_input
             ):
                 click.echo(message, nl=False)
 

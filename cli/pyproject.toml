@@ -38,7 +38,7 @@ dev = [
 ]
 
 [project.scripts]
-potpie = "src.potpie.main:cli"
+potpie = "potpie.main:cli"
 
 [project.urls]
 Homepage = "https://potpie.ai/"
@@ -47,10 +47,11 @@ Repository = "https://github.com/potpie-ai/potpie"
 Issues = "https://github.com/potpie-ai/potpie/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src"]
+packages = ["src/potpie"]
 
 [tool.pytest.ini_options]
 addopts = [
     "--import-mode=importlib",
 ]
+
 pythonpath = ["src"]

@@ -1,3 +1,12 @@
+"""
+Server Management Module for Potpie
+
+This module provides functionality to manage the Potpie development server,
+including starting, stopping, and monitoring dependencies like Docker, PostgreSQL,
+and Celery workers.
+
+"""
+
 import time
 import json
 import logging
@@ -5,6 +14,8 @@ import os
 import signal
 import subprocess
 import sys
+from types import FrameType
+from typing import NoReturn, Optional
 from dotenv import load_dotenv, find_dotenv
 from potpie.utility import Utility
 
@@ -15,14 +26,17 @@ class ServerManagerException(Exception):
     """Base class for exceptions in this module."""
 
 
-
 class StartServerError(ServerManagerException):
+    """Exception raised for errors during server startup."""
+
     def __init__(self, message="Starting the server has an error"):
         self.message = message
         super().__init__(self.message)
 
 
 class StopServerError(ServerManagerException):
+    """Exception raised for errors during server shutdown."""
+
     def __init__(self, message="Stopping the server has an error"):
         self.message = message
         super().__init__(self.message)
@@ -61,6 +75,8 @@ class MigrationError(ServerManagerException):
 
 
 class ServerManager:
+    """A class to manage the Potpie development server."""
+
     def __init__(self):
 
         utility: Utility = Utility()
@@ -71,14 +87,12 @@ class ServerManager:
     def check_environment(self) -> bool:
         """Check if we're in the development environment"""
         env = os.getenv("ENV")
-        logging.info(f"Current ENV value: {env}")
+        logging.info("Current ENV value: %s", env)
         if env == "development":
             return True
-        else:
-            logging.warning(
-                f"Invalid environment: {env}. This command is only available in the development environment."
-            )
-            return False
+
+        logging.warning("Invalid environment: %s", env)
+        return False
 
     def is_docker_installed(self) -> bool:
         """Check if Docker is installed"""
@@ -88,18 +102,20 @@ class ServerManager:
                 ["docker", "--version"],
                 capture_output=True,
                 text=True,
+                check=True,
             )
 
             if result.returncode == 0:
                 logging.info("Docker is installed")
                 return True
-            else:
-                logging.error(
-                    f"Docker check failed: {result.stderr.strip() or result.stdout.strip()}"
-                )
-                return False
+
+            logging.error(
+                "Docker check failed: %s",
+                result.stderr.strip() or result.stdout.strip(),
+            )
+            return False
         except subprocess.CalledProcessError as e:
-            logging.error(f"Failed to check Docker status: {e}")
+            logging.error("Failed to check Docker status: %s", e)
             return False
 
     def start_docker(self):
@@ -113,11 +129,12 @@ class ServerManager:
             raise DockerError("Docker is not installed")
 
         try:
-            subprocess.Popen(
+            with subprocess.Popen(
                 ["docker", "compose", "up", "-d"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-            )
+            ) as process:
+                logging.info("Docker Process is started...")
 
             max_attempts: int = 30
             attempt: int = 0
@@ -126,6 +143,7 @@ class ServerManager:
                     ["docker", "compose", "ps", "--format", "json"],
                     capture_output=True,
                     text=True,
+                    check=True,
                 )
 
                 containers = [
@@ -155,7 +173,7 @@ class ServerManager:
 
         except subprocess.CalledProcessError as e:
             logging.error(f"Failed to start Docker containers: {e}")
-            raise DockerError("Failed to start Docker containers")
+            raise DockerError("Failed to start Docker containers") from e
 
     def check_postgres(self) -> bool:
         """Check if PostgreSQL server is running"""
@@ -173,13 +191,15 @@ class ServerManager:
             ):
                 logging.info("PostgreSQL is running and accepting connections")
                 return True
-            else:
-                logging.error(
-                    f"PostgreSQL check failed: {result.stderr.strip() or result.stdout.strip()}"
-                )
-                raise PostgresError(
-                    f"PostgreSQL check failed: {result.stderr.strip() or result.stdout.strip()}"
-                )
+
+            logging.error(
+                "PostgreSQL check failed: %s",
+                result.stderr.strip() or result.stdout.strip(),
+            )
+            raise PostgresError(
+                "PostgreSQL check failed: %s"
+                % (result.stderr.strip() or result.stdout.strip())
+            )
         except subprocess.CalledProcessError as e:
             logging.error(f"Failed to check PostgreSQL status: {e}")
             raise PostgresError("Failed to check PostgreSQL status")
@@ -238,9 +258,9 @@ class ServerManager:
                     stdout=logout,
                     stderr=logout,
                 )
-            if celery_process.returncode != 0:
+            if celery_process.returncode not in [0, None]:
                 raise StartServerError(
-                    f" Start Celery Failed: Return Code: {celery_process.returncode} with error: {celery_process.stderr}"
+                    f" Start Celery Failed: with error: {celery_process.stderr}"
                 )
 
             with open(self.pid_file, "a+") as f:
@@ -273,11 +293,12 @@ class ServerManager:
                     stderr=logout,
                 )
 
-                if server_process.returncode != 0:
-
-                    raise StartServerError(
-                        f" Start Celery Failed: Return Code: {server_process.returncode} with error: {server_process.stderr}"
-                    )
+                time.sleep(1)
+                if server_process.poll() is not None:
+                    if server_process.returncode != 0:
+                        raise StartServerError(
+                            f"Start server (Return Code: {server_process.returncode})"
+                        ) from None
 
                 with open(self.pid_file, "w") as f:
                     f.write(str(server_process.pid))
@@ -303,10 +324,9 @@ class ServerManager:
 
             self.run_migrations()
 
-            self.is_running = True
             logging.info("🚀 Services started:")
             self.run_server()
-            logging.info(f"Server is up and running at {Utility.base_url}")
+            logging.info(f"Server is up and running at {Utility.base_url()}")
             self.run_celery()
             logging.info("Startup is running")
 
@@ -348,7 +368,7 @@ class ServerManager:
                 subprocess.run(["docker", "compose", "down"], check=True)
                 logging.info("Docker containers stopped")
             except subprocess.CalledProcessError as e:
-                logging.error(f"Failed to stop Docker containers: {e}")
+                logging.error("Failed to stop Docker containers: %s", e)
                 raise StopServerError(f"Failed to stop Docker containers: {e}")
 
             logging.info("All services stopped successfully")
@@ -356,10 +376,10 @@ class ServerManager:
             os.remove(self.pid_file)
 
         except Exception as e:
-            logging.error(f"Error during shutdown: {e}")
-            raise StopServerError(f"Error during shutdown: {e}")
+            logging.error("Error during shutdown: %s", e)
+            raise StopServerError("Error during shutdown:") from e
 
-    def handle_shutdown(self, signum):
+    def handle_shutdown(self, signum: int, frame: Optional[FrameType]) -> NoReturn:
         """Handle shutdown signal,
 
         Args:
@@ -368,6 +388,8 @@ class ServerManager:
         note: we can also aff the frames
 
         """
-        logging.info(f"Received shutdown signal ({signum}), stopping server...")
+        logging.info(
+            "Received shutdown signal (%s %s), stopping server...", signum, frame
+        )
         self.stop_server()
         sys.exit(0)

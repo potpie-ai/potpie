@@ -112,7 +112,10 @@ def test_check_postgres(
             raise subprocess.CalledProcessError(1, args[0])
 
         class MockResult:
-            pass
+            def __init__(self):
+                self.returncode = None
+                self.stdout = ""
+                self.stderr = ""
 
         result = MockResult()
         result.returncode = returncode
@@ -126,7 +129,7 @@ def test_check_postgres(
         with pytest.raises(PostgresError):
             server_manager.check_postgres()
     else:
-        assert server_manager.check_postgres() is True
+        assert server_manager.check_postgres() == True
 
 
 @pytest.mark.parametrize(
@@ -159,6 +162,8 @@ def test_run_migrations(
         class MockResult:
             def __init__(self, returncode: str):
                 self.returncode = returncode
+                self.stdout = ""
+                self.stderr = ""
 
         result = MockResult(returncode=returncode)
         result.stdout = stdout
@@ -224,6 +229,9 @@ def test_start_server(server_manager, monkeypatch, scenario, expected_exception)
             self.pid = 1234
             self.returncode = 0
 
+        def poll(self):
+            return True
+
         def wait(self):
             return self.returncode
 
@@ -243,6 +251,8 @@ def test_start_server(server_manager, monkeypatch, scenario, expected_exception)
         return MockFile()
 
     monkeypatch.setattr("builtins.open", mock_open)
+
+    monkeypatch.setattr(time, "sleep", lambda x: None)
 
     if expected_exception:
         with pytest.raises(expected_exception):
