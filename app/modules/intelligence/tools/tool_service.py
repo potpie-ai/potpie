@@ -36,16 +36,20 @@ from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool impo
     GetNodesFromTags,
 )
 from app.modules.intelligence.tools.tool_schema import ToolInfo
+from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import webpage_extractor_tool
+from app.modules.intelligence.tools.web_tools.github_tool import github_tool
 
 
 class ToolService:
     def __init__(self, db: Session, user_id: str):
         self.db = db
         self.user_id = user_id
+        self.webpage_extractor_tool = webpage_extractor_tool(db, user_id)
+        self.github_tool = github_tool(db, user_id)
         self.tools = self._initialize_tools()
 
     def _initialize_tools(self) -> Dict[str, Any]:
-        return {
+        tools = {
             "get_code_from_probable_node_name": GetCodeFromProbableNodeNameTool(
                 self.db, self.user_id
             ),
@@ -66,6 +70,14 @@ class ToolService:
                 self.db
             ),
         }
+        
+        if self.webpage_extractor_tool:
+            tools["webpage_extractor"] = self.webpage_extractor_tool
+            
+        if self.github_tool:
+            tools["github_tool"] = self.github_tool
+
+        return tools
 
     async def run_tool(self, tool_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
         tool = self.tools.get(tool_id)

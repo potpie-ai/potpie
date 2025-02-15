@@ -6,10 +6,12 @@
 
 <br/>
 <p align="center">
-
+<a href="https://trendshift.io/repositories/12918" target="_blank"><img src="https://trendshift.io/api/badge/repositories/12918" alt="potpie-ai%2Fpotpie | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+</br>
   <br />
   <a href="https://app.potpie.ai" rel="dofollow">App</a> | <a href="https://docs.potpie.ai" rel="dofollow">Documentation</a> | <a href="https://docs.potpie.ai/open-source"  rel="dofollow">API Reference</a> | <a href="https://app.potpie.ai/newchat?repo=potpie-ai/potpie&branch=main" rel="dofollow">Chat with 🥧 Repo</a>
   <br />
+
   </p>
 
 <p align="center">
@@ -17,23 +19,26 @@
   <a href="https://github.com/potpie-ai/potpie/blob/main/LICENSE">
     <img src="https://img.shields.io/github/license/potpie-ai/potpie" alt="Apache 2.0">
   </a>
-  
+
   <a href="https://github.com/potpie-ai/potpie">
     <img src="https://img.shields.io/github/stars/potpie-ai/potpie" alt="GitHub Repo stars">
   </a>
+  
 </br>
+
+
 <a href="https://discord.gg/ryk5CMD5v6">
     <img src="https://img.shields.io/badge/Join%20our-Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join our Discord">
 </a>
 </br>
-<a href="https://twitter.com/intent/tweet?text=I%20created%20custom%20engineering%20agents%20for%20my%20codebase%20in%20minutes%20with%20potpie.ai%20@potpiedotai%20!🥧"> 
-    <img alt="tweet" src="https://img.shields.io/twitter/url/http/shields.io.svg?style=social"> 
+<a href="https://twitter.com/intent/tweet?text=I%20created%20custom%20engineering%20agents%20for%20my%20codebase%20in%20minutes%20with%20potpie.ai%20@potpiedotai%20!🥧">
+    <img alt="tweet" src="https://img.shields.io/twitter/url/http/shields.io.svg?style=social">
 </a>
 
 </p>
 
 <h1 align="center">
-  
+
 Prompt-To-Agent: Create custom engineering agents for your code
 </h1>
 
@@ -64,6 +69,14 @@ Potpie is an open-source platform that creates AI agents specialized in your cod
 - 🔄 **Seamless Integration**: Works with your existing development workflow
 - 📈 **Flexible**: Handles codebases of any size or language
 
+
+## 🔌 VSCode Extension
+
+Bring the power of Potpie's AI agents directly into your development environment with our VSCode extension:
+
+- **Direct Integration**: Access all Potpie agents without leaving your editor
+- **Quick Setup**: Install directly from the [VSCode Marketplace](https://marketplace.visualstudio.com/items?itemName=PotpieAI.potpie-vscode-extension)
+- **Seamless Workflow**: Ask questions, get explanations, and implement suggestions right where you code
 
 
 ## 🤖 Potpie's Prebuilt Agents
@@ -217,13 +230,13 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
 - **Onboarding**: For developers new to a codebase, the codebase QnA agent helps them understand the codebase and get up to speed quickly. Ask it how to setup a new project, how to run the tests etc
 >We tried to onboard ourselves with Potpie to the [**AgentOps**](https://github.com/AgentOps-AI/AgentOps) codebase and it worked like a charm : Video [here](https://youtu.be/_mPixNDn2r8).
 
-- **Codebase Understanding**: Answer questions about any library you're integrating, explain functions, features, and architecture. 
+- **Codebase Understanding**: Answer questions about any library you're integrating, explain functions, features, and architecture.
 >We used the Q&A agent to understand the underlying working of a feature of the [**CrewAI**](https://github.com/CrewAIInc/CrewAI) codebase that was not documented in official docs : Video [here](https://www.linkedin.com/posts/dhirenmathur_what-do-you-do-when-youre-stuck-and-even-activity-7256704603977613312-8X8G).
 
-- **Low Level Design**: Get detailed implementation plans for new features or improvements before writing code. 
+- **Low Level Design**: Get detailed implementation plans for new features or improvements before writing code.
 >We fed an open issue from the [**Portkey-AI/Gateway**](https://github.com/Portkey-AI/Gateway) project to this agent to generate a low level design for it: Video [here](https://www.linkedin.com/posts/dhirenmathur_potpie-ai-agents-vs-llms-i-am-extremely-activity-7255607456448286720-roOC).
 
-- **Reviewing Code Changes**: Understand the functional impact of changes and compute the blast radius of modifications. 
+- **Reviewing Code Changes**: Understand the functional impact of changes and compute the blast radius of modifications.
 >Here we analyse a PR from the [**mem0ai/mem0**](https://github.com/mem0ai/mem0) codebase and understand its blast radius : Video [here](https://www.linkedin.com/posts/dhirenmathur_prod-is-down-three-words-every-activity-7257007131613122560-o4A7).
 
 - **Debugging**: Get step-by-step debugging guidance based on stacktraces and codebase context.

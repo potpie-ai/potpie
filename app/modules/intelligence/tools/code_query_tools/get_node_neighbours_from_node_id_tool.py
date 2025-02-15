@@ -1,17 +1,20 @@
-from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
-from langchain_core.tools import StructuredTool, Tool
-from neo4j import GraphDatabase
-from sqlalchemy.orm import Session
 import asyncio
 import logging
+from typing import Any, Dict, List, Optional
+
+from langchain_core.tools import StructuredTool, Tool
+from neo4j import GraphDatabase
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 
 
 class GetNodeNeighboursInput(BaseModel):
     project_id: str = Field(..., description="The repository ID (UUID)")
-    node_ids: List[str] = Field(..., description="List of node IDs to retrieve neighbors for")
+    node_ids: List[str] = Field(
+        ..., description="List of node IDs to retrieve neighbors for"
+    )
 
 
 class GetNodeNeighboursFromNodeIdTool:
@@ -121,5 +124,5 @@ def get_node_neighbours_from_node_id_tool(sql_db: Session) -> Tool:
         func=tool_instance.run,
         name="Get Node Neighbours From Node ID",
         description="Retrieves inbound and outbound neighbors of a specific node in a repository given its node ID. This is helpful to find which functions are called by a specific function and which functions are calling the specific function. Works best with Pythoon, JS and TS code.",
-        args_schema=GetNodeNeighboursInput
+        args_schema=GetNodeNeighboursInput,
     )

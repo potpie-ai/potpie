@@ -47,6 +47,11 @@ class ConversationInfoResponse(BaseModel):
         from_attributes = True
 
 
+class ChatMessageResponse(BaseModel):
+    message: str
+    citations: List[str]
+
+
 # Resolve forward references
 ConversationInfoResponse.update_forward_refs()
 

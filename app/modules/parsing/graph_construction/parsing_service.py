@@ -178,11 +178,10 @@ class ParsingService:
             # self.create_neo4j_indices(graph_manager) commented since indices are created already
 
             try:
-                graph_constructor = GraphConstructor(graph_manager, user_id)
-                n, r = graph_constructor.build_graph(extracted_dir)
+                graph_constructor = GraphConstructor(user_id, extracted_dir)
+                n, r = graph_constructor.build_graph()
                 graph_manager.create_nodes(n)
                 graph_manager.create_edges(r)
-
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.PARSED
                 )

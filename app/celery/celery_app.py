@@ -49,11 +49,17 @@ def configure_celery(queue_prefix: str):
                 "queue": f"{queue_prefix}_process_repository"
             },
         },
+        # Optimize task distribution
         worker_prefetch_multiplier=1,
         task_acks_late=True,
         task_track_started=True,
-        # Add the task_time_limit configuration
         task_time_limit=5400,  # 90 minutes in seconds
+        # Add fair task distribution settings
+        worker_max_tasks_per_child=200,  # Restart worker after 200 tasks to prevent memory leaks
+        worker_max_memory_per_child=2000000,  # Restart worker if using more than 2GB
+        task_default_rate_limit='10/m',  # Limit tasks to 10 per minute per worker
+        task_reject_on_worker_lost=True,  # Requeue tasks if worker dies
+        broker_transport_options={'visibility_timeout': 5400},  # 45 minutes visibility timeout
     )
 
 

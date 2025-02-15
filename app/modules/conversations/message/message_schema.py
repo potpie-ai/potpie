@@ -16,6 +16,12 @@ class MessageRequest(BaseModel):
     node_ids: Optional[List[NodeContext]] = None
 
 
+class DirectMessageRequest(BaseModel):
+    content: str
+    node_ids: Optional[List[NodeContext]] = None
+    agent_id: str | None = None
+
+
 class RegenerateRequest(BaseModel):
     node_ids: Optional[List[NodeContext]] = None
 
