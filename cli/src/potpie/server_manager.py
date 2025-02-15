@@ -201,11 +201,10 @@ class ServerManager:
             raise PostgresError(
                 "PostgreSQL check failed: %s"
                 % (result.stderr.strip() or result.stdout.strip())
-            )
+            ) from None
         except subprocess.CalledProcessError as e:
             logging.error(f"Failed to check PostgreSQL status: {e}")
-            raise PostgresError("Failed to check PostgreSQL status")
-
+            raise PostgresError("Failed to check PostgreSQL status") from e
     def run_migrations(self) -> None:
         """Run database migrations using alembic from virtual environment"""
         logging.info("Running database migrations...")
