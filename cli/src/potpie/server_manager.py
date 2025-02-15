@@ -125,14 +125,20 @@ class ServerManager:
 
         if not is_docker_installed:
             logging.error("Docker is not installed. Aborting...")
-            raise DockerError("Docker is not installed")
+            raise DockerError("Docker is not installed") from None
 
         try:
-            subprocess.Popen(
+            process = subprocess.Popen(
                 ["docker", "compose", "up", "-d"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
+            # Wait briefly for immediate failures
+            time.sleep(1)
+            if process.poll() is not None and process.returncode != 0:
+                raise DockerError(
+                    f"Docker compose failed to start (Return Code: {process.returncode})"
+                ) from None
 
             max_attempts: int = 30
             attempt: int = 0
@@ -164,14 +170,13 @@ class ServerManager:
                     "Docker containers does not run within the time 60 seconds"
                 )
 
-                raise DockerError("Docker containers failed to start in time.")
+                raise DockerError("Docker containers failed to start in time.") from None
 
             logging.info("Docker containers started successfully")
 
         except subprocess.CalledProcessError as e:
             logging.error(f"Failed to start Docker containers: {e}")
             raise DockerError("Failed to start Docker containers") from e
-
     def check_postgres(self) -> bool:
         """Check if PostgreSQL server is running"""
         logging.info("Checking if PostgreSQL server is running...")
