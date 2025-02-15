@@ -170,41 +170,69 @@ class ServerManager:
                     "Docker containers does not run within the time 60 seconds"
                 )
 
-                raise DockerError("Docker containers failed to start in time.") from None
+                raise DockerError(
+                    "Docker containers failed to start in time."
+                ) from None
 
             logging.info("Docker containers started successfully")
 
         except subprocess.CalledProcessError as e:
             logging.error(f"Failed to start Docker containers: {e}")
             raise DockerError("Failed to start Docker containers") from e
-    def check_postgres(self) -> bool:
-        """Check if PostgreSQL server is running"""
+
+    def check_postgres(self, max_retries=5, retry_delay=2) -> bool:
+        """
+        Check if PostgreSQL server is running with retries
+        
+        Args:
+            max_retries (int): Maximum number of retry attempts
+            retry_delay (int): Delay in seconds between retries
+        """
         logging.info("Checking if PostgreSQL server is running...")
-        try:
-            result = subprocess.run(
-                ["docker", "exec", "potpie_postgres", "pg_isready", "-U", "postgres"],
-                capture_output=True,
-                text=True,
-            )
+        
+        for attempt in range(max_retries):
+            try:
+                result = subprocess.run(
+                    ["docker", "exec", "potpie_postgres", "pg_isready", "-U", "postgres"],
+                    capture_output=True,
+                    text=True,
+                )
 
-            if (
-                result.returncode == 0
-                and "accepting connections" in result.stdout.lower()
-            ):
-                logging.info("PostgreSQL is running and accepting connections")
-                return True
+                if result.returncode == 0 and "accepting connections" in result.stdout.lower():
+                    logging.info("PostgreSQL is running and accepting connections")
+                    return True
 
-            logging.error(
-                "PostgreSQL check failed: %s",
-                result.stderr.strip() or result.stdout.strip(),
-            )
-            raise PostgresError(
-                "PostgreSQL check failed: %s"
-                % (result.stderr.strip() or result.stdout.strip())
-            ) from None
-        except subprocess.CalledProcessError as e:
-            logging.error(f"Failed to check PostgreSQL status: {e}")
-            raise PostgresError("Failed to check PostgreSQL status") from e
+                if attempt < max_retries - 1:
+                    logging.warning(
+                        f"PostgreSQL not ready (attempt {attempt + 1}/{max_retries}), "
+                        f"waiting {retry_delay} seconds..."
+                    )
+                    time.sleep(retry_delay)
+                    continue
+
+                logging.error(
+                    "PostgreSQL check failed: %s",
+                    result.stderr.strip() or result.stdout.strip(),
+                )
+                raise PostgresError(
+                    "PostgreSQL check failed: %s"
+                    % (result.stderr.strip() or result.stdout.strip())
+                ) from None
+
+            except subprocess.CalledProcessError as e:
+                if attempt < max_retries - 1:
+                    logging.warning(
+                        f"Failed to check PostgreSQL status (attempt {attempt + 1}/{max_retries}), "
+                        f"waiting {retry_delay} seconds..."
+                    )
+                    time.sleep(retry_delay)
+                    continue
+                    
+                logging.error(f"Failed to check PostgreSQL status: {e}")
+                raise PostgresError("Failed to check PostgreSQL status") from e
+
+        return False
+
     def run_migrations(self) -> None:
         """Run database migrations using alembic from virtual environment"""
         logging.info("Running database migrations...")
@@ -365,7 +393,9 @@ class ServerManager:
 
             logging.info("Stopping Docker containers...")
             try:
-                subprocess.run(["docker", "compose", "down"], )
+                subprocess.run(
+                    ["docker", "compose", "down"],
+                )
                 logging.info("Docker containers stopped")
             except subprocess.CalledProcessError as e:
                 logging.error("Failed to stop Docker containers: %s", e)

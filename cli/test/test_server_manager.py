@@ -75,6 +75,9 @@ def test_start_docker(
                 self.stdout = ""
                 self.stderr = ""
 
+            def poll(self):
+                return True
+
         if docker_compose_up is DockerError:
             raise DockerError("Docker Compose failed")
         return MockProcess(docker_compose_up)
