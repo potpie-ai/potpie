@@ -65,7 +65,7 @@ def stop():
     try:
         server_manager.stop_server()
     except Exception as e:
-        logging.error("Error during startup: %s", e)
+        logging.error("Error during shutdown: %s", e)
 
 
 @cli.command()
