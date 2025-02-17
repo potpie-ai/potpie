@@ -3,7 +3,7 @@ import logging
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import git
 from fastapi import HTTPException
@@ -152,7 +152,7 @@ class LocalRepoService:
 
         try:
             contents = await asyncio.get_event_loop().run_in_executor(
-                self.executor, repo.get_contents, path
+                self.executor, self._get_contents, path
             )
 
             if not isinstance(contents, list):
@@ -160,22 +160,22 @@ class LocalRepoService:
 
             # Filter out files with excluded extensions
             contents = [
-                item
-                for item in contents
-                if item.type == "dir"
-                or not any(item.name.endswith(ext) for ext in exclude_extensions)
-            ]
+                        item
+                        for item in contents
+                        if item['type'] == "dir"
+                        or not any(item['name'].endswith(ext) for ext in exclude_extensions)
+                    ]
 
             tasks = []
             for item in contents:
                 # Only process items within the base_path if it's specified
-                if base_path and not item.path.startswith(base_path):
+                if base_path and not item['path'].startswith(base_path):
                     continue
 
-                if item.type == "dir":
+                if item['type'] == "dir":
                     task = self._fetch_repo_structure_async(
                         repo,
-                        item.path,
+                        item['path'],
                         current_depth=current_depth,
                         base_path=base_path,
                     )
@@ -184,8 +184,8 @@ class LocalRepoService:
                     structure["children"].append(
                         {
                             "type": "file",
-                            "name": item.name,
-                            "path": item.path,
+                            "name": item['name'],
+                            "path": item['path'],
                         }
                     )
 
@@ -270,3 +270,65 @@ class LocalRepoService:
             patches_dict[current_file] = "\n".join(patch_lines)
 
         return patches_dict
+
+    def _get_contents(self, path: str) -> Union[List[dict], dict]:
+        """
+        If the path is a directory, it returns a list of dictionaries,
+        each representing a file or subdirectory. If the path is a file, its content is read and returned.
+        
+        :param path: Relative or absolute path within the local repository.
+        :return: A dict if the path is a file (with file content loaded), or a list of dicts if the path is a directory.
+        """
+        if not isinstance(path, str):
+            raise TypeError(f"Expected path to be a string, got {type(path).__name__}")
+
+        if path == "/":
+            path = ""
+        
+        abs_path = os.path.abspath(path)
+        
+        if not os.path.exists(abs_path):
+            raise FileNotFoundError(f"Path '{abs_path}' does not exist.")
+        
+        if os.path.isdir(abs_path):
+            contents = []
+            for item in os.listdir(abs_path):
+                item_path = os.path.join(abs_path, item)
+                if os.path.isdir(item_path):
+                    contents.append({
+                        "path": item_path,
+                        "name": item,
+                        "type": "dir",
+                        "content": None, #path is a dir, content is not loaded
+                        "completed": True
+                    })
+                elif os.path.isfile(item_path):
+                    contents.append({
+                        "path": item_path,
+                        "name": item,
+                        "type": "file",
+                        "content": None,  
+                        "completed": False
+                    })
+                else:
+                    contents.append({
+                        "path": item_path,
+                        "name": item,
+                        "type": "other",
+                        "content": None,
+                        "completed": True
+                    })
+            return contents
+        
+        elif os.path.isfile(abs_path):
+            with open(abs_path, "r", encoding="utf-8") as file:
+                file_content = file.read()
+            return {
+                "path": abs_path,
+                "name": os.path.basename(abs_path),
+                "type": "file",
+                "content": file_content, #path is a file, content is loaded
+                "completed": True
+            }
+
+        
