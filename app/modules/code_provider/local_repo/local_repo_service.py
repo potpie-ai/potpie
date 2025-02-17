@@ -15,14 +15,13 @@ logger = logging.getLogger(__name__)
 
 
 class LocalRepoService:
-    def __init__(self, db: Session,base_path: str = "."):
+    def __init__(self, db: Session):
         self.db = db
         self.project_manager = ProjectService(db)
         self.projects_dir = os.path.join(os.getcwd(), "projects")
         self.max_workers = 10
         self.max_depth = 4
         self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
-        self.base_path = os.path.abspath(base_path)
 
     def get_repo(self, repo_path: str) -> git.Repo:
         if not os.path.exists(repo_path):
