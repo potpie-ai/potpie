@@ -59,7 +59,7 @@ class SecretManager:
             raise HTTPException(status_code=400, detail="Invalid provider")
         return secret_id
 
-    @router.post("/secrets")
+    @router.post("/secrets", status_code=201)
     def create_secret(
         request: CreateSecretRequest,
         user=Depends(AuthService.check_auth),
@@ -253,7 +253,7 @@ class SecretManager:
         except Exception as e:
             raise HTTPException(status_code=404, detail=f"Secret not found: {str(e)}")
 
-    @router.post("/api-keys", response_model=APIKeyResponse)
+    @router.post("/api-keys", response_model=APIKeyResponse, status_code=201)
     async def create_api_key(
         user=Depends(AuthService.check_auth),
         db: Session = Depends(get_db),

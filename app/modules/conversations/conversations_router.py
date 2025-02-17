@@ -38,7 +38,9 @@ async def get_stream(data_stream: AsyncGenerator[Any, None]):
 
 class ConversationAPI:
     @staticmethod
-    @router.post("/conversations/", response_model=CreateConversationResponse)
+    @router.post(
+        "/conversations/", response_model=CreateConversationResponse, status_code=201
+    )
     async def create_conversation(
         conversation: CreateConversationRequest,
         db: Session = Depends(get_db),
