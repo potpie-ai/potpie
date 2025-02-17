@@ -22,3 +22,7 @@ cli/momentum_cli/.momentum
 projects/
 # Ignore PyCharm config
 .idea
+#pytest cache
+.pytest_cache
+# pid
+poitre.pid
