@@ -37,8 +37,9 @@ from app.modules.conversations.message.message_schema import (
 from app.modules.intelligence.agents.agent_factory import AgentFactory
 from app.modules.intelligence.agents.agent_injector_service import AgentInjectorService
 from app.modules.intelligence.agents.agents_service import AgentsService
+from app.modules.intelligence.agents.custom_agents.custom_agent import CustomAgent
 from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
-    CustomAgentsService,
+    CustomAgentService,
 )
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import (
@@ -221,15 +222,30 @@ class SimplifiedAgentSupervisor:
             return Command(update={"response": "Agent not initialized"}, goto=END)
 
         try:
-            async for chunk in self.agent.run(
-                query=state["query"],
-                project_id=state["project_id"],
-                conversation_id=state["conversation_id"],
-                user_id=state["user_id"],
-                node_ids=state["node_ids"],
-            ):
-                if isinstance(chunk, str):
-                    writer(chunk)
+            system_agents = [
+            agent.id for agent in self.available_agents if agent.status == "SYSTEM"
+        ]
+            if state["agent_id"] in system_agents:
+                async for chunk in self.agent.run(
+                    query=state["query"],
+                    project_id=state["project_id"],
+                    conversation_id=state["conversation_id"],
+                    user_id=state["user_id"],
+                    node_ids=state["node_ids"],
+                ):
+                    if isinstance(chunk, str):
+                        writer(chunk)   
+            else:
+                async for chunk in await self.agent.run(
+                    query=state["query"],
+                    project_id=state["project_id"],
+                    conversation_id=state["conversation_id"],
+                    user_id=state["user_id"],
+                    agent_id=state["agent_id"],
+                    node_ids=state["node_ids"],
+                ):
+                    if isinstance(chunk, str):
+                        writer(chunk)
         except Exception as e:
             logger.error(f"Error in agent execution: {e}")
             writer("An error occurred while processing your request")
@@ -283,7 +299,7 @@ class ConversationService:
         history_manager: ChatHistoryService,
         provider_service: ProviderService,
         agent_injector_service: AgentInjectorService,
-        custom_agent_service: CustomAgentsService,
+        custom_agent_service: CustomAgentService,
     ):
         self.sql_db = db
         self.user_id = user_id
@@ -300,7 +316,7 @@ class ConversationService:
         history_manager = ChatHistoryService(db)
         provider_service = ProviderService(db, user_id)
         agent_injector_service = AgentInjectorService(db, provider_service, user_id)
-        custom_agent_service = CustomAgentsService()
+        custom_agent_service = CustomAgentService(db)
         return cls(
             db,
             user_id,
@@ -353,7 +369,7 @@ class ConversationService:
         self, conversation: CreateConversationRequest, user_id: str
     ) -> tuple[str, str]:
         try:
-            if not self.agent_injector_service.validate_agent_id(
+            if not await self.agent_injector_service.validate_agent_id(
                 user_id, conversation.agent_ids[0]
             ):
                 raise ConversationServiceError(
@@ -513,7 +529,6 @@ class ConversationService:
                     async for chunk in self._generate_and_stream_ai_response(
                         message.content, conversation_id, user_id, message.node_ids
                     ):
-
                         full_message += chunk.message
                         all_citations = all_citations + chunk.citations
 
@@ -721,18 +736,18 @@ class ConversationService:
         supervisor = SimplifiedAgentSupervisor(self.sql_db, self.provider_service)
         await supervisor.initialize(user_id)
         try:
-            agent = self.agent_injector_service.get_agent(agent_id)
+            agent = await self.agent_injector_service.get_agent(agent_id)
 
             logger.info(
                 f"conversation_id: {conversation_id} Running agent {agent_id} with query: {query}"
             )
 
-            if isinstance(agent, CustomAgentsService):
+            if isinstance(agent, CustomAgent):
                 # Custom agent doesn't support streaming, so we'll yield the entire response at once
-                response = await agent.run(
-                    agent_id, query, project_id, user_id, conversation.id, node_ids
+                response = await CustomAgentService(self.sql_db).execute_agent_runtime(
+                    agent_id, user_id, query, node_ids, project_id, conversation.id
                 )
-                yield self.parse_str_to_message(response)
+                yield ChatMessageResponse(message=response["message"], citations=[])
             else:
                 # For other agents that support streaming
                 async for chunk in supervisor.process_query(

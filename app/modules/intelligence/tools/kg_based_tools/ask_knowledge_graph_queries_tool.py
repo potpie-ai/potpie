@@ -1,5 +1,4 @@
 import asyncio
-import os
 from typing import Dict, List
 
 from langchain_core.tools import StructuredTool
@@ -51,7 +50,6 @@ class KnowledgeGraphQueryTool:
         """
 
     def __init__(self, sql_db, user_id):
-        self.kg_query_url = os.getenv("KNOWLEDGE_GRAPH_URL")
         self.headers = {"Content-Type": "application/json"}
         self.user_id = user_id
         self.sql_db = sql_db

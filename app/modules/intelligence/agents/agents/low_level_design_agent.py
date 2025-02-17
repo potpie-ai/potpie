@@ -30,10 +30,10 @@ from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_n
 from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool import (
     get_nodes_from_tags_tool,
 )
-from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import (
-    webpage_extractor_tool
-)
 from app.modules.intelligence.tools.web_tools.github_tool import github_tool
+from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import (
+    webpage_extractor_tool,
+)
 
 
 class DesignStep(BaseModel):
@@ -99,8 +99,13 @@ class LowLevelDesignAgent:
                 self.get_code_from_node_id,
                 self.get_code_from_probable_node_name,
                 self.get_code_file_structure,
-            ] + ([self.webpage_extractor_tool] if hasattr(self, 'webpage_extractor_tool') else [])
-              + ([self.github_tool] if hasattr(self, 'github_tool') else []),
+            ]
+            + (
+                [self.webpage_extractor_tool]
+                if hasattr(self, "webpage_extractor_tool")
+                else []
+            )
+            + ([self.github_tool] if hasattr(self, "github_tool") else []),
             allow_delegation=False,
             verbose=True,
             llm=self.llm,

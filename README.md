@@ -23,7 +23,7 @@
   <a href="https://github.com/potpie-ai/potpie">
     <img src="https://img.shields.io/github/stars/potpie-ai/potpie" alt="GitHub Repo stars">
   </a>
-  
+
 </br>
 
 

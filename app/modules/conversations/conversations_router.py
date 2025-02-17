@@ -1,4 +1,6 @@
-from typing import List, AsyncGenerator, Any
+import json
+from typing import Any, AsyncGenerator, List
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -25,7 +27,6 @@ from .conversation.conversation_schema import (
     RenameConversationRequest,
 )
 from .message.message_schema import MessageRequest, MessageResponse, RegenerateRequest
-import json
 
 router = APIRouter()
 

@@ -1,17 +1,16 @@
-import os
 import asyncio
 import logging
-from typing import Dict, Any, Optional
-from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+import os
+from typing import Any, Dict, Optional
+
 from firecrawl import FirecrawlApp
 from langchain_core.tools import StructuredTool, Tool
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 
 class WebpageExtractorInput(BaseModel):
-    url: str = Field(
-        description="The URL of the webpage to extract content from"
-    )
+    url: str = Field(description="The URL of the webpage to extract content from")
 
 
 class WebpageExtractorTool:
@@ -39,14 +38,13 @@ class WebpageExtractorTool:
         return await asyncio.to_thread(self.run, url)
 
     def run(self, url: str) -> Dict[str, Any]:
-        
         try:
             content = self._extract_content(url)
             if not content:
                 return {
                     "success": False,
                     "error": "Failed to extract content",
-                    "content": None
+                    "content": None,
                 }
             return content
         except Exception as e:
@@ -54,11 +52,10 @@ class WebpageExtractorTool:
             return {
                 "success": False,
                 "error": f"An unexpected error occurred: {str(e)}",
-                "content": None
+                "content": None,
             }
 
     def _extract_content(self, url: str) -> Optional[Dict[str, Any]]:
-        
         if not self.api_key or not self.firecrawl:
             return None
 
@@ -68,8 +65,8 @@ class WebpageExtractorTool:
         response = self.firecrawl.scrape_url(
             url=url,
             params={
-                'formats': ['markdown'],
-            }
+                "formats": ["markdown"],
+            },
         )
         if not response.get("markdown"):
             return None
@@ -85,14 +82,15 @@ class WebpageExtractorTool:
                 "description": metadata.get("description", ""),
                 "language": metadata.get("language"),
                 "url": metadata.get("sourceURL", url),
-            }
+            },
         }
 
 
 def webpage_extractor_tool(sql_db: Session, user_id: str) -> Optional[Tool]:
-    
     if not os.getenv("FIRECRAWL_API_KEY"):
-        logging.warning("FIRECRAWL_API_KEY not set, webpage extractor tool will not be initialized")
+        logging.warning(
+            "FIRECRAWL_API_KEY not set, webpage extractor tool will not be initialized"
+        )
         return None
 
     tool_instance = WebpageExtractorTool(sql_db, user_id)

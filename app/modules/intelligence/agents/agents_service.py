@@ -1,19 +1,20 @@
 import os
 from typing import List
 
-import aiohttp
-
-from app.modules.auth.auth_service import AuthService
 from app.modules.intelligence.agents.agents_schema import AgentInfo
+from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
+    CustomAgentService,
+)
 from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.utils.logger import setup_logger
 
+logger = setup_logger(__name__)
 
 class AgentsService:
     def __init__(self, db):
         self.project_path = os.getenv("PROJECT_PATH", "projects/")
         self.db = db
         self.prompt_service = PromptService(db)
-        self.base_url = os.getenv("POTPIE_PLUS_BASE_URL", "http://localhost:8000")
 
     async def list_available_agents(
         self, current_user: dict, list_system_agents: bool
@@ -64,47 +65,26 @@ class AgentsService:
         ]
 
         try:
-            custom_agents = await self.fetch_custom_agents(current_user["user_id"])
-        except Exception:
+            custom_agents = CustomAgentService(self.db).list_agents(
+                current_user["user_id"]
+            )
+        except Exception as e:
+            logger.error(f"Failed to fetch custom agents for user {current_user['user_id']}: {e}")
             custom_agents = []
+        agent_info_list = [
+            AgentInfo(
+                id=agent.id,
+                name=agent.role,
+                description=agent.goal,
+                status=agent.deployment_status,
+            )
+            for agent in custom_agents
+        ]
 
         if list_system_agents:
-            return system_agents + custom_agents
+            return system_agents + agent_info_list
         else:
-            return custom_agents
-
-    async def fetch_custom_agents(self, user_id: str) -> List[AgentInfo]:
-        custom_agents = []
-        skip = 0
-        limit = 10
-        hmac_signature = AuthService.generate_hmac_signature(user_id)
-        headers = {"X-HMAC-Signature": hmac_signature}
-
-        async with aiohttp.ClientSession(headers=headers) as session:
-            while True:
-                url = f"{self.base_url}/custom-agents/agents/?user_id={user_id}&skip={skip}&limit={limit}"
-                async with session.get(url) as response:
-                    if response.status != 200:
-                        break
-                    data = await response.json()
-                    if not data:
-                        break
-
-                    for agent in data:
-                        custom_agents.append(
-                            AgentInfo(
-                                id=agent["id"],
-                                name=agent["role"],
-                                description=agent["goal"],
-                                status=agent["deployment_status"],
-                            )
-                        )
-
-                    skip += limit
-                    if len(data) < limit:
-                        break
-
-        return custom_agents
+            return agent_info_list
 
     def format_citations(self, citations: List[str]) -> List[str]:
         cleaned_citations = []

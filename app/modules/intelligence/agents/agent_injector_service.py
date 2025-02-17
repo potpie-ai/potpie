@@ -1,4 +1,3 @@
-import logging
 from typing import Any, Dict
 
 from sqlalchemy.orm import Session
@@ -20,25 +19,27 @@ from app.modules.intelligence.agents.chat_agents.qna_chat_agent import QNAChatAg
 from app.modules.intelligence.agents.chat_agents.unit_test_chat_agent import (
     UnitTestAgent,
 )
+from app.modules.intelligence.agents.custom_agents.agent_validator import validate_agent
 from app.modules.intelligence.agents.custom_agents.custom_agent import CustomAgent
 from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
-    CustomAgentsService,
+    CustomAgentService,
 )
 from app.modules.intelligence.provider.provider_service import (
     AgentType,
     ProviderService,
 )
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class AgentInjectorService:
     def __init__(self, db: Session, provider_service: ProviderService, user_id: str):
         self.sql_db = db
         self.provider_service = provider_service
-        self.custom_agent_service = CustomAgentsService()
-        self.agents = self._initialize_agents()
+        self.custom_agent_service = CustomAgentService(db)
         self.user_id = user_id
+        self.agents = self._initialize_agents()
 
     def _initialize_agents(self) -> Dict[str, Any]:
         mini_llm = self.provider_service.get_small_llm(agent_type=AgentType.LANGCHAIN)
@@ -61,21 +62,27 @@ class AgentInjectorService:
             ),
         }
 
-    def get_agent(self, agent_id: str) -> Any:
+    async def get_agent(self, agent_id: str) -> Any:
+        """Get an agent instance by ID"""
         if agent_id in self.agents:
             return self.agents[agent_id]
         else:
-            reasoning_llm = self.provider_service.get_large_llm(
-                agent_type=AgentType.LANGCHAIN
-            )
-            return CustomAgent(
-                llm=reasoning_llm,
-                db=self.sql_db,
-                agent_id=agent_id,
-                user_id=self.user_id,
-            )
+            # For custom agents, we need to validate and get the system prompt
+            if await validate_agent(self.sql_db, self.user_id, agent_id):
+                reasoning_llm = self.provider_service.get_large_llm(
+                    agent_type=AgentType.LANGCHAIN
+                )
+                return CustomAgent(
+                    llm=reasoning_llm,
+                    db=self.sql_db,
+                    agent_id=agent_id,
+                    user_id=self.user_id,
+                )
+            else:
+                raise ValueError(f"Invalid agent ID: {agent_id}")
 
-    def validate_agent_id(self, user_id: str, agent_id: str) -> bool:
-        return agent_id in self.agents or self.custom_agent_service.validate_agent(
+    async def validate_agent_id(self, user_id: str, agent_id: str) -> bool:
+        """Validate if an agent ID is valid"""
+        return agent_id in self.agents or await validate_agent(
             self.sql_db, user_id, agent_id
         )

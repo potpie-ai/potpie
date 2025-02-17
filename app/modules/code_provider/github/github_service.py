@@ -165,8 +165,8 @@ class GithubService:
                 continue
             url = parts[0].strip()[1:-1]  # Remove < and >
             for p in parts[1:]:
-                if 'rel=' in p:
-                    rel = p.strip().split('=')[1].strip('"')
+                if "rel=" in p:
+                    rel = p.strip().split("=")[1].strip('"')
                     links[rel] = url
                     break
         return links
@@ -219,10 +219,14 @@ class GithubService:
 
             async with aiohttp.ClientSession() as session:
                 # Get first page to determine total pages
-                async with session.get(f"{base_url}?per_page=100", headers=headers) as response:
+                async with session.get(
+                    f"{base_url}?per_page=100", headers=headers
+                ) as response:
                     if response.status != 200:
                         error_text = await response.text()
-                        logger.error(f"Failed to get installations. Response: {error_text}")
+                        logger.error(
+                            f"Failed to get installations. Response: {error_text}"
+                        )
                         raise HTTPException(
                             status_code=response.status,
                             detail=f"Failed to get installations: {error_text}",
@@ -242,7 +246,10 @@ class GithubService:
                     all_installations.extend(first_page_data)
 
                 # Generate remaining page URLs (skip page 1)
-                page_urls = [f"{base_url}?page={page}&per_page=100" for page in range(2, last_page + 1)]
+                page_urls = [
+                    f"{base_url}?page={page}&per_page=100"
+                    for page in range(2, last_page + 1)
+                ]
 
                 # Process URLs in batches of 10
                 async def fetch_page(url):
@@ -253,7 +260,9 @@ class GithubService:
                                 return installations
                             else:
                                 error_text = await response.text()
-                                logger.error(f"Failed to fetch page {url}. Response: {error_text}")
+                                logger.error(
+                                    f"Failed to fetch page {url}. Response: {error_text}"
+                                )
                                 return []
                     except Exception as e:
                         logger.error(f"Error fetching page {url}: {str(e)}")
@@ -261,7 +270,7 @@ class GithubService:
 
                 # Process URLs in batches of 10
                 for i in range(0, len(page_urls), 10):
-                    batch = page_urls[i:i + 10]
+                    batch = page_urls[i : i + 10]
                     batch_tasks = [fetch_page(url) for url in batch]
                     batch_results = await asyncio.gather(*batch_tasks)
                     for installations in batch_results:
@@ -274,7 +283,10 @@ class GithubService:
                     account_login = account["login"].lower()
                     account_type = account["type"]
 
-                    if account_type == "User" and account_login == github_username.lower():
+                    if (
+                        account_type == "User"
+                        and account_login == github_username.lower()
+                    ):
                         user_installations.append(installation)
                     elif account_type == "Organization" and account_login in org_logins:
                         user_installations.append(installation)
@@ -287,7 +299,9 @@ class GithubService:
                     github = Github(auth=app_auth)  # do not remove this line
                     auth_headers = {"Authorization": f"Bearer {app_auth.token}"}
 
-                    async with session.get(f"{repos_url}?per_page=100", headers=auth_headers) as response:
+                    async with session.get(
+                        f"{repos_url}?per_page=100", headers=auth_headers
+                    ) as response:
                         if response.status != 200:
                             logger.error(
                                 f"Failed to fetch repositories for installation ID {installation['id']}. Response: {await response.text()}"
@@ -309,19 +323,27 @@ class GithubService:
 
                         if last_page > 1:
                             # Generate remaining page URLs (skip page 1)
-                            page_urls = [f"{repos_url}?page={page}&per_page=100" for page in range(2, last_page + 1)]
+                            page_urls = [
+                                f"{repos_url}?page={page}&per_page=100"
+                                for page in range(2, last_page + 1)
+                            ]
 
                             # Process URLs in batches of 10
                             for i in range(0, len(page_urls), 10):
-                                batch = page_urls[i:i + 10]
-                                tasks = [session.get(url, headers=auth_headers) for url in batch]
+                                batch = page_urls[i : i + 10]
+                                tasks = [
+                                    session.get(url, headers=auth_headers)
+                                    for url in batch
+                                ]
                                 responses = await asyncio.gather(*tasks)
-                                
+
                                 for response in responses:
                                     async with response:
                                         if response.status == 200:
                                             page_data = await response.json()
-                                            repos.extend(page_data.get("repositories", []))
+                                            repos.extend(
+                                                page_data.get("repositories", [])
+                                            )
                                         else:
                                             logger.error(
                                                 f"Failed to fetch repositories page. Response: {await response.text()}"
@@ -350,7 +372,9 @@ class GithubService:
             )
         finally:
             total_duration = time.time() - start_time  # Calculate total duration
-            logger.info(f"get_repos_for_user executed in {total_duration:.2f} seconds")  # Log total duration
+            logger.info(
+                f"get_repos_for_user executed in {total_duration:.2f} seconds"
+            )  # Log total duration
 
     async def get_combined_user_repos(self, user_id: str):
         subquery = (
