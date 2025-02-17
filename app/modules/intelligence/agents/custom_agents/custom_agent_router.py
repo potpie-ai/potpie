@@ -29,7 +29,7 @@ async def create_custom_agent(
     user_id = user["user_id"]
     custom_agent_controller = CustomAgentController(db)
     try:
-        return await custom_agent_controller.create_custom_agent(
+        return await custom_agent_controller.create_agent(
             user_id=user_id,
             role=request.role,
             goal=request.goal,
@@ -71,7 +71,7 @@ async def update_custom_agent(
     """Update a custom agent"""
     custom_agent_controller = CustomAgentController(db)
     try:
-        return await custom_agent_controller.update_custom_agent(
+        return await custom_agent_controller.update_agent(
             agent_id, user["user_id"], request
         )
     except HTTPException as he:

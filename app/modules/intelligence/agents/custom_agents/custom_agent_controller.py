@@ -91,16 +91,6 @@ class CustomAgentController:
                 detail=f"Failed to fetch custom agent: {str(e)}",
             )
 
-    async def list_agents(self, user_id: str) -> List[Agent]:
-        """List all custom agents for a user"""
-        try:
-            return await self.service.list_agents(user_id)
-        except Exception as e:
-            logger.error(f"Error listing custom agents: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to list custom agents: {str(e)}",
-            )
 
     async def create_agent_from_prompt(
         self,

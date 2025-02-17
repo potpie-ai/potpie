@@ -67,8 +67,6 @@ class AgentExecutor:
         query: str,
         project_id: str,
         conversation_id: str,
-        user_id: str,
-        agent_id: str,
         node_ids: List[NodeContext],
     ) -> AsyncGenerator[str, None]:
         """Execute the agent with the given query"""
