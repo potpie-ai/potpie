@@ -40,7 +40,7 @@ if ! pip install -r requirements.txt; then
 fi
 
 # Apply database migrations
-alembic upgrade head
+alembic upgrade heads
 
 echo "Starting momentum application..."
 gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app &
