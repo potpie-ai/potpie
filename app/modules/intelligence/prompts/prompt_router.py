@@ -19,7 +19,7 @@ router = APIRouter()
 
 class PromptAPI:
     @staticmethod
-    @router.post("/prompts/", response_model=PromptResponse)
+    @router.post("/prompts/", response_model=PromptResponse, status_code=201)
     async def create_prompt(
         prompt: PromptCreate,
         db: Session = Depends(get_db),
