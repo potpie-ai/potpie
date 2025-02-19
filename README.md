@@ -265,17 +265,22 @@ You can access Potpie Agents through an API key, enabling integration into CI/CD
 
 Potpie is designed to be flexible and customizable. Here are key areas to personalize your own deployment:
 
-### 1. System Prompts Configuration
-Modify prompts in `app/modules/intelligence/prompts/system_prompt_setup.py`
+### **Effortless Agent Creation**:
+Design custom agents tailored to your specific tasks using a single prompt. Utilize the following API to create your custom agents:
+  
+  ```bash
+  curl -X POST "http://localhost:8001/api/v1/custom-agents/agents/auto" \
+       -H "Content-Type: application/json" \
+       -d '{
+             "prompt": "Create an agent that assists users with scheduling appointments and sending reminders."
+           }'
+  ```
 
-### 2. Add New Agents
-Create new agents in `app/modules/intelligence/agents/chat_agents` and `app/modules/intelligence/agents/agentic_tools`
+  Read more about other custom agent APIs to edit and delete your custom agents in our [documentation](https://docs.potpie.ai/open-source/agents/create-agent-from-prompt).
 
-### 3. Agent Behavior Customization
-Modify guidelines within each agent's prompt in the `app/modules/intelligence/agents` directory
-
-### 4. Tool Integration
-Edit or add tools in the `app/modules/intelligence/tools` directory
+### Tool Integration
+Edit or add tools in the `app/modules/intelligence/tools` directory for your custom agents.
+Initialise the tools in the  `app/modules/intelligence/tools/tool_service.py` file and include them in your agent. 
 
 ## 🤝 Contributing
 

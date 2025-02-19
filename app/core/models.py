@@ -11,3 +11,4 @@ from app.modules.search.search_models import SearchIndex  # noqa
 from app.modules.tasks.task_model import Task  # noqa
 from app.modules.users.user_model import User  # noqa
 from app.modules.users.user_preferences_model import UserPreferences  # noqa
+from app.modules.intelligence.agents.custom_agents.custom_agent_model import CustomAgent  # noqa
