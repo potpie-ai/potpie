@@ -272,7 +272,7 @@ Design custom agents tailored to your specific tasks using a single prompt. Util
   curl -X POST "http://localhost:8001/api/v1/custom-agents/agents/auto" \
        -H "Content-Type: application/json" \
        -d '{
-             "prompt": "Create an agent that assists users with scheduling appointments and sending reminders."
+             "prompt": "Aan agent that takes stacktrace as input and gives root cause analysis and proposed solution as output"
            }'
   ```
 
