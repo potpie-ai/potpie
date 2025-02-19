@@ -66,3 +66,6 @@ tiktoken==0.7.0
 agentops==0.3.26
 pydantic[email]==2.10.3
 firecrawl-py==1.11.1
+agentops==0.3.23
+pydantic==2.10.3
+pytest==8.3.4
