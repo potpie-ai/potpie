@@ -2,7 +2,7 @@ from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from .crewai_rag_agent import AgentType
-from .chat_agent import ChatAgent, ChatAgentResponse, ChatContext
+from ..chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator
 from langchain_core.runnables import RunnableSequence
 from langchain_core.output_parsers import PydanticOutputParser

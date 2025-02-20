@@ -7,7 +7,7 @@ from app.modules.intelligence.provider.provider_service import (
 from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel
 from app.modules.utils.logger import setup_logger
-from .chat_agent import ChatAgent, ChatAgentResponse, ChatContext
+from ..chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 
 logger = setup_logger(__name__)
 

@@ -37,3 +37,11 @@ class ChatAgent(ABC):
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         """Run asynchronously, yield response piece by piece"""
         pass
+
+
+class AgentWithInfo:
+    def __init__(self, agent: ChatAgent, id: str, name: str, description: str):
+        self.id = id
+        self.name = name
+        self.description = description
+        self.agent = agent

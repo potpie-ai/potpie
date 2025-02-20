@@ -1,6 +1,6 @@
 from typing import AsyncGenerator
 
-from app.modules.intelligence.agents_copy.chat_agents.chat_agent import (
+from app.modules.intelligence.agents_copy.chat_agent import (
     ChatAgent,
     ChatAgentResponse,
     ChatContext,
@@ -8,7 +8,6 @@ from app.modules.intelligence.agents_copy.chat_agents.chat_agent import (
 from .llm_chat import LLM
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
-    AgentType,
 )
 from app.modules.intelligence.prompts.classification_prompts import (
     ClassificationPrompts,

@@ -1,9 +1,9 @@
-from typing import AsyncGenerator, List
-
-from app.modules.intelligence.agents_copy.chat_agents.chat_agent import (
+from typing import AsyncGenerator, Dict
+from app.modules.intelligence.agents_copy.chat_agent import (
     ChatAgentResponse,
     ChatContext,
     ChatAgent,
+    AgentWithInfo,
 )
 from .llm_chat import LLM
 from app.modules.intelligence.provider.provider_service import (
@@ -15,32 +15,19 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class AgentWithInfo:
-    def __init__(self, agent: ChatAgent, id: str, name: str, description: str):
-        self.id = id
-        self.name = name
-        self.description = description
-        self.agent = agent
-
-
 class AutoRouterAgent(ChatAgent):
     """AutoRouterAgent routes the request into one of n system agents based on query"""
 
     def __init__(
         self,
         llm_provider: ProviderService,
-        agents: List[AgentWithInfo],
-        curr_agent_id: str,
+        agents: Dict[str, AgentWithInfo],
     ):
         self.llm_provider = llm_provider
-
+        self.agents = agents
         self.agent_descriptions = "\n".join(
-            [f"- {agent.id}: {agent.description}" for agent in agents]
+            [f"- {agents[id].id}: {agents[id].description}" for id in agents]
         )
-        self.curr_agent_id = curr_agent_id
-        self.agents = {info.id: info.agent for info in agents}
-        if not self.agents[curr_agent_id]:
-            raise ValueError("invalid curr_agent_id")
 
     async def _run_classification(
         self, ctx: ChatContext, agent_descriptions: str
@@ -63,13 +50,13 @@ class AutoRouterAgent(ChatAgent):
             selected_agent_id = (
                 agent_id
                 if confidence >= 0.5 and self.agents[agent_id]
-                else self.curr_agent_id
+                else ctx.curr_agent_id
             )
         except (ValueError, TypeError):
             logger.error("Classification format error, falling back to current agent")
-            selected_agent_id = self.curr_agent_id
+            selected_agent_id = ctx.curr_agent_id
 
-        return self.agents[selected_agent_id]
+        return self.agents[selected_agent_id].agent
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         agent = await self._run_classification(ctx, self.agent_descriptions)
