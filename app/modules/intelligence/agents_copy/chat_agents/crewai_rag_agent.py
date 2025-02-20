@@ -1,5 +1,8 @@
 import json
+import os
 from typing import Any, List, AsyncGenerator
+
+import agentops
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
     AgentType,
@@ -128,6 +131,9 @@ class CrewAIRagAgent(ChatAgent):
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         """Main execution flow"""
         try:
+            # agentops.init(
+            #     os.getenv("AGENTOPS_API_KEY"), default_tags=["openai-gpt-notebook"]
+            # )
             # Create all tasks
             tasks = []
             for i, task_config in enumerate(self.tasks):
@@ -146,6 +152,7 @@ class CrewAIRagAgent(ChatAgent):
             logger.info(f"Starting Crew AI kickoff with {len(tasks)} tasks")
             result = await crew.kickoff_async()
             response: ChatAgentResponse = result.tasks_output[0].pydantic
+            # agentops.end_session("success")
             return response
 
         except Exception as e:

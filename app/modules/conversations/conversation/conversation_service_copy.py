@@ -327,14 +327,6 @@ class ConversationService:
                         full_message += chunk.message
                         all_citations = all_citations + chunk.citations
 
-                    # TODO: what is this below comment for?
-                    # # Store the complete response as a single message
-                    # self.history_manager.add_message_chunk(
-                    #     conversation_id, full_response, MessageType.AI, user_id
-                    # )
-                    # self.history_manager.flush_message_buffer(
-                    #     conversation_id, MessageType.AI, user_id
-                    # )
                     yield ChatMessageResponse(
                         message=full_message, citations=all_citations
                     )
@@ -440,13 +432,14 @@ class ConversationService:
                 ):
                     full_message += chunk.message
                     all_citations = all_citations + chunk.citations
-                # # Store the complete response as a single message
-                # self.history_manager.add_message_chunk(
-                #     conversation_id, full_response, MessageType.AI, user_id
-                # )
-                # self.history_manager.flush_message_buffer(
-                #     conversation_id, MessageType.AI, user_id
-                # )
+
+                # Store the complete response as a single message
+                self.history_manager.add_message_chunk(
+                    conversation_id, full_response, MessageType.AI, user_id
+                )
+                self.history_manager.flush_message_buffer(
+                    conversation_id, MessageType.AI, user_id
+                )
                 yield ChatMessageResponse(message=full_message, citations=all_citations)
 
         except AccessTypeReadError:
@@ -531,7 +524,11 @@ class ConversationService:
 
         try:
             history = self.history_manager.get_session_history(user_id, conversation_id)
-            validated_history = [str(msg) for msg in history]
+            validated_history = [
+                (str(msg.content) if msg.content else msg) for msg in history
+            ]
+
+            print(validated_history)
         except Exception as e:
             raise ConversationServiceError("Failed to get chat history")
 
@@ -566,10 +563,19 @@ class ConversationService:
                     ChatContext(
                         project_id=str(project_id),
                         curr_agent_id=str(agent_id),
-                        history=validated_history,
+                        history=validated_history[-5:],
                         node_ids=[node.node_id for node in node_ids],
                         query=query,
                     )
+                )
+                self.history_manager.add_message_chunk(
+                    conversation_id,
+                    res.response,
+                    MessageType.AI_GENERATED,
+                    citations=res.citations,
+                )
+                self.history_manager.flush_message_buffer(
+                    conversation_id, MessageType.AI_GENERATED
                 )
                 yield ChatMessageResponse(message=res.response, citations=res.citations)
 

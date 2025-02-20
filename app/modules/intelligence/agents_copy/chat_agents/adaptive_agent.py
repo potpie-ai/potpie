@@ -47,7 +47,7 @@ class AdaptiveAgent(ChatAgent):
 
     async def _create_llm(self) -> ChatAgent:
         llm_prompts = await self.prompt_provider.get_prompts_by_agent_id_and_types(
-            str(self.agent_type), [PromptType.SYSTEM, PromptType.HUMAN]
+            self.agent_type.value, [PromptType.SYSTEM, PromptType.HUMAN]
         )
         prompts = {prompt.type: prompt for prompt in llm_prompts}
         system_prompt = prompts.get(PromptType.SYSTEM)
