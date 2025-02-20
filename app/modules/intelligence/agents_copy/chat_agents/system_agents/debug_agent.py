@@ -3,20 +3,18 @@ from app.modules.intelligence.provider.provider_service import (
 )
 from app.modules.intelligence.tools.tool_service import ToolService
 from ..crewai_rag_agent import CrewAIRagAgent, AgentConfig, TaskConfig
-from ...chat_agent import ChatAgent, ChatAgentResponse
-from typing import List, Optional, AsyncGenerator
+from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
+from typing import AsyncGenerator
 
 
-class CodeGenAgent(ChatAgent):
+class DebugAgent(ChatAgent):
     def __init__(
         self,
         llm_provider: ProviderService,
         tools_provider: ToolService,
-        project_id: str,
     ):
         self.rag_agent = CrewAIRagAgent(
             llm_provider,
-            project_id,
             AgentConfig(
                 role="Context curation agent",
                 goal="Handle querying the knowledge graph and refining the results to provide accurate and contextually rich responses.",
@@ -47,36 +45,16 @@ class CodeGenAgent(ChatAgent):
             ],
         )
 
-    async def run(
-        self,
-        query: str,
-        history: List[str],
-        node_ids: Optional[List[str]] = None,
-    ) -> ChatAgentResponse:
-        res = await self.run_stream(query, history, node_ids)
-        async for response in res:
-            return response
-
-        # raise exception if we don't get a response
-        raise Exception("response stream failed!!")
+    async def run(self, ctx: ChatContext) -> ChatAgentResponse:
+        return await self.rag_agent.run(ctx)
 
     async def run_stream(
-        self,
-        query: str,
-        history: List[str],
-        node_ids: Optional[List[str]] = None,
+        self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        return self.rag_agent.run_stream(query, history, node_ids)
+        return self.rag_agent.run_stream(ctx)
 
 
 code_gen_task_prompt = """
-    Adhere to {self.max_iter} iterations max. Analyze input:
-
-    - Chat History: {chat_history}
-    - Query: {query}
-    - Project ID: {project_id}
-    - User Node IDs: {[node for node in node_ids]}
-
     1. Analyze project structure:
 
     - Identify key directories, files, and modules
@@ -137,7 +115,7 @@ code_gen_task_prompt = """
 
     Note:
 
-    -   Always traverse directories before attempting to access files
+    - Always traverse directories before attempting to access files
     - Never skip the directory structure retrieval step
     - Use available tools in the correct order: structure first, then code
     - Use markdown for code snippets with language name in the code block like python or javascript

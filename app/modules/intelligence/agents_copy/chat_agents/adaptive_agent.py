@@ -1,10 +1,11 @@
-from typing import Any, AsyncGenerator, Coroutine, List
-from pydantic import BaseModel
-from enum import Enum
+from typing import AsyncGenerator
 
-from app.modules.intelligence.agents_copy.chat_agent import ChatAgentResponse
-from ..chat_agent import ChatAgent
-from .simple_llm_agent import SimpleLLMAgent
+from app.modules.intelligence.agents_copy.chat_agent import (
+    ChatAgent,
+    ChatAgentResponse,
+    ChatContext,
+)
+from .llm_chat import LLM
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
     AgentType,
@@ -35,7 +36,7 @@ class AdaptiveAgent(ChatAgent):
             agent_type
         )
         self.llm_provider = llm_provider
-        self.classifier = SimpleLLMAgent(
+        self.classifier = LLM(
             llm_provider,
             prompt_template=classification_prompt
             + " just return the single classification in response ",
@@ -45,7 +46,7 @@ class AdaptiveAgent(ChatAgent):
 
         self.rag_agent = rag_agent
 
-    async def _create_llm_agent(self) -> ChatAgent:
+    async def _create_llm(self) -> ChatAgent:
         llm_prompts = await self.prompt_provider.get_prompts_by_agent_id_and_types(
             str(self.agent_type), [PromptType.SYSTEM, PromptType.HUMAN]
         )
@@ -55,7 +56,7 @@ class AdaptiveAgent(ChatAgent):
             # raise ValueError(f"System Prompt for {self.agent_type} not found!!")
             logger.error(f"System Prompt for {self.agent_type} not found!!")
 
-        return SimpleLLMAgent(
+        return LLM(
             self.llm_provider,
             prompt_template=(
                 system_prompt.text
@@ -65,11 +66,9 @@ class AdaptiveAgent(ChatAgent):
             ),
         )
 
-    async def run(
-        self, query: str, history: List[str], node_ids: List[str] | None = None
-    ) -> ChatAgentResponse:
+    async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         # classify the query into agent needed or not
-        classification_response = await self.classifier.run(query, history, node_ids)
+        classification_response = await self.classifier.run(ctx)
         classification = "AGENT_REQUIRED"
         print("Classification response:", classification_response.response)
         try:
@@ -83,17 +82,17 @@ class AdaptiveAgent(ChatAgent):
             pass
 
         if classification == "AGENT_REQUIRED":
-            rag_agent_response = await self.rag_agent.run(query, history, node_ids)
-            query += f" with information: {rag_agent_response.response} and citations: {rag_agent_response.citations}"
+            rag_agent_response = await self.rag_agent.run(ctx)
+            ctx.query += f" with information: {rag_agent_response.response} and citations: {rag_agent_response.citations}"
 
         # build llm response
-        llm_agent = await self._create_llm_agent()
-        return await llm_agent.run(query, history, node_ids)
+        llm = await self._create_llm()
+        return await llm.run(ctx)
 
     async def run_stream(
-        self, query: str, history: List[str], node_ids: List[str] | None = None
+        self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        classification_response = await self.classifier.run(query, history, node_ids)
+        classification_response = await self.classifier.run(ctx)
         classification = "AGENT_REQUIRED"
         print("Classification response:", classification_response.response)
         try:
@@ -107,9 +106,9 @@ class AdaptiveAgent(ChatAgent):
             pass
 
         if classification == "AGENT_REQUIRED":
-            rag_agent_response = await self.rag_agent.run(query, history, node_ids)
-            query += f" with information: {rag_agent_response.response} and citations: {rag_agent_response.citations}"
+            rag_agent_response = await self.rag_agent.run(ctx)
+            ctx.query += f" with information: {rag_agent_response.response} and citations: {rag_agent_response.citations}"
 
         # build llm response
-        llm_agent = await self._create_llm_agent()
-        return await llm_agent.run_stream(query, history, node_ids)
+        llm = await self._create_llm()
+        return await llm.run_stream(ctx)

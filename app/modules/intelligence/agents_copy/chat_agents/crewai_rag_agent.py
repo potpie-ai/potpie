@@ -1,5 +1,5 @@
 import json
-from typing import Any, List, Optional, AsyncGenerator
+from typing import Any, List, AsyncGenerator
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
     AgentType,
@@ -7,7 +7,7 @@ from app.modules.intelligence.provider.provider_service import (
 from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel
 from app.modules.utils.logger import setup_logger
-from ..chat_agent import ChatAgent, ChatAgentResponse
+from ..chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 
 logger = setup_logger(__name__)
 
@@ -26,20 +26,18 @@ class AgentConfig(BaseModel):
     goal: str
     backstory: str
     tasks: List[TaskConfig]
-    max_iter: int = 5
+    max_iter: int = 15
 
 
 class CrewAIRagAgent(ChatAgent):
     def __init__(
         self,
         llm_provider: ProviderService,
-        project_id: str,
         config: AgentConfig,
-        tools: List[Any],  # TODO: Add type
+        tools: List[Any],
     ):
         """Initialize the agent with configuration and tools"""
 
-        self.project_id = project_id
         self.tasks = config.tasks
         self.max_iter = config.max_iter
 
@@ -53,7 +51,7 @@ class CrewAIRagAgent(ChatAgent):
             tools=tools,
             allow_delegation=False,
             verbose=True,
-            llm=llm_provider.get_small_llm(AgentType.CREWAI),
+            llm=llm_provider.get_large_llm(AgentType.CREWAI),
             max_iter=config.max_iter,
         )
 
@@ -71,25 +69,24 @@ class CrewAIRagAgent(ChatAgent):
     def _create_task_description(
         self,
         task_config: TaskConfig,
-        query: str,
-        node_ids: Optional[List[str]] = None,
-        context: str = "",
+        ctx: ChatContext,
     ) -> str:
         """Create a task description from task configuration"""
-        if isinstance(node_ids, str):
-            node_ids = [node_ids]
+        if isinstance(ctx.node_ids, str):
+            node_ids = [ctx.node_ids]
 
         return f"""
                 CONTEXT:
-                Query: {query}
-                Project ID: {self.project_id}
-                Node IDs: {node_ids}
-                Additional Context: {context}
+                User Query: {ctx.query}
+                Project ID: {ctx.project_id}
+                Node IDs: {ctx.node_ids}
+                Consider the chat history for any specific instructions or context: {ctx.history}
+                Additional Context: {ctx.additional_context}
 
                 TASK:
                 {task_config.description}
 
-                Expected Output Format:
+                Expected Output:
                 {json.dumps(task_config.expected_output, indent=2)}
 
                 INSTRUCTIONS:
@@ -100,24 +97,23 @@ class CrewAIRagAgent(ChatAgent):
                 5. Provide clear explanations
 
                 IMPORTANT:
-                - You have a maximum of {self.max_iter} iterations
+                - Respect the max iterations limit of {self.max_iter} when planning and executing tools.
                 - Use tools efficiently and avoid unnecessary API calls
                 - Only use the tools listed below
                 {self.tools_description}
+                
+                **Output Requirements:**
+                - Ensure that your final response MUST be a valid JSON object which follows the structure outlined in the Pydantic model: {ChatAgentResponse.model_json_schema()}
+                - Do not wrap the response in ```json, ```python, ```code, or ``` symbols.
+                - For citations, include only the `file_path` of the nodes fetched and used.
+                - Do not include any explanation or additional text outside of this JSON object.
+                - Ensure all of the expected output and code are included within the "response" string.
             """
 
-    async def _create_task(
-        self,
-        query: str,
-        task_config: TaskConfig,
-        node_ids: Optional[List[str]] = None,
-        context: str = "",
-    ) -> Task:
+    async def _create_task(self, task_config: TaskConfig, ctx: ChatContext) -> Task:
         """Create a task with proper context and description"""
 
-        task_description = self._create_task_description(
-            task_config, query, node_ids, context
-        )
+        task_description = self._create_task_description(task_config, ctx)
 
         # Create task with agent
         task = Task(
@@ -129,26 +125,13 @@ class CrewAIRagAgent(ChatAgent):
 
         return task
 
-    async def run(
-        self,
-        query: str,
-        history: List[str],
-        node_ids: Optional[List[str]] = None,
-    ) -> ChatAgentResponse:
-        return await anext(self.run_stream(query, history, node_ids))
-
-    async def run_stream(
-        self,
-        query: str,
-        history: List[str],
-        node_ids: Optional[List[str]] = None,
-    ) -> AsyncGenerator[ChatAgentResponse, None]:
+    async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         """Main execution flow"""
         try:
             # Create all tasks
             tasks = []
             for i, task_config in enumerate(self.tasks):
-                task = await self._create_task(query, task_config, node_ids)
+                task = await self._create_task(task_config, ctx)
                 tasks.append(task)
                 logger.info(f"Created task {i+1}/{len(self.tasks)}")
 
@@ -163,8 +146,13 @@ class CrewAIRagAgent(ChatAgent):
             logger.info(f"Starting Crew AI kickoff with {len(tasks)} tasks")
             result = await crew.kickoff_async()
             response: ChatAgentResponse = result.tasks_output[0].pydantic
-            yield response
+            return response
 
         except Exception as e:
             logger.error(f"Error in run method: {str(e)}", exc_info=True)
             raise Exception from e
+
+    async def run_stream(
+        self, ctx: ChatContext
+    ) -> AsyncGenerator[ChatAgentResponse, None]:
+        yield await self.run(ctx)  # CrewAI doesn't support streaming response

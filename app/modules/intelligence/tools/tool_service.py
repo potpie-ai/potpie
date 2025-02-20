@@ -13,6 +13,7 @@ from app.modules.intelligence.tools.code_query_tools.get_code_from_node_name_too
 )
 from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id_tool import (
     get_code_graph_from_node_id_tool,
+    GetCodeGraphFromNodeIdTool,
 )
 from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_name_tool import (
     get_code_graph_from_node_name_tool,
@@ -25,6 +26,7 @@ from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_t
 )
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_multiple_node_ids_tool import (
     get_code_from_multiple_node_ids_tool,
+    GetCodeFromMultipleNodeIdsTool,
 )
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     get_code_from_node_id_tool,
@@ -48,6 +50,10 @@ class ToolService:
         self.user_id = user_id
         self.webpage_extractor_tool = webpage_extractor_tool(db, user_id)
         self.github_tool = github_tool(db, user_id)
+        self.get_code_from_probable_node_name_tool = GetCodeFromMultipleNodeIdsTool(
+            self.db, self.user_id
+        )
+        self.get_code_graph_from_node_id_tool = GetCodeGraphFromNodeIdTool(db)
         self.tools = self._initialize_tools()
 
     def _initialize_tools(self) -> Dict[str, Any]:

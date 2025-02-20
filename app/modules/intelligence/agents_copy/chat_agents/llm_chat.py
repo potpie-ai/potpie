@@ -2,8 +2,8 @@ from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from .crewai_rag_agent import AgentType
-from ..chat_agent import ChatAgent, ChatAgentResponse
-from typing import List, Optional, AsyncGenerator
+from ..chat_agent import ChatAgent, ChatAgentResponse, ChatContext
+from typing import AsyncGenerator
 from langchain_core.runnables import RunnableSequence
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import (
@@ -11,7 +11,7 @@ from langchain_core.prompts import (
 )
 
 
-class SimpleLLMAgent(ChatAgent):
+class LLM(ChatAgent):
     def __init__(self, llm_provider: ProviderService, prompt_template: str):
         self.llm_large = llm_provider.get_large_llm(AgentType.LANGCHAIN)
         self.llm_small = llm_provider.get_small_llm(AgentType.LANGCHAIN)
@@ -23,21 +23,15 @@ class SimpleLLMAgent(ChatAgent):
             template=prompt_template + "output format: {format_instructions}",
             partial_variables={"format_instructions": parser.get_format_instructions()},
         )
-        return prompt_with_parser | self.llm_small | parser
+        return prompt_with_parser | self.llm_large | parser
 
-    async def run(
-        self,
-        query: str,
-        history: List[str],
-        node_ids: Optional[List[str]] = None,
-    ) -> ChatAgentResponse:
-        return await self.chain.ainvoke({"query": query, "history": history})
+    async def run(self, ctx: ChatContext) -> ChatAgentResponse:
+        return await self.chain.ainvoke({"query": ctx.query, "history": ctx.history})
 
     async def run_stream(
-        self,
-        query: str,
-        history: List[str],
-        node_ids: Optional[List[str]] = None,
+        self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        async for chunk in self.chain.astream({"query": query, "history": history}):
+        async for chunk in self.chain.astream(
+            {"query": ctx.query, "history": ctx.history}
+        ):
             yield chunk

@@ -3,8 +3,8 @@ from app.modules.intelligence.provider.provider_service import (
 )
 from app.modules.intelligence.tools.tool_service import ToolService
 from ..crewai_rag_agent import CrewAIRagAgent, AgentConfig, TaskConfig
-from ...chat_agent import ChatAgent, ChatAgentResponse
-from typing import List, Optional, AsyncGenerator
+from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
+from typing import AsyncGenerator
 
 
 class BlastRadiusAgent(ChatAgent):
@@ -12,11 +12,13 @@ class BlastRadiusAgent(ChatAgent):
         self,
         llm_provider: ProviderService,
         tools_provider: ToolService,
-        project_id: str,
     ):
-        self.rag_agent = CrewAIRagAgent(
-            llm_provider,
-            project_id,
+        self.tools_provider = tools_provider
+        self.llm_provider = llm_provider
+
+    def _build_agent(self):
+        return CrewAIRagAgent(
+            self.llm_provider,
             AgentConfig(
                 role="Blast Radius Analyzer",
                 goal="Analyze the impact of code changes",
@@ -29,40 +31,24 @@ class BlastRadiusAgent(ChatAgent):
                 ],
             ),
             tools=[
-                tools_provider.tools["get_nodes_from_tags"],
-                tools_provider.tools["ask_knowledge_graph_queries"],
-                tools_provider.tools["get_code_from_multiple_node_ids"],
-                tools_provider.tools["webpage_extractor"],
-                tools_provider.tools["github_tool"],
+                self.tools_provider.tools["get_nodes_from_tags"],
+                self.tools_provider.tools["ask_knowledge_graph_queries"],
+                self.tools_provider.tools["get_code_from_multiple_node_ids"],
+                self.tools_provider.tools["webpage_extractor"],
+                self.tools_provider.tools["github_tool"],
             ],
         )
 
-    async def run(
-        self,
-        query: str,
-        history: List[str],
-        node_ids: Optional[List[str]] = None,
-    ) -> ChatAgentResponse:
-        res = await self.run_stream(query, history, node_ids)
-        async for response in res:
-            return response
-
-        # raise exception if we don't get a response
-        raise Exception("response stream failed!!")
+    async def run(self, ctx: ChatContext) -> ChatAgentResponse:
+        return await self._build_agent().run(ctx)
 
     async def run_stream(
-        self,
-        query: str,
-        history: List[str],
-        node_ids: Optional[List[str]] = None,
+        self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        return self.rag_agent.run_stream(query, history, node_ids)
+        return self._build_agent().run_stream(ctx)
 
 
 blast_radius_task_prompt = """
-    Fetch the changes in the current branch for project {project_id} using the get code changes tool.
-    The response of the fetch changes tool is in the following format:
-    {ChangeDetectionResponse.model_json_schema()}
     In the response, the patches contain the file patches for the changes.
     The changes contain the list of changes with the updated and entry point code. Entry point corresponds to the API/Consumer upstream of the function that the change was made in.
     The citations contain the list of file names referenced in the changed code and entry point code.

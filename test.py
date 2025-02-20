@@ -4,6 +4,7 @@ from app.modules.intelligence.agents_copy.chat_agents.crewai_rag_agent import (
     CrewAIRagAgent,
     AgentConfig,
     TaskConfig,
+    ChatContext,
 )
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
@@ -11,8 +12,8 @@ from app.modules.intelligence.provider.provider_service import (
 from app.modules.intelligence.agents_copy.chat_agents.system_agents.blast_radius_agent import (
     BlastRadiusAgent,
 )
-from app.modules.intelligence.agents_copy.chat_agents.simple_llm_agent import (
-    SimpleLLMAgent,
+from app.modules.intelligence.agents_copy.chat_agents.llm_chat import (
+    LLM,
 )
 from app.modules.intelligence.agents_copy.chat_agents.auto_router_agent import (
     AutoRouterAgent,
@@ -32,6 +33,9 @@ from app.modules.intelligence.tools.code_query_tools.get_code_file_structure imp
 )
 from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id_tool import (
     get_code_graph_from_node_id_tool,
+)
+from app.modules.intelligence.agents_copy.chat_agents.supervisor_agent import (
+    SupervisorAgent,
 )
 from app.core.database import get_db
 from dotenv import load_dotenv
@@ -71,11 +75,13 @@ async def go():
             get_code_from_probable_node_name_tool(session, user_id),
             get_code_graph_from_node_id_tool(session),
         ],
-        project_id=project_id,
     )
-    blast_radius_agent = BlastRadiusAgent(llm_provider, tools_provider, project_id)
+    blast_radius_agent = BlastRadiusAgent(
+        llm_provider,
+        tools_provider,
+    )
 
-    simple_llm_agent = SimpleLLMAgent(
+    simple_llm_agent = LLM(
         llm_provider,
         "You are the Code Review Agent, review the code given in the query. Answer the following query: {query}",
     )
@@ -103,9 +109,17 @@ async def go():
         curr_agent_id="code_changes_agent",
     )
 
-    res = await auto_router_agent.run(
-        query="""What components will be affected if i update PromptService?""",
-        history=[],
+    agent = SupervisorAgent(
+        llm_provider, tools_provider, prompt_provider, "code_changes_agent"
+    )
+
+    res = await agent.run(
+        ctx=ChatContext(
+            query="""Can you generate some code to show examples of using prompt service in the repo? Also respond with list of tools you used and the data returned by them, if they errored out mention that""",
+            project_id=project_id,
+            curr_agent_id="code_changes_agent",
+            history=[],
+        )
     )
     print(res.response, res.citations)
 

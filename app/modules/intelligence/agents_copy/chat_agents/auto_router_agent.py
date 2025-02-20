@@ -1,8 +1,11 @@
 from typing import AsyncGenerator, List
 
-from app.modules.intelligence.agents_copy.chat_agent import ChatAgentResponse
-from ..chat_agent import ChatAgent
-from .simple_llm_agent import SimpleLLMAgent
+from app.modules.intelligence.agents_copy.chat_agent import (
+    ChatAgentResponse,
+    ChatContext,
+    ChatAgent,
+)
+from .llm_chat import LLM
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
@@ -39,18 +42,20 @@ class AutoRouterAgent(ChatAgent):
         if not self.agents[curr_agent_id]:
             raise ValueError("invalid curr_agent_id")
 
-    async def _run_classification(self, query: str) -> ChatAgent:
+    async def _run_classification(
+        self, ctx: ChatContext, agent_descriptions: str
+    ) -> ChatAgent:
         # classify the query into agent needed or not
         prompt = classification_prompt.format(
-            agent_id=self.curr_agent_id,
-            agent_descriptions=self.agent_descriptions,
-            query=query,
+            agent_id=ctx.curr_agent_id,
+            agent_descriptions=agent_descriptions,
+            query=ctx.query,
         )
-        classifier = SimpleLLMAgent(
+        classifier = LLM(
             self.llm_provider,
             prompt_template=prompt,
         )
-        classification = await classifier.run(query, [])
+        classification = await classifier.run(ctx)
 
         try:
             agent_id, confidence = classification.response.strip("`").split("|")
@@ -66,17 +71,15 @@ class AutoRouterAgent(ChatAgent):
 
         return self.agents[selected_agent_id]
 
-    async def run(
-        self, query: str, history: List[str], node_ids: List[str] | None = None
-    ) -> ChatAgentResponse:
-        agent = await self._run_classification(query)
-        return await agent.run(query, history, node_ids)
+    async def run(self, ctx: ChatContext) -> ChatAgentResponse:
+        agent = await self._run_classification(ctx, self.agent_descriptions)
+        return await agent.run(ctx)
 
     async def run_stream(
-        self, query: str, history: List[str], node_ids: List[str] | None = None
+        self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        agent = await self._run_classification(query)
-        return await agent.run_stream(query, history, node_ids)
+        agent = await self._run_classification(ctx, self.agent_descriptions)
+        return await agent.run_stream(ctx)
 
 
 classification_prompt = """
