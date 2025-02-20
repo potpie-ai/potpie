@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -90,7 +90,6 @@ class CustomAgentController:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to fetch custom agent: {str(e)}",
             )
-
 
     async def create_agent_from_prompt(
         self,

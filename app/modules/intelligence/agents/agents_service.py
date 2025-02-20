@@ -10,6 +10,7 @@ from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+
 class AgentsService:
     def __init__(self, db):
         self.project_path = os.getenv("PROJECT_PATH", "projects/")
@@ -69,7 +70,9 @@ class AgentsService:
                 current_user["user_id"]
             )
         except Exception as e:
-            logger.error(f"Failed to fetch custom agents for user {current_user['user_id']}: {e}")
+            logger.error(
+                f"Failed to fetch custom agents for user {current_user['user_id']}: {e}"
+            )
             custom_agents = []
         agent_info_list = [
             AgentInfo(
