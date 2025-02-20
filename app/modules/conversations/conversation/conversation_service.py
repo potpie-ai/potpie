@@ -223,8 +223,8 @@ class SimplifiedAgentSupervisor:
 
         try:
             system_agents = [
-            agent.id for agent in self.available_agents if agent.status == "SYSTEM"
-        ]
+                agent.id for agent in self.available_agents if agent.status == "SYSTEM"
+            ]
             if state["agent_id"] in system_agents:
                 async for chunk in self.agent.run(
                     query=state["query"],
@@ -234,7 +234,7 @@ class SimplifiedAgentSupervisor:
                     node_ids=state["node_ids"],
                 ):
                     if isinstance(chunk, str):
-                        writer(chunk)   
+                        writer(chunk)
             else:
                 async for chunk in await self.agent.run(
                     query=state["query"],
