@@ -12,7 +12,7 @@ from app.modules.intelligence.agents_copy.chat_agents.adaptive_agent import (
     PromptService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
-from app.modules.intelligence.agents.custom_agents.custom_agent_router import (
+from app.modules.intelligence.agents_copy.custom_agents.custom_agent_router import (
     router as custom_agent_router,
 )
 

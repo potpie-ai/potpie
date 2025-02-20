@@ -533,16 +533,20 @@ class ConversationService:
             raise ConversationServiceError("Failed to get chat history")
 
         try:
-            agent = await self.agent_service.get_agent(agent_id)
+            type = await self.agent_service.validate_agent_id(user_id, str(agent_id))
+            if type is None:
+                raise ConversationServiceError(f"Invalid agent_id {agent_id}")
 
             logger.info(
                 f"conversation_id: {conversation_id} Running agent {agent_id} with query: {query}"
             )
 
-            if isinstance(agent, CustomAgent):
+            if type == "CUSTOM_AGENT":
                 # Custom agent doesn't support streaming, so we'll yield the entire response at once
-                response = await CustomAgentService(self.sql_db).execute_agent_runtime(
-                    agent_id, user_id, query, node_ids, project_id, conversation.id
+                response = (
+                    await self.agent_service.custom_agent_service.execute_agent_runtime(
+                        agent_id, user_id, query, node_ids, project_id, conversation.id
+                    )
                 )
                 yield ChatMessageResponse(message=response["message"], citations=[])
             else:

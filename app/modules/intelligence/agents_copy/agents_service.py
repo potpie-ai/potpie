@@ -27,7 +27,9 @@ from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.intelligence.agents_copy.chat_agents.supervisor_agent import (
     SupervisorAgent,
 )
-from app.modules.intelligence.agents.custom_agents.agent_validator import validate_agent
+from app.modules.intelligence.agents_copy.custom_agents.agent_validator import (
+    validate_agent,
+)
 from pydantic import BaseModel
 
 logger = setup_logger(__name__)
@@ -55,6 +57,7 @@ class AgentsService:
             llm_provider, prompt_provider, tools_provider
         )
         self.supervisor_agent = SupervisorAgent(llm_provider, self.system_agents)
+        self.custom_agent_service = CustomAgentService(self.db)
 
     def _system_agents(
         self,
@@ -171,7 +174,7 @@ class AgentsService:
         ]
 
         try:
-            custom_agents = CustomAgentService(self.db).list_agents(
+            custom_agents = self.custom_agent_service.list_agents(
                 current_user["user_id"]
             )
         except Exception as e:
@@ -194,29 +197,10 @@ class AgentsService:
         else:
             return agent_info_list
 
-    async def get_agent(self, agent_id: str) -> Any:
-        """Get an agent instance by ID"""
-        if agent_id in self.system_agents:
-            return self.system_agents[agent_id]
-        else:
-            # For custom agents, we need to validate and get the system prompt
-            # if await validate_agent(self.sql_db, self.user_id, agent_id):
-            #     reasoning_llm = self.provider_service.get_large_llm(
-            #         agent_type=AgentType.LANGCHAIN
-            #     )
-            #     return CustomAgent(
-            #         llm=reasoning_llm,
-            #         db=self.sql_db,
-            #         agent_id=agent_id,
-            #         user_id=self.user_id,
-            #     )
-            # else:
-            #     raise ValueError(f"Invalid agent ID: {agent_id}")
-            pass
-
-    async def validate_agent_id(self, user_id: str, agent_id: str) -> bool:
+    async def validate_agent_id(self, user_id: str, agent_id: str) -> str | None:
         """Validate if an agent ID is valid"""
-        return agent_id in self.system_agents  # or await validate_agent(
-        # self.sql_db, user_id, agent_id
-        # )
-        # TODO: Fix this after implementing custom agents
+        if agent_id in self.system_agents:
+            return "SYSTEM_AGENT"
+        if await validate_agent(self.db, user_id, agent_id):
+            return "CUSTOM_AGENT"
+        return None
