@@ -1,6 +1,6 @@
 from typing import AsyncGenerator, List
 
-from app.modules.intelligence.agents_copy.chat_agent import (
+from app.modules.intelligence.agents_copy.chat_agents.chat_agent import (
     ChatAgentResponse,
     ChatContext,
     ChatAgent,

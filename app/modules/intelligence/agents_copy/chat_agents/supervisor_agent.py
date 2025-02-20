@@ -4,7 +4,7 @@ from app.modules.intelligence.provider.provider_service import (
 from app.modules.intelligence.tools.tool_service import ToolService
 from .auto_router_agent import AutoRouterAgent, AgentWithInfo
 from .adaptive_agent import AdaptiveAgent, PromptService, AgentType
-from ..chat_agent import ChatAgent, ChatAgentResponse, ChatContext
+from .chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from .system_agents import (
     blast_radius_agent,
     code_gen_agent,

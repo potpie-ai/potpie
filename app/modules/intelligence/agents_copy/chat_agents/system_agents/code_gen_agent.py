@@ -3,7 +3,7 @@ from app.modules.intelligence.provider.provider_service import (
 )
 from app.modules.intelligence.tools.tool_service import ToolService
 from ..crewai_rag_agent import CrewAIRagAgent, AgentConfig, TaskConfig
-from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
+from ..chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator
 
 
