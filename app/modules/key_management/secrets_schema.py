@@ -1,12 +1,17 @@
 import re
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, field_validator
 
 
 class BaseSecretRequest(BaseModel):
     api_key: str
-    provider: Literal["openai", "anthropic", "deepseek"]
+    provider: Literal[
+        "openai", "anthropic", "deepseek", "meta-llama", "mistralai", "gemini", "openrouter"
+    ] # Added platform providers
+    low_reasoning_model: Optional[str] = None
+    high_reasoning_model: Optional[str] = None
+
 
     @staticmethod
     def validate_openai_api_key_format(api_key: str) -> bool:
@@ -21,7 +26,9 @@ class BaseSecretRequest(BaseModel):
             return v
         elif v.startswith("sk-ant-"):
             return v
-        elif v.startswith("sk-"):
+        elif v.startswith("sk-or-"):
+            return v
+        elif v.startswith("sk-"):  # Generic sk- check for future keys
             return v
         else:
             raise ValueError("Invalid API key format")
@@ -39,8 +46,14 @@ class BaseSecretRequest(BaseModel):
         elif provider == "deepseek":
             if not api_key.startswith("sk-or-"):
                 raise ValueError("Invalid OpenRouter API key format")
-        else:
-            raise ValueError("Invalid provider")
+        elif provider == "mistralai": # Assuming mistralai also uses openrouter keys
+            if not api_key.startswith("sk-or-"):
+                raise ValueError("Invalid OpenRouter API key format for MistralAI")
+        elif provider == "meta-llama": # Assuming meta-llama also uses openrouter keys
+            if not api_key.startswith("sk-or-"):
+                raise ValueError("Invalid OpenRouter API key format for Meta Llama")
+        # For gemini and other potential future platform providers, no specific key validation for now,
+        # can be extended here if needed.
         return provider
 
 
