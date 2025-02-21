@@ -1,22 +1,25 @@
+import asyncio
+import json
 import logging
 import os
 from enum import Enum
-from typing import List, Tuple
-
+from typing import List, Tuple, Dict, Any, Type, get_origin, get_args, Union, AsyncGenerator
+from pydantic import BaseModel, create_model
 from crewai import LLM
 from langchain_anthropic import ChatAnthropic
 from langchain_deepseek import ChatDeepSeek
 from langchain_openai.chat_models import ChatOpenAI
-from portkey_ai import PORTKEY_GATEWAY_URL, createHeaders
+from portkey_ai import AsyncPortkey, PORTKEY_GATEWAY_URL, createHeaders
 
 from app.modules.key_management.secret_manager import SecretManager
+from app.modules.parsing.knowledge_graph.inference_schema import DocstringResponse
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.posthog_helper import PostHogClient
 
 from .provider_schema import ProviderInfo
 
 
-class AgentType(Enum):
+class ProviderType(Enum):
     CREWAI = "CREWAI"
     LANGCHAIN = "LANGCHAIN"
 
@@ -26,9 +29,9 @@ class ProviderService:
         self.db = db
         self.llm = None
         self.user_id = user_id
-        if os.getenv("isDevelopmentMode") != "enabled":
-            self.PORTKEY_API_KEY = os.environ.get("PORTKEY_API_KEY")
+        self.PORTKEY_API_KEY = os.environ.get("PORTKEY_API_KEY", None)
         self.openrouter_base_url = "https://openrouter.ai/api/v1"
+        self.portkey = None  # Initialize later when we know the provider
 
     @classmethod
     def create(cls, db, user_id: str):
@@ -168,73 +171,188 @@ class ProviderService:
                 return os.getenv(f"{provider.upper()}_API_KEY")
             raise e
 
-    def _get_portkey_headers(self, provider: str):
-        """Get Portkey headers for the specified provider."""
-        if os.getenv("isDevelopmentMode") == "enabled":
+    def _initialize_portkey(self, provider: str):
+        api_key = self._get_api_key(provider)
+        if not api_key:
             return None
 
-        return createHeaders(
-            api_key=self.PORTKEY_API_KEY,
+        if not self.PORTKEY_API_KEY:
+            
+            return AsyncPortkey(
+                provider=provider,
+                Authorization=f"Bearer {api_key}",
+            )
+
+        return AsyncPortkey(
+            apiKey=self.PORTKEY_API_KEY,
             provider=provider,
+            Authorization=f"Bearer {api_key}",
             metadata={
                 "_user": self.user_id,
                 "environment": os.environ.get("ENV"),
-            },
+            }
         )
 
-    def _initialize_llm(self, provider: str, size: str, agent_type: AgentType):
-        """Initialize LLM based on provider, size, and agent type."""
+    def _build_llm_params(self, provider: str, size: str) -> Dict[str, Any]:
+        """Build a dictionary of parameters for LLM initialization."""
         if provider not in self.MODEL_CONFIGS:
             raise ValueError(f"Invalid LLM provider: {provider}")
 
         config = self.MODEL_CONFIGS[provider][size]
         api_key = self._get_api_key(provider)
-        portkey_headers = self._get_portkey_headers(provider)
 
-        common_params = {
+        params = {
             "temperature": 0.3,
             "api_key": api_key,
         }
 
         if provider == "deepseek" and size == "large":
-            common_params.update(
-                {
-                    "max_tokens": 8000,
-                    "base_url": self.openrouter_base_url,
-                    "api_base": self.openrouter_base_url,
-                }
-            )
+            params.update({
+                "max_tokens": 8000,
+                "base_url": self.openrouter_base_url,
+                "api_base": self.openrouter_base_url,
+            })
 
         if provider == "anthropic":
-            common_params.update(
-                {
-                    "max_tokens": 8000,
-                }
-            )
+            params.update({
+                "max_tokens": 8000,
+            })
 
-        if agent_type == AgentType.CREWAI:
-            return LLM(model=config["crewai"]["model"], **common_params)
-        else:
-            model_class = config["langchain"]["class"]
-            model_params = {"model_name": config["langchain"]["model"], **common_params}
+        return params
 
-            if not os.getenv("isDevelopmentMode") == "enabled":
-                model_params.update(
-                    {
-                        "base_url": PORTKEY_GATEWAY_URL,
-                        "default_headers": portkey_headers,
-                    }
+    async def call_llm(self, messages: list, size: str = "small", stream: bool = False) -> Union[str, AsyncGenerator[str, None]]:
+        provider = self._get_provider_config(size)
+        params = self._build_llm_params(provider, size)
+        config = self.MODEL_CONFIGS[provider][size]
+        
+        try:
+            # Initialize Portkey with the correct provider
+            self.portkey = self._initialize_portkey(provider)
+            
+            if self.portkey:
+                if stream:
+                    # Streaming case: wrap the synchronous iterator into an async generator
+                    async def generator() -> AsyncGenerator[str, None]:
+                        async for chunk in self.portkey.beta.chat.completions.stream(
+                            model=config["langchain"]["model"],
+                            messages=messages,
+                            stream=True,
+                            temperature=params.get("temperature", 0.3),
+                            max_tokens=params.get("max_tokens"),
+                            top_p=params.get("top_p", 1.0),
+                        ):  
+                            chunk = json.loads(chunk)
+                            chunk = chunk["chunk"] if chunk["type"] == "chunk" else None
+                            if chunk["choices"][0]["delta"]["content"]:
+                                yield chunk["choices"][0]["delta"]["content"]
+                    return generator()
+                else:
+                    # Non-streaming: gather the output into a string and return it
+                    response = self.portkey.chat.completions.create(
+                        model=config["langchain"]["model"],
+                        messages=messages,
+                        temperature=params.get("temperature", 0.3),
+                        max_tokens=params.get("max_tokens"),
+                        stream=False
+                    )
+                    return response.choices[0].message.content
+        except Exception as e:
+            logging.error(f"LLM call failed: {e}")
+            raise e
+
+    async def call_llm_with_structured_output(self, messages: list, output_schema: BaseModel, size: str = "small") -> Any:
+        """
+        Call LLM and parse the response into a structured output using a Pydantic model.
+        Uses Portkey's structured output feature for more reliable JSON responses.
+        """
+        provider = self._get_provider_config(size)
+        params = self._build_llm_params(provider, size)
+        config = self.MODEL_CONFIGS[provider][size]
+        
+        try:
+            # Initialize Portkey with the correct provider
+            self.portkey = self._initialize_portkey(provider)
+            
+            if self.portkey:
+
+                # Get the Pydantic schema
+                def transform_annotation(annotation: Any) -> Any:
+                    """
+                    Recursively transform type annotations: if the annotation is a Pydantic model,
+                    replace it with its "no-defaults" copy; if it's a generic type (like Optional[T] or List[T]),
+                    recursively process its arguments.
+                    """
+                    origin = get_origin(annotation)
+                    if origin is None:
+                        # Not a generic type: if it's a subclass of BaseModel, recursively copy it.
+                        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+                            return copy_without_defaults(annotation)
+                        return annotation
+                    else:
+                        # Process generic arguments recursively.
+                        args = get_args(annotation)
+                        new_args = tuple(transform_annotation(arg) for arg in args)
+                        try:
+                            return origin[new_args]
+                        except TypeError:
+                            # Some types may not be subscriptable, so fallback.
+                            return annotation
+                    
+                def copy_without_defaults(model_cls: Type[BaseModel]) -> Type[BaseModel]:
+                    new_fields = {}
+                    # Process each field's type annotation, replacing nested models recursively.
+                    for name, annotation in model_cls.__annotations__.items():
+                        new_annotation = transform_annotation(annotation)
+                        # Mark the field as required (by using Ellipsis for its default).
+                        new_fields[name] = (new_annotation, ...)
+                    # Create a new model with the same configuration (by inheriting from model_cls).
+                    NewModel = create_model(f"{model_cls.__name__}NoDefaults", __base__=model_cls, **new_fields)
+                    return NewModel
+                
+                schema = copy_without_defaults(output_schema)
+                # Use Portkey's beta.chat.completions.parse for structured output
+                response = await self.portkey.beta.chat.completions.parse(
+                    model=config["langchain"]["model"],
+                    messages=messages,
+                    response_format=schema,  # Pass the Pydantic model directly
+                    temperature=params.get("temperature", 0.3),
+                    max_tokens=params.get("max_tokens"),
                 )
+                return response.choices[0].message.parsed
 
+        except Exception as e:
+            logging.error(f"LLM call with structured output failed: {e}")
+            raise
+
+    def _initialize_llm(self, provider: str, size: str, agent_type: ProviderType):
+        """Initialize LLM based on provider, size, and agent type."""
+        config = self.MODEL_CONFIGS[provider][size]
+        params = self._build_llm_params(provider, size)
+
+        if agent_type == ProviderType.CREWAI:
+            crewai_params = {
+                "model": config["crewai"]["model"],
+                **params
+            }
+            
+            if "default_headers" in params:
+                crewai_params["headers"] = params["default_headers"]
+            
+            return LLM(**crewai_params)
+        else:
+            # For backwards compatibility, still return LangChain clients
+            # but configured to use Portkey gateway when available
+            model_class = config["langchain"]["class"]
+            model_params = {"model_name": config["langchain"]["model"], **params}
             return model_class(**model_params)
 
-    def get_large_llm(self, agent_type: AgentType):
+    def get_large_llm(self, agent_type: ProviderType):
         provider = self._get_provider_config("large")
         logging.info(f"Initializing {provider.capitalize()} LLM")
         self.llm = self._initialize_llm(provider, "large", agent_type)
         return self.llm
 
-    def get_small_llm(self, agent_type: AgentType):
+    def get_small_llm(self, agent_type: ProviderType):
         provider = self._get_provider_config("small")
         if provider == "deepseek":
             # temporary
@@ -244,7 +362,7 @@ class ProviderService:
 
     def get_llm_provider_name(self) -> str:
         """Returns the name of the LLM provider based on the LLM instance."""
-        llm = self.get_small_llm(agent_type=AgentType.LANGCHAIN)
+        llm = self.get_small_llm(agent_type=ProviderType.LANGCHAIN)
 
         # Check the type of the LLM to determine the provider
         if isinstance(llm, ChatOpenAI):

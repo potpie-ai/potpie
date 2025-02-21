@@ -43,7 +43,7 @@ from app.modules.intelligence.agents.custom_agents.custom_agents_service import 
 )
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import (
-    AgentType,
+    ProviderType,
     ProviderService,
 )
 from app.modules.projects.projects_service import ProjectService
@@ -582,7 +582,7 @@ class ConversationService:
     ) -> str:
         agent_type = conversation.agent_ids[0]
 
-        llm = self.provider_service.get_small_llm(agent_type=AgentType.LANGCHAIN)
+        llm = self.provider_service.get_small_llm(agent_type=ProviderType.LANGCHAIN)
         prompt = ChatPromptTemplate.from_template(
             "Given an agent type '{agent_type}' and an initial message '{message}', "
             "generate a concise and relevant title for a conversation. "

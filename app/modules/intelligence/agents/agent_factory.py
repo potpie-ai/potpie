@@ -21,7 +21,7 @@ from app.modules.intelligence.agents.chat_agents.unit_test_chat_agent import (
 )
 from app.modules.intelligence.agents.custom_agents.custom_agent import CustomAgent
 from app.modules.intelligence.provider.provider_service import (
-    AgentType,
+    ProviderType,
     ProviderService,
 )
 
@@ -39,9 +39,9 @@ class AgentFactory:
         if cache_key in self._agent_cache:
             return self._agent_cache[cache_key]
 
-        mini_llm = self.provider_service.get_small_llm(agent_type=AgentType.LANGCHAIN)
+        mini_llm = self.provider_service.get_small_llm(agent_type=ProviderType.LANGCHAIN)
         reasoning_llm = self.provider_service.get_large_llm(
-            agent_type=AgentType.LANGCHAIN
+            agent_type=ProviderType.LANGCHAIN
         )
 
         agent = self._create_agent(agent_id, mini_llm, reasoning_llm, user_id)

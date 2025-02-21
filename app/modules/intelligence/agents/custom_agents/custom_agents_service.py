@@ -21,7 +21,7 @@ from app.modules.intelligence.agents.custom_agents.custom_agent_schema import (
 )
 from app.modules.intelligence.agents.custom_agents.runtime_agent import RuntimeAgent
 from app.modules.intelligence.provider.provider_service import (
-    AgentType,
+    ProviderType,
     ProviderService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
@@ -228,7 +228,7 @@ class CustomAgentService(BaseAgentService):
             "system_prompt": agent_model.system_prompt,
             "tasks": agent_model.tasks,
         }
-        llm = ProviderService(self.db, user_id).get_large_llm(AgentType.LANGCHAIN)
+        llm = ProviderService(self.db, user_id).get_large_llm(ProviderType.LANGCHAIN)
         runtime_agent = RuntimeAgent(llm, self.db, agent_config, self.secret_manager)
         try:
             result = await runtime_agent.run(
@@ -275,7 +275,7 @@ Ensure that your response is a properly formatted JSON object that can be parsed
 
         prompt = PromptTemplate(input_variables=["prompt", "tools"], template=template)
 
-        llm = ProviderService(self.db, user_id).get_large_llm(AgentType.LANGCHAIN)
+        llm = ProviderService(self.db, user_id).get_large_llm(ProviderType.LANGCHAIN)
         return LLMChain(llm=llm, prompt=prompt)
 
     async def create_agent_from_prompt(
@@ -420,7 +420,7 @@ Ensure that your response is a properly formatted JSON object that can be parsed
             input_variables=["description", "goal", "tools"], template=template
         )
 
-        llm = ProviderService(self.db, user_id).get_large_llm(AgentType.LANGCHAIN)
+        llm = ProviderService(self.db, user_id).get_large_llm(ProviderType.LANGCHAIN)
 
         return LLMChain(llm=llm, prompt=prompt)
 

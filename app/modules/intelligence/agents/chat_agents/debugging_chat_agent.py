@@ -32,19 +32,18 @@ from app.modules.intelligence.prompts.classification_prompts import (
 )
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.provider.provider_service import ProviderService, ProviderType
 
 logger = logging.getLogger(__name__)
 
 
 class DebuggingChatAgent:
     def __init__(self, mini_llm, reasoning_llm, db: Session):
-        self.mini_llm = mini_llm
-        self.llm = reasoning_llm
+        self.db = db
         self.history_manager = ChatHistoryService(db)
         self.prompt_service = PromptService(db)
         self.agents_service = AgentsService(db)
         self.chain = None
-        self.db = db
 
     @lru_cache(maxsize=2)
     async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
@@ -53,37 +52,29 @@ class DebuggingChatAgent:
         )
         return {prompt.type: prompt for prompt in prompts}
 
-    async def _create_chain(self) -> RunnableSequence:
-        prompts = await self._get_prompts()
-        system_prompt = prompts.get(PromptType.SYSTEM)
-        human_prompt = prompts.get(PromptType.HUMAN)
 
-        if not system_prompt or not human_prompt:
-            raise ValueError("Required prompts not found for DEBUGGING_AGENT")
-
-        prompt_template = ChatPromptTemplate(
-            messages=[
-                SystemMessagePromptTemplate.from_template(system_prompt.text),
-                MessagesPlaceholder(variable_name="history"),
-                MessagesPlaceholder(variable_name="tool_results"),
-                HumanMessagePromptTemplate.from_template(human_prompt.text),
-            ]
-        )
-        return prompt_template | self.mini_llm
-
-    async def _classify_query(self, query: str, history: List[HumanMessage]):
+    async def _classify_query(self, query: str, history: List[HumanMessage], provider_service: ProviderService):
         prompt = ClassificationPrompts.get_classification_prompt(AgentType.DEBUGGING)
         inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
 
         parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
-        prompt_with_parser = ChatPromptTemplate.from_template(
-            template=prompt,
-            partial_variables={"format_instructions": parser.get_format_instructions()},
-        )
-        chain = prompt_with_parser | self.llm | parser
-        response = await chain.ainvoke(input=inputs)
+        format_instructions = parser.get_format_instructions()
 
-        return response.classification
+        messages = [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": f"Query: {inputs['query']}\nHistory: {inputs['history']}\n\n{format_instructions}"}
+        ]
+
+        try:
+            result = await provider_service.call_llm_with_structured_output(
+                messages=messages,
+                output_schema=ClassificationResponse,
+                size="large"
+            )
+            return result.classification
+        except Exception as e:
+            logger.error(f"Classification failed: {e}")
+            return ClassificationResult.AGENT_REQUIRED
 
     class State(TypedDict):
         query: str
@@ -134,7 +125,8 @@ class DebuggingChatAgent:
         }
         graph = self._create_graph()
         async for chunk in graph.astream(state, stream_mode="custom"):
-            yield chunk
+            if isinstance(chunk, str):
+                yield chunk
 
     async def execute(
         self,
@@ -146,11 +138,14 @@ class DebuggingChatAgent:
         logs: str = "",
         stacktrace: str = "",
     ) -> AsyncGenerator[str, None]:
-        start_time = time.time()  # Start the timer
-
         try:
-            if not self.chain:
-                self.chain = await self._create_chain()
+            provider_service = ProviderService(self.db, user_id)
+            prompts = await self._get_prompts()
+            system_prompt = prompts.get(PromptType.SYSTEM)
+            human_prompt = prompts.get(PromptType.HUMAN)
+
+            if not system_prompt or not human_prompt:
+                raise ValueError("Required prompts not found for DEBUGGING_AGENT")
 
             history = self.history_manager.get_session_history(user_id, conversation_id)
             validated_history = [
@@ -162,10 +157,11 @@ class DebuggingChatAgent:
                 for msg in history
             ]
 
-            classification = await self._classify_query(query, validated_history)
+            classification = await self._classify_query(query, validated_history, provider_service)
 
             tool_results = []
             citations = []
+
             if classification == ClassificationResult.AGENT_REQUIRED:
                 async for chunk in kickoff_debug_rag_agent(
                     query,
@@ -177,8 +173,8 @@ class DebuggingChatAgent:
                     ],
                     node_ids,
                     self.db,
-                    self.llm,
-                    self.mini_llm,
+                    provider_service.get_large_llm(agent_type=ProviderType.CREWAI),
+                    provider_service.get_small_llm(agent_type=ProviderType.CREWAI),
                     user_id,
                 ):
                     content = str(chunk)
@@ -198,21 +194,20 @@ class DebuggingChatAgent:
                 self.history_manager.flush_message_buffer(
                     conversation_id, MessageType.AI_GENERATED
                 )
-
-            if classification != ClassificationResult.AGENT_REQUIRED:
+            else:
                 full_query = f"Query: {query}\nProject ID: {project_id}\nLogs: {logs}\nStacktrace: {stacktrace}"
-                inputs = {
-                    "history": validated_history,
-                    "tool_results": tool_results,
-                    "input": full_query,
-                }
+                
+                # Format messages for Portkey
+                messages = [
+                    {"role": "system", "content": system_prompt.text},
+                    *[{"role": "user" if isinstance(msg, HumanMessage) else "assistant", "content": msg.content} for msg in validated_history],
+                    *[{"role": "system", "content": result.content} for result in tool_results],
+                    {"role": "user", "content": human_prompt.text.format(input=full_query)}
+                ]
 
-                logger.debug(f"Inputs to LLM: {inputs}")
-                citations = self.agents_service.format_citations(citations)
-                full_response = ""
-                async for chunk in self.chain.astream(inputs):
-                    content = chunk.content if hasattr(chunk, "content") else str(chunk)
-                    full_response += content
+                try:
+                    response = await provider_service.call_llm(messages=messages, size="large")
+                    content = response
                     self.history_manager.add_message_chunk(
                         conversation_id,
                         content,
@@ -225,15 +220,14 @@ class DebuggingChatAgent:
                             "message": content,
                         }
                     )
-
-                logger.debug(f"Full LLM response: {full_response}")
+                except Exception as e:
+                    logger.error(f"Debugging generation failed: {e}")
+                    yield json.dumps({"error": f"Debugging generation failed: {str(e)}"})
 
                 self.history_manager.flush_message_buffer(
                     conversation_id, MessageType.AI_GENERATED
                 )
 
         except Exception as e:
-            logger.error(
-                f"Error during DebuggingChatAgent run: {str(e)}", exc_info=True
-            )
+            logger.error(f"Error during DebuggingChatAgent run: {str(e)}", exc_info=True)
             yield f"An error occurred: {str(e)}"

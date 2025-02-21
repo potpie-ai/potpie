@@ -16,6 +16,7 @@ from app.modules.intelligence.agents.agents.code_gen_agent import (
 from app.modules.intelligence.agents.agents_service import AgentsService
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.provider.provider_service import ProviderService, ProviderType
 
 logger = logging.getLogger(__name__)
 
@@ -23,12 +24,11 @@ logger = logging.getLogger(__name__)
 class CodeGenerationChatAgent:
     def __init__(self, mini_llm, llm, db: Session):
         self.mini_llm = mini_llm
-        self.llm = llm
+        self.db = db
         self.history_manager = ChatHistoryService(db)
         self.prompt_service = PromptService(db)
         self.agents_service = AgentsService(db)
         self.chain = None
-        self.db = db
 
     class State(TypedDict):
         query: str
@@ -93,29 +93,38 @@ class CodeGenerationChatAgent:
             ]
 
             citations = []
-            async for chunk in kickoff_code_generation_crew(
-                query,
-                project_id,
-                validated_history[-5:],
-                node_ids,
-                self.db,
-                self.llm,
-                self.mini_llm,
-                user_id,
-            ):
-                content = str(chunk)
-                self.history_manager.add_message_chunk(
-                    conversation_id,
-                    content,
-                    MessageType.AI_GENERATED,
-                    citations=citations,
-                )
-                yield json.dumps(
-                    {
-                        "citations": citations,
-                        "message": content,
-                    }
-                )
+            try:
+                # Initialize provider service for this user
+                provider_service = ProviderService(self.db, user_id)
+                
+                # Try using Portkey first for code generation
+                async for chunk in kickoff_code_generation_crew(
+                    query,
+                    project_id,
+                    validated_history[-5:],
+                    node_ids,
+                    self.db,
+                    provider_service.get_large_llm(agent_type=ProviderType.CREWAI),  # Use provider_service directly
+                    provider_service.get_small_llm(agent_type=ProviderType.CREWAI),  # Use provider_service for mini_llm
+                    user_id,
+                ):
+                    content = str(chunk)
+                    self.history_manager.add_message_chunk(
+                        conversation_id,
+                        content,
+                        MessageType.AI_GENERATED,
+                        citations=citations,
+                    )
+                    yield json.dumps(
+                        {
+                            "citations": citations,
+                            "message": content,
+                        }
+                    )
+
+            except Exception as e:
+                logger.warning(f"Code generation failed: {e}")
+                yield json.dumps({"error": f"Code generation failed: {str(e)}"})
 
             self.history_manager.flush_message_buffer(
                 conversation_id, MessageType.AI_GENERATED

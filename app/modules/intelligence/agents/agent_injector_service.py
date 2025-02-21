@@ -25,7 +25,7 @@ from app.modules.intelligence.agents.custom_agents.custom_agents_service import 
     CustomAgentService,
 )
 from app.modules.intelligence.provider.provider_service import (
-    AgentType,
+    ProviderType,
     ProviderService,
 )
 from app.modules.utils.logger import setup_logger
@@ -42,9 +42,9 @@ class AgentInjectorService:
         self.agents = self._initialize_agents()
 
     def _initialize_agents(self) -> Dict[str, Any]:
-        mini_llm = self.provider_service.get_small_llm(agent_type=AgentType.LANGCHAIN)
+        mini_llm = self.provider_service.get_small_llm(agent_type=ProviderType.LANGCHAIN)
         reasoning_llm = self.provider_service.get_large_llm(
-            agent_type=AgentType.LANGCHAIN
+            agent_type=ProviderType.LANGCHAIN
         )
         return {
             "debugging_agent": DebuggingChatAgent(mini_llm, reasoning_llm, self.sql_db),
@@ -70,7 +70,7 @@ class AgentInjectorService:
             # For custom agents, we need to validate and get the system prompt
             if await validate_agent(self.sql_db, self.user_id, agent_id):
                 reasoning_llm = self.provider_service.get_large_llm(
-                    agent_type=AgentType.LANGCHAIN
+                    agent_type=ProviderType.LANGCHAIN
                 )
                 return CustomAgent(
                     llm=reasoning_llm,

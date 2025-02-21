@@ -29,19 +29,18 @@ from app.modules.intelligence.prompts.classification_prompts import (
 )
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.provider.provider_service import ProviderService
 
 logger = logging.getLogger(__name__)
 
 
 class CodeChangesChatAgent:
     def __init__(self, mini_llm, llm, db: Session):
-        self.mini_llm = mini_llm
-        self.llm = llm
+        self.db = db
         self.history_manager = ChatHistoryService(db)
         self.prompt_service = PromptService(db)
         self.agents_service = AgentsService(db)
         self.chain = None
-        self.db = db
 
     @lru_cache(maxsize=2)
     async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
@@ -58,6 +57,11 @@ class CodeChangesChatAgent:
         if not system_prompt or not human_prompt:
             raise ValueError("Required prompts not found for CODE_CHANGES_AGENT")
 
+        # For Portkey, we'll format messages as a list of dicts
+        self.system_message = system_prompt.text
+        self.human_message_template = human_prompt.text
+
+        # Keep Langchain chain for fallback
         prompt_template = ChatPromptTemplate(
             messages=[
                 SystemMessagePromptTemplate.from_template(system_prompt.text),
@@ -66,21 +70,35 @@ class CodeChangesChatAgent:
                 HumanMessagePromptTemplate.from_template(human_prompt.text),
             ]
         )
-        return prompt_template | self.mini_llm
+        return prompt_template | self.provider_service.get_large_llm(agent_type=AgentType.LANGCHAIN)
 
-    async def _classify_query(self, query: str, history: List[HumanMessage]):
+    async def _classify_query(self, query: str, history: List[HumanMessage], provider_service: ProviderService):
         prompt = ClassificationPrompts.get_classification_prompt(AgentType.CODE_CHANGES)
         inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
 
         parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
-        prompt_with_parser = ChatPromptTemplate.from_template(
-            template=prompt,
-            partial_variables={"format_instructions": parser.get_format_instructions()},
-        )
-        chain = prompt_with_parser | self.llm | parser
-        response = await chain.ainvoke(input=inputs)
+        format_instructions = parser.get_format_instructions()
 
-        return response.classification
+        # Format messages for Portkey
+        messages = [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": f"Query: {inputs['query']}\nHistory: {inputs['history']}\n\n{format_instructions}"}
+        ]
+
+        try:
+            # Try using Portkey first
+            response = await provider_service.call_llm(messages=messages, size="small")
+            return parser.parse(response).classification
+        except Exception as e:
+            logger.warning(f"Portkey classification failed, falling back to Langchain: {e}")
+            # Fallback to Langchain
+            prompt_with_parser = ChatPromptTemplate.from_template(
+                template=prompt,
+                partial_variables={"format_instructions": format_instructions},
+            )
+            chain = prompt_with_parser | provider_service.get_small_llm(agent_type=AgentType.LANGCHAIN)
+            response = await chain.ainvoke(input=inputs)
+            return response.classification
 
     async def run(
         self,
@@ -91,6 +109,7 @@ class CodeChangesChatAgent:
         node_ids: List[NodeContext],
     ) -> AsyncGenerator[str, None]:
         try:
+            provider_service = ProviderService(self.db, user_id)
             if not self.chain:
                 self.chain = await self._create_chain()
 
@@ -104,7 +123,7 @@ class CodeChangesChatAgent:
                 for msg in history
             ]
 
-            classification = await self._classify_query(query, validated_history)
+            classification = await self._classify_query(query, validated_history, provider_service)
 
             tool_results = []
             citations = []
@@ -115,7 +134,7 @@ class CodeChangesChatAgent:
                     node_ids,
                     self.db,
                     user_id,
-                    self.mini_llm,
+                    provider_service.get_small_llm(agent_type=AgentType.LANGCHAIN),
                 )
 
                 if blast_radius_result.pydantic:
@@ -129,47 +148,57 @@ class CodeChangesChatAgent:
                     SystemMessage(content=f"Blast Radius Agent result: {response}")
                 ]
 
-            inputs = {
-                "history": validated_history,
-                "tool_results": tool_results,
-                "input": query,
-            }
+            # Format messages for Portkey
+            messages = [
+                {"role": "system", "content": self.system_message},
+                *[{"role": "user" if isinstance(msg, HumanMessage) else "assistant", "content": msg.content} for msg in validated_history],
+                *[{"role": "system", "content": result.content} for result in tool_results],
+                {"role": "user", "content": self.human_message_template.format(input=query)}
+            ]
 
-            logger.debug(f"Inputs to LLM: {inputs}")
+            try:
+                # Try using Portkey first
+                async for chunk in provider_service.call_llm_stream(messages=messages, size="small"):
+                    content = chunk
+                    self.history_manager.add_message_chunk(
+                        conversation_id,
+                        content,
+                        MessageType.AI_GENERATED,
+                        citations=citations if classification == ClassificationResult.AGENT_REQUIRED else None,
+                    )
+                    yield json.dumps(
+                        {
+                            "citations": citations if classification == ClassificationResult.AGENT_REQUIRED else [],
+                            "message": content,
+                        }
+                    )
+            except Exception as e:
+                logger.warning(f"Portkey streaming failed, falling back to Langchain: {e}")
+                # Fallback to Langchain
+                inputs = {
+                    "history": validated_history,
+                    "tool_results": tool_results,
+                    "input": query,
+                }
+                async for chunk in self.chain.astream(inputs):
+                    content = chunk.content if hasattr(chunk, "content") else str(chunk)
+                    self.history_manager.add_message_chunk(
+                        conversation_id,
+                        content,
+                        MessageType.AI_GENERATED,
+                        citations=citations if classification == ClassificationResult.AGENT_REQUIRED else None,
+                    )
+                    yield json.dumps(
+                        {
+                            "citations": citations if classification == ClassificationResult.AGENT_REQUIRED else [],
+                            "message": content,
+                        }
+                    )
 
-            full_response = ""
-            citations = self.agents_service.format_citations(citations)
-            async for chunk in self.chain.astream(inputs):
-                content = chunk.content if hasattr(chunk, "content") else str(chunk)
-                full_response += content
-                self.history_manager.add_message_chunk(
-                    conversation_id,
-                    content,
-                    MessageType.AI_GENERATED,
-                    citations=(
-                        citations
-                        if classification == ClassificationResult.AGENT_REQUIRED
-                        else None
-                    ),
-                )
-                yield json.dumps(
-                    {
-                        "citations": (
-                            citations
-                            if classification == ClassificationResult.AGENT_REQUIRED
-                            else []
-                        ),
-                        "message": content,
-                    }
-                )
-
-            logger.debug(f"Full LLM response: {full_response}")
             self.history_manager.flush_message_buffer(
                 conversation_id, MessageType.AI_GENERATED
             )
 
         except Exception as e:
-            logger.error(
-                f"Error during CodeChangesChatAgent run: {str(e)}", exc_info=True
-            )
+            logger.error(f"Error during CodeChangesChatAgent run: {str(e)}", exc_info=True)
             yield f"An error occurred: {str(e)}"

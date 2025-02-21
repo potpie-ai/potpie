@@ -8,7 +8,7 @@ from crewai import Agent, Crew, Process, Task
 
 from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.provider.provider_service import (
-    AgentType,
+    ProviderType,
     ProviderService,
 )
 from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
@@ -60,6 +60,7 @@ class CodeGenerationAgent:
         self.llm = llm
         self.mini_llm = mini_llm
         self.user_id = user_id
+        self.provider_service = ProviderService(sql_db, user_id)
 
     async def create_agents(self):
         code_generator = Agent(
@@ -96,7 +97,7 @@ class CodeGenerationAgent:
             + ([self.github_tool] if hasattr(self, "github_tool") else []),
             allow_delegation=False,
             verbose=True,
-            llm=self.llm,
+            llm=self.provider_service.get_large_llm(agent_type=ProviderType.CREWAI),
             max_iter=self.max_iter,
         )
 
@@ -333,9 +334,6 @@ async def kickoff_code_generation_crew(
     mini_llm,
     user_id: str,
 ) -> AsyncGenerator[str, None]:
-    provider_service = ProviderService(sql_db, user_id)
-    crew_ai_mini_llm = provider_service.get_small_llm(agent_type=AgentType.CREWAI)
-    crew_ai_llm = provider_service.get_large_llm(agent_type=AgentType.CREWAI)
-    code_gen_agent = CodeGenerationAgent(sql_db, crew_ai_llm, crew_ai_mini_llm, user_id)
-    async for chunk in code_gen_agent.run(query, project_id, history, node_ids):
+    agent = CodeGenerationAgent(sql_db, llm, llm, user_id)
+    async for chunk in agent.run(query, project_id, history, node_ids):
         yield chunk
