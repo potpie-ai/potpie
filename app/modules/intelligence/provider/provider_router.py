@@ -7,7 +7,7 @@ from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
 
 from .provider_controller import ProviderController
-from .provider_schema import ProviderInfo, SetProviderRequest
+from .provider_schema import ProviderInfo, SetProviderRequest, GetProviderResponse
 
 router = APIRouter()
 
@@ -37,7 +37,7 @@ class ProviderAPI:
         )
 
     @staticmethod
-    @router.get("/get-global-ai-provider/")
+    @router.get("/get-global-ai-provider/", response_model=GetProviderResponse)
     async def get_global_ai_provider(
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),

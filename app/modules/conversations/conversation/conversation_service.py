@@ -86,7 +86,6 @@ class SimplifiedAgentSupervisor:
         self.available_agents = await self.agents_service.list_available_agents(
             current_user={"user_id": user_id}, list_system_agents=True
         )
-        self.llm = self.provider_service.get_small_llm(user_id)
         self.classifier_prompt = """
         Given the user query and the current agent ID, select the most appropriate agent by comparing the query's requirements with each agent's specialties.
 
@@ -180,8 +179,13 @@ class SimplifiedAgentSupervisor:
             agent_descriptions=self.agent_descriptions,
         )
 
-        response = await self.llm.ainvoke(prompt)
-        response = response.content.strip("`")
+        messages = [
+            {"role": "system", "content": "You are an expert agent classifier that helps route queries to the most appropriate agent."},
+            {"role": "user", "content": prompt}
+        ]
+
+        response = await self.provider_service.call_llm(messages=messages, size="small")
+        response = response.strip("`")
         try:
             agent_id, confidence = response.split("|")
             confidence = float(confidence)
@@ -570,8 +574,11 @@ class ConversationService:
             "The title should be no longer than 50 characters. Only return title string, do not wrap in quotes."
         ).format(agent_type=agent_type, message=message_content)
 
-        messages = [{"role": "user", "content": prompt}]
-        generated_title = await self.provider_service.call_llm(messages, size="small")
+        messages = [
+            {"role": "system", "content": "You are a conversation title generator that creates concise and relevant titles."},
+            {"role": "user", "content": prompt}
+        ]
+        generated_title = await self.provider_service.call_llm(messages=messages, size="small")
         
         if len(generated_title) > 50:
             generated_title = generated_title[:50].strip() + "..."
@@ -961,3 +968,4 @@ class ConversationService:
             raise ConversationServiceError(
                 "Failed to rename conversation due to an unexpected error"
             ) from e
+        
