@@ -30,12 +30,14 @@ class IntegrationTestAgent(ChatAgent):
                     )
                 ],
             ),
-            tools=[
-                tools_provider.tools["get_code_from_multiple_node_ids"],
-                tools_provider.tools["get_code_from_probable_node_name"],
-                tools_provider.tools["webpage_extractor"],
-                tools_provider.tools["github_tool"],
-            ],
+            tools=self.tools_provider.get_tools(
+                [
+                    "get_code_from_multiple_node_ids",
+                    "get_code_from_probable_node_name",
+                    "webpage_extractor",
+                    "github_tool",
+                ]
+            ),
         )
 
     def _enriched_context(self, ctx: ChatContext) -> ChatContext:

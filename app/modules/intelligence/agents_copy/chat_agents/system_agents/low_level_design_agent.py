@@ -34,15 +34,17 @@ class LowLevelDesignAgent(ChatAgent):
                     )
                 ],
             ),
-            tools=[
-                self.tools_provider.tools["get_code_from_multiple_node_ids"],
-                self.tools_provider.tools["get_node_neighbours_from_node_id"],
-                self.tools_provider.tools["get_code_from_probable_node_name"],
-                self.tools_provider.tools["ask_knowledge_graph_queries"],
-                self.tools_provider.tools["get_nodes_from_tags"],
-                self.tools_provider.tools["webpage_extractor"],
-                self.tools_provider.tools["github_tool"],
-            ],
+            tools=self.tools_provider.get_tools(
+                [
+                    "get_code_from_multiple_node_ids",
+                    "get_node_neighbours_from_node_id",
+                    "get_code_from_probable_node_name",
+                    "ask_knowledge_graph_queries",
+                    "get_nodes_from_tags",
+                    "webpage_extractor",
+                    "github_tool",
+                ]
+            ),
         )
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
@@ -54,7 +56,11 @@ class LowLevelDesignAgent(ChatAgent):
                 f"Code Graph context of the node_ids in query:\n {code_results}"
             )
 
-        file_structure = self.tools_provider.file_structure_tool.run(ctx.project_id)
+        file_structure = (
+            await self.tools_provider.file_structure_tool.fetch_repo_structure(
+                ctx.project_id
+            )
+        )
         ctx.additional_context += f"File Structure of the project:\n {file_structure}"
 
         return ctx
