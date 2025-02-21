@@ -2,7 +2,7 @@ from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
-from ..crewai_rag_agent import CrewAIRagAgent, AgentConfig, TaskConfig
+from ..crewai_agent import CrewAIAgent, AgentConfig, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator
 
@@ -15,7 +15,7 @@ class IntegrationTestAgent(ChatAgent):
     ):
         self.llm_provider = llm_provider
         self.tools_provider = tools_provider
-        self.rag_agent = CrewAIRagAgent(
+        self.rag_agent = CrewAIAgent(
             llm_provider,
             AgentConfig(
                 role="Integration Test Writer",

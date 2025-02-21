@@ -2,7 +2,7 @@ from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
-from ..crewai_rag_agent import CrewAIRagAgent, AgentConfig, TaskConfig
+from ..crewai_agent import CrewAIAgent, AgentConfig, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator
 
@@ -17,7 +17,7 @@ class UnitTestAgent(ChatAgent):
         self.tools_provider = tools_provider
 
     def _build_agent(self) -> ChatAgent:
-        return CrewAIRagAgent(
+        return CrewAIAgent(
             self.llm_provider,
             AgentConfig(
                 role="Test Plan and Unit Test Expert",

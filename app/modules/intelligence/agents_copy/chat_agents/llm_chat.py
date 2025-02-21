@@ -1,7 +1,7 @@
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
+    AgentType,
 )
-from .crewai_rag_agent import AgentType
 from ..chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator
 from langchain_core.runnables import RunnableSequence

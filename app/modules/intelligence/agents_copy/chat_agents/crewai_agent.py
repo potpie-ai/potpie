@@ -32,7 +32,7 @@ class AgentConfig(BaseModel):
     max_iter: int = 15
 
 
-class CrewAIRagAgent(ChatAgent):
+class CrewAIAgent(ChatAgent):
     def __init__(
         self,
         llm_provider: ProviderService,

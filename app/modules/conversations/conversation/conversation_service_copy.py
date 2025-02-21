@@ -433,13 +433,6 @@ class ConversationService:
                     full_message += chunk.message
                     all_citations = all_citations + chunk.citations
 
-                # Store the complete response as a single message
-                self.history_manager.add_message_chunk(
-                    conversation_id, full_response, MessageType.AI, user_id
-                )
-                self.history_manager.flush_message_buffer(
-                    conversation_id, MessageType.AI, user_id
-                )
                 yield ChatMessageResponse(message=full_message, citations=all_citations)
 
         except AccessTypeReadError:
@@ -550,19 +543,6 @@ class ConversationService:
                 )
                 yield ChatMessageResponse(message=response["message"], citations=[])
             else:
-                # For other agents that support streaming
-                # async for chunk in await self.agent_service.execute_stream(
-                #     ChatContext(
-                #         project_id=str(project_id),
-                #         curr_agent_id=str(agent_id),
-                #         history=validated_history,
-                #         node_ids=[node.node_id for node in node_ids],
-                #         query=query,
-                #     )
-                # ):
-                #     yield ChatMessageResponse(
-                #         message=chunk.response, citations=chunk.citations
-                #     )
                 res = await self.agent_service.execute(
                     ChatContext(
                         project_id=str(project_id),

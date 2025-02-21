@@ -52,8 +52,9 @@ class AdaptiveAgent(ChatAgent):
         prompts = {prompt.type: prompt for prompt in llm_prompts}
         system_prompt = prompts.get(PromptType.SYSTEM)
         if system_prompt == None:
-            # raise ValueError(f"System Prompt for {self.agent_type} not found!!")
-            logger.error(f"System Prompt for {self.agent_type} not found!!")
+            raise ValueError(
+                f"System Prompt for {self.agent_type} not found!!"
+            )  # sanity check
 
         return LLM(
             self.llm_provider,
@@ -69,7 +70,7 @@ class AdaptiveAgent(ChatAgent):
         # classify the query into agent needed or not
         classification_response = await self.classifier.run(ctx)
         classification = "AGENT_REQUIRED"
-        print("Classification response:", classification_response.response)
+        logger.info(f"Classification response: {classification_response.response}")
         try:
             classification_json = json.loads(classification_response.response)
             if (
@@ -77,8 +78,9 @@ class AdaptiveAgent(ChatAgent):
                 and classification_json["classification"] == "LLM_SUFFICIENT"
             ):
                 classification = "LLM_SUFFICIENT"
-        except Exception:
-            pass
+        except Exception as e:
+            # use agent by default if classification failed
+            logger.error(f"Defaulting to agent because classification failed: {e}")
 
         if classification == "AGENT_REQUIRED":
             return await self.rag_agent.run(ctx)
