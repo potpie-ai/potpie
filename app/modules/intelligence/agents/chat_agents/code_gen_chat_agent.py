@@ -16,14 +16,13 @@ from app.modules.intelligence.agents.agents.code_gen_agent import (
 from app.modules.intelligence.agents.agents_service import AgentsService
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.provider.provider_service import ProviderService, ProviderType
+from app.modules.intelligence.provider.provider_service import ProviderService, AgentProvider
 
 logger = logging.getLogger(__name__)
 
 
 class CodeGenerationChatAgent:
-    def __init__(self, mini_llm, llm, db: Session):
-        self.mini_llm = mini_llm
+    def __init__(self, db: Session):
         self.db = db
         self.history_manager = ChatHistoryService(db)
         self.prompt_service = PromptService(db)
@@ -104,8 +103,8 @@ class CodeGenerationChatAgent:
                     validated_history[-5:],
                     node_ids,
                     self.db,
-                    provider_service.get_large_llm(agent_type=ProviderType.CREWAI),  # Use provider_service directly
-                    provider_service.get_small_llm(agent_type=ProviderType.CREWAI),  # Use provider_service for mini_llm
+                    provider_service.get_large_llm(agent_type=AgentProvider.CREWAI),  # Use provider_service directly
+                    provider_service.get_small_llm(agent_type=AgentProvider.CREWAI),  # Use provider_service for mini_llm
                     user_id,
                 ):
                     content = str(chunk)

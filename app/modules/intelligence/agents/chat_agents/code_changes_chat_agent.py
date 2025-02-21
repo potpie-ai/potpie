@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 class CodeChangesChatAgent:
-    def __init__(self, mini_llm, llm, db: Session):
+    def __init__(self, db: Session):
         self.db = db
         self.history_manager = ChatHistoryService(db)
         self.prompt_service = PromptService(db)

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 from app.modules.intelligence.provider.provider_service import (
-    ProviderType,
+    AgentProvider,
     ProviderService,
 )
 from app.modules.parsing.knowledge_graph.inference_schema import (

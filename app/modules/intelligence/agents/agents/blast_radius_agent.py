@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.provider.provider_service import (
-    ProviderType,
+    AgentProvider,
     ProviderService,
 )
 from app.modules.intelligence.tools.change_detection.change_detection_tool import (
@@ -162,7 +162,7 @@ async def kickoff_blast_radius_agent(
     query: str, project_id: str, node_ids: List[NodeContext], sql_db, user_id, llm
 ) -> Dict[str, str]:
     provider_service = ProviderService(sql_db, user_id)
-    crew_ai_mini_llm = provider_service.get_small_llm(agent_type=ProviderType.CREWAI)
+    crew_ai_mini_llm = provider_service.get_small_llm(agent_type=AgentProvider.CREWAI)
     blast_radius_agent = BlastRadiusAgent(sql_db, user_id, crew_ai_mini_llm)
     result = await blast_radius_agent.run(project_id, node_ids, query)
     return result

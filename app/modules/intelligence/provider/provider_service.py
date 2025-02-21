@@ -19,7 +19,7 @@ from app.modules.utils.posthog_helper import PostHogClient
 from .provider_schema import ProviderInfo
 
 
-class ProviderType(Enum):
+class AgentProvider(Enum):
     CREWAI = "CREWAI"
     LANGCHAIN = "LANGCHAIN"
 
@@ -248,7 +248,7 @@ class ProviderService:
                     return generator()
                 else:
                     # Non-streaming: gather the output into a string and return it
-                    response = self.portkey.chat.completions.create(
+                    response = await self.portkey.chat.completions.create(
                         model=config["langchain"]["model"],
                         messages=messages,
                         temperature=params.get("temperature", 0.3),
@@ -324,12 +324,12 @@ class ProviderService:
             logging.error(f"LLM call with structured output failed: {e}")
             raise
 
-    def _initialize_llm(self, provider: str, size: str, agent_type: ProviderType):
+    def _initialize_llm(self, provider: str, size: str, agent_type: AgentProvider):
         """Initialize LLM based on provider, size, and agent type."""
         config = self.MODEL_CONFIGS[provider][size]
         params = self._build_llm_params(provider, size)
 
-        if agent_type == ProviderType.CREWAI:
+        if agent_type == AgentProvider.CREWAI:
             crewai_params = {
                 "model": config["crewai"]["model"],
                 **params
@@ -346,39 +346,19 @@ class ProviderService:
             model_params = {"model_name": config["langchain"]["model"], **params}
             return model_class(**model_params)
 
-    def get_large_llm(self, agent_type: ProviderType):
+    def get_large_llm(self, agent_type: AgentProvider):
         provider = self._get_provider_config("large")
         logging.info(f"Initializing {provider.capitalize()} LLM")
         self.llm = self._initialize_llm(provider, "large", agent_type)
         return self.llm
 
-    def get_small_llm(self, agent_type: ProviderType):
+    def get_small_llm(self, agent_type: AgentProvider):
         provider = self._get_provider_config("small")
         if provider == "deepseek":
             # temporary
             provider = "openai"
         self.llm = self._initialize_llm(provider, "small", agent_type)
         return self.llm
-
-    def get_llm_provider_name(self) -> str:
-        """Returns the name of the LLM provider based on the LLM instance."""
-        llm = self.get_small_llm(agent_type=ProviderType.LANGCHAIN)
-
-        # Check the type of the LLM to determine the provider
-        if isinstance(llm, ChatOpenAI):
-            return "OpenAI"
-        elif isinstance(llm, ChatAnthropic):
-            return "Anthropic"
-        elif isinstance(llm, ChatDeepSeek):
-            return "DeepSeek"
-        elif isinstance(llm, LLM):
-            if llm.model.split("/")[0] == "openai":
-                return "OpenAI"
-            elif llm.model.split("/")[0] == "anthropic":
-                return "Anthropic"
-            elif llm.model.split("/")[0] == "deepseek":
-                return "DeepSeek"
-        return "Unknown"
 
     async def get_global_ai_provider(self, user_id: str) -> str:
         user_pref = (

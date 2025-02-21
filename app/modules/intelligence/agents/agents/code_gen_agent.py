@@ -8,7 +8,7 @@ from crewai import Agent, Crew, Process, Task
 
 from app.modules.conversations.message.message_schema import NodeContext
 from app.modules.intelligence.provider.provider_service import (
-    ProviderType,
+    AgentProvider,
     ProviderService,
 )
 from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
@@ -97,7 +97,7 @@ class CodeGenerationAgent:
             + ([self.github_tool] if hasattr(self, "github_tool") else []),
             allow_delegation=False,
             verbose=True,
-            llm=self.provider_service.get_large_llm(agent_type=ProviderType.CREWAI),
+            llm=self.provider_service.get_large_llm(agent_type=AgentProvider.CREWAI),
             max_iter=self.max_iter,
         )
 

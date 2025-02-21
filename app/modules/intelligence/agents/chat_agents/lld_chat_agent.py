@@ -31,13 +31,13 @@ from app.modules.intelligence.prompts.classification_prompts import (
 )
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.provider.provider_service import ProviderService, ProviderType
+from app.modules.intelligence.provider.provider_service import ProviderService, AgentProvider
 
 logger = logging.getLogger(__name__)
 
 
 class LLDChatAgent:
-    def __init__(self, mini_llm, llm, db: Session):
+    def __init__(self, db: Session):
         self.db = db
         self.history_manager = ChatHistoryService(db)
         self.prompt_service = PromptService(db)
@@ -159,8 +159,8 @@ class LLDChatAgent:
                     ],
                     node_ids,
                     self.db,
-                    provider_service.get_large_llm(agent_type=ProviderType.CREWAI),
-                    provider_service.get_small_llm(agent_type=ProviderType.CREWAI),
+                    provider_service.get_large_llm(agent_type=AgentProvider.CREWAI),
+                    provider_service.get_small_llm(agent_type=AgentProvider.CREWAI),
                     user_id,
                 ):
                     content = str(chunk)

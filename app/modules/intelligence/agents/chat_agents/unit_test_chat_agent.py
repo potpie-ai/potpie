@@ -26,7 +26,7 @@ from app.modules.intelligence.prompts.classification_prompts import (
 )
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.provider.provider_service import ProviderService, ProviderType
+from app.modules.intelligence.provider.provider_service import ProviderService, AgentProvider
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     GetCodeFromNodeIdTool,
 )
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 class UnitTestAgent:
-    def __init__(self, mini_llm, llm, db: Session):
+    def __init__(self, db: Session):
         self.db = db
         self.history_manager = ChatHistoryService(db)
         self.prompt_service = PromptService(db)
@@ -170,7 +170,7 @@ class UnitTestAgent:
 
             if classification == ClassificationResult.AGENT_REQUIRED:
                 # Get CrewAI LLM once and store it
-                crew_ai_llm = provider_service.get_large_llm(agent_type=ProviderType.CREWAI)
+                crew_ai_llm = provider_service.get_large_llm(agent_type=AgentProvider.CREWAI)
                 test_response = await kickoff_unit_test_agent(
                     query,
                     validated_history,

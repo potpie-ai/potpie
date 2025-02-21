@@ -34,16 +34,14 @@ from app.modules.conversations.message.message_schema import (
     MessageResponse,
     NodeContext,
 )
-from app.modules.intelligence.agents.agent_factory import AgentFactory
 from app.modules.intelligence.agents.agent_injector_service import AgentInjectorService
 from app.modules.intelligence.agents.agents_service import AgentsService
-from app.modules.intelligence.agents.custom_agents.custom_agent import CustomAgent
 from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
     CustomAgentService,
 )
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import (
-    ProviderType,
+    AgentProvider,
     ProviderService,
 )
 from app.modules.projects.projects_service import ProjectService
@@ -81,7 +79,7 @@ class SimplifiedAgentSupervisor:
         self.current_agent_id = None
         self.classifier = None
         self.agents_service = AgentsService(db)
-        self.agent_factory = AgentFactory(db, provider_service)
+        self.agent_injector_service = AgentInjectorService(db, provider_service)
         self.available_agents = []
 
     async def initialize(self, user_id: str):
@@ -90,7 +88,7 @@ class SimplifiedAgentSupervisor:
         )
         self.llm = self.provider_service.get_small_llm(user_id)
         self.classifier_prompt = """
-        Given the user query and the current agent ID, select the most appropriate agent by comparing the query’s requirements with each agent’s specialties.
+        Given the user query and the current agent ID, select the most appropriate agent by comparing the query's requirements with each agent's specialties.
 
         Query: {query}
         Current Agent ID: {agent_id}
@@ -102,22 +100,22 @@ class SimplifiedAgentSupervisor:
 
         Analysis Instructions (DO NOT include these instructions in the final answer):
         1. **Semantic Analysis:**
-        - Identify the key topics, technical terms, and the user’s intent from the query.
-        - Compare these elements to each agent’s detailed specialty description.
+        - Identify the key topics, technical terms, and the user's intent from the query.
+        - Compare these elements to each agent's detailed specialty description.
         - Focus on specific skills, tools, frameworks, and domain expertise mentioned.
 
         2. **Contextual Weighting:**
-        - If the query strongly aligns with the current agent’s known capabilities, add +0.15 confidence for direct core expertise and +0.1 for related domain knowledge.
-        - If the query introduces new topics outside the current agent’s domain, do not apply the current agent bias. Instead, evaluate all agents equally based on their described expertise.
+        - If the query strongly aligns with the current agent's known capabilities, add +0.15 confidence for direct core expertise and +0.1 for related domain knowledge.
+        - If the query introduces new topics outside the current agent's domain, do not apply the current agent bias. Instead, evaluate all agents equally based on their described expertise.
 
         3. **Multi-Agent Evaluation:**
-        - Consider all agents’ described specialties thoroughly, not just the current agent.
+        - Consider all agents' described specialties thoroughly, not just the current agent.
         - For overlapping capabilities, favor the agent with more specialized expertise or more relevant tools/methodologies.
         - If no agent clearly surpasses a 0.5 confidence threshold, select the agent with the highest confidence score, even if it is below 0.5.
 
         4. **Confidence Scoring Guidelines:**
-        - 0.9-1.0: Ideal match with the agent’s core, primary expertise.
-        - 0.7-0.9: Strong match with the agent’s known capabilities.
+        - 0.9-1.0: Ideal match with the agent's core, primary expertise.
+        - 0.7-0.9: Strong match with the agent's known capabilities.
         - 0.5-0.7: Partial or related match, not a direct specialty.
         - Below 0.5: Weak match; consider if another agent is more suitable, but still choose the best available option.
 
@@ -164,8 +162,8 @@ class SimplifiedAgentSupervisor:
             # Initialize the agent if needed
             if not self.agent or self.current_agent_id != state["agent_id"]:
                 try:
-                    self.agent = self.agent_factory.get_agent(
-                        state["agent_id"], state["user_id"]
+                    self.agent = self.agent_injector_service.get_system_agent(
+                        state["agent_id"]
                     )
                     self.current_agent_id = state["agent_id"]
                 except Exception as e:
@@ -199,8 +197,8 @@ class SimplifiedAgentSupervisor:
         # Initialize the selected system agent
         if not self.agent or self.current_agent_id != selected_agent_id:
             try:
-                self.agent = self.agent_factory.get_agent(
-                    selected_agent_id, state["user_id"]
+                self.agent = await self.agent_injector_service.get_system_agent(
+                    selected_agent_id
                 )
                 self.current_agent_id = selected_agent_id
             except Exception as e:
@@ -315,7 +313,7 @@ class ConversationService:
         project_service = ProjectService(db)
         history_manager = ChatHistoryService(db)
         provider_service = ProviderService(db, user_id)
-        agent_injector_service = AgentInjectorService(db, provider_service, user_id)
+        agent_injector_service = AgentInjectorService(db, provider_service)
         custom_agent_service = CustomAgentService(db)
         return cls(
             db,
@@ -431,16 +429,6 @@ class ConversationService:
         logger.info(
             f"Project id : {conversation.project_ids[0]} Created new conversation with ID: {conversation_id}, title: {title}, user_id: {user_id}, agent_id: {conversation.agent_ids[0]}"
         )
-        provider_name = self.provider_service.get_llm_provider_name()
-        PostHogClient().send_event(
-            user_id,
-            "create Conversation Event",
-            {
-                "project_ids": conversation.project_ids,
-                "agent_ids": conversation.agent_ids,
-                "llm": provider_name,
-            },
-        )
         return conversation_id
 
     async def _add_system_message(
@@ -487,13 +475,7 @@ class ConversationService:
                 conversation_id, message_type, user_id
             )
             logger.info(f"Stored message in conversation {conversation_id}")
-            provider_name = self.provider_service.get_llm_provider_name()
 
-            PostHogClient().send_event(
-                user_id,
-                "message post event",
-                {"conversation_id": conversation_id, "llm": provider_name},
-            )
             if message_type == MessageType.HUMAN:
                 conversation = await self._get_conversation_with_message_count(
                     conversation_id
@@ -582,19 +564,15 @@ class ConversationService:
     ) -> str:
         agent_type = conversation.agent_ids[0]
 
-        llm = self.provider_service.get_small_llm(agent_type=ProviderType.LANGCHAIN)
-        prompt = ChatPromptTemplate.from_template(
+        prompt = (
             "Given an agent type '{agent_type}' and an initial message '{message}', "
             "generate a concise and relevant title for a conversation. "
             "The title should be no longer than 50 characters. Only return title string, do not wrap in quotes."
-        )
+        ).format(agent_type=agent_type, message=message_content)
 
-        messages = prompt.format_messages(
-            agent_type=agent_type, message=message_content
-        )
-        response = await llm.agenerate([messages])
-
-        generated_title = response.generations[0][0].text.strip()
+        messages = [{"role": "user", "content": prompt}]
+        generated_title = await self.provider_service.call_llm(messages, size="small")
+        
         if len(generated_title) > 50:
             generated_title = generated_title[:50].strip() + "..."
         return generated_title
@@ -736,24 +714,23 @@ class ConversationService:
         supervisor = SimplifiedAgentSupervisor(self.sql_db, self.provider_service)
         await supervisor.initialize(user_id)
         try:
-            agent = await self.agent_injector_service.get_agent(agent_id)
+            agent = await self.agent_injector_service.get_system_agent(agent_id)
 
             logger.info(
                 f"conversation_id: {conversation_id} Running agent {agent_id} with query: {query}"
             )
 
-            if isinstance(agent, CustomAgent):
+            if agent:
+                async for chunk in supervisor.process_query(
+                    query, project_id, conversation.id, user_id, node_ids, agent_id
+                ):
+                    yield self.parse_str_to_message(chunk)
+            else :
                 # Custom agent doesn't support streaming, so we'll yield the entire response at once
                 response = await CustomAgentService(self.sql_db).execute_agent_runtime(
                     agent_id, user_id, query, node_ids, project_id, conversation.id
                 )
                 yield ChatMessageResponse(message=response["message"], citations=[])
-            else:
-                # For other agents that support streaming
-                async for chunk in supervisor.process_query(
-                    query, project_id, conversation.id, user_id, node_ids, agent_id
-                ):
-                    yield self.parse_str_to_message(chunk)
 
             logger.info(
                 f"Generated and streamed AI response for conversation {conversation.id} for user {user_id} using agent {agent_id}"
