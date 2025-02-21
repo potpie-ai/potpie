@@ -43,7 +43,9 @@ class IntegrationTestAgent(ChatAgent):
             graph = self.tools_provider.get_code_graph_from_node_id_tool.run(
                 ctx.project_id, ctx.node_ids[0]
             )
-            ctx.additional_context += f"Graph: {graph}"
+            ctx.additional_context += (
+                f"Code Graph context of the node_ids in query: {graph}"
+            )
         return ctx
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:

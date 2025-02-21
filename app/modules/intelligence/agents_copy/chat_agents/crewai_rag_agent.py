@@ -75,6 +75,8 @@ class CrewAIRagAgent(ChatAgent):
         ctx: ChatContext,
     ) -> str:
         """Create a task description from task configuration"""
+        if ctx.node_ids is None:
+            ctx.node_ids = []
         if isinstance(ctx.node_ids, str):
             node_ids = [ctx.node_ids]
 
@@ -82,9 +84,12 @@ class CrewAIRagAgent(ChatAgent):
                 CONTEXT:
                 User Query: {ctx.query}
                 Project ID: {ctx.project_id}
-                Node IDs: {ctx.node_ids}
-                Consider the chat history for any specific instructions or context: {ctx.history}
-                Additional Context: {ctx.additional_context}
+                Node IDs: {" ,".join(ctx.history)}
+                
+                Consider the chat history for any specific instructions or context: {" ,".join(ctx.history)}
+                
+                Additional Context: 
+                {ctx.additional_context}
 
                 TASK:
                 {task_config.description}
@@ -111,6 +116,8 @@ class CrewAIRagAgent(ChatAgent):
                 - For citations, include only the `file_path` of the nodes fetched and used.
                 - Do not include any explanation or additional text outside of this JSON object.
                 - Ensure all of the expected output and code are included within the "response" string.
+                
+                With above information answer the user query: {ctx.query}
             """
 
     async def _create_task(self, task_config: TaskConfig, ctx: ChatContext) -> Task:

@@ -41,10 +41,12 @@ class UnitTestAgent(ChatAgent):
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if ctx.node_ids and len(ctx.node_ids) > 0:
-            code_results = await self.tools_provider.get_code_from_probable_node_name_tool.run_multiple(
+            code_results = await self.tools_provider.get_code_from_multiple_node_ids_tool.run_multiple(
                 ctx.project_id, ctx.node_ids
             )
-            ctx.additional_context += f"Code results:\n {code_results}"
+            ctx.additional_context += (
+                f"Code Graph context of the node_ids in query:\n {code_results}"
+            )
         return ctx
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:

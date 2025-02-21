@@ -81,8 +81,7 @@ class AdaptiveAgent(ChatAgent):
             pass
 
         if classification == "AGENT_REQUIRED":
-            rag_agent_response = await self.rag_agent.run(ctx)
-            ctx.query += f" with information: {rag_agent_response.response} and citations: {rag_agent_response.citations}"
+            return await self.rag_agent.run(ctx)
 
         # build llm response
         llm = await self._create_llm()
@@ -105,8 +104,11 @@ class AdaptiveAgent(ChatAgent):
             pass
 
         if classification == "AGENT_REQUIRED":
-            rag_agent_response = await self.rag_agent.run(ctx)
-            ctx.query += f" with information: {rag_agent_response.response} and citations: {rag_agent_response.citations}"
+            return await self.rag_agent.run_stream(ctx)
+
+            # You can pass the result to llm to stream response, but it's unnecessary and gives a overhead
+            # rag_agent_response = await self.rag_agent.run(ctx)
+            # ctx.query += f"\n with tool_response: {rag_agent_response.response} and citations: {rag_agent_response.citations}"
 
         # build llm response
         llm = await self._create_llm()

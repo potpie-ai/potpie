@@ -30,13 +30,16 @@ class BlastRadiusAgent(ChatAgent):
                     )
                 ],
             ),
-            tools=[
-                self.tools_provider.tools["get_nodes_from_tags"],
-                self.tools_provider.tools["ask_knowledge_graph_queries"],
-                self.tools_provider.tools["get_code_from_multiple_node_ids"],
-                self.tools_provider.tools["webpage_extractor"],
-                self.tools_provider.tools["github_tool"],
-            ],
+            tools=self.tools_provider.get_tools(
+                [
+                    "get_nodes_from_tags",
+                    "ask_knowledge_graph_queries",
+                    "get_code_from_multiple_node_ids",
+                    "change_detection",
+                    "webpage_extractor",
+                    "github_tool",
+                ]
+            ),
         )
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:

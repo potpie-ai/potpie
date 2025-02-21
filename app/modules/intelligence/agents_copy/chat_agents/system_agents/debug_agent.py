@@ -13,6 +13,7 @@ class DebugAgent(ChatAgent):
         llm_provider: ProviderService,
         tools_provider: ToolService,
     ):
+        self.tools_provider = tools_provider
         self.rag_agent = CrewAIRagAgent(
             llm_provider,
             AgentConfig(
@@ -34,16 +35,29 @@ class DebugAgent(ChatAgent):
                     )
                 ],
             ),
-            tools=[
-                tools_provider.tools["get_code_from_multiple_node_ids"],
-                tools_provider.tools["get_node_neighbours_from_node_id"],
-                tools_provider.tools["get_code_from_probable_node_name"],
-                tools_provider.tools["ask_knowledge_graph_queries"],
-                tools_provider.tools["get_nodes_from_tags"],
-                tools_provider.tools["webpage_extractor"],
-                tools_provider.tools["github_tool"],
-            ],
+            tools=self.tools_provider.get_tools(
+                [
+                    "get_code_from_multiple_node_ids",
+                    "get_node_neighbours_from_node_id",
+                    "get_code_from_probable_node_name",
+                    "ask_knowledge_graph_queries",
+                    "get_nodes_from_tags",
+                    "get_code_file_structure",
+                    "webpage_extractor",
+                    "github_tool",
+                ]
+            ),
         )
+
+    async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
+        if ctx.node_ids and len(ctx.node_ids) > 0:
+            code_results = await self.tools_provider.get_code_from_multiple_node_ids_tool.run_multiple(
+                ctx.project_id, ctx.node_ids
+            )
+            ctx.additional_context += (
+                f"Code referred to in the query:\n {code_results}\n"
+            )
+        return ctx
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         return await self.rag_agent.run(ctx)
