@@ -21,6 +21,8 @@ from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.posthog_helper import PostHogClient
+from app.modules.conversations.conversation.conversation_model import Conversation
+from app.modules.conversations.conversation.conversation_model import Visibility
 
 logger = logging.getLogger(__name__)
 
@@ -245,13 +247,31 @@ class ParsingController:
         try:
             project_service = ProjectService(db)
             parse_helper = ParseHelper(db)
+
             project = await project_service.get_project_from_db_by_id_and_user_id(
                 project_id, user["user_id"]
             )
+
             if project:
                 is_latest = await parse_helper.check_commit_status(project_id)
                 return {"status": project["status"], "latest": is_latest}
             else:
+                conversations = (
+                    db.query(Conversation)
+                    .filter(Conversation.project_ids.any(project_id))
+                    .all()
+                )
+
+                for conversation in conversations:
+                    shared_emails = conversation.shared_with_emails or []
+                    if conversation.visibility == Visibility.PUBLIC or user["email"] in shared_emails:
+                        project = await project_service.get_project_from_db_by_id_and_user_id(
+                            project_id, conversation.user_id
+                        )
+                        if project:
+                            is_latest = await parse_helper.check_commit_status(project_id)
+                            return {"status": project["status"], "latest": is_latest}
+
                 raise HTTPException(status_code=404, detail="Project not found")
         except Exception as e:
             logger.error(f"Error in fetch_parsing_status: {str(e)}")
