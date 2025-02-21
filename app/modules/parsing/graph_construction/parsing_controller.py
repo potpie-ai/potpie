@@ -7,6 +7,7 @@ from typing import Any, Dict
 from dotenv import load_dotenv
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, or_
 from uuid6 import uuid7
 
 from app.celery.tasks.parsing_tasks import process_parsing
@@ -23,6 +24,7 @@ from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.posthog_helper import PostHogClient
 from app.modules.conversations.conversation.conversation_model import Conversation
 from app.modules.conversations.conversation.conversation_model import Visibility
+from app.modules.projects.projects_model import Project
 
 logger = logging.getLogger(__name__)
 
@@ -243,36 +245,47 @@ class ParsingController:
     @staticmethod
     async def fetch_parsing_status(
         project_id: str, db: AsyncSession, user: Dict[str, Any]
-    ):
+    ):        
         try:
-            project_service = ProjectService(db)
-            parse_helper = ParseHelper(db)
-
-            project = await project_service.get_project_from_db_by_id_and_user_id(
-                project_id, user["user_id"]
+            project_query = (
+                select(Project.status)
+                .join(
+                    Conversation,
+                    Conversation.project_ids.any(Project.id),
+                    isouter=True
+                )
+                .where(
+                    Project.id == project_id,
+                    or_(
+                        Project.user_id == user["user_id"],
+                        Conversation.visibility == Visibility.PUBLIC,
+                        Conversation.shared_with_emails.any(user["email"])
+                    )
+                )
+                .limit(1)  # Since we only need one result
             )
 
-            if project:
-                is_latest = await parse_helper.check_commit_status(project_id)
-                return {"status": project["status"], "latest": is_latest}
-            else:
-                conversations = (
-                    db.query(Conversation)
-                    .filter(Conversation.project_ids.any(project_id))
-                    .all()
+            result = db.execute(project_query)
+            project_status = result.scalars().first()
+
+            if not project_status:
+                raise HTTPException(
+                    status_code=404,    
+                    detail="Project not found or access denied"
                 )
+            parse_helper = ParseHelper(db)
+            is_latest = await parse_helper.check_commit_status(project_id)
 
-                for conversation in conversations:
-                    shared_emails = conversation.shared_with_emails or []
-                    if conversation.visibility == Visibility.PUBLIC or user["email"] in shared_emails:
-                        project = await project_service.get_project_from_db_by_id_and_user_id(
-                            project_id, conversation.user_id
-                        )
-                        if project:
-                            is_latest = await parse_helper.check_commit_status(project_id)
-                            return {"status": project["status"], "latest": is_latest}
+            return {
+                "status": project_status,
+                "latest": is_latest
+            }
 
-                raise HTTPException(status_code=404, detail="Project not found")
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error in fetch_parsing_status: {str(e)}")
-            raise HTTPException(status_code=500, detail="Internal server error")
+            raise HTTPException(
+                status_code=500,
+                detail="Internal server error"
+            )
