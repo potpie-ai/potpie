@@ -8,18 +8,19 @@ from langchain.prompts import PromptTemplate
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.modules.intelligence.agents.base_agent_service import BaseAgentService
 from app.modules.intelligence.agents_copy.custom_agents.custom_agent_model import (
     CustomAgent as CustomAgentModel,
 )
-from app.modules.intelligence.agents.custom_agents.custom_agent_schema import (
+from app.modules.intelligence.agents_copy.custom_agents.custom_agent_schema import (
     Agent,
     AgentCreate,
     AgentUpdate,
     Task,
     TaskCreate,
 )
-from app.modules.intelligence.agents.custom_agents.runtime_agent import RuntimeAgent
+from app.modules.intelligence.agents_copy.custom_agents.runtime_agent import (
+    RuntimeAgent,
+)
 from app.modules.intelligence.provider.provider_service import (
     AgentType,
     ProviderService,
@@ -31,9 +32,9 @@ from app.modules.utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 
-class CustomAgentService(BaseAgentService):
+class CustomAgentService:
     def __init__(self, db: Session):
-        super().__init__(db)
+        self.db = db
         self.secret_manager = SecretManager()
 
     async def _get_agent_by_id_and_user(
