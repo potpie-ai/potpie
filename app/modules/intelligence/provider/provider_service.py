@@ -9,10 +9,9 @@ from crewai import LLM
 from langchain_anthropic import ChatAnthropic
 from langchain_deepseek import ChatDeepSeek
 from langchain_openai.chat_models import ChatOpenAI
-from portkey_ai import AsyncPortkey, PORTKEY_GATEWAY_URL, createHeaders
+from portkey_ai import AsyncPortkey
 
 from app.modules.key_management.secret_manager import SecretManager
-from app.modules.parsing.knowledge_graph.inference_schema import DocstringResponse
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.posthog_helper import PostHogClient
 
@@ -339,12 +338,9 @@ class ProviderService:
                 crewai_params["headers"] = params["default_headers"]
             
             return LLM(**crewai_params)
+        
         else:
-            # For backwards compatibility, still return LangChain clients
-            # but configured to use Portkey gateway when available
-            model_class = config["langchain"]["class"]
-            model_params = {"model_name": config["langchain"]["model"], **params}
-            return model_class(**model_params)
+            return None
 
     def get_large_llm(self, agent_type: AgentProvider):
         provider = self._get_provider_config("large")
