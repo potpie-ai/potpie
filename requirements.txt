@@ -50,7 +50,7 @@ aiofiles==24.1.0
 scikit-learn==1.5.2
 requests==2.32.3
 resend==2.4.0
-transformers==4.46.3
+transformers>=4.48.0
 torch==2.5.1
 sentence-transformers==3.3.1
 crewai==0.95.0
