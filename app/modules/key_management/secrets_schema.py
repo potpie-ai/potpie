@@ -15,8 +15,8 @@ class BaseSecretRequest(BaseModel):
 
     @staticmethod
     def validate_openai_api_key_format(api_key: str) -> bool:
-        pattern = r"^sk-[a-zA-Z0-9]{48}$"
-        proj_pattern = r"^sk-proj-[a-zA-Z0-9]{48}$"
+        pattern = r"^sk-[a-zA-Z0-9-]+$" 
+        proj_pattern = r"^sk-proj-[a-zA-Z0-9-]+$"  
         return bool(re.match(pattern, api_key)) or bool(re.match(proj_pattern, api_key))
 
     @field_validator("api_key")

@@ -1,5 +1,5 @@
 import os
-import base64
+import asyncio
 from typing import Literal
 
 from fastapi import Depends, HTTPException
@@ -113,46 +113,61 @@ class SecretManager:
         customer_id = user["user_id"]
         client, project_id = SecretManager.get_client_and_project()
 
-        # Update user preferences with provider info and models regardless of GCP or not.
-        user_pref = (
-            db.query(UserPreferences)
-            .filter(UserPreferences.user_id == customer_id)
-            .first()
-        )
-        if not user_pref:
-            user_pref = UserPreferences(user_id=customer_id, preferences={})
-            db.add(user_pref)
-        user_pref.preferences["provider"] = request.provider
-        if request.low_reasoning_model:
-            user_pref.preferences["low_reasoning_model"] = request.low_reasoning_model
-        if request.high_reasoning_model:
-            user_pref.preferences["high_reasoning_model"] = request.high_reasoning_model
-
-        if client and project_id:
-            # Use Google Secret Manager for API Key
-            api_key = request.api_key
-            secret_id = SecretManager.get_secret_id(request.provider, customer_id)
-            parent = f"projects/{project_id}"
-            secret = {"replication": {"automatic": {}}}
-            response = client.create_secret(
-                request={"parent": parent, "secret_id": secret_id, "secret": secret}
+        try:
+            # Update user preferences with provider info and models regardless of GCP or not.
+            user_pref = (
+                db.query(UserPreferences)
+                .filter(UserPreferences.user_id == customer_id)
+                .first()
             )
-            version = {"payload": {"data": api_key.encode("UTF-8")}}
-            client.add_secret_version(
-                request={"parent": response.name, "payload": version["payload"]}
-            )
-        else:
-            # Fallback: store encrypted API key and model configs in UserPreferences
-            encrypted_key = SecretManager.encrypt_api_key(request.api_key)
-            user_pref.preferences[f"api_key_{request.provider}"] = encrypted_key
+            if not user_pref:
+                user_pref = UserPreferences(user_id=customer_id, preferences={})
+                db.add(user_pref)
+                db.flush()  # Ensure the new record is created before modifying preferences
 
-        db.commit()
-        PostHogClient().send_event(
-            customer_id,
-            "secret_creation_event",
-            {"provider": request.provider, "key_added": "true"},
-        )
-        return {"message": "Secret created successfully"}
+            # Create a copy of preferences to avoid modifying the dict directly
+            preferences = user_pref.preferences.copy() if user_pref.preferences else {}
+            preferences["provider"] = request.provider
+            if request.low_reasoning_model:
+                preferences["low_reasoning_model"] = request.low_reasoning_model
+            if request.high_reasoning_model:
+                preferences["high_reasoning_model"] = request.high_reasoning_model
+
+            if client and project_id:
+                # Use Google Secret Manager for API Key
+                api_key = request.api_key
+                secret_id = SecretManager.get_secret_id(request.provider, customer_id)
+                parent = f"projects/{project_id}"
+                secret = {"replication": {"automatic": {}}}
+                response = client.create_secret(
+                    request={"parent": parent, "secret_id": secret_id, "secret": secret}
+                )
+                version = {"payload": {"data": api_key.encode("UTF-8")}}
+                client.add_secret_version(
+                    request={"parent": response.name, "payload": version["payload"]}
+                )
+            else:
+                # Fallback: store encrypted API key and model configs in UserPreferences
+                encrypted_key = SecretManager.encrypt_api_key(request.api_key)
+                preferences[f"api_key_{request.provider}"] = encrypted_key
+
+            # Update the preferences after all operations are successful
+            user_pref.preferences = preferences
+            db.commit()
+            db.refresh(user_pref)  # Refresh to ensure we have the latest state
+
+            PostHogClient().send_event(
+                customer_id,
+                "secret_creation_event",
+                {"provider": request.provider, "key_added": "true"},
+            )
+            return {"message": "Secret created successfully"}
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create secret: {str(e)}"
+            )
 
     @router.get("/secrets/{provider}")
     def get_secret_for_provider(
@@ -230,17 +245,8 @@ class SecretManager:
         db: Session = Depends(get_db),
     ):
         customer_id = user["user_id"]
-        api_key = request.api_key
-        client, project_id = SecretManager.get_client_and_project()
-        if client and project_id:
-            secret_id = SecretManager.get_secret_id(request.provider, customer_id)
-            parent = f"projects/{project_id}/secrets/{secret_id}"
-            version = {"payload": {"data": api_key.encode("UTF-8")}}
-            client.add_secret_version(
-                request={"parent": parent, "payload": version["payload"]}
-            )
-        else:
-            # Fallback: update UserPreferences store
+        try:
+            # Get or create user preferences
             user_pref = (
                 db.query(UserPreferences)
                 .filter(UserPreferences.user_id == customer_id)
@@ -249,26 +255,63 @@ class SecretManager:
             if not user_pref:
                 user_pref = UserPreferences(user_id=customer_id, preferences={})
                 db.add(user_pref)
-            encrypted_key = SecretManager.encrypt_api_key(api_key)
-            user_pref.preferences[f"api_key_{request.provider}"] = encrypted_key
+                db.flush()  # Ensure the new record is created before modifying preferences
 
-        # Update provider and models in user preferences as well.
-        user_pref = (
-            db.query(UserPreferences)
-            .filter(UserPreferences.user_id == customer_id)
-            .first()
-        )
-        user_pref.preferences["provider"] = request.provider
-        if request.low_reasoning_model:
-            user_pref.preferences["low_reasoning_model"] = request.low_reasoning_model
-        if request.high_reasoning_model:
-            user_pref.preferences["high_reasoning_model"] = request.high_reasoning_model
+            # Create a copy of preferences to avoid modifying the dict directly
+            preferences = user_pref.preferences.copy() if user_pref.preferences else {}
 
-        db.commit()
-        return {"message": "Secret updated successfully"}
+            # Handle Google Secret Manager if available
+            client, project_id = SecretManager.get_client_and_project()
+            if client and project_id:
+                secret_id = SecretManager.get_secret_id(request.provider, customer_id)
+                parent = f"projects/{project_id}/secrets/{secret_id}"
+                try:
+                    version = {"payload": {"data": request.api_key.encode("UTF-8")}}
+                    client.add_secret_version(
+                        request={"parent": parent, "payload": version["payload"]}
+                    )
+                except Exception as e:
+                    # If secret doesn't exist, create it
+                    secret = {"replication": {"automatic": {}}}
+                    response = client.create_secret(
+                        request={"parent": f"projects/{project_id}", "secret_id": secret_id, "secret": secret}
+                    )
+                    version = {"payload": {"data": request.api_key.encode("UTF-8")}}
+                    client.add_secret_version(
+                        request={"parent": response.name, "payload": version["payload"]}
+                    )
+            else:
+                # Fallback: update encrypted API key in UserPreferences
+                encrypted_key = SecretManager.encrypt_api_key(request.api_key)
+                preferences[f"api_key_{request.provider}"] = encrypted_key
+
+            # Update provider and models in preferences
+            preferences["provider"] = request.provider
+            if request.low_reasoning_model:
+                preferences["low_reasoning_model"] = request.low_reasoning_model
+            if request.high_reasoning_model:
+                preferences["high_reasoning_model"] = request.high_reasoning_model
+
+            # Update the preferences after all operations are successful
+            user_pref.preferences = preferences
+            db.commit()
+            db.refresh(user_pref)  # Refresh to ensure we have the latest state
+
+            PostHogClient().send_event(
+                customer_id,
+                "secret_update_event",
+                {"provider": request.provider, "key_updated": "true"},
+            )
+            return {"message": "Secret updated successfully"}
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to update secret: {str(e)}"
+            )
 
     @router.delete("/secrets/{provider}")
-    def delete_secret(
+    async def delete_secret(
         provider: Literal[
             "openai", "anthropic", "deepseek", "meta-llama", "mistralai", "gemini", "openrouter", "all"
         ],
@@ -276,27 +319,26 @@ class SecretManager:
         db: Session = Depends(get_db),
     ):
         from app.modules.intelligence.provider.provider_service import PLATFORM_PROVIDERS
+        
         customer_id = user["user_id"]
-        if provider == "all":
-            provider_list = PLATFORM_PROVIDERS # Use PLATFORM_PROVIDERS list
-            deletion_results = []
-            for prov in provider_list:
+        
+        async def delete_single_provider(prov: str) -> dict:
+            """Helper function to delete a single provider's secret"""
+            try:
                 client, project_id = SecretManager.get_client_and_project()
                 if client and project_id:
                     secret_id = SecretManager.get_secret_id(prov, customer_id)
                     try:
                         name = f"projects/{project_id}/secrets/{secret_id}"
                         client.delete_secret(request={"name": name})
-                        deletion_results.append(f"Successfully deleted {prov} secret")
                         PostHogClient().send_event(
                             customer_id,
                             "secret_deletion_event",
                             {"provider": prov, "key_removed": "true"},
                         )
+                        return {"provider": prov, "status": "success", "message": f"Successfully deleted {prov} secret"}
                     except Exception as e:
-                        deletion_results.append(
-                            f"Failed to delete {prov} secret: {str(e)}"
-                        )
+                        return {"provider": prov, "status": "error", "message": f"Failed to delete {prov} secret: {str(e)}"}
                 else:
                     # Fallback deletion: remove from UserPreferences
                     user_pref = (
@@ -305,80 +347,67 @@ class SecretManager:
                         .first()
                     )
                     if user_pref and f"api_key_{prov}" in user_pref.preferences:
-                        del user_pref.preferences[f"api_key_{prov}"]
+                        preferences = user_pref.preferences.copy()
+                        del preferences[f"api_key_{prov}"]
+                        user_pref.preferences = preferences
                         db.commit()
-                        deletion_results.append(f"Deleted {prov} secret from DB")
                         PostHogClient().send_event(
                             customer_id,
                             "secret_deletion_event",
                             {"provider": prov, "key_removed": "true"},
                         )
-            # Remove provider and model configs from user preferences
-            user_pref = (
-                db.query(UserPreferences)
-                .filter(UserPreferences.user_id == customer_id)
-                .first()
-            )
-            if user_pref and "provider" in user_pref.preferences:
-                del user_pref.preferences["provider"]
-            if user_pref and "low_reasoning_model" in user_pref.preferences:
-                del user_pref.preferences["low_reasoning_model"]
-            if user_pref and "high_reasoning_model" in user_pref.preferences:
-                del user_pref.preferences["high_reasoning_model"]
-            db.commit()
-            return {
-                "message": "All secrets deletion completed",
-                "details": deletion_results,
-            }
+                        return {"provider": prov, "status": "success", "message": f"Deleted {prov} secret from DB"}
+                    return {"provider": prov, "status": "not_found", "message": f"No secret found for {prov}"}
+            except Exception as e:
+                return {"provider": prov, "status": "error", "message": f"Error processing {prov}: {str(e)}"}
 
-        client, project_id = SecretManager.get_client_and_project()
-        if client and project_id:
-            secret_id = SecretManager.get_secret_id(provider, customer_id)
-            name = f"projects/{project_id}/secrets/{secret_id}"
+        if provider == "all":
             try:
-                client.delete_secret(request={"name": name})
+                # Create tasks for all providers
+                tasks = [delete_single_provider(prov) for prov in PLATFORM_PROVIDERS]
+                # Execute all deletions in parallel
+                deletion_results = await asyncio.gather(*tasks)
+                
+                # Clean up provider preferences after all deletions
                 user_pref = (
                     db.query(UserPreferences)
                     .filter(UserPreferences.user_id == customer_id)
                     .first()
                 )
-                if user_pref and "provider" in user_pref.preferences:
-                    del user_pref.preferences["provider"]
-                if user_pref and "low_reasoning_model" in user_pref.preferences:
-                    del user_pref.preferences["low_reasoning_model"]
-                if user_pref and "high_reasoning_model" in user_pref.preferences:
-                    del user_pref.preferences["high_reasoning_model"]
-                db.commit()
-                PostHogClient().send_event(
-                    customer_id,
-                    "secret_deletion_event",
-                    {"provider": provider, "key_removed": "true"},
-                )
-                return {"message": "Secret deleted successfully"}
+                if user_pref:
+                    preferences = user_pref.preferences.copy()
+                    if "provider" in preferences:
+                        del preferences["provider"]
+                    if "low_reasoning_model" in preferences:
+                        del preferences["low_reasoning_model"]
+                    if "high_reasoning_model" in preferences:
+                        del preferences["high_reasoning_model"]
+                    user_pref.preferences = preferences
+                    db.commit()
+
+                successful = [r for r in deletion_results if r["status"] == "success"]
+                failed = [r for r in deletion_results if r["status"] == "error"]
+                not_found = [r for r in deletion_results if r["status"] == "not_found"]
+
+                return {
+                    "message": "All secrets deletion completed",
+                    "successful_deletions": successful,
+                    "failed_deletions": failed,
+                    "not_found": not_found
+                }
             except Exception as e:
                 raise HTTPException(
-                    status_code=404, detail=f"Secret not found: {str(e)}"
+                    status_code=500,
+                    detail=f"Failed to process parallel deletions: {str(e)}"
                 )
         else:
-            # Fallback: delete from UserPreferences
-            user_pref = (
-                db.query(UserPreferences)
-                .filter(UserPreferences.user_id == customer_id)
-                .first()
-            )
-            if user_pref and f"api_key_{provider}" in user_pref.preferences:
-                del user_pref.preferences[f"api_key_{provider}"]
-                db.commit()
-                PostHogClient().send_event(
-                    customer_id,
-                    "secret_deletion_event",
-                    {"provider": provider, "key_removed": "true"},
-                )
-                return {"message": "Secret deleted successfully from DB"}
-            else:
-                raise HTTPException(
-                    status_code=404, detail="Secret not found in fallback storage"
-                )
+            # Single provider deletion
+            result = await delete_single_provider(provider)
+            if result["status"] == "error":
+                raise HTTPException(status_code=500, detail=result["message"])
+            elif result["status"] == "not_found":
+                raise HTTPException(status_code=404, detail=result["message"])
+            return {"message": result["message"]}
 
     @router.post("/api-keys", response_model=APIKeyResponse)
     async def create_api_key(

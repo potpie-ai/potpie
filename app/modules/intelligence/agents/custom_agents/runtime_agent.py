@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
+from app.modules.intelligence.provider.provider_service import AgentProvider, ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.utils.logger import setup_logger
 
@@ -69,7 +70,7 @@ class RuntimeAgent:
         self.history_manager = ChatHistoryService(self.db)
         self.project_id = None
         self.agent = None
-
+        self.llm = ProviderService(self.db,self.user_id).get_large_llm(AgentProvider.CREWAI)
         # Initialize tools
         self.tool_service = ToolService(db, self.user_id)
         self.tools = {}
@@ -159,7 +160,6 @@ class RuntimeAgent:
             description=task_description,
             agent=self.agent,
             expected_output="Markdown formatted response with code context and explanations",
-            llm=self.llm,
         )
 
         logger.info(f"Created task {task_index + 1} with LLM configuration")

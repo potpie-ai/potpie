@@ -28,9 +28,10 @@ class ProviderController:
         low_reasoning_model = provider_request.low_reasoning_model
         high_reasoning_model = provider_request.high_reasoning_model
 
-        if provider not in PLATFORM_PROVIDERS and provider not in [p.id for p in await self.list_available_llms()]: # check if provider is valid
-            raise HTTPException(status_code=400, detail=f"Invalid provider: {provider}")
+        # if provider not in PLATFORM_PROVIDERS and provider not in [p.id for p in await self.list_available_llms()]: # check if provider is valid
+        #     raise HTTPException(status_code=400, detail=f"Invalid provider: {provider}")
 
+        #add a supported provider list and check here
         if provider not in PLATFORM_PROVIDERS: # for non-platform providers, model names are required
             if not low_reasoning_model or not high_reasoning_model:
                 raise HTTPException(

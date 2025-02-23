@@ -160,7 +160,6 @@ class LLDChatAgent:
                     node_ids,
                     self.db,
                     provider_service.get_large_llm(agent_type=AgentProvider.CREWAI),
-                    provider_service.get_small_llm(agent_type=AgentProvider.CREWAI),
                     user_id,
                 ):
                     content = str(chunk)

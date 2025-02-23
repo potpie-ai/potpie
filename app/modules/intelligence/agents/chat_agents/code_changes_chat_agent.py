@@ -79,26 +79,18 @@ class CodeChangesChatAgent:
         parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
         format_instructions = parser.get_format_instructions()
 
-        # Format messages for Portkey
         messages = [
             {"role": "system", "content": prompt},
             {"role": "user", "content": f"Query: {inputs['query']}\nHistory: {inputs['history']}\n\n{format_instructions}"}
         ]
 
         try:
-            # Try using Portkey first
             response = await provider_service.call_llm(messages=messages, size="small")
             return parser.parse(response).classification
         except Exception as e:
-            logger.warning(f"Portkey classification failed, falling back to Langchain: {e}")
-            # Fallback to Langchain
-            prompt_with_parser = ChatPromptTemplate.from_template(
-                template=prompt,
-                partial_variables={"format_instructions": format_instructions},
-            )
-            chain = prompt_with_parser | provider_service.get_small_llm(agent_type=AgentType.LANGCHAIN)
-            response = await chain.ainvoke(input=inputs)
-            return response.classification
+            logger.warning(f"Classification failed")
+            return ClassificationResult.AGENT_REQUIRED
+
 
     async def run(
         self,

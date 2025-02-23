@@ -37,7 +37,7 @@ from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import (
 
 
 class CodeGenerationAgent:
-    def __init__(self, sql_db, llm, mini_llm, user_id):
+    def __init__(self, sql_db, user_id):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.max_iter = os.getenv("MAX_ITER", 15)
         self.sql_db = sql_db
@@ -57,8 +57,6 @@ class CodeGenerationAgent:
             self.webpage_extractor_tool = webpage_extractor_tool(sql_db, user_id)
         if os.getenv("GITHUB_APP_ID"):
             self.github_tool = github_tool(sql_db, user_id)
-        self.llm = llm
-        self.mini_llm = mini_llm
         self.user_id = user_id
         self.provider_service = ProviderService(sql_db, user_id)
 
@@ -334,6 +332,6 @@ async def kickoff_code_generation_crew(
     mini_llm,
     user_id: str,
 ) -> AsyncGenerator[str, None]:
-    agent = CodeGenerationAgent(sql_db, llm, llm, user_id)
+    agent = CodeGenerationAgent(sql_db, user_id)
     async for chunk in agent.run(query, project_id, history, node_ids):
         yield chunk

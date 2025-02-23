@@ -123,7 +123,6 @@ class QNAChatAgent:
         conversation_id: str,
         node_ids: List[NodeContext],
     ) -> AsyncGenerator[str, None]:
-        start_time = time.time()  # Start the timer
 
         try:
             provider_service = ProviderService(self.db, user_id)
@@ -161,7 +160,6 @@ class QNAChatAgent:
                     node_ids,
                     self.db,
                     provider_service.get_large_llm(agent_type=AgentProvider.CREWAI),
-                    provider_service.get_small_llm(agent_type=AgentProvider.CREWAI),
                     user_id,
                 ):
                     content = str(chunk)

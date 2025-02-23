@@ -448,7 +448,7 @@ String with the following format:
             )
 
 
-    async def get_custom_agent(db: Session, user_id: str, agent_id: str) -> bool:
+    async def get_custom_agent(db: Session, user_id: str, agent_id: str):
         """Validate if an agent exists and belongs to the user"""
         try:
             return (

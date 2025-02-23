@@ -61,7 +61,7 @@ class AgentInjectorService:
         else:
             return None
 
-    async def validate_agent_id(self, user_id: str, agent_id: str) -> bool:
+    async def validate_agent_id(self, user_id: str, agent_id: str) :
         """Validate if an agent ID is valid"""
         return agent_id in self.agents or await self.custom_agent_service.get_custom_agent(
             self.sql_db, user_id, agent_id

@@ -56,7 +56,7 @@ class RAGResponse(BaseModel):
 
 
 class RAGAgent:
-    def __init__(self, sql_db, llm, mini_llm, user_id):
+    def __init__(self, sql_db, llm, user_id):
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.max_iter = os.getenv("MAX_ITER", 5)
         self.sql_db = sql_db
@@ -80,7 +80,6 @@ class RAGAgent:
         if os.getenv("GITHUB_APP_ID"):
             self.github_tool = github_tool(sql_db, user_id)
         self.llm = llm
-        self.mini_llm = mini_llm
         self.user_id = user_id
 
     async def create_agents(self):
@@ -282,10 +281,9 @@ async def kickoff_rag_agent(
     node_ids: List[NodeContext],
     sql_db,
     llm,
-    mini_llm,
     user_id: str,
 ) -> AsyncGenerator[str, None]:
-    rag_agent = RAGAgent(sql_db, llm, mini_llm, user_id)
+    rag_agent = RAGAgent(sql_db, llm, user_id)
     file_structure = await CodeProviderService(sql_db).get_project_structure_async(
         project_id
     )
