@@ -68,7 +68,6 @@ class LLDChatAgent:
                 output_schema=ClassificationResponse,
                 size="small"
             )
-            [res.text for res in result]
             return result.classification
         except Exception as e:
             logger.error(f"Classification failed: {e}")
