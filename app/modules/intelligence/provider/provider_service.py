@@ -5,7 +5,7 @@ from typing import Iterable, List, Dict, Any, Union, AsyncGenerator, Optional
 import uuid
 from crewai import LLM
 from pydantic import BaseModel
-from litellm import acompletion
+from litellm import AsyncOpenAI, acompletion
 import instructor
 from portkey_ai import createHeaders, PORTKEY_GATEWAY_URL
 
@@ -235,16 +235,22 @@ class ProviderService:
                 .first()
             )
             if size == "small":
+                low_reasoning_model = os.environ.get("LOW_REASONING_MODEL", None)
                 model_name = (
-                    user_pref.preferences.get("low_reasoning_model")
+                    low_reasoning_model
+                    if low_reasoning_model
+                    else user_pref.preferences.get("low_reasoning_model")
                     if user_pref and user_pref.preferences
-                    else os.environ.get("LOW_REASONING_MODEL")
+                    else None
                 )
             elif size == "large":
+                high_reasoning_model = os.environ.get("HIGH_REASONING_MODEL", None)
                 model_name = (
-                    user_pref.preferences.get("high_reasoning_model")
+                    high_reasoning_model
+                    if high_reasoning_model
+                    else user_pref.preferences.get("high_reasoning_model")
                     if user_pref and user_pref.preferences
-                    else os.environ.get("HIGH_REASONING_MODEL")
+                    else None
                 )
             if not model_name:
                 raise ValueError(
@@ -340,16 +346,28 @@ class ProviderService:
             extra_params["extra_headers"] = createHeaders(api_key=self.portkey_api_key, provider=provider)
 
         try:
-            client = instructor.from_litellm(acompletion, mode=instructor.Mode.JSON)
-            response = await client.chat.completions.create(
-                model=params["model"],
-                messages=messages,
-                response_model=output_schema,
-                temperature=params.get("temperature", 0.3),
-                max_tokens=params.get("max_tokens"),
-                api_key=params.get("api_key"),
-                **extra_params,
-            )
+            if provider == "ollama":
+                # use openai client to call ollama because of https://github.com/BerriAI/litellm/issues/7355
+                client = instructor.from_openai(AsyncOpenAI(base_url="http://localhost:11434/v1",api_key="ollama"),mode=instructor.Mode.JSON)
+                response = await client.chat.completions.create(
+                    model=params["model"].split("/")[-1],
+                    messages=messages,
+                    response_model=output_schema,
+                    temperature=params.get("temperature", 0.3),
+                    max_tokens=params.get("max_tokens"),
+                    **extra_params,
+                )
+            else:
+                client = instructor.from_litellm(acompletion, mode=instructor.Mode.JSON)
+                response = await client.chat.completions.create(
+                    model=params["model"],
+                    messages=messages,
+                    response_model=output_schema,
+                    temperature=params.get("temperature", 0.3),
+                    max_tokens=params.get("max_tokens"),
+                    api_key=params.get("api_key"),
+                    **extra_params,
+                )
             return response
         except Exception as e:
             logging.error(f"LLM call with structured output failed: {e}")
