@@ -268,7 +268,9 @@ class ProviderService:
                 "temperature": 0.3,
                 "api_key": self._get_api_key(provider),
                 "model": model_name,
-                "routing_provider": model_name.split("/")[0] if "/" in model_name else provider
+                "routing_provider": (
+                    model_name.split("/")[0] if "/" in model_name else provider
+                ),
             }
 
         elif (
@@ -278,7 +280,9 @@ class ProviderService:
                 "temperature": 0.3,
                 "api_key": self._get_api_key(provider),
                 "model": self._get_reasoning_model_config(size),
-                "routing_provider": self._get_reasoning_model_config(size).split("/")[0]
+                "routing_provider": self._get_reasoning_model_config(size).split("/")[
+                    0
+                ],
             }
         else:
             raise ValueError(f"Invalid LLM provider: {provider}")
