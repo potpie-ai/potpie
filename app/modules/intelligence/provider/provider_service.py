@@ -146,8 +146,8 @@ class ProviderService:
             "large": {"model": "openrouter/meta-llama/llama-3.3-70b-instruct"},
         },
         "gemini": {
-            "small": {"model": "google/gemini-2.0-flash-001"},
-            "large": {"model": "google/gemini-2.0-pro-exp-02-05"},
+            "small": {"model": "openrouter/google/gemini-2.0-flash-001"},
+            "large": {"model": "openrouter/google/gemini-2.0-flash-001"},  # TODO: add pro model after it moves out of experimentsl and gets higher rate
         },
     }
 
@@ -297,6 +297,7 @@ class ProviderService:
         """
         provider = self._get_provider_config(size)
         params = self._build_llm_params(provider, size)
+        provider = params["model"].split("/")[0]
         extra_params = {}
         if self.portkey_api_key and provider != "ollama":
             # ollama + portkey is not supported currently
@@ -349,6 +350,8 @@ class ProviderService:
         """
         provider = self._get_provider_config(size)
         params = self._build_llm_params(provider, size)
+        provider = params["model"].split("/")[0]
+
         extra_params = {}
         if self.portkey_api_key and provider != "ollama":
             # ollama + portkey is not supported currently
@@ -395,6 +398,7 @@ class ProviderService:
         Kept for potential future differentiated initialization.
         """
         params = self._build_llm_params(provider, size)
+        provider = params["model"].split("/")[0]
 
         if agent_type == AgentProvider.CREWAI:
             crewai_params = {"model": params["model"], **params}
