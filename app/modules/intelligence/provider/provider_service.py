@@ -1,11 +1,13 @@
 import logging
 import os
 from enum import Enum
-from typing import List, Dict, Any, Union, AsyncGenerator, Optional
+from typing import Iterable, List, Dict, Any, Union, AsyncGenerator, Optional
+import uuid
 from crewai import LLM
 from pydantic import BaseModel
 from litellm import acompletion
 import instructor
+from portkey_ai import createHeaders, PORTKEY_GATEWAY_URL
 
 from app.modules.key_management.secret_manager import SecretManager
 from app.modules.users.user_preferences_model import UserPreferences
@@ -27,6 +29,7 @@ class ProviderService:
         self.db = db
         self.llm = None
         self.user_id = user_id
+        self.portkey_api_key = os.environ.get("PORTKEY_API_KEY", None)
 
     @classmethod
     def create(cls, db, user_id: str):
@@ -225,9 +228,9 @@ class ProviderService:
                 .first()
             )
             if size == "small":
-                model_name = user_pref.preferences.get("low_reasoning_model") if user_pref and user_pref.preferences else os.environ.get("LOW_REASONING_MODEL")
+                model_name = user_pref.preferences.get("low_reasoning_model") if user_pref and "low_reasoning_model" in user_pref.preferences else os.environ.get("LOW_REASONING_MODEL")
             elif size == "large":
-                model_name = user_pref.preferences.get("high_reasoning_model") if user_pref and user_pref.preferences else os.environ.get("HIGH_REASONING_MODEL")
+                model_name = user_pref.preferences.get("high_reasoning_model") if user_pref and "high_reasoning_model" in user_pref.preferences else os.environ.get("HIGH_REASONING_MODEL")
             if not model_name:
                 raise ValueError(f"Model name for {size} size for provider {provider} is not set in preferences.")
             params = {
@@ -265,6 +268,9 @@ class ProviderService:
         provider = self._get_provider_config(size)
         params = self._build_llm_params(provider, size)
         extra_params = {}
+        if self.portkey_api_key:
+            extra_params["base_url"] = PORTKEY_GATEWAY_URL
+            extra_params["extra_headers"] = createHeaders(api_key=self.portkey_api_key, provider=provider)
 
         try:
             if stream:
@@ -310,9 +316,12 @@ class ProviderService:
         provider = self._get_provider_config(size)
         params = self._build_llm_params(provider, size)
         extra_params = {}
+        if self.portkey_api_key:
+            extra_params["base_url"] = PORTKEY_GATEWAY_URL
+            extra_params["extra_headers"] = createHeaders(api_key=self.portkey_api_key, provider=provider)
 
         try:
-            client = instructor.from_litellm(acompletion)
+            client = instructor.from_litellm(acompletion, mode=instructor.Mode.JSON)
             response = await client.chat.completions.create(
                 model=params["model"],
                 messages=messages,
@@ -339,6 +348,10 @@ class ProviderService:
             crewai_params = {"model": params["model"], **params}
             if "default_headers" in params:
                 crewai_params["headers"] = params["default_headers"]
+            if self.portkey_api_key:
+                headers = createHeaders(api_key=self.portkey_api_key, provider=provider, trace_id=str(uuid.uuid4())[:8])
+                crewai_params["extra_headers"] = headers
+                crewai_params["base_url"] = PORTKEY_GATEWAY_URL
             return LLM(**crewai_params)
         else:
             return None
