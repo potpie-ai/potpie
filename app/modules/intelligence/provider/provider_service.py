@@ -137,7 +137,7 @@ class ProviderService:
         },
         "deepseek": {
             "small": {"model": "openrouter/deepseek/deepseek-chat"},
-            "large": {"model": "openrouter/deepseek/deepseek-r1"},
+            "large": {"model": "openrouter/deepseek/deepseek-chat"}, #r1 is slow and unstable rn
         },
         "meta-llama": {
             "small": {"model": "openrouter/meta-llama/llama-3.3-70b-instruct"},
@@ -292,7 +292,8 @@ class ProviderService:
         provider = self._get_provider_config(size)
         params = self._build_llm_params(provider, size)
         extra_params = {}
-        if self.portkey_api_key:
+        if self.portkey_api_key and provider != "ollama":
+            #ollama + portkey is not supported currently
             extra_params["base_url"] = PORTKEY_GATEWAY_URL
             extra_params["extra_headers"] = createHeaders(api_key=self.portkey_api_key, provider=provider)
 
@@ -341,7 +342,8 @@ class ProviderService:
         provider = self._get_provider_config(size)
         params = self._build_llm_params(provider, size)
         extra_params = {}
-        if self.portkey_api_key:
+        if self.portkey_api_key and provider != "ollama":
+            #ollama + portkey is not supported currently
             extra_params["base_url"] = PORTKEY_GATEWAY_URL
             extra_params["extra_headers"] = createHeaders(api_key=self.portkey_api_key, provider=provider)
 
@@ -385,7 +387,8 @@ class ProviderService:
             crewai_params = {"model": params["model"], **params}
             if "default_headers" in params:
                 crewai_params["headers"] = params["default_headers"]
-            if self.portkey_api_key:
+            if self.portkey_api_key and provider != "ollama":
+                #ollama + portkey is not supported currently
                 headers = createHeaders(api_key=self.portkey_api_key, provider=provider, trace_id=str(uuid.uuid4())[:8])
                 crewai_params["extra_headers"] = headers
                 crewai_params["base_url"] = PORTKEY_GATEWAY_URL
