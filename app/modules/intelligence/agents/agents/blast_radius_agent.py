@@ -159,7 +159,7 @@ class BlastRadiusAgent:
 
 
 async def kickoff_blast_radius_agent(
-    query: str, project_id: str, node_ids: List[NodeContext], sql_db, user_id, llm
+    query: str, project_id: str, node_ids: List[NodeContext], sql_db, user_id
 ) -> Dict[str, str]:
     provider_service = ProviderService(sql_db, user_id)
     crew_ai_mini_llm = provider_service.get_small_llm(agent_type=AgentProvider.CREWAI)

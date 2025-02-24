@@ -196,7 +196,6 @@ class DebuggingChatAgent:
             else:
                 full_query = f"Query: {query}\nProject ID: {project_id}\nLogs: {logs}\nStacktrace: {stacktrace}"
 
-                # Format messages for Portkey
                 messages = [
                     {"role": "system", "content": system_prompt.text},
                     *[

@@ -328,8 +328,6 @@ async def kickoff_code_generation_crew(
     history: str,
     node_ids: List[NodeContext],
     sql_db,
-    llm,
-    mini_llm,
     user_id: str,
 ) -> AsyncGenerator[str, None]:
     agent = CodeGenerationAgent(sql_db, user_id)

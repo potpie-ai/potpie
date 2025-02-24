@@ -180,7 +180,6 @@ class LLDChatAgent:
                     conversation_id, MessageType.AI_GENERATED
                 )
             else:
-                # Format messages for Portkey
                 messages = [
                     {"role": "system", "content": system_prompt.text},
                     *[

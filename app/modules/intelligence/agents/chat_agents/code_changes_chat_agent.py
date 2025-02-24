@@ -5,13 +5,6 @@ from typing import AsyncGenerator, Dict, List
 
 from langchain.schema import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
-from langchain_core.prompts import (
-    ChatPromptTemplate,
-    HumanMessagePromptTemplate,
-    MessagesPlaceholder,
-    SystemMessagePromptTemplate,
-)
-from langchain_core.runnables import RunnableSequence
 from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
@@ -40,6 +33,7 @@ class CodeChangesChatAgent:
         self.history_manager = ChatHistoryService(db)
         self.prompt_service = PromptService(db)
         self.agents_service = AgentsService(db)
+        self.system_message = None
         self.chain = None
 
     @lru_cache(maxsize=2)
@@ -47,36 +41,17 @@ class CodeChangesChatAgent:
         prompts = await self.prompt_service.get_prompts_by_agent_id_and_types(
             "CODE_CHANGES_AGENT", [PromptType.SYSTEM, PromptType.HUMAN]
         )
-        return {prompt.type: prompt for prompt in prompts}
-
-    async def _create_chain(self) -> RunnableSequence:
-        prompts = await self._get_prompts()
-        system_prompt = prompts.get(PromptType.SYSTEM)
-        human_prompt = prompts.get(PromptType.HUMAN)
-
-        if not system_prompt or not human_prompt:
-            raise ValueError("Required prompts not found for CODE_CHANGES_AGENT")
-
-        # For Portkey, we'll format messages as a list of dicts
-        self.system_message = system_prompt.text
-        self.human_message_template = human_prompt.text
-
-        # Keep Langchain chain for fallback
-        prompt_template = ChatPromptTemplate(
-            messages=[
-                SystemMessagePromptTemplate.from_template(system_prompt.text),
-                MessagesPlaceholder(variable_name="history"),
-                MessagesPlaceholder(variable_name="tool_results"),
-                HumanMessagePromptTemplate.from_template(human_prompt.text),
-            ]
-        )
-        return prompt_template | self.provider_service.get_large_llm(
-            agent_type=AgentType.LANGCHAIN
-        )
+        for prompt in prompts:
+            if prompt.type == PromptType.SYSTEM:
+                self.system_message = prompt.text
+            elif prompt.type == PromptType.HUMAN:
+                self.human_message_template = prompt.text
 
     async def _classify_query(
         self, query: str, history: List[HumanMessage], provider_service: ProviderService
     ):
+        if not self.system_message or not self.human_message_template:
+            await self._get_prompts()
         prompt = ClassificationPrompts.get_classification_prompt(AgentType.CODE_CHANGES)
         inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
 
@@ -108,8 +83,6 @@ class CodeChangesChatAgent:
     ) -> AsyncGenerator[str, None]:
         try:
             provider_service = ProviderService(self.db, user_id)
-            if not self.chain:
-                self.chain = await self._create_chain()
 
             history = self.history_manager.get_session_history(user_id, conversation_id)
             validated_history = [
@@ -129,12 +102,7 @@ class CodeChangesChatAgent:
             citations = []
             if classification == ClassificationResult.AGENT_REQUIRED:
                 blast_radius_result = await kickoff_blast_radius_agent(
-                    query,
-                    project_id,
-                    node_ids,
-                    self.db,
-                    user_id,
-                    provider_service.get_small_llm(agent_type=AgentType.LANGCHAIN),
+                    query, project_id, node_ids, self.db, user_id
                 )
 
                 if blast_radius_result.pydantic:
@@ -148,7 +116,6 @@ class CodeChangesChatAgent:
                     SystemMessage(content=f"Blast Radius Agent result: {response}")
                 ]
 
-            # Format messages for Portkey
             messages = [
                 {"role": "system", "content": self.system_message},
                 *[
@@ -171,9 +138,8 @@ class CodeChangesChatAgent:
             ]
 
             try:
-                # Try using Portkey first
-                async for chunk in provider_service.call_llm_stream(
-                    messages=messages, size="small"
+                async for chunk in await provider_service.call_llm(
+                    messages=messages, size="small", stream=True
                 ):
                     content = chunk
                     self.history_manager.add_message_chunk(
@@ -197,37 +163,7 @@ class CodeChangesChatAgent:
                         }
                     )
             except Exception as e:
-                logger.warning(
-                    f"Portkey streaming failed, falling back to Langchain: {e}"
-                )
-                # Fallback to Langchain
-                inputs = {
-                    "history": validated_history,
-                    "tool_results": tool_results,
-                    "input": query,
-                }
-                async for chunk in self.chain.astream(inputs):
-                    content = chunk.content if hasattr(chunk, "content") else str(chunk)
-                    self.history_manager.add_message_chunk(
-                        conversation_id,
-                        content,
-                        MessageType.AI_GENERATED,
-                        citations=(
-                            citations
-                            if classification == ClassificationResult.AGENT_REQUIRED
-                            else None
-                        ),
-                    )
-                    yield json.dumps(
-                        {
-                            "citations": (
-                                citations
-                                if classification == ClassificationResult.AGENT_REQUIRED
-                                else []
-                            ),
-                            "message": content,
-                        }
-                    )
+                logger.warning(f"CodeChangesAgent streaming failed: {e}")
 
             self.history_manager.flush_message_buffer(
                 conversation_id, MessageType.AI_GENERATED
