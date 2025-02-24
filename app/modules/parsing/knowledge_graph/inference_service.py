@@ -32,7 +32,7 @@ class InferenceService:
         )
 
         self.provider_service = ProviderService(db, user_id)
-        self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+        self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2", device='cpu')
         self.search_service = SearchService(db)
         self.project_manager = ProjectService(db)
         self.parallel_requests = int(os.getenv("PARALLEL_REQUESTS", 50))
