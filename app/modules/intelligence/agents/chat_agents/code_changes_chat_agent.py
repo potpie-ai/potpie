@@ -5,13 +5,6 @@ from typing import AsyncGenerator, Dict, List
 
 from langchain.schema import HumanMessage, SystemMessage
 from langchain_core.output_parsers import PydanticOutputParser
-from langchain_core.prompts import (
-    ChatPromptTemplate,
-    HumanMessagePromptTemplate,
-    MessagesPlaceholder,
-    SystemMessagePromptTemplate,
-)
-from langchain_core.runnables import RunnableSequence
 from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
@@ -29,58 +22,56 @@ from app.modules.intelligence.prompts.classification_prompts import (
 )
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.provider.provider_service import ProviderService
 
 logger = logging.getLogger(__name__)
 
 
 class CodeChangesChatAgent:
-    def __init__(self, mini_llm, llm, db: Session):
-        self.mini_llm = mini_llm
-        self.llm = llm
+    def __init__(self, db: Session):
+        self.db = db
         self.history_manager = ChatHistoryService(db)
         self.prompt_service = PromptService(db)
         self.agents_service = AgentsService(db)
+        self.system_message = None
         self.chain = None
-        self.db = db
 
     @lru_cache(maxsize=2)
     async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
         prompts = await self.prompt_service.get_prompts_by_agent_id_and_types(
             "CODE_CHANGES_AGENT", [PromptType.SYSTEM, PromptType.HUMAN]
         )
-        return {prompt.type: prompt for prompt in prompts}
+        for prompt in prompts:
+            if prompt.type == PromptType.SYSTEM:
+                self.system_message = prompt.text
+            elif prompt.type == PromptType.HUMAN:
+                self.human_message_template = prompt.text
 
-    async def _create_chain(self) -> RunnableSequence:
-        prompts = await self._get_prompts()
-        system_prompt = prompts.get(PromptType.SYSTEM)
-        human_prompt = prompts.get(PromptType.HUMAN)
-
-        if not system_prompt or not human_prompt:
-            raise ValueError("Required prompts not found for CODE_CHANGES_AGENT")
-
-        prompt_template = ChatPromptTemplate(
-            messages=[
-                SystemMessagePromptTemplate.from_template(system_prompt.text),
-                MessagesPlaceholder(variable_name="history"),
-                MessagesPlaceholder(variable_name="tool_results"),
-                HumanMessagePromptTemplate.from_template(human_prompt.text),
-            ]
-        )
-        return prompt_template | self.mini_llm
-
-    async def _classify_query(self, query: str, history: List[HumanMessage]):
+    async def _classify_query(
+        self, query: str, history: List[HumanMessage], provider_service: ProviderService
+    ):
+        if not self.system_message or not self.human_message_template:
+            await self._get_prompts()
         prompt = ClassificationPrompts.get_classification_prompt(AgentType.CODE_CHANGES)
         inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
 
         parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
-        prompt_with_parser = ChatPromptTemplate.from_template(
-            template=prompt,
-            partial_variables={"format_instructions": parser.get_format_instructions()},
-        )
-        chain = prompt_with_parser | self.llm | parser
-        response = await chain.ainvoke(input=inputs)
+        format_instructions = parser.get_format_instructions()
 
-        return response.classification
+        messages = [
+            {"role": "system", "content": prompt},
+            {
+                "role": "user",
+                "content": f"Query: {inputs['query']}\nHistory: {inputs['history']}\n\n{format_instructions}",
+            },
+        ]
+
+        try:
+            response = await provider_service.call_llm(messages=messages, size="small")
+            return parser.parse(response).classification
+        except Exception:
+            logger.warning("Classification failed")
+            return ClassificationResult.AGENT_REQUIRED
 
     async def run(
         self,
@@ -91,8 +82,7 @@ class CodeChangesChatAgent:
         node_ids: List[NodeContext],
     ) -> AsyncGenerator[str, None]:
         try:
-            if not self.chain:
-                self.chain = await self._create_chain()
+            provider_service = ProviderService(self.db, user_id)
 
             history = self.history_manager.get_session_history(user_id, conversation_id)
             validated_history = [
@@ -104,18 +94,15 @@ class CodeChangesChatAgent:
                 for msg in history
             ]
 
-            classification = await self._classify_query(query, validated_history)
+            classification = await self._classify_query(
+                query, validated_history, provider_service
+            )
 
             tool_results = []
             citations = []
             if classification == ClassificationResult.AGENT_REQUIRED:
                 blast_radius_result = await kickoff_blast_radius_agent(
-                    query,
-                    project_id,
-                    node_ids,
-                    self.db,
-                    user_id,
-                    self.mini_llm,
+                    query, project_id, node_ids, self.db, user_id
                 )
 
                 if blast_radius_result.pydantic:
@@ -129,41 +116,55 @@ class CodeChangesChatAgent:
                     SystemMessage(content=f"Blast Radius Agent result: {response}")
                 ]
 
-            inputs = {
-                "history": validated_history,
-                "tool_results": tool_results,
-                "input": query,
-            }
-
-            logger.debug(f"Inputs to LLM: {inputs}")
-
-            full_response = ""
-            citations = self.agents_service.format_citations(citations)
-            async for chunk in self.chain.astream(inputs):
-                content = chunk.content if hasattr(chunk, "content") else str(chunk)
-                full_response += content
-                self.history_manager.add_message_chunk(
-                    conversation_id,
-                    content,
-                    MessageType.AI_GENERATED,
-                    citations=(
-                        citations
-                        if classification == ClassificationResult.AGENT_REQUIRED
-                        else None
-                    ),
-                )
-                yield json.dumps(
+            messages = [
+                {"role": "system", "content": self.system_message},
+                *[
                     {
-                        "citations": (
+                        "role": (
+                            "user" if isinstance(msg, HumanMessage) else "assistant"
+                        ),
+                        "content": msg.content,
+                    }
+                    for msg in validated_history
+                ],
+                *[
+                    {"role": "system", "content": result.content}
+                    for result in tool_results
+                ],
+                {
+                    "role": "user",
+                    "content": self.human_message_template.format(input=query),
+                },
+            ]
+
+            try:
+                async for chunk in await provider_service.call_llm(
+                    messages=messages, size="small", stream=True
+                ):
+                    content = chunk
+                    self.history_manager.add_message_chunk(
+                        conversation_id,
+                        content,
+                        MessageType.AI_GENERATED,
+                        citations=(
                             citations
                             if classification == ClassificationResult.AGENT_REQUIRED
-                            else []
+                            else None
                         ),
-                        "message": content,
-                    }
-                )
+                    )
+                    yield json.dumps(
+                        {
+                            "citations": (
+                                citations
+                                if classification == ClassificationResult.AGENT_REQUIRED
+                                else []
+                            ),
+                            "message": content,
+                        }
+                    )
+            except Exception as e:
+                logger.warning(f"CodeChangesAgent streaming failed: {e}")
 
-            logger.debug(f"Full LLM response: {full_response}")
             self.history_manager.flush_message_buffer(
                 conversation_id, MessageType.AI_GENERATED
             )
