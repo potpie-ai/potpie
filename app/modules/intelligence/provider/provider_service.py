@@ -19,7 +19,13 @@ class AgentProvider(Enum):
     LANGCHAIN = "LANGCHAIN"  # Keeping this enum for now
 
 
-PLATFORM_PROVIDERS = ["openai", "anthropic", "deepseek", "meta-llama", "mistralai", "gemini"]
+PLATFORM_PROVIDERS = [
+    "openai",
+    "anthropic",
+    "deepseek",
+    "meta-llama",
+    "gemini",
+]
 
 
 class ProviderService:
@@ -55,11 +61,6 @@ class ProviderService:
                 description="Meta's family of large language models.",
             ),
             ProviderInfo(
-                id="mistralai",
-                name="Mistral AI",
-                description="Mistral AI models.",
-            ),
-            ProviderInfo(
                 id="gemini",
                 name="Google Gemini",
                 description="Google Gemini models.",
@@ -93,10 +94,18 @@ class ProviderService:
 
         if provider in PLATFORM_PROVIDERS:
             # For platform providers, allow model update only if API key is set
-            api_key_set = await SecretManager.check_secret_exists_for_user(provider, user_id, self.db) or (os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")) # check env keys too for platform providers
-            if low_reasoning_model or high_reasoning_model: # if user is trying to set custom models for platform provider
+            api_key_set = await SecretManager.check_secret_exists_for_user(
+                provider, user_id, self.db
+            ) or (
+                os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
+            )  # check env keys too for platform providers
+            if (
+                low_reasoning_model or high_reasoning_model
+            ):  # if user is trying to set custom models for platform provider
                 if not api_key_set:
-                    raise ValueError(f"To set custom models for {provider}, please set your API key first.")
+                    raise ValueError(
+                        f"To set custom models for {provider}, please set your API key first."
+                    )
 
         if low_reasoning_model:
             preferences.preferences["low_reasoning_model"] = low_reasoning_model
@@ -130,10 +139,6 @@ class ProviderService:
         "meta-llama": {
             "small": {"model": "openrouter/meta-llama/llama-3.3-70b-instruct"},
             "large": {"model": "openrouter/meta-llama/llama-3.3-70b-instruct"},
-        },
-        "mistralai": {
-            "small": {"model": "openrouter/mistralai/mistral-small-24b-instruct-2501"},
-            "large": {"model": "openrouter/mistralai/codestral-2501"},
         },
         "gemini": {
             "small": {"model": "google/gemini-2.0-flash-001"},
@@ -196,11 +201,11 @@ class ProviderService:
 
     def _get_api_key(self, provider: str) -> str:
         """Get API key for the specified provider."""
-        
-        env_key = os.getenv(f"LLM_API_KEY", None)
+
+        env_key = os.getenv("LLM_API_KEY", None)
         if env_key:
             return env_key
-        
+
         try:
             secret = SecretManager.get_secret(provider, self.user_id, self.db)
             return secret.get("api_key")
@@ -209,7 +214,7 @@ class ProviderService:
                 env_key = os.getenv(f"{provider.upper()}_API_KEY")
                 if env_key:
                     return env_key
-                return None # No API key found in secret manager or env for platform provider
+                return None  # No API key found in secret manager or env for platform provider
             raise e
 
     def _build_llm_params(self, provider: str, size: str) -> Dict[str, Any]:
@@ -217,7 +222,9 @@ class ProviderService:
         Build a dictionary of parameters for LLM initialization.
         Model is determined by _get_reasoning_model_config.
         """
-        if provider not in self.MODEL_CONFIGS and provider not in PLATFORM_PROVIDERS: # Allow non-platform providers
+        if (
+            provider not in self.MODEL_CONFIGS and provider not in PLATFORM_PROVIDERS
+        ):  # Allow non-platform providers
             # For non-platform providers, model names must be user specified, retrieve from user preferences
             user_pref = (
                 self.db.query(UserPreferences)
@@ -225,26 +232,37 @@ class ProviderService:
                 .first()
             )
             if size == "small":
-                model_name = user_pref.preferences.get("low_reasoning_model") if user_pref and user_pref.preferences else os.environ.get("LOW_REASONING_MODEL")
+                model_name = (
+                    user_pref.preferences.get("low_reasoning_model")
+                    if user_pref and user_pref.preferences
+                    else os.environ.get("LOW_REASONING_MODEL")
+                )
             elif size == "large":
-                model_name = user_pref.preferences.get("high_reasoning_model") if user_pref and user_pref.preferences else os.environ.get("HIGH_REASONING_MODEL")
+                model_name = (
+                    user_pref.preferences.get("high_reasoning_model")
+                    if user_pref and user_pref.preferences
+                    else os.environ.get("HIGH_REASONING_MODEL")
+                )
             if not model_name:
-                raise ValueError(f"Model name for {size} size for provider {provider} is not set in preferences.")
+                raise ValueError(
+                    f"Model name for {size} size for provider {provider} is not set in preferences."
+                )
             params = {
                 "temperature": 0.3,
                 "api_key": self._get_api_key(provider),
                 "model": model_name,
             }
 
-        elif provider in self.MODEL_CONFIGS: # platform providers with default model configs
+        elif (
+            provider in self.MODEL_CONFIGS
+        ):  # platform providers with default model configs
             params = {
                 "temperature": 0.3,
                 "api_key": self._get_api_key(provider),
                 "model": self._get_reasoning_model_config(size),
             }
         else:
-             raise ValueError(f"Invalid LLM provider: {provider}")
-
+            raise ValueError(f"Invalid LLM provider: {provider}")
 
         # For deepseek large model, add extra parameters.
         if provider == "deepseek":
@@ -283,6 +301,7 @@ class ProviderService:
                         content = chunk.choices[0].delta.content
                         if content:
                             yield content
+
                 return generator()
             else:
                 response = await acompletion(
@@ -390,10 +409,10 @@ class ProviderService:
         return GetProviderResponse(
             preferred_llm=provider,
             model_type="global",  # or any other relevant type, if needed
-            low_reasoning_model=low_reasoning_model
-            if low_reasoning_model
-            else default_small_model,
-            high_reasoning_model=high_reasoning_model
-            if high_reasoning_model
-            else default_large_model,
+            low_reasoning_model=(
+                low_reasoning_model if low_reasoning_model else default_small_model
+            ),
+            high_reasoning_model=(
+                high_reasoning_model if high_reasoning_model else default_large_model
+            ),
         )

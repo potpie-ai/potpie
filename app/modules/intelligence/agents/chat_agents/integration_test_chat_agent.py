@@ -1,6 +1,5 @@
 import json
 import logging
-import time
 from functools import lru_cache
 from typing import AsyncGenerator, Dict, List
 
@@ -26,7 +25,10 @@ from app.modules.intelligence.prompts.classification_prompts import (
 )
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.provider.provider_service import ProviderService, AgentProvider
+from app.modules.intelligence.provider.provider_service import (
+    ProviderService,
+    AgentProvider,
+)
 from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id_tool import (
     GetCodeGraphFromNodeIdTool,
 )
@@ -48,8 +50,12 @@ class IntegrationTestChatAgent:
         )
         return {prompt.type: prompt for prompt in prompts}
 
-    async def _classify_query(self, query: str, history: List[HumanMessage], provider_service: ProviderService):
-        prompt = ClassificationPrompts.get_classification_prompt(AgentType.INTEGRATION_TEST)
+    async def _classify_query(
+        self, query: str, history: List[HumanMessage], provider_service: ProviderService
+    ):
+        prompt = ClassificationPrompts.get_classification_prompt(
+            AgentType.INTEGRATION_TEST
+        )
         inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
 
         parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
@@ -57,14 +63,15 @@ class IntegrationTestChatAgent:
 
         messages = [
             {"role": "system", "content": prompt},
-            {"role": "user", "content": f"Query: {inputs['query']}\nHistory: {inputs['history']}\n\n{format_instructions}"}
+            {
+                "role": "user",
+                "content": f"Query: {inputs['query']}\nHistory: {inputs['history']}\n\n{format_instructions}",
+            },
         ]
 
         try:
             result = await provider_service.call_llm_with_structured_output(
-                messages=messages,
-                output_schema=ClassificationResponse,
-                size="large"
+                messages=messages, output_schema=ClassificationResponse, size="large"
             )
             return result.classification
         except Exception as e:
@@ -90,7 +97,9 @@ class IntegrationTestChatAgent:
 
     def _create_graph(self):
         graph_builder = StateGraph(IntegrationTestChatAgent.State)
-        graph_builder.add_node("integration_test_agent", self._stream_integration_test_agent)
+        graph_builder.add_node(
+            "integration_test_agent", self._stream_integration_test_agent
+        )
         graph_builder.add_edge(START, "integration_test_agent")
         graph_builder.add_edge("integration_test_agent", END)
         return graph_builder.compile()
@@ -130,7 +139,9 @@ class IntegrationTestChatAgent:
             human_prompt = prompts.get(PromptType.HUMAN)
 
             if not system_prompt or not human_prompt:
-                raise ValueError("Required prompts not found for INTEGRATION_TEST_AGENT")
+                raise ValueError(
+                    "Required prompts not found for INTEGRATION_TEST_AGENT"
+                )
 
             citations = []
             if not node_ids:
@@ -148,17 +159,15 @@ class IntegrationTestChatAgent:
                 return
 
             history = self.history_manager.get_session_history(user_id, conversation_id)
-            
+
             # Get graph for each node to maintain proper context
             graphs = {}
             for node in node_ids:
-                graph = GetCodeGraphFromNodeIdTool(self.db).run(project_id, node.node_id)
-                graphs[node.node_id] = graph
-                history.append(
-                    HumanMessage(
-                        content=f"{node.name}: {graph}"
-                    )
+                graph = GetCodeGraphFromNodeIdTool(self.db).run(
+                    project_id, node.node_id
                 )
+                graphs[node.node_id] = graph
+                history.append(HumanMessage(content=f"{node.name}: {graph}"))
             validated_history = [
                 (
                     HumanMessage(content=str(msg))
@@ -168,14 +177,18 @@ class IntegrationTestChatAgent:
                 for msg in history
             ]
 
-            classification = await self._classify_query(query, validated_history, provider_service)
+            classification = await self._classify_query(
+                query, validated_history, provider_service
+            )
 
             tool_results = []
             citations = []
 
             if classification == ClassificationResult.AGENT_REQUIRED:
                 # Get CrewAI LLM once and store it
-                crew_ai_llm = provider_service.get_large_llm(agent_type=AgentProvider.CREWAI)
+                crew_ai_llm = provider_service.get_large_llm(
+                    agent_type=AgentProvider.CREWAI
+                )
                 test_response = await kickoff_integration_test_agent(
                     query,
                     validated_history,
@@ -186,12 +199,12 @@ class IntegrationTestChatAgent:
                     user_id,
                 )
 
-                if hasattr(test_response, 'pydantic'):
+                if hasattr(test_response, "pydantic"):
                     citations = test_response.pydantic.citations
                     response = test_response.pydantic.response
                 else:
                     citations = []
-                    response = test_response.get('response', str(test_response))
+                    response = test_response.get("response", str(test_response))
 
                 tool_results = [
                     SystemMessage(
@@ -202,18 +215,24 @@ class IntegrationTestChatAgent:
             # Format messages for final response
             messages = [
                 {"role": "system", "content": system_prompt.text},
-                *[{"role": "user" if isinstance(msg, HumanMessage) else "assistant", "content": msg.content} for msg in validated_history],
+                *[
+                    {
+                        "role": (
+                            "user" if isinstance(msg, HumanMessage) else "assistant"
+                        ),
+                        "content": msg.content,
+                    }
+                    for msg in validated_history
+                ],
                 *[{"role": "system", "content": msg.content} for msg in tool_results],
-                {"role": "user", "content": human_prompt.text.format(input=query)}
+                {"role": "user", "content": human_prompt.text.format(input=query)},
             ]
 
             citations = self.agents_service.format_citations(citations)
-            
+
             try:
                 async_generator = await provider_service.call_llm(
-                    messages=messages, 
-                    size="large",
-                    stream=True
+                    messages=messages, size="large", stream=True
                 )
                 async for chunk in async_generator:
                     content = chunk
@@ -231,12 +250,16 @@ class IntegrationTestChatAgent:
                     )
             except Exception as e:
                 logger.error(f"Integration test generation failed: {e}")
-                yield json.dumps({"error": f"Integration test generation failed: {str(e)}"})
+                yield json.dumps(
+                    {"error": f"Integration test generation failed: {str(e)}"}
+                )
 
             self.history_manager.flush_message_buffer(
                 conversation_id, MessageType.AI_GENERATED
             )
 
         except Exception as e:
-            logger.error(f"Error during IntegrationTestChatAgent run: {str(e)}", exc_info=True)
+            logger.error(
+                f"Error during IntegrationTestChatAgent run: {str(e)}", exc_info=True
+            )
             yield f"An error occurred: {str(e)}"

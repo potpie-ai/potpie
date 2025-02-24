@@ -8,7 +8,10 @@ from sqlalchemy.orm import Session
 
 from app.modules.conversations.message.message_model import MessageType
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
-from app.modules.intelligence.provider.provider_service import AgentProvider, ProviderService
+from app.modules.intelligence.provider.provider_service import (
+    AgentProvider,
+    ProviderService,
+)
 from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.utils.logger import setup_logger
 
@@ -70,7 +73,9 @@ class RuntimeAgent:
         self.history_manager = ChatHistoryService(self.db)
         self.project_id = None
         self.agent = None
-        self.llm = ProviderService(self.db,self.user_id).get_large_llm(AgentProvider.CREWAI)
+        self.llm = ProviderService(self.db, self.user_id).get_large_llm(
+            AgentProvider.CREWAI
+        )
         # Initialize tools
         self.tool_service = ToolService(db, self.user_id)
         self.tools = {}
@@ -211,10 +216,10 @@ class RuntimeAgent:
 
             content = result.raw
             self.history_manager.add_message_chunk(
-                    conversation_id,
-                    content,
-                    MessageType.AI_GENERATED,
-                )
+                conversation_id,
+                content,
+                MessageType.AI_GENERATED,
+            )
             self.history_manager.flush_message_buffer(
                 conversation_id, MessageType.AI_GENERATED
             )

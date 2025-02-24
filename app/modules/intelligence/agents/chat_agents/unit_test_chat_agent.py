@@ -1,6 +1,5 @@
 import json
 import logging
-import time
 from functools import lru_cache
 from typing import AsyncGenerator, Dict, List
 
@@ -26,7 +25,10 @@ from app.modules.intelligence.prompts.classification_prompts import (
 )
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.provider.provider_service import ProviderService, AgentProvider
+from app.modules.intelligence.provider.provider_service import (
+    ProviderService,
+    AgentProvider,
+)
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     GetCodeFromNodeIdTool,
 )
@@ -48,7 +50,9 @@ class UnitTestAgent:
         )
         return {prompt.type: prompt for prompt in prompts}
 
-    async def _classify_query(self, query: str, history: List[HumanMessage], provider_service: ProviderService):
+    async def _classify_query(
+        self, query: str, history: List[HumanMessage], provider_service: ProviderService
+    ):
         prompt = ClassificationPrompts.get_classification_prompt(AgentType.UNIT_TEST)
         inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
 
@@ -57,14 +61,15 @@ class UnitTestAgent:
 
         messages = [
             {"role": "system", "content": prompt},
-            {"role": "user", "content": f"Query: {inputs['query']}\nHistory: {inputs['history']}\n\n{format_instructions}"}
+            {
+                "role": "user",
+                "content": f"Query: {inputs['query']}\nHistory: {inputs['history']}\n\n{format_instructions}",
+            },
         ]
 
         try:
             result = await provider_service.call_llm_with_structured_output(
-                messages=messages,
-                output_schema=ClassificationResponse,
-                size="large"
+                messages=messages, output_schema=ClassificationResponse, size="large"
             )
             return result.classification
         except Exception as e:
@@ -163,14 +168,18 @@ class UnitTestAgent:
                 for msg in history
             ]
 
-            classification = await self._classify_query(query, validated_history, provider_service)
+            classification = await self._classify_query(
+                query, validated_history, provider_service
+            )
 
             tool_results = []
             citations = []
 
             if classification == ClassificationResult.AGENT_REQUIRED:
                 # Get CrewAI LLM once and store it
-                crew_ai_llm = provider_service.get_large_llm(agent_type=AgentProvider.CREWAI)
+                crew_ai_llm = provider_service.get_large_llm(
+                    agent_type=AgentProvider.CREWAI
+                )
                 test_response = await kickoff_unit_test_agent(
                     query,
                     validated_history,
@@ -181,12 +190,12 @@ class UnitTestAgent:
                     user_id,
                 )
 
-                if hasattr(test_response, 'pydantic'):
+                if hasattr(test_response, "pydantic"):
                     citations = test_response.pydantic.citations
                     response = test_response.pydantic.response
                 else:
                     citations = []
-                    response = test_response.get('response', str(test_response))
+                    response = test_response.get("response", str(test_response))
 
                 tool_results = [
                     SystemMessage(
@@ -197,18 +206,24 @@ class UnitTestAgent:
             # Format messages for final response
             messages = [
                 {"role": "system", "content": system_prompt.text},
-                *[{"role": "user" if isinstance(msg, HumanMessage) else "assistant", "content": msg.content} for msg in validated_history],
+                *[
+                    {
+                        "role": (
+                            "user" if isinstance(msg, HumanMessage) else "assistant"
+                        ),
+                        "content": msg.content,
+                    }
+                    for msg in validated_history
+                ],
                 *[{"role": "system", "content": msg.content} for msg in tool_results],
-                {"role": "user", "content": human_prompt.text.format(input=query)}
+                {"role": "user", "content": human_prompt.text.format(input=query)},
             ]
 
             citations = self.agents_service.format_citations(citations)
-            
+
             try:
                 async_generator = await provider_service.call_llm(
-                    messages=messages, 
-                    size="large",
-                    stream=True
+                    messages=messages, size="large", stream=True
                 )
                 async for chunk in async_generator:
                     content = chunk

@@ -31,8 +31,10 @@ class ProviderController:
         # if provider not in PLATFORM_PROVIDERS and provider not in [p.id for p in await self.list_available_llms()]: # check if provider is valid
         #     raise HTTPException(status_code=400, detail=f"Invalid provider: {provider}")
 
-        #add a supported provider list and check here
-        if provider not in PLATFORM_PROVIDERS: # for non-platform providers, model names are required
+        # add a supported provider list and check here
+        if (
+            provider not in PLATFORM_PROVIDERS
+        ):  # for non-platform providers, model names are required
             if not low_reasoning_model or not high_reasoning_model:
                 raise HTTPException(
                     status_code=400,
@@ -43,7 +45,9 @@ class ProviderController:
                 user_id, provider, low_reasoning_model, high_reasoning_model
             )
             return response
-        except ValueError as ve: # Catch ValueError from service for API key not set error
+        except (
+            ValueError
+        ) as ve:  # Catch ValueError from service for API key not set error
             raise HTTPException(status_code=400, detail=str(ve))
         except Exception as e:
             raise HTTPException(

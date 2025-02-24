@@ -3,8 +3,6 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from fastapi import HTTPException
-from langchain.chains import LLMChain
-from langchain.prompts import PromptTemplate
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -21,7 +19,6 @@ from app.modules.intelligence.agents.custom_agents.custom_agent_schema import (
 )
 from app.modules.intelligence.agents.custom_agents.runtime_agent import RuntimeAgent
 from app.modules.intelligence.provider.provider_service import (
-    AgentProvider,
     ProviderService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
@@ -235,7 +232,9 @@ class CustomAgentService(BaseAgentService):
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    async def create_agent_plan(self, user_id: str, prompt: str, tools: List[str]) -> Dict[str, Any]:
+    async def create_agent_plan(
+        self, user_id: str, prompt: str, tools: List[str]
+    ) -> Dict[str, Any]:
         """Create a plan for the agent using LLM"""
         template = """You are an expert AI agent designer with advanced reasoning capabilities. Your task is to design a structured agent plan that uses the user's prompt and the available tools to achieve a clear, actionable goal.
 
@@ -276,7 +275,9 @@ Ensure that your response is a properly formatted JSON object that can be parsed
         response = await provider_service.call_llm(messages, size="large")
         return response
 
-    async def enhance_task_description(self, user_id: str, description: str, goal: str, tools: List[str]) -> str:
+    async def enhance_task_description(
+        self, user_id: str, description: str, goal: str, tools: List[str]
+    ) -> str:
         """Enhance a single task description using LLM"""
         template = """You are a task description enhancement expert. Your job is to transform a task description into a detailed execution plan.
 
@@ -325,7 +326,9 @@ String with the following format:
 2. Step-by-Step Plan
 3. Tool Usage Guide
 """
-        formatted_prompt = template.format(description=description, goal=goal, tools=tools)
+        formatted_prompt = template.format(
+            description=description, goal=goal, tools=tools
+        )
         messages = [{"role": "user", "content": formatted_prompt}]
         provider_service = ProviderService(self.db, user_id)
         response = await provider_service.call_llm(messages, size="large")
@@ -447,13 +450,14 @@ String with the following format:
                 status_code=500, detail="Failed to fetch available tools"
             )
 
-
     async def get_custom_agent(db: Session, user_id: str, agent_id: str):
         """Validate if an agent exists and belongs to the user"""
         try:
             return (
                 db.query(CustomAgentModel)
-                .filter(CustomAgentModel.id == agent_id, CustomAgentModel.user_id == user_id)
+                .filter(
+                    CustomAgentModel.id == agent_id, CustomAgentModel.user_id == user_id
+                )
                 .first()
             )
         except SQLAlchemyError as e:

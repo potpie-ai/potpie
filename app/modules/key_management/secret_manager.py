@@ -76,7 +76,12 @@ class SecretManager:
     @staticmethod
     def get_secret_id(
         provider: Literal[
-            "openai", "anthropic", "deepseek", "meta-llama", "mistralai", "gemini", "openrouter"
+            "openai",
+            "anthropic",
+            "deepseek",
+            "meta-llama",
+            "gemini",
+            "openrouter",
         ],
         customer_id: str,
     ):
@@ -86,23 +91,28 @@ class SecretManager:
         return secret_id
 
     @staticmethod
-    async def check_secret_exists_for_user(provider: str, user_id: str, db: Session) -> bool:
+    async def check_secret_exists_for_user(
+        provider: str, user_id: str, db: Session
+    ) -> bool:
         """Check if a secret exists for a given provider and user, without raising exceptions."""
         client, project_id = SecretManager.get_client_and_project()
         if client and project_id:
             secret_id = SecretManager.get_secret_id(provider, user_id)
             name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
             try:
-                client.access_secret_version(request={"name": name}) # Try to access, will raise exception if not found
-                return True # Secret exists in GCP
+                client.access_secret_version(
+                    request={"name": name}
+                )  # Try to access, will raise exception if not found
+                return True  # Secret exists in GCP
             except Exception:
-                pass # Secret not found in GCP, fallback to checking UserPreferences
+                pass  # Secret not found in GCP, fallback to checking UserPreferences
         # Fallback: check UserPreferences
-        user_pref = db.query(UserPreferences).filter(UserPreferences.user_id == user_id).first()
+        user_pref = (
+            db.query(UserPreferences).filter(UserPreferences.user_id == user_id).first()
+        )
         if user_pref and user_pref.preferences.get(f"api_key_{provider}"):
-            return True # Secret exists in UserPreferences
-        return False # Secret not found anywhere
-
+            return True  # Secret exists in UserPreferences
+        return False  # Secret not found anywhere
 
     @router.post("/secrets")
     def create_secret(
@@ -165,14 +175,19 @@ class SecretManager:
         except Exception as e:
             db.rollback()
             raise HTTPException(
-                status_code=500,
-                detail=f"Failed to create secret: {str(e)}"
+                status_code=500, detail=f"Failed to create secret: {str(e)}"
             )
 
     @router.get("/secrets/{provider}")
     def get_secret_for_provider(
         provider: Literal[
-            "openai", "anthropic", "deepseek", "meta-llama", "mistralai", "gemini", "openrouter", "all"
+            "openai",
+            "anthropic",
+            "deepseek",
+            "meta-llama",
+            "gemini",
+            "openrouter",
+            "all",
         ],
         user=Depends(AuthService.check_auth),
         db: Session = Depends(get_db),
@@ -200,7 +215,12 @@ class SecretManager:
     @staticmethod
     def get_secret(
         provider: Literal[
-            "openai", "anthropic", "deepseek", "meta-llama", "mistralai", "gemini", "openrouter"
+            "openai",
+            "anthropic",
+            "deepseek",
+            "meta-llama",
+            "gemini",
+            "openrouter",
         ],
         customer_id: str,
         db: Session = None,
@@ -270,11 +290,15 @@ class SecretManager:
                     client.add_secret_version(
                         request={"parent": parent, "payload": version["payload"]}
                     )
-                except Exception as e:
+                except Exception:
                     # If secret doesn't exist, create it
                     secret = {"replication": {"automatic": {}}}
                     response = client.create_secret(
-                        request={"parent": f"projects/{project_id}", "secret_id": secret_id, "secret": secret}
+                        request={
+                            "parent": f"projects/{project_id}",
+                            "secret_id": secret_id,
+                            "secret": secret,
+                        }
                     )
                     version = {"payload": {"data": request.api_key.encode("UTF-8")}}
                     client.add_secret_version(
@@ -306,22 +330,29 @@ class SecretManager:
         except Exception as e:
             db.rollback()
             raise HTTPException(
-                status_code=500,
-                detail=f"Failed to update secret: {str(e)}"
+                status_code=500, detail=f"Failed to update secret: {str(e)}"
             )
 
     @router.delete("/secrets/{provider}")
     async def delete_secret(
         provider: Literal[
-            "openai", "anthropic", "deepseek", "meta-llama", "mistralai", "gemini", "openrouter", "all"
+            "openai",
+            "anthropic",
+            "deepseek",
+            "meta-llama",
+            "gemini",
+            "openrouter",
+            "all",
         ],
         user=Depends(AuthService.check_auth),
         db: Session = Depends(get_db),
     ):
-        from app.modules.intelligence.provider.provider_service import PLATFORM_PROVIDERS
-        
+        from app.modules.intelligence.provider.provider_service import (
+            PLATFORM_PROVIDERS,
+        )
+
         customer_id = user["user_id"]
-        
+
         async def delete_single_provider(prov: str) -> dict:
             """Helper function to delete a single provider's secret"""
             try:
@@ -336,9 +367,17 @@ class SecretManager:
                             "secret_deletion_event",
                             {"provider": prov, "key_removed": "true"},
                         )
-                        return {"provider": prov, "status": "success", "message": f"Successfully deleted {prov} secret"}
+                        return {
+                            "provider": prov,
+                            "status": "success",
+                            "message": f"Successfully deleted {prov} secret",
+                        }
                     except Exception as e:
-                        return {"provider": prov, "status": "error", "message": f"Failed to delete {prov} secret: {str(e)}"}
+                        return {
+                            "provider": prov,
+                            "status": "error",
+                            "message": f"Failed to delete {prov} secret: {str(e)}",
+                        }
                 else:
                     # Fallback deletion: remove from UserPreferences
                     user_pref = (
@@ -356,10 +395,22 @@ class SecretManager:
                             "secret_deletion_event",
                             {"provider": prov, "key_removed": "true"},
                         )
-                        return {"provider": prov, "status": "success", "message": f"Deleted {prov} secret from DB"}
-                    return {"provider": prov, "status": "not_found", "message": f"No secret found for {prov}"}
+                        return {
+                            "provider": prov,
+                            "status": "success",
+                            "message": f"Deleted {prov} secret from DB",
+                        }
+                    return {
+                        "provider": prov,
+                        "status": "not_found",
+                        "message": f"No secret found for {prov}",
+                    }
             except Exception as e:
-                return {"provider": prov, "status": "error", "message": f"Error processing {prov}: {str(e)}"}
+                return {
+                    "provider": prov,
+                    "status": "error",
+                    "message": f"Error processing {prov}: {str(e)}",
+                }
 
         if provider == "all":
             try:
@@ -367,7 +418,7 @@ class SecretManager:
                 tasks = [delete_single_provider(prov) for prov in PLATFORM_PROVIDERS]
                 # Execute all deletions in parallel
                 deletion_results = await asyncio.gather(*tasks)
-                
+
                 # Clean up provider preferences after all deletions
                 user_pref = (
                     db.query(UserPreferences)
@@ -393,12 +444,12 @@ class SecretManager:
                     "message": "All secrets deletion completed",
                     "successful_deletions": successful,
                     "failed_deletions": failed,
-                    "not_found": not_found
+                    "not_found": not_found,
                 }
             except Exception as e:
                 raise HTTPException(
                     status_code=500,
-                    detail=f"Failed to process parallel deletions: {str(e)}"
+                    detail=f"Failed to process parallel deletions: {str(e)}",
                 )
         else:
             # Single provider deletion

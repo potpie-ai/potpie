@@ -5,15 +5,12 @@ import re
 from typing import Dict, List, Optional
 
 import tiktoken
-from langchain.output_parsers import PydanticOutputParser
-from langchain.prompts import ChatPromptTemplate
 from neo4j import GraphDatabase
 from sentence_transformers import SentenceTransformer
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 from app.modules.intelligence.provider.provider_service import (
-    AgentProvider,
     ProviderService,
 )
 from app.modules.parsing.knowledge_graph.inference_schema import (
@@ -387,15 +384,16 @@ class InferenceService:
         )
 
         messages = [
-            {"role": "system", "content": "You are an expert software architecture documentation assistant. You will analyze code flows and provide structured documentation in JSON format."},
-            {"role": "user", "content": prompt.format(entry_points=entry_points_text)}
+            {
+                "role": "system",
+                "content": "You are an expert software architecture documentation assistant. You will analyze code flows and provide structured documentation in JSON format.",
+            },
+            {"role": "user", "content": prompt.format(entry_points=entry_points_text)},
         ]
 
         try:
             result = await self.provider_service.call_llm_with_structured_output(
-                messages=messages,
-                output_schema=DocstringResponse,
-                size="small"
+                messages=messages, output_schema=DocstringResponse, size="small"
             )
             return result
         except Exception as e:
@@ -556,19 +554,24 @@ class InferenceService:
             )
 
         messages = [
-            {"role": "system", "content": "You are an expert software documentation assistant. You will analyze code and provide structured documentation in JSON format."},
-            {"role": "user", "content": base_prompt.format(code_snippets=code_snippets)}
+            {
+                "role": "system",
+                "content": "You are an expert software documentation assistant. You will analyze code and provide structured documentation in JSON format.",
+            },
+            {
+                "role": "user",
+                "content": base_prompt.format(code_snippets=code_snippets),
+            },
         ]
 
         import time
+
         start_time = time.time()
         logger.info(f"Parsing project {repo_id}: Starting the inference process...")
 
         try:
             result = await self.provider_service.call_llm_with_structured_output(
-                messages=messages,
-                output_schema=DocstringResponse,
-                size="small"
+                messages=messages, output_schema=DocstringResponse, size="small"
             )
         except Exception as e:
             logger.error(

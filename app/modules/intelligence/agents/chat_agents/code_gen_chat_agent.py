@@ -16,7 +16,10 @@ from app.modules.intelligence.agents.agents.code_gen_agent import (
 from app.modules.intelligence.agents.agents_service import AgentsService
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.provider.provider_service import ProviderService, AgentProvider
+from app.modules.intelligence.provider.provider_service import (
+    ProviderService,
+    AgentProvider,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +98,7 @@ class CodeGenerationChatAgent:
             try:
                 # Initialize provider service for this user
                 provider_service = ProviderService(self.db, user_id)
-                
+
                 # Try using Portkey first for code generation
                 async for chunk in kickoff_code_generation_crew(
                     query,
@@ -103,8 +106,12 @@ class CodeGenerationChatAgent:
                     validated_history[-5:],
                     node_ids,
                     self.db,
-                    provider_service.get_large_llm(agent_type=AgentProvider.CREWAI),  # Use provider_service directly
-                    provider_service.get_small_llm(agent_type=AgentProvider.CREWAI),  # Use provider_service for mini_llm
+                    provider_service.get_large_llm(
+                        agent_type=AgentProvider.CREWAI
+                    ),  # Use provider_service directly
+                    provider_service.get_small_llm(
+                        agent_type=AgentProvider.CREWAI
+                    ),  # Use provider_service for mini_llm
                     user_id,
                 ):
                     content = str(chunk)

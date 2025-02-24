@@ -70,9 +70,13 @@ class CodeChangesChatAgent:
                 HumanMessagePromptTemplate.from_template(human_prompt.text),
             ]
         )
-        return prompt_template | self.provider_service.get_large_llm(agent_type=AgentType.LANGCHAIN)
+        return prompt_template | self.provider_service.get_large_llm(
+            agent_type=AgentType.LANGCHAIN
+        )
 
-    async def _classify_query(self, query: str, history: List[HumanMessage], provider_service: ProviderService):
+    async def _classify_query(
+        self, query: str, history: List[HumanMessage], provider_service: ProviderService
+    ):
         prompt = ClassificationPrompts.get_classification_prompt(AgentType.CODE_CHANGES)
         inputs = {"query": query, "history": [msg.content for msg in history[-5:]]}
 
@@ -81,16 +85,18 @@ class CodeChangesChatAgent:
 
         messages = [
             {"role": "system", "content": prompt},
-            {"role": "user", "content": f"Query: {inputs['query']}\nHistory: {inputs['history']}\n\n{format_instructions}"}
+            {
+                "role": "user",
+                "content": f"Query: {inputs['query']}\nHistory: {inputs['history']}\n\n{format_instructions}",
+            },
         ]
 
         try:
             response = await provider_service.call_llm(messages=messages, size="small")
             return parser.parse(response).classification
-        except Exception as e:
-            logger.warning(f"Classification failed")
+        except Exception:
+            logger.warning("Classification failed")
             return ClassificationResult.AGENT_REQUIRED
-
 
     async def run(
         self,
@@ -115,7 +121,9 @@ class CodeChangesChatAgent:
                 for msg in history
             ]
 
-            classification = await self._classify_query(query, validated_history, provider_service)
+            classification = await self._classify_query(
+                query, validated_history, provider_service
+            )
 
             tool_results = []
             citations = []
@@ -143,29 +151,55 @@ class CodeChangesChatAgent:
             # Format messages for Portkey
             messages = [
                 {"role": "system", "content": self.system_message},
-                *[{"role": "user" if isinstance(msg, HumanMessage) else "assistant", "content": msg.content} for msg in validated_history],
-                *[{"role": "system", "content": result.content} for result in tool_results],
-                {"role": "user", "content": self.human_message_template.format(input=query)}
+                *[
+                    {
+                        "role": (
+                            "user" if isinstance(msg, HumanMessage) else "assistant"
+                        ),
+                        "content": msg.content,
+                    }
+                    for msg in validated_history
+                ],
+                *[
+                    {"role": "system", "content": result.content}
+                    for result in tool_results
+                ],
+                {
+                    "role": "user",
+                    "content": self.human_message_template.format(input=query),
+                },
             ]
 
             try:
                 # Try using Portkey first
-                async for chunk in provider_service.call_llm_stream(messages=messages, size="small"):
+                async for chunk in provider_service.call_llm_stream(
+                    messages=messages, size="small"
+                ):
                     content = chunk
                     self.history_manager.add_message_chunk(
                         conversation_id,
                         content,
                         MessageType.AI_GENERATED,
-                        citations=citations if classification == ClassificationResult.AGENT_REQUIRED else None,
+                        citations=(
+                            citations
+                            if classification == ClassificationResult.AGENT_REQUIRED
+                            else None
+                        ),
                     )
                     yield json.dumps(
                         {
-                            "citations": citations if classification == ClassificationResult.AGENT_REQUIRED else [],
+                            "citations": (
+                                citations
+                                if classification == ClassificationResult.AGENT_REQUIRED
+                                else []
+                            ),
                             "message": content,
                         }
                     )
             except Exception as e:
-                logger.warning(f"Portkey streaming failed, falling back to Langchain: {e}")
+                logger.warning(
+                    f"Portkey streaming failed, falling back to Langchain: {e}"
+                )
                 # Fallback to Langchain
                 inputs = {
                     "history": validated_history,
@@ -178,11 +212,19 @@ class CodeChangesChatAgent:
                         conversation_id,
                         content,
                         MessageType.AI_GENERATED,
-                        citations=citations if classification == ClassificationResult.AGENT_REQUIRED else None,
+                        citations=(
+                            citations
+                            if classification == ClassificationResult.AGENT_REQUIRED
+                            else None
+                        ),
                     )
                     yield json.dumps(
                         {
-                            "citations": citations if classification == ClassificationResult.AGENT_REQUIRED else [],
+                            "citations": (
+                                citations
+                                if classification == ClassificationResult.AGENT_REQUIRED
+                                else []
+                            ),
                             "message": content,
                         }
                     )
@@ -192,5 +234,7 @@ class CodeChangesChatAgent:
             )
 
         except Exception as e:
-            logger.error(f"Error during CodeChangesChatAgent run: {str(e)}", exc_info=True)
+            logger.error(
+                f"Error during CodeChangesChatAgent run: {str(e)}", exc_info=True
+            )
             yield f"An error occurred: {str(e)}"

@@ -9,8 +9,8 @@ class ProviderInfo(BaseModel):
 
 class SetProviderRequest(BaseModel):
     provider: str
-    low_reasoning_model: str = None # optional, user specified model name
-    high_reasoning_model: str = None # optional, user specified model name
+    low_reasoning_model: str = None  # optional, user specified model name
+    high_reasoning_model: str = None  # optional, user specified model name
 
 
 class GetProviderResponse(BaseModel):

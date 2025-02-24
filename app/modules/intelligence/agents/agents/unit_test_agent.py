@@ -5,10 +5,6 @@ from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
-from app.modules.intelligence.provider.provider_service import (
-    AgentProvider,
-    ProviderService,
-)
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     get_code_from_node_id_tool,
 )

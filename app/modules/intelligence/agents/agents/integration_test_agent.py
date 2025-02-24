@@ -3,14 +3,9 @@ from typing import Dict, List, Any
 import json
 
 from crewai import Agent, Crew, Process, Task
-from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from app.modules.conversations.message.message_schema import NodeContext
-from app.modules.intelligence.provider.provider_service import (
-    AgentProvider,
-    ProviderService,
-)
 from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id_tool import (
     GetCodeGraphFromNodeIdTool,
 )
@@ -95,8 +90,11 @@ class IntegrationTestAgent:
         formatted_graphs = {}
         for node_id, graph in graphs.items():
             formatted_graphs[node_id] = {
-                "name": next((node.name for node in node_ids if node.node_id == node_id), "Unknown"),
-                "structure": graph["graph"]["root_node"]
+                "name": next(
+                    (node.name for node in node_ids if node.node_id == node_id),
+                    "Unknown",
+                ),
+                "structure": graph["graph"]["root_node"],
             }
 
         integration_test_task = Task(
@@ -179,31 +177,37 @@ class IntegrationTestAgent:
         chat_history: List,
     ) -> Dict[str, str]:
         integration_test_agent = await self.create_agents()
-        
+
         # Get graphs for each node to understand component relationships
         graphs = {}
         all_node_contexts = []
-        
+
         for node in node_ids:
             # Get the code graph for each node
-            graph = GetCodeGraphFromNodeIdTool(self.sql_db).run(project_id, node.node_id)
+            graph = GetCodeGraphFromNodeIdTool(self.sql_db).run(
+                project_id, node.node_id
+            )
             graphs[node.node_id] = graph
-            
+
             def extract_unique_node_contexts(node, visited=None):
                 if visited is None:
                     visited = set()
                 node_contexts = []
                 if node["id"] not in visited:
                     visited.add(node["id"])
-                    node_contexts.append(NodeContext(node_id=node["id"], name=node["name"]))
+                    node_contexts.append(
+                        NodeContext(node_id=node["id"], name=node["name"])
+                    )
                     for child in node.get("children", []):
-                        node_contexts.extend(extract_unique_node_contexts(child, visited))
+                        node_contexts.extend(
+                            extract_unique_node_contexts(child, visited)
+                        )
                 return node_contexts
 
             # Extract related nodes from each graph
             node_contexts = extract_unique_node_contexts(graph["graph"]["root_node"])
             all_node_contexts.extend(node_contexts)
-        
+
         # Remove duplicates while preserving order
         seen = set()
         unique_node_contexts = []
@@ -213,7 +217,12 @@ class IntegrationTestAgent:
                 unique_node_contexts.append(ctx)
 
         integration_test_task = await self.create_tasks(
-            unique_node_contexts, project_id, query, graphs, chat_history, integration_test_agent
+            unique_node_contexts,
+            project_id,
+            query,
+            graphs,
+            chat_history,
+            integration_test_agent,
         )
 
         crew = Crew(
@@ -240,16 +249,16 @@ async def kickoff_integration_test_agent(
         return {
             "error": "No function name is provided by the user. The agent cannot generate test plan or test code without specific class or function being selected by the user. Request the user to use the '@ followed by file or function name' feature to link individual functions to the message. "
         }
-    
+
     # Get graphs for each node to understand component relationships
     graphs = {}
     all_node_contexts = []
-    
+
     for node in node_ids:
         # Get the code graph for each node
         graph = GetCodeGraphFromNodeIdTool(sql_db).run(project_id, node.node_id)
         graphs[node.node_id] = graph
-        
+
         def extract_unique_node_contexts(node, visited=None):
             if visited is None:
                 visited = set()
@@ -264,7 +273,7 @@ async def kickoff_integration_test_agent(
         # Extract related nodes from each graph
         node_contexts = extract_unique_node_contexts(graph["graph"]["root_node"])
         all_node_contexts.extend(node_contexts)
-    
+
     # Remove duplicates while preserving order
     seen = set()
     unique_node_contexts = []
@@ -272,7 +281,9 @@ async def kickoff_integration_test_agent(
         if ctx.node_id not in seen:
             seen.add(ctx.node_id)
             unique_node_contexts.append(ctx)
-    
+
     integration_test_agent = IntegrationTestAgent(sql_db, llm, user_id)
-    result = await integration_test_agent.run(project_id, unique_node_contexts, query, chat_history)
+    result = await integration_test_agent.run(
+        project_id, unique_node_contexts, query, chat_history
+    )
     return result

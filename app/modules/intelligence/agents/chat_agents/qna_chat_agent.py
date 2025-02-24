@@ -1,6 +1,5 @@
 import json
 import logging
-import time
 from functools import lru_cache
 from typing import AsyncGenerator, Dict, List
 
@@ -24,7 +23,10 @@ from app.modules.intelligence.prompts.classification_prompts import (
 )
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.provider.provider_service import ProviderService, AgentProvider
+from app.modules.intelligence.provider.provider_service import (
+    ProviderService,
+    AgentProvider,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +45,9 @@ class QNAChatAgent:
         )
         return {prompt.type: prompt for prompt in prompts}
 
-    async def _classify_query(self, query: str, history: List[HumanMessage], provider_service: ProviderService):
+    async def _classify_query(
+        self, query: str, history: List[HumanMessage], provider_service: ProviderService
+    ):
         prompt = ClassificationPrompts.get_classification_prompt(AgentType.QNA)
         inputs = {"query": query, "history": [msg.content for msg in history[-10:]]}
 
@@ -52,14 +56,15 @@ class QNAChatAgent:
 
         messages = [
             {"role": "system", "content": prompt},
-            {"role": "user", "content": f"Query: {inputs['query']}\nHistory: {inputs['history']}\n\n{format_instructions}"}
+            {
+                "role": "user",
+                "content": f"Query: {inputs['query']}\nHistory: {inputs['history']}\n\n{format_instructions}",
+            },
         ]
 
         try:
             result = await provider_service.call_llm_with_structured_output(
-                messages=messages,
-                output_schema=ClassificationResponse,
-                size="small"
+                messages=messages, output_schema=ClassificationResponse, size="small"
             )
             return result.classification
         except Exception as e:
@@ -143,7 +148,9 @@ class QNAChatAgent:
                 for msg in history
             ]
 
-            classification = await self._classify_query(query, validated_history, provider_service)
+            classification = await self._classify_query(
+                query, validated_history, provider_service
+            )
 
             tool_results = []
             citations = []
@@ -183,13 +190,26 @@ class QNAChatAgent:
                 # Format messages for Portkey
                 messages = [
                     {"role": "system", "content": system_prompt.text},
-                    *[{"role": "user" if isinstance(msg, HumanMessage) else "assistant", "content": msg.content} for msg in validated_history],
-                    *[{"role": "system", "content": result.content} for result in tool_results],
-                    {"role": "user", "content": human_prompt.text.format(input=query)}
+                    *[
+                        {
+                            "role": (
+                                "user" if isinstance(msg, HumanMessage) else "assistant"
+                            ),
+                            "content": msg.content,
+                        }
+                        for msg in validated_history
+                    ],
+                    *[
+                        {"role": "system", "content": result.content}
+                        for result in tool_results
+                    ],
+                    {"role": "user", "content": human_prompt.text.format(input=query)},
                 ]
 
                 try:
-                    response = await provider_service.call_llm(messages=messages, size="large")
+                    response = await provider_service.call_llm(
+                        messages=messages, size="large"
+                    )
                     content = response
                     self.history_manager.add_message_chunk(
                         conversation_id,

@@ -4,7 +4,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional, TypedDict
 
-from langchain.prompts import ChatPromptTemplate
 from langgraph.graph import END, StateGraph
 from langgraph.types import Command, StreamWriter
 from sqlalchemy import func
@@ -41,7 +40,6 @@ from app.modules.intelligence.agents.custom_agents.custom_agents_service import 
 )
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import (
-    AgentProvider,
     ProviderService,
 )
 from app.modules.projects.projects_service import ProjectService
@@ -180,8 +178,11 @@ class SimplifiedAgentSupervisor:
         )
 
         messages = [
-            {"role": "system", "content": "You are an expert agent classifier that helps route queries to the most appropriate agent."},
-            {"role": "user", "content": prompt}
+            {
+                "role": "system",
+                "content": "You are an expert agent classifier that helps route queries to the most appropriate agent.",
+            },
+            {"role": "user", "content": prompt},
         ]
 
         response = await self.provider_service.call_llm(messages=messages, size="small")
@@ -575,11 +576,16 @@ class ConversationService:
         ).format(agent_type=agent_type, message=message_content)
 
         messages = [
-            {"role": "system", "content": "You are a conversation title generator that creates concise and relevant titles."},
-            {"role": "user", "content": prompt}
+            {
+                "role": "system",
+                "content": "You are a conversation title generator that creates concise and relevant titles.",
+            },
+            {"role": "user", "content": prompt},
         ]
-        generated_title = await self.provider_service.call_llm(messages=messages, size="small")
-        
+        generated_title = await self.provider_service.call_llm(
+            messages=messages, size="small"
+        )
+
         if len(generated_title) > 50:
             generated_title = generated_title[:50].strip() + "..."
         return generated_title
@@ -732,7 +738,7 @@ class ConversationService:
                     query, project_id, conversation.id, user_id, node_ids, agent_id
                 ):
                     yield self.parse_str_to_message(chunk)
-            else :
+            else:
                 # Custom agent doesn't support streaming, so we'll yield the entire response at once
                 response = await CustomAgentService(self.sql_db).execute_agent_runtime(
                     agent_id, user_id, query, node_ids, project_id, conversation.id
@@ -968,4 +974,3 @@ class ConversationService:
             raise ConversationServiceError(
                 "Failed to rename conversation due to an unexpected error"
             ) from e
-        

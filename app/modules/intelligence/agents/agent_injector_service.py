@@ -42,16 +42,10 @@ class AgentInjectorService:
             "debugging_agent": DebuggingChatAgent(self.sql_db),
             "codebase_qna_agent": QNAChatAgent(self.sql_db),
             "unit_test_agent": UnitTestAgent(self.sql_db),
-            "integration_test_agent": IntegrationTestChatAgent(
-                self.sql_db
-            ),
-            "code_changes_agent": CodeChangesChatAgent(
-                self.sql_db
-            ),
+            "integration_test_agent": IntegrationTestChatAgent(self.sql_db),
+            "code_changes_agent": CodeChangesChatAgent(self.sql_db),
             "LLD_agent": LLDChatAgent(self.sql_db),
-            "code_generation_agent": CodeGenerationChatAgent(
-                self.sql_db
-            ),
+            "code_generation_agent": CodeGenerationChatAgent(self.sql_db),
         }
 
     async def get_system_agent(self, agent_id: str) -> Any:
@@ -61,8 +55,11 @@ class AgentInjectorService:
         else:
             return None
 
-    async def validate_agent_id(self, user_id: str, agent_id: str) :
+    async def validate_agent_id(self, user_id: str, agent_id: str):
         """Validate if an agent ID is valid"""
-        return agent_id in self.agents or await self.custom_agent_service.get_custom_agent(
-            self.sql_db, user_id, agent_id
+        return (
+            agent_id in self.agents
+            or await self.custom_agent_service.get_custom_agent(
+                self.sql_db, user_id, agent_id
+            )
         )
