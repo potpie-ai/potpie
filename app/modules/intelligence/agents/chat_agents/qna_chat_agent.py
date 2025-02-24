@@ -1,18 +1,10 @@
 import json
 import logging
-import time
 from functools import lru_cache
 from typing import AsyncGenerator, Dict, List
 
 from langchain.schema import HumanMessage
 from langchain_core.output_parsers import PydanticOutputParser
-from langchain_core.prompts import (
-    ChatPromptTemplate,
-    HumanMessagePromptTemplate,
-    MessagesPlaceholder,
-    SystemMessagePromptTemplate,
-)
-from langchain_core.runnables import RunnableSequence
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import StreamWriter
 from sqlalchemy.orm import Session
@@ -31,19 +23,20 @@ from app.modules.intelligence.prompts.classification_prompts import (
 )
 from app.modules.intelligence.prompts.prompt_schema import PromptResponse, PromptType
 from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.provider.provider_service import (
+    ProviderService,
+    AgentProvider,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class QNAChatAgent:
-    def __init__(self, mini_llm, llm, db: Session):
-        self.mini_llm = mini_llm
-        self.llm = llm
+    def __init__(self, db: Session):
+        self.db = db
         self.history_manager = ChatHistoryService(db)
         self.prompt_service = PromptService(db)
         self.agents_service = AgentsService(db)
-        self.chain = None
-        self.db = db
 
     @lru_cache(maxsize=2)
     async def _get_prompts(self) -> Dict[PromptType, PromptResponse]:
@@ -52,37 +45,31 @@ class QNAChatAgent:
         )
         return {prompt.type: prompt for prompt in prompts}
 
-    async def _create_chain(self) -> RunnableSequence:
-        prompts = await self._get_prompts()
-        system_prompt = prompts.get(PromptType.SYSTEM)
-        human_prompt = prompts.get(PromptType.HUMAN)
-
-        if not system_prompt or not human_prompt:
-            raise ValueError("Required prompts not found for QNA_AGENT")
-
-        prompt_template = ChatPromptTemplate(
-            messages=[
-                SystemMessagePromptTemplate.from_template(system_prompt.text),
-                MessagesPlaceholder(variable_name="history"),
-                MessagesPlaceholder(variable_name="tool_results"),
-                HumanMessagePromptTemplate.from_template(human_prompt.text),
-            ]
-        )
-        return prompt_template | self.mini_llm
-
-    async def _classify_query(self, query: str, history: List[HumanMessage]):
+    async def _classify_query(
+        self, query: str, history: List[HumanMessage], provider_service: ProviderService
+    ):
         prompt = ClassificationPrompts.get_classification_prompt(AgentType.QNA)
         inputs = {"query": query, "history": [msg.content for msg in history[-10:]]}
 
         parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
-        prompt_with_parser = ChatPromptTemplate.from_template(
-            template=prompt,
-            partial_variables={"format_instructions": parser.get_format_instructions()},
-        )
-        chain = prompt_with_parser | self.llm | parser
-        response = await chain.ainvoke(input=inputs)
+        format_instructions = parser.get_format_instructions()
 
-        return response.classification
+        messages = [
+            {"role": "system", "content": prompt},
+            {
+                "role": "user",
+                "content": f"Query: {inputs['query']}\nHistory: {inputs['history']}\n\n{format_instructions}",
+            },
+        ]
+
+        try:
+            result = await provider_service.call_llm_with_structured_output(
+                messages=messages, output_schema=ClassificationResponse, size="small"
+            )
+            return result.classification
+        except Exception as e:
+            logger.error(f"Classification failed: {e}")
+            return ClassificationResult.AGENT_REQUIRED
 
     class State(TypedDict):
         query: str
@@ -141,10 +128,15 @@ class QNAChatAgent:
         conversation_id: str,
         node_ids: List[NodeContext],
     ) -> AsyncGenerator[str, None]:
-        start_time = time.time()  # Start the timer
+
         try:
-            if not self.chain:
-                self.chain = await self._create_chain()
+            provider_service = ProviderService(self.db, user_id)
+            prompts = await self._get_prompts()
+            system_prompt = prompts.get(PromptType.SYSTEM)
+            human_prompt = prompts.get(PromptType.HUMAN)
+
+            if not system_prompt or not human_prompt:
+                raise ValueError("Required prompts not found for QNA_AGENT")
 
             history = self.history_manager.get_session_history(user_id, conversation_id)
             validated_history = [
@@ -156,18 +148,13 @@ class QNAChatAgent:
                 for msg in history
             ]
 
-            classification_start_time = time.time()  # Start timer for classification
-            classification = await self._classify_query(query, validated_history)
-            classification_duration = (
-                time.time() - classification_start_time
-            )  # Calculate duration
-            logger.info(
-                f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
-                f"Duration of classify method call: {classification_duration:.2f}s"
+            classification = await self._classify_query(
+                query, validated_history, provider_service
             )
 
             tool_results = []
             citations = []
+
             if classification == ClassificationResult.AGENT_REQUIRED:
                 async for chunk in kickoff_rag_agent(
                     query,
@@ -179,48 +166,10 @@ class QNAChatAgent:
                     ],
                     node_ids,
                     self.db,
-                    self.llm,
-                    self.mini_llm,
+                    provider_service.get_large_llm(agent_type=AgentProvider.CREWAI),
                     user_id,
                 ):
                     content = str(chunk)
-
-                    self.history_manager.add_message_chunk(
-                        conversation_id,
-                        content,
-                        MessageType.AI_GENERATED,
-                        citations=citations,
-                    )
-
-                    yield json.dumps(
-                        {
-                            "citations": citations,
-                            "message": content,
-                        }
-                    )
-
-                self.history_manager.flush_message_buffer(
-                    conversation_id, MessageType.AI_GENERATED
-                )
-
-            if classification != ClassificationResult.AGENT_REQUIRED:
-                inputs = {
-                    "history": validated_history[-10:],
-                    "tool_results": tool_results,
-                    "input": query,
-                }
-
-                logger.debug(f"Inputs to LLM: {inputs}")
-                citations = self.agents_service.format_citations(citations)
-                full_response = ""
-                add_stream_chunk_start_time = (
-                    time.time()
-                )  # Start timer for adding message chunk
-
-                async for chunk in self.chain.astream(inputs):
-                    content = chunk.content if hasattr(chunk, "content") else str(chunk)
-                    full_response += content
-
                     self.history_manager.add_message_chunk(
                         conversation_id,
                         content,
@@ -233,26 +182,52 @@ class QNAChatAgent:
                             "message": content,
                         }
                     )
-                add_stream_chunk_duration = (
-                    time.time() - add_stream_chunk_start_time
-                )  # Calculate duration
-                logger.info(
-                    f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
-                    f"Duration of adding message chunk during streaming: {add_stream_chunk_duration:.2f}s"
-                )
 
-                flush_stream_buffer_start_time = (
-                    time.time()
-                )  # Start timer for flushing message buffer after streaming
                 self.history_manager.flush_message_buffer(
                     conversation_id, MessageType.AI_GENERATED
                 )
-                flush_stream_buffer_duration = (
-                    time.time() - flush_stream_buffer_start_time
-                )  # Calculate duration
-                logger.info(
-                    f"Time elapsed since entering run: {time.time() - start_time:.2f}s, "
-                    f"Duration of flushing message buffer after streaming: {flush_stream_buffer_duration:.2f}s"
+            else:
+                messages = [
+                    {"role": "system", "content": system_prompt.text},
+                    *[
+                        {
+                            "role": (
+                                "user" if isinstance(msg, HumanMessage) else "assistant"
+                            ),
+                            "content": msg.content,
+                        }
+                        for msg in validated_history
+                    ],
+                    *[
+                        {"role": "system", "content": result.content}
+                        for result in tool_results
+                    ],
+                    {"role": "user", "content": human_prompt.text.format(input=query)},
+                ]
+
+                try:
+                    response = await provider_service.call_llm(
+                        messages=messages, size="large"
+                    )
+                    content = response
+                    self.history_manager.add_message_chunk(
+                        conversation_id,
+                        content,
+                        MessageType.AI_GENERATED,
+                        citations=citations,
+                    )
+                    yield json.dumps(
+                        {
+                            "citations": citations,
+                            "message": content,
+                        }
+                    )
+                except Exception as e:
+                    logger.error(f"QNA generation failed: {e}")
+                    yield json.dumps({"error": f"QNA generation failed: {str(e)}"})
+
+                self.history_manager.flush_message_buffer(
+                    conversation_id, MessageType.AI_GENERATED
                 )
 
         except Exception as e:
