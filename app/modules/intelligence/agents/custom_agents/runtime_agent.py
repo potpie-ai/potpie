@@ -6,8 +6,13 @@ from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel, validator
 from sqlalchemy.orm import Session
 
+from app.modules.conversations.message.message_model import MessageType
+from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
+from app.modules.intelligence.provider.provider_service import (
+    AgentProvider,
+    ProviderService,
+)
 from app.modules.intelligence.tools.tool_service import ToolService
-from app.modules.key_management.secret_manager import SecretManager
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -53,26 +58,24 @@ class AgentConfig(BaseModel):
 class RuntimeAgent:
     def __init__(
         self,
-        llm: Any,
         db: Session,
         agent_config: Dict[str, Any],
-        secret_manager: SecretManager,
     ):
         """Initialize the agent with configuration and tools"""
         self.config = AgentConfig(**agent_config)
-        self.secret_manager = secret_manager
         self.db = db
-        self.llm = llm
         self.max_iter = int(os.getenv("MAX_ITER", "5"))
 
         self.user_id = self.config.user_id
         self.role = self.config.role
         self.goal = self.config.goal
         self.backstory = self.config.backstory
-
+        self.history_manager = ChatHistoryService(self.db)
         self.project_id = None
         self.agent = None
-
+        self.llm = ProviderService(self.db, self.user_id).get_large_llm(
+            AgentProvider.CREWAI
+        )
         # Initialize tools
         self.tool_service = ToolService(db, self.user_id)
         self.tools = {}
@@ -162,7 +165,6 @@ class RuntimeAgent:
             description=task_description,
             agent=self.agent,
             expected_output="Markdown formatted response with code context and explanations",
-            llm=self.llm,
         )
 
         logger.info(f"Created task {task_index + 1} with LLM configuration")
@@ -211,6 +213,16 @@ class RuntimeAgent:
 
             logger.info(f"Starting Crew AI kickoff with {len(tasks)} tasks")
             result = await crew.kickoff_async()
+
+            content = result.raw
+            self.history_manager.add_message_chunk(
+                conversation_id,
+                content,
+                MessageType.AI_GENERATED,
+            )
+            self.history_manager.flush_message_buffer(
+                conversation_id, MessageType.AI_GENERATED
+            )
 
             return {"response": result.raw, "conversation_id": conversation_id}
 

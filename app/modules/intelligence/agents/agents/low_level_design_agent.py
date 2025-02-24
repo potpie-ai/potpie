@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 # Import necessary tools (assuming they're available in your project)
 from app.modules.intelligence.provider.provider_service import (
-    AgentType,
+    AgentProvider,
     ProviderService,
 )
 from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
@@ -227,7 +227,7 @@ async def create_low_level_design_agent(
     user_id: str,
 ) -> AsyncGenerator[str, None]:
     provider_service = ProviderService(sql_db, user_id)
-    crew_ai_llm = provider_service.get_large_llm(agent_type=AgentType.CREWAI)
+    crew_ai_llm = provider_service.get_large_llm(agent_type=AgentProvider.CREWAI)
     design_agent = LowLevelDesignAgent(sql_db, crew_ai_llm, user_id)
     async for chunk in design_agent.run(functional_requirements, project_id):
         yield chunk
