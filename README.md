@@ -208,7 +208,7 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
        "agent_ids": ["chosen-agent-id"]
      }'
    # Save the conversation_id from the response
-   
+
 8. **Start Interacting with Your Agent**
    ```bash
    curl -X POST 'http://localhost:8001/api/v1/conversations/your-conversation-id/message/' \
