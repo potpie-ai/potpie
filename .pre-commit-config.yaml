@@ -4,17 +4,11 @@ repos:
     hooks:
       - id: check-yaml
       - id: trailing-whitespace
-      - id: check-docstring-first
+      - id: end-of-file-fixer
       - id: check-merge-conflict
       - id: check-added-large-files
         args: ["--maxkb=51200"]
       - id: debug-statements
-
-  - repo: https://github.com/timothycrosley/isort
-    rev: 5.13.2
-    hooks:
-      - id: isort
-        args: ["--profile", "black", "--filter-files"]
 
   - repo: https://github.com/psf/black
     rev: 24.8.0
@@ -25,18 +19,9 @@ repos:
     rev: v0.6.2
     hooks:
       - id: ruff
-        args: [ --fix ]
-      - id: ruff-format
-
-  - repo: https://github.com/PyCQA/pylint
-    rev: v3.2.6
-    hooks:
-      - id: pylint
-        entry: bash -c 'pylint "$@" || true' --
-        verbose: true
+        args: ["--fix"]
 
   - repo: https://github.com/PyCQA/bandit
     rev: 1.7.9
     hooks:
       - id: bandit
-        entry: bash -c 'bandit "$@" || true' --

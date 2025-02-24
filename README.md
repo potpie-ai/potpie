@@ -267,7 +267,7 @@ Potpie is designed to be flexible and customizable. Here are key areas to person
 
 ### **Effortless Agent Creation**:
 Design custom agents tailored to your specific tasks using a single prompt. Utilize the following API to create your custom agents:
-  
+
   ```bash
   curl -X POST "http://localhost:8001/api/v1/custom-agents/agents/auto" \
        -H "Content-Type: application/json" \
@@ -280,7 +280,7 @@ Design custom agents tailored to your specific tasks using a single prompt. Util
 
 ### Tool Integration
 Edit or add tools in the `app/modules/intelligence/tools` directory for your custom agents.
-Initialise the tools in the  `app/modules/intelligence/tools/tool_service.py` file and include them in your agent. 
+Initialise the tools in the  `app/modules/intelligence/tools/tool_service.py` file and include them in your agent.
 
 ## 🤝 Contributing
 
