@@ -321,11 +321,11 @@ class ProviderService:
             extra_params["extra_headers"] = createHeaders(api_key=self.portkey_api_key, provider=provider)
 
         try:
-            client = instructor.from_litellm(acompletion, mode=instructor.Mode.PARALLEL_TOOLS)
+            client = instructor.from_litellm(acompletion, mode=instructor.Mode.JSON)
             response = await client.chat.completions.create(
                 model=params["model"],
                 messages=messages,
-                response_model=Iterable[output_schema],
+                response_model=output_schema,
                 temperature=params.get("temperature", 0.3),
                 max_tokens=params.get("max_tokens"),
                 api_key=params.get("api_key"),
