@@ -266,6 +266,7 @@ class ProviderService:
                 "temperature": 0.3,
                 "api_key": self._get_api_key(provider),
                 "model": model_name,
+                "routing_provider": model_name.split("/")[0] if "/" in model_name else provider
             }
 
         elif (
@@ -275,6 +276,7 @@ class ProviderService:
                 "temperature": 0.3,
                 "api_key": self._get_api_key(provider),
                 "model": self._get_reasoning_model_config(size),
+                "routing_provider": self._get_reasoning_model_config(size).split("/")[0]
             }
         else:
             raise ValueError(f"Invalid LLM provider: {provider}")
@@ -297,13 +299,13 @@ class ProviderService:
         """
         provider = self._get_provider_config(size)
         params = self._build_llm_params(provider, size)
-        provider = params["model"].split("/")[0]
+        routing_provider = params["routing_provider"]
         extra_params = {}
-        if self.portkey_api_key and provider != "ollama":
+        if self.portkey_api_key and routing_provider != "ollama":
             # ollama + portkey is not supported currently
             extra_params["base_url"] = PORTKEY_GATEWAY_URL
             extra_params["extra_headers"] = createHeaders(
-                api_key=self.portkey_api_key, provider=provider
+                api_key=self.portkey_api_key, provider=routing_provider
             )
 
         try:
@@ -350,14 +352,14 @@ class ProviderService:
         """
         provider = self._get_provider_config(size)
         params = self._build_llm_params(provider, size)
-        provider = params["model"].split("/")[0]
+        routing_provider = params["routing_provider"]
 
         extra_params = {}
-        if self.portkey_api_key and provider != "ollama":
+        if self.portkey_api_key and routing_provider != "ollama":
             # ollama + portkey is not supported currently
             extra_params["base_url"] = PORTKEY_GATEWAY_URL
             extra_params["extra_headers"] = createHeaders(
-                api_key=self.portkey_api_key, provider=provider
+                api_key=self.portkey_api_key, provider=routing_provider
             )
 
         try:
@@ -398,17 +400,17 @@ class ProviderService:
         Kept for potential future differentiated initialization.
         """
         params = self._build_llm_params(provider, size)
-        provider = params["model"].split("/")[0]
+        routing_provider = params["routing_provider"]
 
         if agent_type == AgentProvider.CREWAI:
             crewai_params = {"model": params["model"], **params}
             if "default_headers" in params:
                 crewai_params["headers"] = params["default_headers"]
-            if self.portkey_api_key and provider != "ollama":
+            if self.portkey_api_key and routing_provider != "ollama":
                 # ollama + portkey is not supported currently
                 headers = createHeaders(
                     api_key=self.portkey_api_key,
-                    provider=provider,
+                    provider=routing_provider,
                     trace_id=str(uuid.uuid4())[:8],
                 )
                 crewai_params["extra_headers"] = headers
