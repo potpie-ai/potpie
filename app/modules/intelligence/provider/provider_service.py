@@ -147,7 +147,9 @@ class ProviderService:
         },
         "gemini": {
             "small": {"model": "openrouter/google/gemini-2.0-flash-001"},
-            "large": {"model": "openrouter/google/gemini-2.0-flash-001"},  # TODO: add pro model after it moves out of experimentsl and gets higher rate
+            "large": {
+                "model": "openrouter/google/gemini-2.0-flash-001"
+            },  # TODO: add pro model after it moves out of experimentsl and gets higher rate
         },
     }
 
