@@ -1,7 +1,7 @@
 import logging
 import os
 from enum import Enum
-from typing import Iterable, List, Dict, Any, Union, AsyncGenerator, Optional
+from typing import List, Dict, Any, Union, AsyncGenerator, Optional
 import uuid
 from crewai import LLM
 from pydantic import BaseModel
@@ -137,7 +137,9 @@ class ProviderService:
         },
         "deepseek": {
             "small": {"model": "openrouter/deepseek/deepseek-chat"},
-            "large": {"model": "openrouter/deepseek/deepseek-chat"}, #r1 is slow and unstable rn
+            "large": {
+                "model": "openrouter/deepseek/deepseek-chat"
+            },  # r1 is slow and unstable rn
         },
         "meta-llama": {
             "small": {"model": "openrouter/meta-llama/llama-3.3-70b-instruct"},
@@ -239,18 +241,22 @@ class ProviderService:
                 model_name = (
                     low_reasoning_model
                     if low_reasoning_model
-                    else user_pref.preferences.get("low_reasoning_model")
-                    if user_pref and user_pref.preferences
-                    else None
+                    else (
+                        user_pref.preferences.get("low_reasoning_model")
+                        if user_pref and user_pref.preferences
+                        else None
+                    )
                 )
             elif size == "large":
                 high_reasoning_model = os.environ.get("HIGH_REASONING_MODEL", None)
                 model_name = (
                     high_reasoning_model
                     if high_reasoning_model
-                    else user_pref.preferences.get("high_reasoning_model")
-                    if user_pref and user_pref.preferences
-                    else None
+                    else (
+                        user_pref.preferences.get("high_reasoning_model")
+                        if user_pref and user_pref.preferences
+                        else None
+                    )
                 )
             if not model_name:
                 raise ValueError(
@@ -293,9 +299,11 @@ class ProviderService:
         params = self._build_llm_params(provider, size)
         extra_params = {}
         if self.portkey_api_key and provider != "ollama":
-            #ollama + portkey is not supported currently
+            # ollama + portkey is not supported currently
             extra_params["base_url"] = PORTKEY_GATEWAY_URL
-            extra_params["extra_headers"] = createHeaders(api_key=self.portkey_api_key, provider=provider)
+            extra_params["extra_headers"] = createHeaders(
+                api_key=self.portkey_api_key, provider=provider
+            )
 
         try:
             if stream:
@@ -343,14 +351,19 @@ class ProviderService:
         params = self._build_llm_params(provider, size)
         extra_params = {}
         if self.portkey_api_key and provider != "ollama":
-            #ollama + portkey is not supported currently
+            # ollama + portkey is not supported currently
             extra_params["base_url"] = PORTKEY_GATEWAY_URL
-            extra_params["extra_headers"] = createHeaders(api_key=self.portkey_api_key, provider=provider)
+            extra_params["extra_headers"] = createHeaders(
+                api_key=self.portkey_api_key, provider=provider
+            )
 
         try:
             if provider == "ollama":
                 # use openai client to call ollama because of https://github.com/BerriAI/litellm/issues/7355
-                client = instructor.from_openai(AsyncOpenAI(base_url="http://localhost:11434/v1",api_key="ollama"),mode=instructor.Mode.JSON)
+                client = instructor.from_openai(
+                    AsyncOpenAI(base_url="http://localhost:11434/v1", api_key="ollama"),
+                    mode=instructor.Mode.JSON,
+                )
                 response = await client.chat.completions.create(
                     model=params["model"].split("/")[-1],
                     messages=messages,
@@ -388,8 +401,12 @@ class ProviderService:
             if "default_headers" in params:
                 crewai_params["headers"] = params["default_headers"]
             if self.portkey_api_key and provider != "ollama":
-                #ollama + portkey is not supported currently
-                headers = createHeaders(api_key=self.portkey_api_key, provider=provider, trace_id=str(uuid.uuid4())[:8])
+                # ollama + portkey is not supported currently
+                headers = createHeaders(
+                    api_key=self.portkey_api_key,
+                    provider=provider,
+                    trace_id=str(uuid.uuid4())[:8],
+                )
                 crewai_params["extra_headers"] = headers
                 crewai_params["base_url"] = PORTKEY_GATEWAY_URL
             return LLM(**crewai_params)
