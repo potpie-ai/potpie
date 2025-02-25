@@ -135,24 +135,26 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
       CELERY_QUEUE_NAME=dev
       defaultUsername=defaultuser
       PROJECT_PATH=projects #repositories will be downloaded/cloned to this path on your system.
+      LLM_PROVIDER=openrouter #any provider supported by litellm
+      LLM_API_KEY=sk-or-your-key #your provider key
+      LOW_REASONING_MODEL=openrouter/deepseek/deepseek-chat #provider model name
+      HIGH_REASONING_MODEL=openrouter/deepseek/deepseek-chat #provider model name
       ```
+      **`LOW_REASONING_MODEL`** and **`HIGH_REASONING_MODEL`** correspond to the models that will be used for generating knowledge graph and for agent reasoning respectively. These model names should be in the format of `provider/model_name` format or as expected by Litellm. For more information, refer to the [Litellm documentation](https://docs.litellm.ai/docs/providers).
+      <br>
    -  Create a Virtual Environment using Python 3.10:
-      ```bash
+      ```
       python3.10 -m venv venv
       source venv/bin/activate
-      ```
-      alternatively, you can also use the `virtualenv` library.
 
     - Install dependencies in your venv:
       ```bash
       pip install -r requirements.txt
-      ```
 
 2. **Start Potpie**
    ```bash
    chmod +x start.sh
    ./start.sh
-   ```
 
 3. **Authentication Setup** (Skip this step in development mode)
    ```bash
@@ -163,7 +165,6 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
        "password": "your-password"
      }'
    # Save the bearer token from the response for subsequent requests
-   ```
 
 4. **Initialize Repository Parsing**
    ```bash
@@ -183,13 +184,11 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
        "branch_name": "main"
      }'
    # Save the project_id from the response
-   ```
 
 5. **Monitor Parsing Status**
    ```bash
    curl -X GET 'http://localhost:8001/api/v1/parsing-status/your-project-id'
    # Wait until parsing is complete
-   ```
 
 6. **View Available Agents**
    ```bash
@@ -209,7 +208,6 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
        "agent_ids": ["chosen-agent-id"]
      }'
    # Save the conversation_id from the response
-   ```
 
 8. **Start Interacting with Your Agent**
    ```bash
@@ -267,7 +265,7 @@ Potpie is designed to be flexible and customizable. Here are key areas to person
 
 ### **Effortless Agent Creation**:
 Design custom agents tailored to your specific tasks using a single prompt. Utilize the following API to create your custom agents:
-  
+
   ```bash
   curl -X POST "http://localhost:8001/api/v1/custom-agents/agents/auto" \
        -H "Content-Type: application/json" \
@@ -280,7 +278,7 @@ Design custom agents tailored to your specific tasks using a single prompt. Util
 
 ### Tool Integration
 Edit or add tools in the `app/modules/intelligence/tools` directory for your custom agents.
-Initialise the tools in the  `app/modules/intelligence/tools/tool_service.py` file and include them in your agent. 
+Initialise the tools in the  `app/modules/intelligence/tools/tool_service.py` file and include them in your agent.
 
 ## 🤝 Contributing
 

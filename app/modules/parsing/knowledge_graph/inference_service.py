@@ -5,15 +5,12 @@ import re
 from typing import Dict, List, Optional
 
 import tiktoken
-from langchain.output_parsers import PydanticOutputParser
-from langchain.prompts import ChatPromptTemplate
 from neo4j import GraphDatabase
 from sentence_transformers import SentenceTransformer
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
 from app.modules.intelligence.provider.provider_service import (
-    AgentType,
     ProviderService,
 )
 from app.modules.parsing.knowledge_graph.inference_schema import (
@@ -33,10 +30,9 @@ class InferenceService:
             neo4j_config["uri"],
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
-        self.llm = ProviderService(db, user_id).get_small_llm(
-            agent_type=AgentType.LANGCHAIN
-        )
-        self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+
+        self.provider_service = ProviderService(db, user_id)
+        self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
         self.search_service = SearchService(db)
         self.project_manager = ProjectService(db)
         self.parallel_requests = int(os.getenv("PARALLEL_REQUESTS", 50))
@@ -368,15 +364,14 @@ class InferenceService:
 
         Remember, the summary should be technical enough for a senior developer to understand the code's functionality via similarity search, but concise enough to be quickly parsed. Aim for a balance between detail and brevity.
 
+        Your response must be a valid JSON object containing a list of docstrings, where each docstring object has:
+        - node_id: The ID of the entry point being documented
+        - docstring: A comprehensive flow summary following the guidelines above
+        - tags: A list of relevant tags based on the functionality (e.g., ["API", "DATABASE"] for endpoints that interact with a database)
+
         Here are the entry points and their flows:
 
         {entry_points}
-
-        Respond with a list of "node_id":"updated docstring" pairs, where the updated docstring includes the original docstring followed by the flow summary. Do not include any tags in your response.
-
-        Before finalizing your response, take a moment to review and refine your summaries. Ensure they are clear, accurate, and provide valuable insights into the code's functionality. Your job depends on it.
-
-        {format_instructions}
         """
 
         entry_points_text = "\n\n".join(
@@ -388,23 +383,22 @@ class InferenceService:
             ]
         )
 
-        formatted_prompt = prompt
-        return await self.generate_llm_response(
-            formatted_prompt, {"entry_points": entry_points_text}
-        )
-
-    async def generate_llm_response(self, prompt: str, inputs: Dict) -> str:
-        output_parser = PydanticOutputParser(pydantic_object=DocstringResponse)
-
-        chat_prompt = ChatPromptTemplate.from_template(
-            template=prompt,
-            partial_variables={
-                "format_instructions": output_parser.get_format_instructions()
+        messages = [
+            {
+                "role": "system",
+                "content": "You are an expert software architecture documentation assistant. You will analyze code flows and provide structured documentation in JSON format.",
             },
-        )
-        chain = chat_prompt | self.llm | output_parser
-        result = await chain.ainvoke(input=inputs)
-        return result
+            {"role": "user", "content": prompt.format(entry_points=entry_points_text)},
+        ]
+
+        try:
+            result = await self.provider_service.call_llm_with_structured_output(
+                messages=messages, output_schema=DocstringResponse, size="small"
+            )
+            return result
+        except Exception as e:
+            logger.error(f"Entry point response generation failed: {e}")
+            return DocstringResponse(docstrings=[])
 
     async def generate_docstrings(self, repo_id: str) -> Dict[str, DocstringResponse]:
         logger.info(
@@ -491,7 +485,7 @@ class InferenceService:
 
     async def generate_response(
         self, batch: List[DocstringRequest], repo_id: str
-    ) -> str:
+    ) -> DocstringResponse:
         base_prompt = """
         You are a senior software engineer with expertise in code analysis and documentation. Your task is to generate concise docstrings for each code snippet and tagging it based on its purpose. Approach this task methodically, following these steps:
 
@@ -512,10 +506,9 @@ class InferenceService:
             - **Frontend**: Contains UI components, event handling, state management, or styling.
 
         2.2. **Summarize the Purpose**:
-        - Based on the identified type, write a brief (1-2 sentences) summary of the code’s main purpose and functionality.
+        - Based on the identified type, write a brief (1-2 sentences) summary of the code's main purpose and functionality.
         - Focus on what the code does, its role in the system, and any critical operations it performs.
         - If the code snippet is related to **specific roles** like authentication, database access, or UI component, state management, explicitly mention this role.
-
 
         2.3. **Assign Tags Based on Code Type**:
         - Use these specific tags based on whether the code is identified as backend or frontend:
@@ -543,23 +536,11 @@ class InferenceService:
             - **ACCESSIBILITY**: Implements accessibility features.
             - **DATA_FETCHING**: Fetches data for frontend use.
 
+        Your response must be a valid JSON object containing a list of docstrings, where each docstring object has:
+        - node_id: The ID of the node being documented
+        - docstring: A concise description of the code's purpose and functionality
+        - tags: A list of relevant tags from the categories above
 
-        3. **Output Compilation**:
-        - Collect the generated docstrings and classifications for each `node_id`.
-        - Ensure that the output includes an entry for every `node_id` provided in the `code_snippets`.
-
-        4. **Review and Verification**:
-        Before finalizing your response:
-        - Verify that every `node_id` from the input is present in the output.
-        - Ensure each docstring is clear, comprehensive, and technically accurate.
-        - Confirm that the assigned tags are justified by the code's functionality.
-        - Make sure all crucial technical details are captured without unnecessary verbosity.
-
-        Refine your output as needed to ensure high-quality, precise documentation that accurately represents the code's structure and functionality.
-
-        {format_instructions}
-        Ensure that the response is a valid DocstringResponse object. Every entry in the response must contain the key "docstring".
-        Even if the docstring is empty, you must still include the node_id and an empty docstring in your response.
         Here are the code snippets:
 
         {code_snippets}
@@ -572,31 +553,33 @@ class InferenceService:
                 f"node_id: {request.node_id} \n```\n{request.text}\n```\n\n "
             )
 
-        output_parser = PydanticOutputParser(pydantic_object=DocstringResponse)
-
-        chat_prompt = ChatPromptTemplate.from_template(
-            template=base_prompt,
-            partial_variables={
-                "format_instructions": output_parser.get_format_instructions()
+        messages = [
+            {
+                "role": "system",
+                "content": "You are an expert software documentation assistant. You will analyze code and provide structured documentation in JSON format.",
             },
-        )
+            {
+                "role": "user",
+                "content": base_prompt.format(code_snippets=code_snippets),
+            },
+        ]
 
         import time
 
         start_time = time.time()
         logger.info(f"Parsing project {repo_id}: Starting the inference process...")
 
-        chain = chat_prompt | self.llm | output_parser
         try:
-            result = await chain.ainvoke({"code_snippets": code_snippets})
+            result = await self.provider_service.call_llm_with_structured_output(
+                messages=messages, output_schema=DocstringResponse, size="small"
+            )
         except Exception as e:
             logger.error(
                 f"Parsing project {repo_id}: Inference request failed. Error: {str(e)}"
             )
-            result = ""
+            result = DocstringResponse(docstrings=[])
 
         end_time = time.time()
-
         logger.info(
             f"Parsing project {repo_id}: Inference request completed. Time Taken: {end_time - start_time} seconds"
         )
