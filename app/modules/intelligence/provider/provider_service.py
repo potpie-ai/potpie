@@ -67,12 +67,7 @@ class ProviderService:
                 id="gemini",
                 name="Google Gemini",
                 description="Google Gemini models.",
-            ),
-            ProviderInfo(
-                id="openrouter",
-                name="OpenRouter",
-                description="Any model supported by OpenRouter.",
-            ),
+            )
         ]
 
     async def set_global_ai_provider(
