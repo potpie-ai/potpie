@@ -1,5 +1,5 @@
 import os
-from typing import Any, List
+from typing import List
 
 from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
     CustomAgentService,

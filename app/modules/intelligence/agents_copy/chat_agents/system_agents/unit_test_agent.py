@@ -1,9 +1,8 @@
-import asyncio
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
-from ..crewai_agent import CrewAIAgent, AgentConfig, TaskConfig
+from ..crewai_agent import AgentConfig, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from ..langchain_agent import LangchainRagAgent
 from typing import AsyncGenerator
@@ -24,7 +23,7 @@ class UnitTestAgent(ChatAgent):
             AgentConfig(
                 role="Test Plan and Unit Test Expert",
                 goal="Create test plans and write unit tests based on user requirements",
-                backstory="""You are a seasoned AI test engineer specializing in creating robust test plans and unit tests. 
+                backstory="""You are a seasoned AI test engineer specializing in creating robust test plans and unit tests.
                         You aim to assist users effectively in generating and refining test plans and unit tests, ensuring they are comprehensive and tailored to the user's project requirements.""",
                 tasks=[
                     TaskConfig(

@@ -2,8 +2,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, List
-from langchain.schema import HumanMessage
+from typing import AsyncGenerator, List
 from langchain.prompts import ChatPromptTemplate
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -32,7 +31,6 @@ from app.modules.conversations.message.message_schema import (
     MessageResponse,
     NodeContext,
 )
-from app.modules.intelligence.agents.custom_agents.custom_agent import CustomAgent
 from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
     CustomAgentService,
 )
@@ -522,7 +520,7 @@ class ConversationService:
             ]
 
             print(validated_history)
-        except Exception as e:
+        except Exception:
             raise ConversationServiceError("Failed to get chat history")
 
         try:

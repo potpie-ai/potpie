@@ -2,7 +2,7 @@ from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
-from ..crewai_agent import CrewAIAgent, AgentConfig, TaskConfig
+from ..crewai_agent import AgentConfig, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from ..langchain_agent import LangchainRagAgent
 from typing import AsyncGenerator
@@ -27,7 +27,7 @@ class DebugAgent(ChatAgent):
                     2. Executing the query with minimal iterations, ensuring accuracy and relevance.
                     3. Refining and enriching the initial results to provide a detailed and contextually appropriate response.
                     4. Maintaining traceability by including relevant citations and references in your output.
-                    5. Including relevant citations in the response.       
+                    5. Including relevant citations in the response.
                 """,
                 tasks=[
                     TaskConfig(

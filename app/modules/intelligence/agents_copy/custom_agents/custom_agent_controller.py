@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.orm import Session

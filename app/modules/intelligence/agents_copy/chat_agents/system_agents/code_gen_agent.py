@@ -2,7 +2,7 @@ from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
-from ..crewai_agent import CrewAIAgent, AgentConfig, TaskConfig
+from ..crewai_agent import AgentConfig, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from ..langchain_agent import LangchainRagAgent
 from typing import AsyncGenerator
@@ -37,7 +37,7 @@ class CodeGenAgent(ChatAgent):
                     - Output only the specific functions/classes being modified
                     - Never change existing string formats or escape characters
                     - Maintain exact indentation and spacing patterns from original code
-                    - Include clear section markers for where code should be inserted/modified            
+                    - Include clear section markers for where code should be inserted/modified
                 """,
                 tasks=[
                     TaskConfig(
