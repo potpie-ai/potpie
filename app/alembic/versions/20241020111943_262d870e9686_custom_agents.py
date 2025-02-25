@@ -39,7 +39,9 @@ def upgrade() -> None:
             sa.Column("updated_at", sa.DateTime(), nullable=False),
             sa.PrimaryKeyConstraint("id"),
         )
-        op.create_index(op.f("ix_custom_agents_id"), "custom_agents", ["id"], unique=False)
+        op.create_index(
+            op.f("ix_custom_agents_id"), "custom_agents", ["id"], unique=False
+        )
         op.create_index(
             op.f("ix_custom_agents_user_id"), "custom_agents", ["user_id"], unique=False
         )
