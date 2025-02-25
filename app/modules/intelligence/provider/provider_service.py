@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Union, AsyncGenerator, Optional
 import uuid
 from crewai import LLM
 from pydantic import BaseModel
-from litellm import AsyncOpenAI, acompletion
+from litellm import litellm, AsyncOpenAI, acompletion
 import instructor
 from portkey_ai import createHeaders, PORTKEY_GATEWAY_URL
 
@@ -32,6 +32,7 @@ PLATFORM_PROVIDERS = [
 
 class ProviderService:
     def __init__(self, db, user_id: str):
+        litellm.modify_params = True
         self.db = db
         self.llm = None
         self.user_id = user_id
@@ -128,7 +129,7 @@ class ProviderService:
         },
         "anthropic": {
             "small": {"model": "anthropic/claude-3-5-haiku-20241022"},
-            "large": {"model": "anthropic/claude-3-5-sonnet-20241022"},
+            "large": {"model": "anthropic/claude-3-7-sonnet-20250219"},
         },
         "deepseek": {
             "small": {"model": "openrouter/deepseek/deepseek-chat"},
