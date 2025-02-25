@@ -16,7 +16,7 @@ from app.modules.code_provider.github.github_router import router as github_rout
 from app.modules.conversations.conversations_router import (
     router as conversations_router,
 )
-from app.modules.intelligence.agents.agents_router import router as agent_router
+from app.modules.intelligence.agents_copy.agents_router import router as agent_router
 from app.modules.intelligence.prompts.prompt_router import router as prompt_router
 from app.modules.intelligence.prompts.system_prompt_setup import SystemPromptSetup
 from app.modules.intelligence.provider.provider_router import router as provider_router
