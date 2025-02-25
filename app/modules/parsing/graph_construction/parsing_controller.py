@@ -245,22 +245,20 @@ class ParsingController:
     @staticmethod
     async def fetch_parsing_status(
         project_id: str, db: AsyncSession, user: Dict[str, Any]
-    ):        
+    ):
         try:
             project_query = (
                 select(Project.status)
                 .join(
-                    Conversation,
-                    Conversation.project_ids.any(Project.id),
-                    isouter=True
+                    Conversation, Conversation.project_ids.any(Project.id), isouter=True
                 )
                 .where(
                     Project.id == project_id,
                     or_(
                         Project.user_id == user["user_id"],
                         Conversation.visibility == Visibility.PUBLIC,
-                        Conversation.shared_with_emails.any(user["email"])
-                    )
+                        Conversation.shared_with_emails.any(user["email"]),
+                    ),
                 )
                 .limit(1)  # Since we only need one result
             )
@@ -270,22 +268,15 @@ class ParsingController:
 
             if not project_status:
                 raise HTTPException(
-                    status_code=404,    
-                    detail="Project not found or access denied"
+                    status_code=404, detail="Project not found or access denied"
                 )
             parse_helper = ParseHelper(db)
             is_latest = await parse_helper.check_commit_status(project_id)
 
-            return {
-                "status": project_status,
-                "latest": is_latest
-            }
+            return {"status": project_status, "latest": is_latest}
 
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"Error in fetch_parsing_status: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail="Internal server error"
-            )
+            raise HTTPException(status_code=500, detail="Internal server error")
