@@ -305,7 +305,9 @@ class ProviderService:
         """
         provider = self._get_provider_config(size)
         params = self._build_llm_params(provider, size)
-        routing_provider = params.pop("routing_provider", None)  # Remove routing_provider from params
+        routing_provider = params.pop(
+            "routing_provider", None
+        )  # Remove routing_provider from params
         extra_params = {}
         if self.portkey_api_key and routing_provider != "ollama":
             # ollama + portkey is not supported currently
@@ -358,7 +360,9 @@ class ProviderService:
         """
         provider = self._get_provider_config(size)
         params = self._build_llm_params(provider, size)
-        routing_provider = params.pop("routing_provider", None)  # Remove routing_provider from params
+        routing_provider = params.pop(
+            "routing_provider", None
+        )  # Remove routing_provider from params
 
         extra_params = {}
         if self.portkey_api_key and routing_provider != "ollama":
