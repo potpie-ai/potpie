@@ -67,7 +67,7 @@ class ProviderService:
                 id="gemini",
                 name="Google Gemini",
                 description="Google Gemini models.",
-            )
+            ),
         ]
 
     async def set_global_ai_provider(
