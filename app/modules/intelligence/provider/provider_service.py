@@ -305,7 +305,9 @@ class ProviderService:
         """
         provider = self._get_provider_config(size)
         params = self._build_llm_params(provider, size)
-        routing_provider = params["routing_provider"]
+        routing_provider = params.pop(
+            "routing_provider", None
+        ) 
         extra_params = {}
         if self.portkey_api_key and routing_provider != "ollama":
             # ollama + portkey is not supported currently
@@ -358,7 +360,9 @@ class ProviderService:
         """
         provider = self._get_provider_config(size)
         params = self._build_llm_params(provider, size)
-        routing_provider = params["routing_provider"]
+        routing_provider = params.pop(
+            "routing_provider", None
+        )
 
         extra_params = {}
         if self.portkey_api_key and routing_provider != "ollama":
@@ -406,8 +410,7 @@ class ProviderService:
         Kept for potential future differentiated initialization.
         """
         params = self._build_llm_params(provider, size)
-        routing_provider = params["routing_provider"]
-
+        routing_provider = params.pop("routing_provider", None)
         if agent_type == AgentProvider.CREWAI:
             crewai_params = {"model": params["model"], **params}
             if "default_headers" in params:
