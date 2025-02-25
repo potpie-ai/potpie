@@ -66,7 +66,8 @@ class AutoRouterAgent(ChatAgent):
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         agent = await self._run_classification(ctx, self.agent_descriptions)
-        return await agent.run_stream(ctx)
+        async for chunk in agent.run_stream(ctx):
+            yield chunk
 
 
 classification_prompt = """

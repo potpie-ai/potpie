@@ -1,9 +1,11 @@
+import asyncio
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
 from ..crewai_agent import CrewAIAgent, AgentConfig, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
+from ..langchain_agent import LangchainRagAgent
 from typing import AsyncGenerator
 
 
@@ -17,7 +19,7 @@ class UnitTestAgent(ChatAgent):
         self.tools_provider = tools_provider
 
     def _build_agent(self) -> ChatAgent:
-        return CrewAIAgent(
+        return LangchainRagAgent(
             self.llm_provider,
             AgentConfig(
                 role="Test Plan and Unit Test Expert",
@@ -57,7 +59,9 @@ class UnitTestAgent(ChatAgent):
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        return await self._build_agent().run_stream(await self._enriched_context(ctx))
+        ctx = await self._enriched_context(ctx)
+        async for chunk in self._build_agent().run_stream(ctx):
+            yield chunk
 
 
 qna_task_prompt = """

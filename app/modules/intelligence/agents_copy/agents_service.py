@@ -158,7 +158,8 @@ class AgentsService:
         return await self.supervisor_agent.run(ctx)
 
     async def execute_stream(self, ctx: ChatContext):
-        return await self.supervisor_agent.run_stream(ctx)
+        async for chunk in self.supervisor_agent.run_stream(ctx):
+            yield chunk
 
     async def list_available_agents(
         self, current_user: dict, list_system_agents: bool

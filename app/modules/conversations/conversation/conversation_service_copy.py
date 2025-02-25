@@ -543,7 +543,7 @@ class ConversationService:
                 )
                 yield ChatMessageResponse(message=response["message"], citations=[])
             else:
-                res = await self.agent_service.execute(
+                res = self.agent_service.execute_stream(
                     ChatContext(
                         project_id=str(project_id),
                         curr_agent_id=str(agent_id),
@@ -552,16 +552,20 @@ class ConversationService:
                         query=query,
                     )
                 )
-                self.history_manager.add_message_chunk(
-                    conversation_id,
-                    res.response,
-                    MessageType.AI_GENERATED,
-                    citations=res.citations,
-                )
+
+                async for chunk in res:
+                    self.history_manager.add_message_chunk(
+                        conversation_id,
+                        chunk.response,
+                        MessageType.AI_GENERATED,
+                        citations=chunk.citations,
+                    )
+                    yield ChatMessageResponse(
+                        message=chunk.response, citations=chunk.citations
+                    )
                 self.history_manager.flush_message_buffer(
                     conversation_id, MessageType.AI_GENERATED
                 )
-                yield ChatMessageResponse(message=res.response, citations=res.citations)
 
             logger.info(
                 f"Generated and streamed AI response for conversation {conversation.id} for user {user_id} using agent {agent_id}"

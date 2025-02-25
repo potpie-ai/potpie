@@ -4,6 +4,7 @@ from app.modules.intelligence.provider.provider_service import (
 from app.modules.intelligence.tools.tool_service import ToolService
 from ..crewai_agent import CrewAIAgent, AgentConfig, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
+from ..langchain_agent import LangchainRagAgent
 from typing import AsyncGenerator
 
 
@@ -15,7 +16,7 @@ class IntegrationTestAgent(ChatAgent):
     ):
         self.llm_provider = llm_provider
         self.tools_provider = tools_provider
-        self.rag_agent = CrewAIAgent(
+        self.rag_agent = LangchainRagAgent(
             llm_provider,
             AgentConfig(
                 role="Integration Test Writer",
@@ -56,7 +57,9 @@ class IntegrationTestAgent(ChatAgent):
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        return self.rag_agent.run_stream(self._enriched_context(ctx))
+        ctx = self._enriched_context(ctx)
+        async for chunk in self.rag_agent.run_stream(ctx):
+            yield chunk
 
 
 integration_test_task_prompt = """
@@ -111,14 +114,4 @@ integration_test_task_prompt = """
         - Review the test plans and integration tests to ensure comprehensive coverage and correctness.
         - Make refinements as necessary, respecting the max iterations limit.
 
-    6. **Response Construction:**
-    - **Structured Output:**
-        - Provide the test plans and integration tests in your response.
-        - Ensure that the response is JSON serializable and follows the specified Pydantic model.
-        - The response MUST be a valid JSON object with two fields:
-            1. "response": A string containing the full test plan and integration tests.
-            2. "citations": A list of strings, each being a file_path of the nodes fetched and used.
-        - Include the full test plan and integration tests in the "response" field.
-        - For citations, include only the `file_path` of the nodes fetched and used in the "citations" field.
-        - Include any specific instructions or context from the chat history in the "response" field based on the user's query.
 """

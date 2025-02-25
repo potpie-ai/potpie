@@ -1,3 +1,4 @@
+import asyncio
 from typing import AsyncGenerator
 
 from app.modules.intelligence.agents_copy.chat_agent import (
@@ -38,7 +39,7 @@ class AdaptiveAgent(ChatAgent):
         self.classifier = LLM(
             llm_provider,
             prompt_template=classification_prompt
-            + " just return the single classification in response ",
+            + "\n the classification output json should be returned as response field in pydantic",
         )
         self.prompt_provider = prompt_provider
         self.agent_type = agent_type
@@ -106,7 +107,8 @@ class AdaptiveAgent(ChatAgent):
             pass
 
         if classification == "AGENT_REQUIRED":
-            return await self.rag_agent.run_stream(ctx)
+            async for chunk in self.rag_agent.run_stream(ctx):
+                yield chunk
 
             # You can pass the result to llm to stream response, but it's unnecessary and gives a overhead
             # rag_agent_response = await self.rag_agent.run(ctx)
@@ -114,4 +116,5 @@ class AdaptiveAgent(ChatAgent):
 
         # build llm response
         llm = await self._create_llm()
-        return await llm.run_stream(ctx)
+        async for chunk in llm.run_stream(ctx):
+            yield chunk

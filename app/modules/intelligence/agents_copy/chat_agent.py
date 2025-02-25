@@ -32,9 +32,7 @@ class ChatAgent(ABC):
         pass
 
     @abstractmethod
-    async def run_stream(
-        self, ctx: ChatContext
-    ) -> AsyncGenerator[ChatAgentResponse, None]:
+    def run_stream(self, ctx: ChatContext) -> AsyncGenerator[ChatAgentResponse, None]:
         """Run asynchronously, yield response piece by piece"""
         pass
 

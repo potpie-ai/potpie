@@ -4,6 +4,7 @@ from app.modules.intelligence.provider.provider_service import (
 from app.modules.intelligence.tools.tool_service import ToolService
 from ..crewai_agent import CrewAIAgent, AgentConfig, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
+from ..langchain_agent import LangchainRagAgent
 from typing import AsyncGenerator
 
 
@@ -14,7 +15,7 @@ class DebugAgent(ChatAgent):
         tools_provider: ToolService,
     ):
         self.tools_provider = tools_provider
-        self.rag_agent = CrewAIAgent(
+        self.rag_agent = LangchainRagAgent(
             llm_provider,
             AgentConfig(
                 role="Context curation agent",
@@ -65,7 +66,8 @@ class DebugAgent(ChatAgent):
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        return self.rag_agent.run_stream(ctx)
+        async for chunk in self.rag_agent.run_stream(ctx):
+            yield chunk
 
 
 code_gen_task_prompt = """

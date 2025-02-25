@@ -3,6 +3,7 @@ from app.modules.intelligence.provider.provider_service import (
 )
 from app.modules.intelligence.tools.tool_service import ToolService
 from ..crewai_agent import CrewAIAgent, AgentConfig, TaskConfig
+from ..langchain_agent import LangchainRagAgent
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator
 
@@ -17,7 +18,7 @@ class BlastRadiusAgent(ChatAgent):
         self.llm_provider = llm_provider
 
     def _build_agent(self):
-        return CrewAIAgent(
+        return LangchainRagAgent(
             self.llm_provider,
             AgentConfig(
                 role="Blast Radius Analyzer",
@@ -48,7 +49,8 @@ class BlastRadiusAgent(ChatAgent):
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        return self._build_agent().run_stream(ctx)
+        async for chunk in self._build_agent().run_stream(ctx):
+            yield chunk
 
 
 blast_radius_task_prompt = """
