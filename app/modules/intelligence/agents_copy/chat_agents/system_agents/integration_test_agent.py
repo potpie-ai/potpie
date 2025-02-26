@@ -2,9 +2,8 @@ from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
-from ..crewai_agent import AgentConfig, TaskConfig
+from ..crewai_agent import CrewAIAgent, AgentConfig, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
-from ..langchain_agent import LangchainRagAgent
 from typing import AsyncGenerator
 from pydantic import BaseModel
 
