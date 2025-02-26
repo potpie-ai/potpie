@@ -3,7 +3,6 @@ import json
 import logging
 from datetime import datetime, timezone
 from typing import AsyncGenerator, List
-from langchain.prompts import ChatPromptTemplate
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -38,7 +37,6 @@ from app.modules.intelligence.agents_copy.agents_service import AgentsService
 from app.modules.intelligence.agents_copy.chat_agent import ChatContext
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import (
-    AgentProvider,
     ProviderService,
 )
 from app.modules.projects.projects_service import ProjectService
