@@ -82,7 +82,7 @@ class CrewAIAgent(ChatAgent):
                 CONTEXT:
                 User Query: {ctx.query}
                 Project ID: {ctx.project_id}
-                Node IDs: {" ,".join(ctx.history)}
+                Node IDs: {" ,".join(ctx.node_ids)}
 
                 Consider the chat history for any specific instructions or context: {" ,".join(ctx.history)}
 
