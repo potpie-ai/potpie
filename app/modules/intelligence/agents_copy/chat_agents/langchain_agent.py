@@ -2,7 +2,6 @@ import json
 import re
 from typing import Any, List, AsyncGenerator
 
-import agentops
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
     AgentProvider,
@@ -12,7 +11,6 @@ from app.modules.utils.logger import setup_logger
 from langchain_core.messages import AIMessage
 from ..chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from pydantic import BaseModel
-import json
 
 from langgraph.prebuilt import create_react_agent, ToolExecutor
 from langchain_core.runnables import RunnableConfig
@@ -64,10 +62,10 @@ class LangchainRagAgent(ChatAgent):
                 User Query: {ctx.query}
                 Project ID: {ctx.project_id}
                 Node IDs: {" ,".join(ctx.node_ids)}
-                
+
                 Consider the chat history for any specific instructions or context: {" ,".join(ctx.history)}
-                
-                Additional Context: 
+
+                Additional Context:
                 {ctx.additional_context}
 
                 TASK:
@@ -88,16 +86,16 @@ class LangchainRagAgent(ChatAgent):
                 - Use tools efficiently and avoid unnecessary API calls
                 - Only use the tools listed below
                 - Respond with whatever info you have before you run out of max_iter
-                
+
                 **Output Requirements:**
-                
+
                 - All citations should be mentioned in comma seperated format at the end after "###Citations###" block
                     ex: If we have 3 citations, this should be at the end of the response:
                         `
                             ###Citations###
                             app/module/path1/file1.ext, app/module/path2/file2.ext, app/module/path3/file3.txt
                         `
-                
+
                 With above information answer the user query: {ctx.query}
             """
 

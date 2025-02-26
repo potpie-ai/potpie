@@ -2,11 +2,10 @@ from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
-from ..crewai_agent import CrewAIAgent, AgentConfig, TaskConfig
+from ..crewai_agent import AgentConfig, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from ..langchain_agent import LangchainRagAgent
 from typing import AsyncGenerator
-import asyncio
 
 
 class LowLevelDesignAgent(ChatAgent):
@@ -27,7 +26,7 @@ class LowLevelDesignAgent(ChatAgent):
                 backstory="""
                     You are a senior software architect specializing in creating detailed,
                     actionable design plans. Your expertise lies in breaking down complex features into
-                    manageable steps and providing clear guidance for implementation.      
+                    manageable steps and providing clear guidance for implementation.
                 """,
                 tasks=[
                     TaskConfig(

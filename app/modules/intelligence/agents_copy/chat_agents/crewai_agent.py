@@ -1,8 +1,6 @@
 import json
-import os
 from typing import Any, List, AsyncGenerator
 
-import agentops
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
     AgentProvider,
@@ -85,10 +83,10 @@ class CrewAIAgent(ChatAgent):
                 User Query: {ctx.query}
                 Project ID: {ctx.project_id}
                 Node IDs: {" ,".join(ctx.history)}
-                
+
                 Consider the chat history for any specific instructions or context: {" ,".join(ctx.history)}
-                
-                Additional Context: 
+
+                Additional Context:
                 {ctx.additional_context}
 
                 TASK:
@@ -109,14 +107,14 @@ class CrewAIAgent(ChatAgent):
                 - Use tools efficiently and avoid unnecessary API calls
                 - Only use the tools listed below
                 {self.tools_description}
-                
+
                 **Output Requirements:**
                 - Ensure that your final response MUST be a valid JSON object which follows the structure outlined in the Pydantic model: {ChatAgentResponse.model_json_schema()}
                 - Do not wrap the response in ```json, ```python, ```code, or ``` symbols.
                 - For citations, include only the `file_path` of the nodes fetched and used.
                 - Do not include any explanation or additional text outside of this JSON object.
                 - Ensure all of the expected output and code are included within the "response" string.
-                
+
                 With above information answer the user query: {ctx.query}
             """
 

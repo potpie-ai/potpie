@@ -2,7 +2,7 @@ from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
-from ..crewai_agent import CrewAIAgent, AgentConfig, TaskConfig
+from ..crewai_agent import AgentConfig, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from ..langchain_agent import LangchainRagAgent
 from typing import AsyncGenerator
@@ -28,7 +28,7 @@ class IntegrationTestAgent(ChatAgent):
                 role="Integration Test Writer",
                 goal="Create a comprehensive integration test suite for the provided codebase. Analyze the code, determine the appropriate testing language and framework, and write tests that cover all major integration points.",
                 backstory="""
-                    You are an expert in writing unit tests for code using latest features of the popular testing libraries for the given programming language. 
+                    You are an expert in writing unit tests for code using latest features of the popular testing libraries for the given programming language.
                 """,
                 tasks=[
                     TaskConfig(
