@@ -28,6 +28,31 @@ class CodeGraphService:
         node_id = hash_object.hexdigest()
 
         return node_id
+        
+    @staticmethod
+    def generate_content_hash(name: str, text: str):
+        """
+        Generate a content-based hash using the node name and text content.
+        This hash will be consistent across different repositories if the 
+        code content is identical, enabling semantic caching.
+        """
+        if not text:
+            return None
+            
+        # Normalize whitespace and combine name and text
+        name = name or ""
+        normalized_name = " ".join(name.split())
+        normalized_text = " ".join(text.split())
+        combined_string = f"{normalized_name}:{normalized_text}"
+
+        # Create a SHA-256 hash of the combined string for stronger uniqueness
+        hash_object = hashlib.sha256()
+        hash_object.update(combined_string.encode("utf-8"))
+
+        # Get the hexadecimal representation of the hash
+        content_hash = hash_object.hexdigest()
+
+        return content_hash
 
     def close(self):
         self.driver.close()
@@ -67,10 +92,14 @@ class CodeGraphService:
                         labels.append(node_type)
 
                     # Prepare node data
+                    node_name = node_data.get("name", node_id)
+                    node_text = node_data.get("text", "")
+                    
+                    # Generate content hash for semantic caching
+                    content_hash = CodeGraphService.generate_content_hash(node_name, node_text)
+                    
                     processed_node = {
-                        "name": node_data.get(
-                            "name", node_id
-                        ),  # Use node_id as fallback
+                        "name": node_name,  # Use node_id as fallback
                         "file_path": node_data.get("file", ""),
                         "start_line": node_data.get("line", -1),
                         "end_line": node_data.get("end_line", -1),
@@ -78,7 +107,8 @@ class CodeGraphService:
                         "node_id": CodeGraphService.generate_node_id(node_id, user_id),
                         "entityId": user_id,
                         "type": node_type,
-                        "text": node_data.get("text", ""),
+                        "text": node_text,
+                        "content_hash": content_hash,
                         "labels": labels,
                     }
 
