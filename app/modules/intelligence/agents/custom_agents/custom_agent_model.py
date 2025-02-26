@@ -23,7 +23,7 @@
 #     )
 
 #     # Add foreign key constraint to users table
-#     __table_args__ = (ForeignKeyConstraint(["user_id"], ["users.uid"]),)
+# __table_args__ = (ForeignKeyConstraint(["user_id"], ["users.uid"]),)
 
 #     # Add relationship to User model
 #     user = relationship("User", back_populates="custom_agents")

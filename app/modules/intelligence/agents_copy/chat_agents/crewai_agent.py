@@ -5,7 +5,7 @@ from typing import Any, List, AsyncGenerator
 import agentops
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
-    AgentType,
+    AgentProvider,
 )
 from crewai import Agent, Crew, Process, Task
 from pydantic import BaseModel
@@ -54,7 +54,7 @@ class CrewAIAgent(ChatAgent):
             tools=tools,
             allow_delegation=False,
             verbose=True,
-            llm=llm_provider.get_large_llm(AgentType.CREWAI),
+            llm=llm_provider.get_large_llm(AgentProvider.CREWAI),
             max_iter=config.max_iter,
         )
 

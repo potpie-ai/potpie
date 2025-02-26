@@ -19,7 +19,7 @@ class LowLevelDesignAgent(ChatAgent):
         self.tools_provider = tools_provider
 
     def _build_agent(self) -> ChatAgent:
-        return LangchainRagAgent(
+        return CrewAIAgent(
             self.llm_provider,
             AgentConfig(
                 role="Design Planner",

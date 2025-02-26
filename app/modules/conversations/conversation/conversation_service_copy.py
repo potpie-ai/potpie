@@ -32,15 +32,14 @@ from app.modules.conversations.message.message_schema import (
     MessageResponse,
     NodeContext,
 )
-from app.modules.intelligence.agents.custom_agents.custom_agent import CustomAgent
-from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
+from app.modules.intelligence.agents_copy.custom_agents.custom_agents_service import (
     CustomAgentService,
 )
 from app.modules.intelligence.agents_copy.agents_service import AgentsService
 from app.modules.intelligence.agents_copy.chat_agent import ChatContext
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
 from app.modules.intelligence.provider.provider_service import (
-    AgentType,
+    AgentProvider,
     ProviderService,
 )
 from app.modules.projects.projects_service import ProjectService
@@ -226,16 +225,6 @@ class ConversationService:
         logger.info(
             f"Project id : {conversation.project_ids[0]} Created new conversation with ID: {conversation_id}, title: {title}, user_id: {user_id}, agent_id: {conversation.agent_ids[0]}"
         )
-        provider_name = self.provider_service.get_llm_provider_name()
-        PostHogClient().send_event(
-            user_id,
-            "create Conversation Event",
-            {
-                "project_ids": conversation.project_ids,
-                "agent_ids": conversation.agent_ids,
-                "llm": provider_name,
-            },
-        )
         return conversation_id
 
     async def _add_system_message(
@@ -282,13 +271,7 @@ class ConversationService:
                 conversation_id, message_type, user_id
             )
             logger.info(f"Stored message in conversation {conversation_id}")
-            provider_name = self.provider_service.get_llm_provider_name()
 
-            PostHogClient().send_event(
-                user_id,
-                "message post event",
-                {"conversation_id": conversation_id, "llm": provider_name},
-            )
             if message_type == MessageType.HUMAN:
                 conversation = await self._get_conversation_with_message_count(
                     conversation_id
@@ -369,19 +352,23 @@ class ConversationService:
     ) -> str:
         agent_type = conversation.agent_ids[0]
 
-        llm = self.provider_service.get_small_llm(agent_type=AgentType.LANGCHAIN)
-        prompt = ChatPromptTemplate.from_template(
+        prompt = (
             "Given an agent type '{agent_type}' and an initial message '{message}', "
             "generate a concise and relevant title for a conversation. "
             "The title should be no longer than 50 characters. Only return title string, do not wrap in quotes."
-        )
+        ).format(agent_type=agent_type, message=message_content)
 
-        messages = prompt.format_messages(
-            agent_type=agent_type, message=message_content
-        )
-        response = await llm.agenerate([messages])
+        messages = [
+            {
+                "role": "system",
+                "content": "You are a conversation title generator that creates concise and relevant titles.",
+            },
+            {"role": "user", "content": prompt},
+        ]
+        generated_title: str = await self.provider_service.call_llm(
+            messages=messages, size="small"
+        )  # type: ignore
 
-        generated_title = response.generations[0][0].text.strip()
         if len(generated_title) > 50:
             generated_title = generated_title[:50].strip() + "..."
         return generated_title

@@ -1,21 +1,20 @@
-import asyncio
 from typing import AsyncGenerator
-
+from langchain_core.output_parsers import PydanticOutputParser
 from app.modules.intelligence.agents_copy.chat_agent import (
     ChatAgent,
     ChatAgentResponse,
     ChatContext,
 )
-from .llm_chat import LLM
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.intelligence.prompts.classification_prompts import (
     ClassificationPrompts,
+    ClassificationResponse,
     AgentType,
+    ClassificationResult,
 )
 from app.modules.intelligence.prompts.prompt_service import PromptService, PromptType
-import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -32,81 +31,90 @@ class AdaptiveAgent(ChatAgent):
         rag_agent: ChatAgent,
         agent_type: AgentType,
     ):
-        classification_prompt = ClassificationPrompts.get_classification_prompt(
-            agent_type
-        )
         self.llm_provider = llm_provider
-        self.classifier = LLM(
-            llm_provider,
-            prompt_template=classification_prompt
-            + "\n the classification output json should be returned as response field in pydantic",
-        )
         self.prompt_provider = prompt_provider
         self.agent_type = agent_type
-
         self.rag_agent = rag_agent
 
-    async def _create_llm(self) -> ChatAgent:
+    async def _get_messages(self, ctx: ChatContext):
         llm_prompts = await self.prompt_provider.get_prompts_by_agent_id_and_types(
             self.agent_type.value, [PromptType.SYSTEM, PromptType.HUMAN]
         )
         prompts = {prompt.type: prompt for prompt in llm_prompts}
         system_prompt = prompts.get(PromptType.SYSTEM)
+        human_message_template = prompts.get(PromptType.HUMAN)
+
         if system_prompt == None:
             raise ValueError(
                 f"System Prompt for {self.agent_type} not found!!"
             )  # sanity check
 
-        return LLM(
-            self.llm_provider,
-            prompt_template=(
-                system_prompt.text
-                if system_prompt
-                else f"you are a {self.agent_type} agent "
-                + " who has complete understading of repo. With the given history of chat: {history} \nAnswer the following query with given info: {query}"
-            ),
+        query = ctx.query
+        if human_message_template is not None:
+            query = human_message_template.text.format(input=ctx.query)
+
+        messages = [
+            {"role": "system", "content": system_prompt.text},
+            *[
+                {
+                    "role": "assistant",
+                    "content": msg,
+                }
+                for msg in ctx.history
+            ],
+            {
+                "role": "user",
+                "content": query,
+            },
+        ]
+
+        return messages
+
+    async def _run_classification(self, ctx: ChatContext):
+        inputs = {
+            "query": ctx.query,
+            "history": [msg for msg in ctx.history],
+        }
+        classification_prompt = ClassificationPrompts.get_classification_prompt(
+            self.agent_type
         )
+
+        parser = PydanticOutputParser(pydantic_object=ClassificationResponse)
+        format_instructions = parser.get_format_instructions()
+
+        messages = [
+            {"role": "system", "content": classification_prompt},
+            {
+                "role": "user",
+                "content": f"Query: {inputs['query']}\nHistory: {inputs['history']}\n\n{format_instructions}",
+            },
+        ]
+
+        try:
+            response = await self.llm_provider.call_llm(messages=messages, size="small")
+            return parser.parse(response).classification  # type: ignore
+        except Exception:
+            logger.warning("Classification failed")
+            return ClassificationResult.AGENT_REQUIRED
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         # classify the query into agent needed or not
-        classification_response = await self.classifier.run(ctx)
-        classification = "AGENT_REQUIRED"
-        logger.info(f"Classification response: {classification_response.response}")
-        try:
-            classification_json = json.loads(classification_response.response)
-            if (
-                classification_json
-                and classification_json["classification"] == "LLM_SUFFICIENT"
-            ):
-                classification = "LLM_SUFFICIENT"
-        except Exception as e:
-            # use agent by default if classification failed
-            logger.error(f"Defaulting to agent because classification failed: {e}")
+        classification = await self._run_classification(ctx)
 
-        if classification == "AGENT_REQUIRED":
+        if classification == ClassificationResult.AGENT_REQUIRED:
             return await self.rag_agent.run(ctx)
 
         # build llm response
-        llm = await self._create_llm()
-        return await llm.run(ctx)
+        messages = await self._get_messages(ctx)
+        res = await self.llm_provider.call_llm(messages=messages)
+        return ChatAgentResponse(response=res, citations=[])  # type: ignore
 
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        classification_response = await self.classifier.run(ctx)
-        classification = "AGENT_REQUIRED"
-        print("Classification response:", classification_response.response)
-        try:
-            classification_json = json.loads(classification_response.response)
-            if (
-                classification_json
-                and classification_json["classification"] == "LLM_SUFFICIENT"
-            ):
-                classification = "LLM_SUFFICIENT"
-        except Exception:
-            pass
+        classification = await self._run_classification(ctx)
 
-        if classification == "AGENT_REQUIRED":
+        if classification == ClassificationResult.AGENT_REQUIRED:
             async for chunk in self.rag_agent.run_stream(ctx):
                 yield chunk
 
@@ -115,6 +123,6 @@ class AdaptiveAgent(ChatAgent):
             # ctx.query += f"\n with tool_response: {rag_agent_response.response} and citations: {rag_agent_response.citations}"
 
         # build llm response
-        llm = await self._create_llm()
-        async for chunk in llm.run_stream(ctx):
-            yield chunk
+        messages = await self._get_messages(ctx)
+        async for chunk in await self.llm_provider.call_llm(messages=messages, stream=True):  # type: ignore
+            yield ChatAgentResponse(response=chunk, citations=[])

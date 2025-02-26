@@ -15,7 +15,7 @@ class DebugAgent(ChatAgent):
         tools_provider: ToolService,
     ):
         self.tools_provider = tools_provider
-        self.rag_agent = LangchainRagAgent(
+        self.rag_agent = CrewAIAgent(
             llm_provider,
             AgentConfig(
                 role="Context curation agent",

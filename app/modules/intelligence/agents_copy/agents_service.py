@@ -1,7 +1,7 @@
 import os
 from typing import Any, List
 
-from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
+from app.modules.intelligence.agents_copy.custom_agents.custom_agents_service import (
     CustomAgentService,
 )
 from app.modules.intelligence.prompts.classification_prompts import (
@@ -26,9 +26,6 @@ from app.modules.intelligence.agents_copy.chat_agents.adaptive_agent import (
 from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.intelligence.agents_copy.chat_agents.supervisor_agent import (
     SupervisorAgent,
-)
-from app.modules.intelligence.agents_copy.custom_agents.agent_validator import (
-    validate_agent,
 )
 from pydantic import BaseModel
 
@@ -202,6 +199,6 @@ class AgentsService:
         """Validate if an agent ID is valid"""
         if agent_id in self.system_agents:
             return "SYSTEM_AGENT"
-        if await validate_agent(self.db, user_id, agent_id):
+        if await self.custom_agent_service.get_custom_agent(self.db, user_id, agent_id):
             return "CUSTOM_AGENT"
         return None

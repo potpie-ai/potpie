@@ -5,7 +5,6 @@ from app.modules.intelligence.agents_copy.chat_agent import (
     ChatAgent,
     AgentWithInfo,
 )
-from .llm_chat import LLM
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
@@ -38,14 +37,18 @@ class AutoRouterAgent(ChatAgent):
             agent_descriptions=agent_descriptions,
             query=ctx.query,
         )
-        classifier = LLM(
-            self.llm_provider,
-            prompt_template=prompt,
-        )
-        classification = await classifier.run(ctx)
+        messages = [
+            {
+                "role": "system",
+                "content": "You are an expert agent classifier that helps route queries to the most appropriate agent.",
+            },
+            {"role": "user", "content": prompt},
+        ]
+
+        classification: str = await self.llm_provider.call_llm(messages=messages)  # type: ignore
 
         try:
-            agent_id, confidence = classification.response.strip("`").split("|")
+            agent_id, confidence = classification.strip("`").split("|")
             confidence = float(confidence)
             selected_agent_id = (
                 agent_id

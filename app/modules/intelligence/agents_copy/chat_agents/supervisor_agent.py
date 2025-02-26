@@ -6,7 +6,6 @@ from ..chat_agent import ChatAgent, ChatAgentResponse, ChatContext, AgentWithInf
 from typing import AsyncGenerator, Dict
 
 
-# TODO: Include custom agents also
 class SupervisorAgent(ChatAgent):
     def __init__(
         self,

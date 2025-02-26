@@ -1,12 +1,11 @@
 import json
-import os
 import re
 from typing import Any, List, AsyncGenerator
 
 import agentops
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
-    AgentType,
+    AgentProvider,
 )
 from .crewai_agent import AgentConfig, TaskConfig
 from app.modules.utils.logger import setup_logger
@@ -44,7 +43,7 @@ class LangchainRagAgent(ChatAgent):
             tools[i].name = re.sub(r" ", "", tool.name)
 
         self.agent = create_react_agent(
-            model=llm_provider.get_large_llm(AgentType.LANGCHAIN),
+            model=llm_provider.get_large_llm(AgentProvider.LANGCHAIN),
             tools=ToolExecutor(tools),
             debug=True,
         )

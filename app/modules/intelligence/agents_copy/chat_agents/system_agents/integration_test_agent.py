@@ -6,6 +6,12 @@ from ..crewai_agent import CrewAIAgent, AgentConfig, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from ..langchain_agent import LangchainRagAgent
 from typing import AsyncGenerator
+from pydantic import BaseModel
+
+
+class NodeContext(BaseModel):
+    node_id: str
+    name: str
 
 
 class IntegrationTestAgent(ChatAgent):
@@ -16,7 +22,7 @@ class IntegrationTestAgent(ChatAgent):
     ):
         self.llm_provider = llm_provider
         self.tools_provider = tools_provider
-        self.rag_agent = LangchainRagAgent(
+        self.rag_agent = CrewAIAgent(
             llm_provider,
             AgentConfig(
                 role="Integration Test Writer",
@@ -42,13 +48,61 @@ class IntegrationTestAgent(ChatAgent):
         )
 
     def _enriched_context(self, ctx: ChatContext) -> ChatContext:
-        if ctx.node_ids and len(ctx.node_ids) > 0:
+        if not ctx.node_ids or len(ctx.node_ids) == 0:
+            return ctx
+
+        graph = self.tools_provider.get_code_graph_from_node_id_tool.run(
+            ctx.project_id, ctx.node_ids[0]
+        )
+        # Get graphs for each node to understand component relationships
+        graphs = {}
+        all_node_contexts = []
+
+        for node_id in ctx.node_ids:
+            # Get the code graph for each node
             graph = self.tools_provider.get_code_graph_from_node_id_tool.run(
-                ctx.project_id, ctx.node_ids[0]
+                ctx.project_id, node_id
             )
-            ctx.additional_context += (
-                f"Code Graph context of the node_ids in query: {graph}"
-            )
+            graphs[node_id] = graph
+
+            def extract_unique_node_contexts(node, visited=None):
+                if visited is None:
+                    visited = set()
+                node_contexts = []
+                if node["id"] not in visited:
+                    visited.add(node["id"])
+                    node_contexts.append(
+                        NodeContext(node_id=node["id"], name=node["name"])
+                    )
+                    for child in node.get("children", []):
+                        node_contexts.extend(
+                            extract_unique_node_contexts(child, visited)
+                        )
+                return node_contexts
+
+            # Extract related nodes from each graph
+            node_contexts = extract_unique_node_contexts(graph["graph"]["root_node"])
+            all_node_contexts.extend(node_contexts)
+
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_node_contexts = []
+        for node in all_node_contexts:
+            if node.node_id not in seen:
+                seen.add(node.node_id)
+                unique_node_contexts.append(ctx)
+
+        # Format graphs for better readability in the prompt
+        formatted_graphs = {}
+        for node_id, graph in graphs.items():
+            formatted_graphs[node_id] = {
+                "structure": graph["graph"]["root_node"],
+            }
+
+        ctx.additional_context += (
+            f"Code Graph context of the node_ids in query: {formatted_graphs}"
+        )
+
         return ctx
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
