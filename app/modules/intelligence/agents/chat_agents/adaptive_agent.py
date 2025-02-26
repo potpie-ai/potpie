@@ -117,7 +117,7 @@ class AdaptiveAgent(ChatAgent):
         if classification == ClassificationResult.AGENT_REQUIRED:
             async for chunk in self.rag_agent.run_stream(ctx):
                 yield chunk
-
+            return
             # You can pass the result to llm to stream response, but it's unnecessary and gives a overhead
             # rag_agent_response = await self.rag_agent.run(ctx)
             # ctx.query += f"\n with tool_response: {rag_agent_response.response} and citations: {rag_agent_response.citations}"

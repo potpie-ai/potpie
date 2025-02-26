@@ -51,9 +51,6 @@ class IntegrationTestAgent(ChatAgent):
         if not ctx.node_ids or len(ctx.node_ids) == 0:
             return ctx
 
-        graph = self.tools_provider.get_code_graph_from_node_id_tool.run(
-            ctx.project_id, ctx.node_ids[0]
-        )
         # Get graphs for each node to understand component relationships
         graphs = {}
         all_node_contexts: List[NodeContext] = []
@@ -108,7 +105,6 @@ class IntegrationTestAgent(ChatAgent):
             }
 
         ctx.additional_context += f"- Code structure is defined in multiple graphs for each component: \n{json.dumps(formatted_graphs, indent=2)}"
-
         ctx.node_ids = [node.node_id for node in unique_node_contexts]
 
         return ctx

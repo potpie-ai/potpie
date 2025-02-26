@@ -12,7 +12,6 @@ class SupervisorAgent(ChatAgent):
         llm_provider: ProviderService,
         agents: Dict[str, AgentWithInfo],
     ):
-
         self.agent = AutoRouterAgent(llm_provider, agents=agents)
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:

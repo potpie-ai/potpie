@@ -76,7 +76,7 @@ class CrewAIAgent(ChatAgent):
         if ctx.node_ids is None:
             ctx.node_ids = []
         if isinstance(ctx.node_ids, str):
-            node_ids = [ctx.node_ids]
+            ctx.node_ids = [ctx.node_ids]
 
         return f"""
                 CONTEXT:
