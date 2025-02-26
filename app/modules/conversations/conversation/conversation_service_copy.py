@@ -505,7 +505,6 @@ class ConversationService:
                 (str(msg.content) if msg.content else msg) for msg in history
             ]
 
-            print(validated_history)
         except Exception:
             raise ConversationServiceError("Failed to get chat history")
 

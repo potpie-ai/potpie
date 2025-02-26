@@ -9,14 +9,16 @@ from sqlalchemy.orm import Session
 from app.modules.intelligence.agents_copy.custom_agents.custom_agent_model import (
     CustomAgent as CustomAgentModel,
 )
-from app.modules.intelligence.agents.custom_agents.custom_agent_schema import (
+from app.modules.intelligence.agents_copy.custom_agents.custom_agent_schema import (
     Agent,
     AgentCreate,
     AgentUpdate,
     Task,
     TaskCreate,
 )
-from app.modules.intelligence.agents.custom_agents.runtime_agent import RuntimeAgent
+from app.modules.intelligence.agents_copy.custom_agents.runtime_agent import (
+    RuntimeAgent,
+)
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )

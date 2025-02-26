@@ -1,10 +1,11 @@
+import json
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
 from ..crewai_agent import CrewAIAgent, AgentConfig, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
-from typing import AsyncGenerator
+from typing import AsyncGenerator, List
 from pydantic import BaseModel
 
 
@@ -55,7 +56,7 @@ class IntegrationTestAgent(ChatAgent):
         )
         # Get graphs for each node to understand component relationships
         graphs = {}
-        all_node_contexts = []
+        all_node_contexts: List[NodeContext] = []
 
         for node_id in ctx.node_ids:
             # Get the code graph for each node
@@ -67,7 +68,7 @@ class IntegrationTestAgent(ChatAgent):
             def extract_unique_node_contexts(node, visited=None):
                 if visited is None:
                     visited = set()
-                node_contexts = []
+                node_contexts: List[NodeContext] = []
                 if node["id"] not in visited:
                     visited.add(node["id"])
                     node_contexts.append(
@@ -85,22 +86,30 @@ class IntegrationTestAgent(ChatAgent):
 
         # Remove duplicates while preserving order
         seen = set()
-        unique_node_contexts = []
+        unique_node_contexts: List[NodeContext] = []
         for node in all_node_contexts:
             if node.node_id not in seen:
                 seen.add(node.node_id)
-                unique_node_contexts.append(ctx)
+                unique_node_contexts.append(node)
 
         # Format graphs for better readability in the prompt
         formatted_graphs = {}
         for node_id, graph in graphs.items():
             formatted_graphs[node_id] = {
+                "name": next(
+                    (
+                        node.name
+                        for node in unique_node_contexts
+                        if node.node_id == node_id
+                    ),
+                    "Unknown",
+                ),
                 "structure": graph["graph"]["root_node"],
             }
 
-        ctx.additional_context += (
-            f"Code Graph context of the node_ids in query: {formatted_graphs}"
-        )
+        ctx.additional_context += f"- Code structure is defined in multiple graphs for each component: \n{json.dumps(formatted_graphs, indent=2)}"
+
+        ctx.node_ids = [node.node_id for node in unique_node_contexts]
 
         return ctx
 
@@ -121,7 +130,6 @@ integration_test_task_prompt = """
     **Process:**
 
     1. **Code Graph Analysis:**
-    - Code structure is defined in the {graph}
     - **Graph Structure:**
         - Analyze the provided graph structure to understand the entire code flow and component interactions.
         - Identify all major components, their dependencies, and interaction points.
