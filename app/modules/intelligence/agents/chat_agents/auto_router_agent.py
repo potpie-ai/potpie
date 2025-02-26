@@ -1,5 +1,5 @@
 from typing import AsyncGenerator, Dict
-from app.modules.intelligence.agents_copy.chat_agent import (
+from app.modules.intelligence.agents.chat_agent import (
     ChatAgentResponse,
     ChatContext,
     ChatAgent,

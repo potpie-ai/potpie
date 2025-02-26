@@ -1,6 +1,6 @@
 from typing import AsyncGenerator
 from langchain_core.output_parsers import PydanticOutputParser
-from app.modules.intelligence.agents_copy.chat_agent import (
+from app.modules.intelligence.agents.chat_agent import (
     ChatAgent,
     ChatAgentResponse,
     ChatContext,
