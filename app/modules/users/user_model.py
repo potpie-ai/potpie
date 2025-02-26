@@ -6,7 +6,7 @@ from app.core.base_model import Base
 from app.modules.conversations.conversation.conversation_model import (  # noqa
     Conversation,
 )
-from app.modules.intelligence.agents.custom_agents.custom_agent_model import (  # noqa
+from app.modules.intelligence.agents_copy.custom_agents.custom_agent_model import (  # noqa
     CustomAgent,
 )
 from app.modules.intelligence.prompts.prompt_model import Prompt  # noqa
