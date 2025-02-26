@@ -450,7 +450,7 @@ String with the following format:
                 status_code=500, detail="Failed to fetch available tools"
             )
 
-    async def get_custom_agent(db: Session, user_id: str, agent_id: str):
+    async def get_custom_agent(self, db: Session, user_id: str, agent_id: str):
         """Validate if an agent exists and belongs to the user"""
         try:
             return (
