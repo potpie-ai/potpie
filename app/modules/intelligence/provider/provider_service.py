@@ -72,11 +72,11 @@ class ProviderService:
         ]
 
     async def set_global_ai_provider(
-        self,
-        user_id: str,
-        provider: str,
-        low_reasoning_model: Optional[str] = None,
-        high_reasoning_model: Optional[str] = None,
+            self,
+            user_id: str,
+            provider: str,
+            low_reasoning_model: Optional[str] = None,
+            high_reasoning_model: Optional[str] = None,
     ):
         provider = provider.lower()
         preferences = self.db.query(UserPreferences).filter_by(user_id=user_id).first()
@@ -96,10 +96,10 @@ class ProviderService:
             api_key_set = await SecretManager.check_secret_exists_for_user(
                 provider, user_id, self.db
             ) or (
-                os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
-            )  # check env keys too for platform providers
+                                  os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
+                          )  # check env keys too for platform providers
             if (
-                low_reasoning_model or high_reasoning_model
+                    low_reasoning_model or high_reasoning_model
             ):  # if user is trying to set custom models for platform provider
                 if not api_key_set:
                     raise ValueError(
@@ -226,7 +226,7 @@ class ProviderService:
         Model is determined by _get_reasoning_model_config.
         """
         if (
-            provider not in self.MODEL_CONFIGS and provider not in PLATFORM_PROVIDERS
+                provider not in self.MODEL_CONFIGS and provider not in PLATFORM_PROVIDERS
         ):  # Allow non-platform providers
             # For non-platform providers, model names must be user specified, retrieve from user preferences
             user_pref = (
@@ -270,7 +270,7 @@ class ProviderService:
             }
 
         elif (
-            provider in self.MODEL_CONFIGS
+                provider in self.MODEL_CONFIGS
         ):  # platform providers with default model configs
             params = {
                 "temperature": 0.3,
@@ -289,11 +289,10 @@ class ProviderService:
 
         if provider == "anthropic":
             params.update({"max_tokens": 8000})
-
         return params
 
     async def call_llm(
-        self, messages: list, size: str = "small", stream: bool = False
+            self, messages: list, size: str = "small", stream: bool = False
     ) -> Union[str, AsyncGenerator[str, None]]:
         """
         Call LLM using LiteLLM's asynchronous completion.
@@ -309,6 +308,9 @@ class ProviderService:
             extra_params["extra_headers"] = createHeaders(
                 api_key=self.portkey_api_key, provider=routing_provider
             )
+        if provider == "azure":
+            extra_params["api_base"] = os.environ.get("AZURE_API_BASE")
+            extra_params["api_version"] = os.environ.get("AZURE_API_VERSION")
 
         try:
             if stream:
@@ -345,7 +347,7 @@ class ProviderService:
             raise e
 
     async def call_llm_with_structured_output(
-        self, messages: list, output_schema: BaseModel, size: str = "small"
+            self, messages: list, output_schema: BaseModel, size: str = "small"
     ) -> Any:
         """
         Call LLM and parse the response into a structured output using a Pydantic model.
@@ -363,7 +365,9 @@ class ProviderService:
             extra_params["extra_headers"] = createHeaders(
                 api_key=self.portkey_api_key, provider=routing_provider
             )
-
+        if provider =="azure":
+            extra_params["api_base"] = os.environ.get("AZURE_API_BASE")
+            extra_params["api_version"] = os.environ.get("AZURE_API_VERSION")
         try:
             if provider == "ollama":
                 # use openai client to call ollama because of https://github.com/BerriAI/litellm/issues/7355
