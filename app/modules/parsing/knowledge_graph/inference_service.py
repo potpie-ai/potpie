@@ -16,9 +16,12 @@ from app.modules.intelligence.provider.provider_service import (
 from app.modules.parsing.knowledge_graph.inference_schema import (
     DocstringRequest,
     DocstringResponse,
+    DocstringNode,
 )
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
+from app.modules.utils.posthog_helper import PostHogClient
+from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +38,10 @@ class InferenceService:
         self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
         self.search_service = SearchService(db)
         self.project_manager = ProjectService(db)
+        self.posthog_client = PostHogClient()
+        self.user_id = user_id
         self.parallel_requests = int(os.getenv("PARALLEL_REQUESTS", 50))
+        self.cache_enabled = os.getenv("ENABLE_SEMANTIC_CACHE", "true").lower() == "true"
 
     def close(self):
         self.driver.close()
@@ -86,10 +92,83 @@ class InferenceService:
         all_nodes = []
         with self.driver.session() as session:
             offset = 0
+            
+            # First, check total nodes and how many have content_hash
+            counts_check = session.run(
+                """
+                MATCH (n:NODE {repoId: $repo_id})
+                RETURN COUNT(n) as total_count,
+                       COUNT(n.content_hash) as hash_count
+                """,
+                repo_id=repo_id
+            )
+            counts = counts_check.single()
+            total_count = counts["total_count"]
+            hash_count = counts["hash_count"]
+            logger.info(f"Found {hash_count} nodes with content_hash out of {total_count} total nodes in repo {repo_id}")
+            
+            # If no hashes found, try to recalculate them
+            if hash_count == 0:
+                logger.warning(f"No content_hash values found in repo {repo_id}, attempting to calculate them")
+                # Calculate each node's content hash and store it directly in our Python code
+                # Retrieve nodes without content hash that have both name and text
+                nodes_to_update = []
+                nodes_query = session.run(
+                    """
+                    MATCH (n:NODE {repoId: $repo_id})
+                    WHERE n.name IS NOT NULL AND n.text IS NOT NULL
+                    AND (n.content_hash IS NULL)
+                    RETURN n.node_id AS node_id, n.name AS name, n.text AS text
+                    """,
+                    repo_id=repo_id
+                )
+                
+                # Calculate SHA-256 hash in Python and prepare batch updates
+                import hashlib
+                for record in nodes_query:
+                    node_id = record["node_id"]
+                    name = record["name"] or ""
+                    text = record["text"] or ""
+                    
+                    # Normalize whitespace and combine name and text (same as our generate_content_hash method)
+                    normalized_name = " ".join(name.split())
+                    normalized_text = " ".join(text.split())
+                    combined_string = f"{normalized_name}:{normalized_text}"
+                    
+                    # Create SHA-256 hash
+                    hash_object = hashlib.sha256()
+                    hash_object.update(combined_string.encode("utf-8"))
+                    content_hash = hash_object.hexdigest()
+                    
+                    nodes_to_update.append({
+                        "node_id": node_id,
+                        "content_hash": content_hash
+                    })
+                
+                # Apply updates in batches
+                batch_size = 500
+                total_updated = 0
+                for i in range(0, len(nodes_to_update), batch_size):
+                    batch = nodes_to_update[i:i+batch_size]
+                    update_result = session.run(
+                        """
+                        UNWIND $batch AS item
+                        MATCH (n:NODE {repoId: $repo_id, node_id: item.node_id})
+                        SET n.content_hash = item.content_hash
+                        """,
+                        batch=batch,
+                        repo_id=repo_id
+                    )
+                    total_updated += len(batch)
+                
+                logger.info(f"Updated content_hash for {total_updated} nodes in repo {repo_id}")
+            
+            # Now fetch all nodes including content_hash
             while True:
                 result = session.run(
                     "MATCH (n:NODE {repoId: $repo_id}) "
-                    "RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path, n.start_line AS start_line, n.end_line AS end_line, n.name AS name "
+                    "RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path, n.start_line AS start_line, "
+                    "n.end_line AS end_line, n.name AS name, n.content_hash AS content_hash "
                     "SKIP $offset LIMIT $limit",
                     repo_id=repo_id,
                     offset=offset,
@@ -100,7 +179,10 @@ class InferenceService:
                     break
                 all_nodes.extend(batch)
                 offset += batch_size
+                
         logger.info(f"DEBUGNEO4J: Fetched {len(all_nodes)} nodes for repo {repo_id}")
+        nodes_with_hash = sum(1 for node in all_nodes if node.get("content_hash"))
+        logger.info(f"CONTENT_HASH: {nodes_with_hash} out of {len(all_nodes)} nodes have content hash ({(nodes_with_hash/len(all_nodes))*100:.2f}%)")
         return all_nodes
 
     def get_entry_points(self, repo_id: str) -> List[str]:
@@ -239,7 +321,12 @@ class InferenceService:
                 current_tokens = 0
 
             current_batch.append(
-                DocstringRequest(node_id=node["node_id"], text=updated_text)
+                DocstringRequest(
+                    node_id=node["node_id"], 
+                    text=updated_text,
+                    content_hash=node.get("content_hash"),
+                    name=node.get("name", "")
+                )
             )
             current_tokens += node_tokens
 
@@ -400,6 +487,180 @@ class InferenceService:
             logger.error(f"Entry point response generation failed: {e}")
             return DocstringResponse(docstrings=[])
 
+    def find_cached_nodes(self, content_hashes: List[str]) -> Dict[str, Dict]:
+        """
+        Finds nodes with matching content hashes from the global cache.
+        
+        Args:
+            content_hashes: List of content hashes to look up
+            
+        Returns:
+            Dictionary mapping content_hash to cached node data (docstring, tags, embedding)
+        """
+        if not content_hashes or not self.cache_enabled:
+            return {}
+            
+        cached_nodes = {}
+        with self.driver.session() as session:
+            
+            # Create the index regardless - Neo4j will handle if it already exists
+            try:
+                # Create content_hash index without checking if it exists first
+                logger.info("Creating content_hash index for better cache lookup performance")
+                session.run(
+                    """
+                    CREATE INDEX content_hash_idx IF NOT EXISTS
+                    FOR (n:NODE) ON (n.content_hash)
+                    """
+                )
+            except Exception as e:
+                logger.warning(f"Error creating content_hash index: {str(e)}")
+                # Fall back to simpler index creation if the above doesn't work
+                try:
+                    session.run("CREATE INDEX ON :NODE(content_hash)")
+                except Exception as e2:
+                    logger.warning(f"Error creating fallback index: {str(e2)}")
+                    # Continue without index - will be slower but should still work
+            
+            # Count nodes with content_hash and docstring for debugging
+            count_query = session.run(
+                """
+                MATCH (n:NODE) 
+                WHERE n.content_hash IS NOT NULL AND n.docstring IS NOT NULL
+                RETURN COUNT(n) AS nodeCount
+                """
+            )
+            count_record = count_query.single()
+            if count_record:
+                logger.info(f"Total nodes with content_hash and docstring in database: {count_record['nodeCount']}")
+            
+            # Process in batches to avoid query size limitations
+            batch_size = 500
+            for i in range(0, len(content_hashes), batch_size):
+                batch_hashes = content_hashes[i:i+batch_size]
+                # Add debugging to see what's happening
+                logger.info(f"Looking up {len(batch_hashes)} content hashes in the cache")
+                
+                # Get a sample of hashes for debugging
+                sample = batch_hashes[:5] if len(batch_hashes) > 5 else batch_hashes
+                logger.info(f"Sample hashes being looked up: {sample}")
+                
+                # Try to directly find one hash for debugging
+                if batch_hashes:
+                    test_hash = batch_hashes[0]
+                    test_result = session.run(
+                        """
+                        MATCH (n:NODE)
+                        WHERE n.content_hash = $test_hash
+                        RETURN COUNT(n) as count
+                        """,
+                        test_hash=test_hash
+                    )
+                    test_count = test_result.single()["count"]
+                    logger.info(f"Direct test lookup for hash {test_hash}: found {test_count} nodes")
+                
+                # Find all matching nodes with the requested content hashes
+                result = session.run(
+                    """
+                    // For each content hash, find the best match with a docstring and embedding
+                    UNWIND $content_hashes as hash
+                    MATCH (n:NODE {content_hash: hash})
+                    WHERE n.docstring IS NOT NULL AND n.embedding IS NOT NULL
+                    // Add more detailed logging to debug what's happening
+                    WITH hash, collect(n) as nodes
+                    WITH hash, nodes, size(nodes) as count
+                    
+                    // If we found any nodes, return one of them
+                    WHERE count > 0
+                    WITH hash, nodes[0] as bestNode
+                    
+                    RETURN hash as content_hash, 
+                           bestNode.docstring AS docstring, 
+                           bestNode.tags AS tags, 
+                           bestNode.embedding AS embedding
+                    """,
+                    content_hashes=batch_hashes
+                )
+                
+                # Get all records and log the count
+                records = list(result)
+                logger.info(f"Found {len(records)} matching nodes with content_hash in the cache")
+                
+                # Get detailed info about which hashes matched and which didn't
+                found_hashes = set(record["content_hash"] for record in records)
+                missed_hashes = set(batch_hashes) - found_hashes
+                
+                if missed_hashes:
+                    logger.info(f"MISSED CACHE: {len(missed_hashes)}/{len(batch_hashes)} content hashes not found in cache")
+                    
+                    # Get all nodes in the database with their docstrings and embeddings status
+                    node_stats = session.run(
+                        """
+                        MATCH (n:NODE)
+                        WHERE n.content_hash IS NOT NULL
+                        RETURN 
+                            COUNT(n) AS total_nodes,
+                            COUNT(CASE WHEN n.docstring IS NOT NULL THEN 1 END) AS nodes_with_docstring,
+                            COUNT(CASE WHEN n.embedding IS NOT NULL THEN 1 END) AS nodes_with_embedding,
+                            COUNT(CASE WHEN n.docstring IS NOT NULL AND n.embedding IS NOT NULL THEN 1 END) AS nodes_with_both
+                        """
+                    )
+                    
+                    stats = node_stats.single()
+                    if stats:
+                        logger.info(f"DATABASE STATS: Total nodes with content_hash: {stats['total_nodes']}, " +
+                                  f"with docstring: {stats['nodes_with_docstring']}, " +
+                                  f"with embedding: {stats['nodes_with_embedding']}, " +
+                                  f"with both: {stats['nodes_with_both']}")
+                    
+                    # Get a sample of missed hashes
+                    sample_missed = list(missed_hashes)[:3] if len(missed_hashes) > 3 else list(missed_hashes)
+                    if sample_missed:
+                        logger.info(f"MISSED HASH EXAMPLES: {sample_missed}")
+                        
+                        # Look for these hashes in the database
+                        for missed_hash in sample_missed:
+                            verification = session.run(
+                                """
+                                MATCH (n:NODE)
+                                WHERE n.content_hash = $hash
+                                RETURN n.node_id AS node_id, n.name AS name, n.file_path AS file_path,
+                                      n.docstring IS NOT NULL as has_docstring,
+                                      n.embedding IS NOT NULL as has_embedding
+                                """,
+                                hash=missed_hash
+                            )
+                            
+                            verification_records = list(verification)
+                            if verification_records:
+                                for v_record in verification_records:
+                                    logger.info(f"  Found missed hash {missed_hash} in node {v_record['node_id']}, name: {v_record['name']}, file: {v_record['file_path']}, has_docstring: {v_record['has_docstring']}, has_embedding: {v_record['has_embedding']}")
+                            else:
+                                logger.info(f"  Missed hash {missed_hash} not found in ANY node in the database")
+                            
+                    # Also check for file changes between the two branches
+                    missed_files_check = session.run(
+                        """
+                        MATCH (n:NODE)
+                        WHERE n.content_hash IN $missed_hashes
+                        RETURN DISTINCT n.file_path AS file_path
+                        """,
+                        missed_hashes=list(missed_hashes)
+                    )
+                    
+                    missed_files = [record["file_path"] for record in missed_files_check]
+                    if missed_files:
+                        logger.info(f"CACHE MISS FILES: {missed_files}")
+                
+                for record in records:
+                    cached_nodes[record["content_hash"]] = {
+                        "docstring": record["docstring"],
+                        "tags": record["tags"],
+                        "embedding": record["embedding"]
+                    }
+                    
+        return cached_nodes
+
     async def generate_docstrings(self, repo_id: str) -> Dict[str, DocstringResponse]:
         logger.info(
             f"DEBUGNEO4J: Function: {self.generate_docstrings.__name__}, Repo ID: {repo_id}"
@@ -436,52 +697,121 @@ class InferenceService:
         )
 
         await self.search_service.commit_indices()
-        # entry_points = self.get_entry_points(repo_id)
-        # logger.info(
-        #     f"DEBUGNEO4J: After get entry points, Repo ID: {repo_id}, Entry points: {len(entry_points)}"
-        # )
-        # self.log_graph_stats(repo_id)
-        # entry_points_neighbors = {}
-        # for entry_point in entry_points:
-        #     neighbors = self.get_neighbours(entry_point, repo_id)
-        #     entry_points_neighbors[entry_point] = neighbors
-
-        # logger.info(
-        #     f"DEBUGNEO4J: After get neighbours, Repo ID: {repo_id}, Entry points neighbors: {len(entry_points_neighbors)}"
-        # )
-        # self.log_graph_stats(repo_id)
-        batches = self.batch_nodes(nodes)
-        all_docstrings = {"docstrings": []}
-
-        semaphore = asyncio.Semaphore(self.parallel_requests)
-
-        async def process_batch(batch, batch_index: int):
-            async with semaphore:
-                logger.info(f"Processing batch {batch_index} for project {repo_id}")
-                response = await self.generate_response(batch, repo_id)
-                if not isinstance(response, DocstringResponse):
-                    logger.warning(
-                        f"Parsing project {repo_id}: Invalid response from LLM. Not an instance of DocstringResponse. Retrying..."
-                    )
-                    response = await self.generate_response(batch, repo_id)
+        
+        # Apply semantic caching to skip LLM calls for nodes with matching content
+        nodes_to_process = []
+        cached_nodes_count = 0
+        cache_hits = []
+        
+        if self.cache_enabled:
+            # Extract content hashes from nodes
+            content_hashes = [node.get("content_hash") for node in nodes if node.get("content_hash")]
+            
+            if content_hashes:
+                # Log this for debugging purposes
+                logger.info(f"Found {len(content_hashes)} nodes with content hash out of {len(nodes)} total nodes")
+                # Show a sample of the hashes
+                sample_hashes = content_hashes[:5] if len(content_hashes) > 5 else content_hashes
+                logger.info(f"Sample content hashes: {sample_hashes}")
+                
+                # Show a sample node with its properties
+                sample_node = next((n for n in nodes if n.get("content_hash")), None)
+                if sample_node:
+                    logger.info(f"Sample node with content_hash: {sample_node}")
                 else:
-                    self.update_neo4j_with_docstrings(repo_id, response)
-                return response
-
-        tasks = [process_batch(batch, i) for i, batch in enumerate(batches)]
-        results = await asyncio.gather(*tasks)
-
-        for result in results:
-            if not isinstance(result, DocstringResponse):
-                logger.error(
-                    f"Project {repo_id}: Invalid response from during inference. Manually verify the project completion."
+                    logger.warning("No nodes with content_hash field found to display")
+                
+                # Find matching nodes in the cache
+                cached_nodes_map = self.find_cached_nodes(content_hashes)
+                logger.info(f"Cache lookup returned {len(cached_nodes_map)} hits")
+                
+                # Process each node - either use cache or mark for LLM processing
+                for node in nodes:
+                    content_hash = node.get("content_hash")
+                    if content_hash and content_hash in cached_nodes_map:
+                        # Use the cached result
+                        cache_hits.append({
+                            "node_id": node["node_id"],
+                            "docstring": cached_nodes_map[content_hash]["docstring"],
+                            "tags": cached_nodes_map[content_hash]["tags"],
+                            "embedding": cached_nodes_map[content_hash]["embedding"]
+                        })
+                        cached_nodes_count += 1
+                    else:
+                        # Node needs LLM processing
+                        nodes_to_process.append(node)
+            else:
+                logger.warning("No nodes with content_hash found - all nodes will be processed")
+                nodes_to_process = nodes
+        else:
+            # If caching is disabled, process all nodes
+            logger.info("Semantic caching is disabled")
+            nodes_to_process = nodes
+        
+        # Log cache metrics
+        cache_hit_rate = 0 if not nodes else (cached_nodes_count / len(nodes)) * 100
+        logger.info(f"Semantic cache hit rate: {cache_hit_rate:.2f}% ({cached_nodes_count}/{len(nodes)} nodes)")
+        
+        # Send cache metrics to PostHog
+        self.posthog_client.send_event(
+            self.user_id,
+            "semantic_cache_metrics",
+            {
+                "project_id": repo_id,
+                "total_nodes": len(nodes),
+                "cache_hits": cached_nodes_count,
+                "cache_hit_rate": cache_hit_rate
+            }
+        )
+        
+        # Create a DocstringResponse for cached nodes
+        cached_docstrings = DocstringResponse(docstrings=[])
+        for hit in cache_hits:
+            cached_docstrings.docstrings.append(
+                DocstringNode(
+                    node_id=hit["node_id"],
+                    docstring=hit["docstring"],
+                    tags=hit["tags"]
                 )
+            )
+        
+        # Update Neo4j with cached results immediately
+        if cached_nodes_count > 0:
+            self.update_neo4j_with_docstrings(repo_id, cached_docstrings)
+        
+        # If we have nodes that need processing, proceed with LLM inference
+        all_docstrings = {"docstrings": cached_docstrings.docstrings}
+        
+        if nodes_to_process:
+            batches = self.batch_nodes(nodes_to_process)
+            
+            semaphore = asyncio.Semaphore(self.parallel_requests)
 
-        # updated_docstrings = await self.generate_docstrings_for_entry_points(
-        #     all_docstrings, entry_points_neighbors
-        # )
-        updated_docstrings = all_docstrings
-        return updated_docstrings
+            async def process_batch(batch, batch_index: int):
+                async with semaphore:
+                    logger.info(f"Processing batch {batch_index} for project {repo_id}")
+                    response = await self.generate_response(batch, repo_id)
+                    if not isinstance(response, DocstringResponse):
+                        logger.warning(
+                            f"Parsing project {repo_id}: Invalid response from LLM. Not an instance of DocstringResponse. Retrying..."
+                        )
+                        response = await self.generate_response(batch, repo_id)
+                    else:
+                        self.update_neo4j_with_docstrings(repo_id, response)
+                    return response
+
+            tasks = [process_batch(batch, i) for i, batch in enumerate(batches)]
+            results = await asyncio.gather(*tasks)
+
+            for result in results:
+                if not isinstance(result, DocstringResponse):
+                    logger.error(
+                        f"Project {repo_id}: Invalid response during inference. Manually verify the project completion."
+                    )
+                else:
+                    all_docstrings["docstrings"].extend(result.docstrings)
+
+        return all_docstrings
 
     async def generate_response(
         self, batch: List[DocstringRequest], repo_id: str
@@ -604,15 +934,79 @@ class InferenceService:
             project = self.project_manager.get_project_from_db_by_id_sync(repo_id)
             repo_path = project.get("repo_path")
             is_local_repo = True if repo_path else False
+            
+            # First, fetch all relevant properties for each node
+            node_properties = {}
             for i in range(0, len(docstring_list), batch_size):
                 batch = docstring_list[i : i + batch_size]
+                node_ids = [item["node_id"] for item in batch]
+                
+                # Get content_hash and other properties
+                hash_result = session.run(
+                    """
+                    MATCH (n:NODE {repoId: $repo_id})
+                    WHERE n.node_id IN $node_ids
+                    RETURN 
+                      n.node_id AS node_id, 
+                      n.content_hash AS content_hash,
+                      n.name AS name,
+                      n.text AS text
+                    """,
+                    repo_id=repo_id,
+                    node_ids=node_ids
+                )
+                
+                for record in hash_result:
+                    node_id = record["node_id"]
+                    node_properties[node_id] = {
+                        "content_hash": record["content_hash"],
+                        "name": record["name"],
+                        "text": record["text"]
+                    }
+            
+            # Update nodes with docstrings and embeddings
+            for i in range(0, len(docstring_list), batch_size):
+                batch = docstring_list[i : i + batch_size]
+                
+                # Add properties to each item in the batch
+                for item in batch:
+                    node_id = item["node_id"]
+                    if node_id in node_properties:
+                        props = node_properties[node_id]
+                        
+                        # If content_hash is missing but we have name and text, calculate it
+                        if props["content_hash"] is None and props["name"] and props["text"]:
+                            # Use the same algorithm as in CodeGraphService
+                            import hashlib
+                            name = props["name"] or ""
+                            text = props["text"] or ""
+                            
+                            # Normalize whitespace and combine name and text
+                            normalized_name = " ".join(name.split())
+                            normalized_text = " ".join(text.split())
+                            combined_string = f"{normalized_name}:{normalized_text}"
+                            
+                            # Create a SHA-256 hash of the combined string
+                            hash_object = hashlib.sha256()
+                            hash_object.update(combined_string.encode("utf-8"))
+                            props["content_hash"] = hash_object.hexdigest()
+                            
+                        # Add properties to item
+                        item["content_hash"] = props["content_hash"]
+                
+                # Log what we're updating
+                nodes_with_hash = sum(1 for item in batch if item.get("content_hash"))
+                logger.info(f"Updating {len(batch)} nodes, {nodes_with_hash} have content_hash")
+                
+                # Execute the update
                 session.run(
                     """
                     UNWIND $batch AS item
                     MATCH (n:NODE {repoId: $repo_id, node_id: item.node_id})
                     SET n.docstring = item.docstring,
                         n.embedding = item.embedding,
-                        n.tags = item.tags
+                        n.tags = item.tags,
+                        n.content_hash = item.content_hash
                     """
                     + ("" if is_local_repo else "REMOVE n.text, n.signature"),
                     batch=batch,
@@ -621,6 +1015,7 @@ class InferenceService:
 
     def create_vector_index(self):
         with self.driver.session() as session:
+            # Create vector index for embeddings
             session.run(
                 """
                 CREATE VECTOR INDEX docstring_embedding IF NOT EXISTS
@@ -630,6 +1025,14 @@ class InferenceService:
                     `vector.dimensions`: 384,
                     `vector.similarity_function`: 'cosine'
                 }}
+                """
+            )
+            
+            # Create index on content_hash for faster cache lookups
+            session.run(
+                """
+                CREATE INDEX content_hash_idx IF NOT EXISTS
+                FOR (n:NODE) ON (n.content_hash)
                 """
             )
 

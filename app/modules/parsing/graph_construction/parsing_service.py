@@ -277,6 +277,7 @@ class ParsingService:
                            n.start_line AS start_line, n.end_line AS end_line, n.name AS name,
                            COALESCE(n.docstring, '') AS docstring,
                            COALESCE(n.embedding, []) AS embedding,
+                           COALESCE(n.content_hash, null) AS content_hash,
                            labels(n) AS labels
                     SKIP $offset LIMIT $limit
                     """
@@ -303,7 +304,8 @@ class ParsingService:
                         end_line: node.end_line,
                         name: node.name,
                         docstring: node.docstring,
-                        embedding: node.embedding
+                        embedding: node.embedding,
+                        content_hash: COALESCE(node.content_hash, null)
                     }) YIELD node AS new_node
                     RETURN new_node
                     """
