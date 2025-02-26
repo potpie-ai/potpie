@@ -6,7 +6,6 @@ from fastapi import HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.modules.intelligence.agents.base_agent_service import BaseAgentService
 from app.modules.intelligence.agents_copy.custom_agents.custom_agent_model import (
     CustomAgent as CustomAgentModel,
 )
@@ -22,14 +21,16 @@ from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
+from app.modules.key_management.secret_manager import SecretManager
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
 
-class CustomAgentService(BaseAgentService):
+class CustomAgentService:
     def __init__(self, db: Session):
-        super().__init__(db)
+        self.db = db
+        self.secret_manager = SecretManager()
 
     async def _get_agent_by_id_and_user(
         self, agent_id: str, user_id: str
@@ -450,7 +451,7 @@ String with the following format:
                 status_code=500, detail="Failed to fetch available tools"
             )
 
-    async def get_custom_agent(db: Session, user_id: str, agent_id: str):
+    async def get_custom_agent(self, db: Session, user_id: str, agent_id: str):
         """Validate if an agent exists and belongs to the user"""
         try:
             return (

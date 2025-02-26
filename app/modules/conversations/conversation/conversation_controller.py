@@ -9,7 +9,7 @@ from app.modules.conversations.conversation.conversation_schema import (
     CreateConversationRequest,
     CreateConversationResponse,
 )
-from app.modules.conversations.conversation.conversation_service import (
+from app.modules.conversations.conversation.conversation_service_copy import (
     AccessTypeNotFoundError,
     AccessTypeReadError,
     ConversationNotFoundError,
