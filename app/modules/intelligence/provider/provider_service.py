@@ -310,8 +310,8 @@ class ProviderService:
                 api_key=self.portkey_api_key, provider=routing_provider
             )
         if provider == "azure":
-            extra_params["api_base"] = os.environ.get("AZURE_API_BASE")
-            extra_params["api_version"] = os.environ.get("AZURE_API_VERSION")
+            extra_params["api_base"] = os.environ.get("LLM_API_BASE")
+            extra_params["api_version"] = os.environ.get("LLM_API_VERSION")
 
         try:
             if stream:
@@ -367,8 +367,8 @@ class ProviderService:
                 api_key=self.portkey_api_key, provider=routing_provider
             )
         if provider =="azure":
-            extra_params["api_base"] = os.environ.get("AZURE_API_BASE")
-            extra_params["api_version"] = os.environ.get("AZURE_API_VERSION")
+            extra_params["api_base"] = os.environ.get("LLM_API_BASE")
+            extra_params["api_version"] = os.environ.get("LLM_API_VERSION")
         try:
             if provider == "ollama":
                 # use openai client to call ollama because of https://github.com/BerriAI/litellm/issues/7355
@@ -421,6 +421,9 @@ class ProviderService:
                 )
                 crewai_params["extra_headers"] = headers
                 crewai_params["base_url"] = PORTKEY_GATEWAY_URL
+            if provider == "azure":
+                crewai_params["api_base"] = os.environ.get("LLM_API_BASE")
+                crewai_params["api_version"] = os.environ.get("LLM_API_VERSION")
             return LLM(**crewai_params)
         else:
             return None
