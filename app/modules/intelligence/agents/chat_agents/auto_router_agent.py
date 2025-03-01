@@ -55,8 +55,10 @@ class AutoRouterAgent(ChatAgent):
                 if confidence >= 0.5 and self.agents[agent_id]
                 else ctx.curr_agent_id
             )
-        except (ValueError, TypeError):
-            logger.error("Classification format error, falling back to current agent")
+        except (ValueError, TypeError, KeyError) as e:
+            logger.error(
+                "Classification format error, falling back to current agent: %e", e
+            )
             selected_agent_id = ctx.curr_agent_id
 
         return self.agents[selected_agent_id].agent
