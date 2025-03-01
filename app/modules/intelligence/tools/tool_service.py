@@ -7,12 +7,14 @@ from app.modules.intelligence.tools.change_detection.change_detection_tool impor
 )
 from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
     get_code_file_structure_tool,
+    GetCodeFileStructureTool,
 )
 from app.modules.intelligence.tools.code_query_tools.get_code_from_node_name_tool import (
     get_code_from_node_name_tool,
 )
 from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id_tool import (
     get_code_graph_from_node_id_tool,
+    GetCodeGraphFromNodeIdTool,
 )
 from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_name_tool import (
     get_code_graph_from_node_name_tool,
@@ -25,6 +27,7 @@ from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_t
 )
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_multiple_node_ids_tool import (
     get_code_from_multiple_node_ids_tool,
+    GetCodeFromMultipleNodeIdsTool,
 )
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     get_code_from_node_id_tool,
@@ -48,7 +51,20 @@ class ToolService:
         self.user_id = user_id
         self.webpage_extractor_tool = webpage_extractor_tool(db, user_id)
         self.github_tool = github_tool(db, user_id)
+        self.get_code_from_multiple_node_ids_tool = GetCodeFromMultipleNodeIdsTool(
+            self.db, self.user_id
+        )
+        self.get_code_graph_from_node_id_tool = GetCodeGraphFromNodeIdTool(db)
+        self.file_structure_tool = GetCodeFileStructureTool(db)
         self.tools = self._initialize_tools()
+
+    def get_tools(self, tool_names: List[str]) -> List[Any]:
+        """get tools if exists"""
+        tools = []
+        for tool_name in tool_names:
+            if self.tools.get(tool_name) is not None:
+                tools.append(self.tools[tool_name])
+        return tools
 
     def _initialize_tools(self) -> Dict[str, Any]:
         tools = {
