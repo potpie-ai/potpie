@@ -307,9 +307,12 @@ class ProviderService:
             # ollama + portkey is not supported currently
             extra_params["base_url"] = PORTKEY_GATEWAY_URL
             extra_params["extra_headers"] = createHeaders(
-                api_key=self.portkey_api_key, provider=routing_provider
+                api_key=self.portkey_api_key,
+                provider=routing_provider,
+                custom_host=os.environ.get("LLM_API_BASE"),
+                api_version=os.environ.get("LLM_API_VERSION"),
             )
-        if provider == "azure":
+        elif provider == "azure":
             extra_params["api_base"] = os.environ.get("LLM_API_BASE")
             extra_params["api_version"] = os.environ.get("LLM_API_VERSION")
 
@@ -364,11 +367,15 @@ class ProviderService:
             # ollama + portkey is not supported currently
             extra_params["base_url"] = PORTKEY_GATEWAY_URL
             extra_params["extra_headers"] = createHeaders(
-                api_key=self.portkey_api_key, provider=routing_provider
+                api_key=self.portkey_api_key,
+                provider=routing_provider,
+                custom_host=os.environ.get("LLM_API_BASE"),
+                api_version=os.environ.get("LLM_API_VERSION"),
             )
-        if provider =="azure":
+        elif provider == "azure":
             extra_params["api_base"] = os.environ.get("LLM_API_BASE")
             extra_params["api_version"] = os.environ.get("LLM_API_VERSION")
+
         try:
             if provider == "ollama":
                 # use openai client to call ollama because of https://github.com/BerriAI/litellm/issues/7355
@@ -413,28 +420,20 @@ class ProviderService:
             if "default_headers" in params:
                 crewai_params["headers"] = params["default_headers"]
 
-            LLM_API_BASE = os.environ.get("LLM_API_BASE")
-            LLM_API_VERSION = os.environ.get("LLM_API_VERSION")
             if self.portkey_api_key and routing_provider != "ollama":
                 # ollama + portkey is not supported currently
                 headers = createHeaders(
                     api_key=self.portkey_api_key,
                     provider=routing_provider,
                     trace_id=str(uuid.uuid4())[:8],
+                    custom_host= os.environ.get("LLM_API_BASE"),
+                    api_version= os.environ.get("LLM_API_VERSION"),
                 )
-
-                if routing_provider == "azure":
-                    headers["custom_host"] = LLM_API_BASE
-                    crewai_params["extra_headers"] = headers
-                    crewai_params["base_url"] = PORTKEY_GATEWAY_URL
-                    crewai_params["api_version"] = LLM_API_VERSION
-                else:
-                    crewai_params["extra_headers"] = headers
-                    crewai_params["base_url"] = PORTKEY_GATEWAY_URL
-
+                crewai_params["extra_headers"] = headers
+                crewai_params["base_url"] = PORTKEY_GATEWAY_URL
             elif routing_provider == "azure":
-                crewai_params["api_base"] = LLM_API_BASE
-                crewai_params["api_version"] = LLM_API_VERSION
+                crewai_params["api_base"] = os.environ.get("LLM_API_BASE")
+                crewai_params["api_version"] = os.environ.get("LLM_API_VERSION")
             return LLM(**crewai_params)
         else:
             return None
