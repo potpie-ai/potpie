@@ -8,7 +8,7 @@ from app.modules.intelligence.agents.chat_agent import (
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
-
+from pydantic import BaseModel, Field
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,10 @@ class AutoRouterAgent(ChatAgent):
         self.llm_provider = llm_provider
         self.agents = agents
         self.agent_descriptions = "\n".join(
-            [f"- {agents[id].id}: {agents[id].description}" for id in agents]
+            [
+                f"agent_id: {agents[id].id}\n description: {agents[id].description}\n\n"
+                for id in agents
+            ]
         )
 
     async def _run_classification(
@@ -45,20 +48,24 @@ class AutoRouterAgent(ChatAgent):
             {"role": "user", "content": prompt},
         ]
 
-        classification: str = await self.llm_provider.call_llm(messages=messages)  # type: ignore
+        classification: ClassificationRespone = (
+            await self.llm_provider.call_llm_with_structured_output(
+                messages=messages,
+                output_schema=ClassificationRespone,  # type: ignore
+            )
+        )
 
         try:
-            agent_id, confidence = classification.strip("`").split("|")
-            confidence = float(confidence)
+            agent_id = classification.agent_id
+            confidence = float(classification.confidence_score)
             selected_agent_id = (
                 agent_id
                 if confidence >= 0.5 and self.agents[agent_id]
                 else ctx.curr_agent_id
             )
+            logger.info(f"Classification successful: using {selected_agent_id} agent")
         except (ValueError, TypeError, KeyError) as e:
-            logger.error(
-                "Classification format error, falling back to current agent: %e", e
-            )
+            logger.error("Classification error, falling back to current agent: %e", e)
             selected_agent_id = ctx.curr_agent_id
 
         return self.agents[selected_agent_id].agent
@@ -73,6 +80,13 @@ class AutoRouterAgent(ChatAgent):
         agent = await self._run_classification(ctx, self.agent_descriptions)
         async for chunk in agent.run_stream(ctx):
             yield chunk
+
+
+class ClassificationRespone(BaseModel):
+    agent_id: str = Field(description="agent_id of the best matching agent")
+    confidence_score: str = Field(
+        description="confidence score of the best matching agent, should be the maximum confidence score and be a valid floating point number"
+    )
 
 
 classification_prompt = """
@@ -107,13 +121,4 @@ classification_prompt = """
     - 0.5-0.7: Partial or related match, not a direct specialty.
     - Below 0.5: Weak match; consider if another agent is more suitable, but still choose the best available option.
 
-    Final Output Requirements:
-    - Return ONLY the chosen agent_id and the confidence score in the format:
-    `agent_id|confidence`
-
-    Examples:
-    - Direct expertise match: `debugging_agent|0.95`
-    - Related capability (current agent): `current_agent_id|0.75`
-    - Need different expertise: `ml_training_agent|0.85`
-    - Overlapping domains, choose more specialized: `choose_higher_expertise_agent|0.80`
 """
