@@ -31,6 +31,10 @@
     <img src="https://img.shields.io/badge/Join%20our-Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join our Discord">
 </a>
 </br>
+<a href="https://marketplace.visualstudio.com/items?itemName=PotpieAI.potpie-vscode-extension">
+    <img src="https://custom-icon-badges.demolab.com/badge/Visual%20Studio%20Code-0078d7.svg?logo=vsc&logoColor=white" alt="VS Code Extension">
+</a>
+</br>
 <a href="https://twitter.com/intent/tweet?text=I%20created%20custom%20engineering%20agents%20for%20my%20codebase%20in%20minutes%20with%20potpie.ai%20@potpiedotai%20!🥧">
     <img alt="tweet" src="https://img.shields.io/twitter/url/http/shields.io.svg?style=social">
 </a>
