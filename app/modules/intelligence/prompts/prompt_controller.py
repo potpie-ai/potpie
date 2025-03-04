@@ -1,6 +1,7 @@
 from typing import Optional
 
 from fastapi import HTTPException
+from sqlalchemy.orm import Session
 
 from app.modules.intelligence.prompts.prompt_schema import (
     PromptCreate,
@@ -13,6 +14,15 @@ from app.modules.intelligence.prompts.prompt_service import (
     PromptService,
     PromptServiceError,
 )
+from app.modules.intelligence.agents.agents_service import AgentsService  
+from app.modules.intelligence.prompts.prompt_schema import RequestModel
+from app.modules.conversations.conversation.conversation_model import Conversation
+from app.modules.intelligence.agents.custom_agents.custom_agent_model import CustomAgent
+from app.modules.conversations.message.message_model import (
+    Message,
+    MessageStatus,
+)
+from app.modules.conversations.message.message_schema import MessageResponse
 
 
 class PromptController:
@@ -74,3 +84,65 @@ class PromptController:
             return await prompt_service.list_prompts(query, skip, limit, user_id)
         except PromptServiceError as e:
             raise HTTPException(status_code=500, detail=str(e))
+    
+    @staticmethod
+    async def enhance_prompt(
+        request_body: RequestModel,
+        db: Session,
+        user: dict,
+    ) -> str:
+        
+        messages = (
+        db.query(Message)
+        .filter_by(conversation_id=request_body.conversation_id)
+        .filter_by(status=MessageStatus.ACTIVE)
+        .order_by(Message.created_at.desc())  
+        .limit(2)  
+        .all()
+        )
+
+        #to get them in chronological order
+        messages.reverse()
+
+        last_messages =  [
+            MessageResponse(
+                id=message.id,
+                conversation_id=message.conversation_id,
+                content=message.content,
+                sender_id=message.sender_id,
+                type=message.type,
+                status=message.status,
+                created_at=message.created_at,
+                citations=(message.citations.split(",") if message.citations else None),
+            )
+            for message in messages
+        ]
+
+
+        agents_service = AgentsService(db)
+        available_agents = await agents_service.list_available_agents(user, list_system_agents=True)
+
+        agent_ids = (
+            db.query(Conversation.agent_ids)
+            .filter_by(id=request_body.conversation_id)  
+            .scalar()                                                                                                                                                                                                                                                                                                                                           
+        ) or []
+        
+        is_custom_agent = db.query(CustomAgent).filter(CustomAgent.id.in_(agent_ids)).first() is not None
+
+        
+        if not is_custom_agent:
+            enhanced_prompt = await PromptService(db).enhance_prompt(
+                request_body.prompt,
+                last_messages,
+                user,
+                agent_ids,
+                available_agents
+            )
+        else:
+            enhanced_prompt = await PromptService(db).enhance_prompt(
+                request_body.prompt,
+                last_messages,
+                user,
+            )
+        return enhanced_prompt
