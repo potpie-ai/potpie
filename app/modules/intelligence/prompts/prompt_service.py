@@ -348,15 +348,23 @@ class PromptService:
         prompt: str,
         last_messages: List[MessageResponse],
         user: dict,
-        agent_ids = None,
-        available_agents = None,
+        agent_ids=None,
+        available_agents=None,
     ) -> str:
-       
+
         if agent_ids and available_agents:
-            inputs = {"query": prompt, "history": [msg.content for msg in last_messages],"agent_id": agent_ids,"available_agents": available_agents,}
+            inputs = {
+                "query": prompt,
+                "history": [msg.content for msg in last_messages],
+                "agent_id": agent_ids,
+                "available_agents": available_agents,
+            }
 
             messages = [
-                {"role": "system", "content": get_prompt("Enhancer_Prompt_With_Classification")},
+                {
+                    "role": "system",
+                    "content": get_prompt("Enhancer_Prompt_With_Classification"),
+                },
                 {
                     "role": "user",
                     "content": f"Query: {inputs['query']}\nHistory: {inputs['history']}\nCurent Agent Id: {inputs['agent_id']}\nAvailable Agents: {inputs['available_agents']}\n\n",
@@ -364,7 +372,10 @@ class PromptService:
             ]
 
         else:
-            inputs = {"query": prompt, "history": [msg.content for msg in last_messages]}
+            inputs = {
+                "query": prompt,
+                "history": [msg.content for msg in last_messages],
+            }
 
             messages = [
                 {"role": "system", "content": get_prompt("Enhancer_Prompt")},
@@ -384,8 +395,10 @@ class PromptService:
             logger.error(f"Enhancing failed: {e}")
             raise
 
+
 def get_prompt(prompt_key: str) -> str:
     return PROMPTS.get(prompt_key, "Prompt not found.")
+
 
 PROMPTS = {
     "Enhancer_Prompt_With_Classification": """You are a prompt enhancer. Your primary purpose is to improve user queries by adding context and clarity.
@@ -427,7 +440,6 @@ PROMPTS = {
 
     Output Format:
     Return ONLY the enhanced query text with no additional commentary or explanation.""",
-    
     "Enhancer_Prompt": """You are a prompt enhancer. Your primary purpose is to improve user queries by adding context and clarity.
     Process:
     1. Enhance the original query using conversation history.

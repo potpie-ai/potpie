@@ -2,7 +2,6 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from langchain_core.output_parsers import PydanticOutputParser
 
 
 from app.core.database import get_db
@@ -15,12 +14,6 @@ from app.modules.intelligence.prompts.prompt_schema import (
     PromptUpdate,
 )
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.conversations.message.message_model import (
-    Message,
-    MessageStatus,
-)
-from app.modules.conversations.message.message_schema import MessageResponse
-from app.modules.intelligence.agents.agents_service import AgentsService  
 from app.modules.intelligence.prompts.prompt_schema import RequestModel
 
 
@@ -90,7 +83,7 @@ class PromptAPI:
         return await PromptController.list_prompts(
             query, skip, limit, prompt_service, user["user_id"]
         )
-    
+
     @staticmethod
     @router.post("/prompts/enhancer", response_model=str)
     async def enhance_prompt(
@@ -98,6 +91,5 @@ class PromptAPI:
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
-        
+
         return await PromptController.enhance_prompt(request_body, db, user)
-    
