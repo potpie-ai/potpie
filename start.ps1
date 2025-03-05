@@ -6,12 +6,17 @@ Get-Content .env | ForEach-Object {
 }
 
 # Set up Service Account Credentials
-$Env:GOOGLE_APPLICATION_CREDENTIALS = ".\service-account.json"
+$credentialsPath = Join-Path $PSScriptRoot "service-account.json"
+$Env:GOOGLE_APPLICATION_CREDENTIALS = $credentialsPath
 
 # Check if the credentials file exists
-if (-not (Test-Path $Env:GOOGLE_APPLICATION_CREDENTIALS)) {
-    Write-Host "Error: Service Account Credentials file not found at $Env:GOOGLE_APPLICATION_CREDENTIALS"
-    Write-Host "Please ensure the service-account.json file is in the current directory if you are working outside developmentMode"
+if (-not (Test-Path $credentialsPath) -and $Env:isDevelopmentMode -ne "enabled") {
+    Write-Host "Error: Service Account Credentials file not found at $credentialsPath"
+    Write-Host "Please ensure the service-account.json file is in the current directory since you are working outside developmentMode"
+    $confirmation = Read-Host "Do you want to continue without credentials? (y/n)"
+    if ($confirmation -ne "y") {
+        exit 1
+    }
 }
 
 Write-Host "Starting Docker Compose..."
