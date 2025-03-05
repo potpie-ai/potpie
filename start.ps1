@@ -1,7 +1,20 @@
 # Load environment variables from .env file
 Get-Content .env | ForEach-Object {
-    if ($_ -match '(.+)=(.+)') {
-        Set-Item -Path "Env:$($matches[1])" -Value $matches[2]
+    $line = $_.Trim()
+    # Skip empty lines and comments
+    if ($line -and !$line.StartsWith('#')) {
+        $keyValue = $line -split '=', 2
+        if ($keyValue.Length -eq 2) {
+            $key = $keyValue[0].Trim()
+            $value = $keyValue[1].Trim()
+            # Remove surrounding quotes if present
+            if ($value -match '^[''"](.*)[''"]\s*$') {
+                $value = $matches[1]
+            }
+            if ($key) {
+                Set-Item -Path "Env:$key" -Value $value
+            }
+        }
     }
 }
 
