@@ -160,19 +160,23 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
       ```
 
       ## Build and Start Frontend
-      1. Navigate to the `potpie-ui` directory:
+
+      Navigate to the `potpie-ui` directory:
+
 
       ```bash
       cd potpie-ui
       ```
 
-      2. Build the frontend using `pnpm`:
+      Build the frontend using `pnpm`:
+
 
       ```bash
       pnpm build
       ```
 
-      3. Start the application:
+      Start the application:
+
 
       ```bash
       pnpm start
