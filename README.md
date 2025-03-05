@@ -159,6 +159,12 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
    ```bash
    chmod +x start.sh
    ./start.sh
+   ```
+
+   **Windows**
+    ```powershell
+    ./start.ps1
+    ```
 
 3. **Authentication Setup** (Skip this step in development mode)
    ```bash
