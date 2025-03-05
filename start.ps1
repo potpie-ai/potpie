@@ -45,6 +45,10 @@ if ($LASTEXITCODE -ne 0) {
 
 # Apply database migrations
 alembic upgrade heads
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Error: Failed to apply database migrations"
+    exit 1
+}
 
 # Start FastAPI application (using uvicorn instead of gunicorn for Windows compatibility)
 Write-Host "Starting momentum application..."
