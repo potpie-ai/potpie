@@ -16,6 +16,10 @@ if (-not (Test-Path $Env:GOOGLE_APPLICATION_CREDENTIALS)) {
 
 Write-Host "Starting Docker Compose..."
 docker compose up -d
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Error: Failed to start Docker Compose services"
+    exit 1
+}
 
 # Wait for postgres to be ready
 Write-Host "Waiting for postgres to be ready..."
