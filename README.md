@@ -152,6 +152,33 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
       pip install -r requirements.txt
 
 2. **Start Potpie**
+    ## Initialize the UI Submodule
+      To initialize the submodule:
+
+      ```bash
+      git submodule update --init
+      ```
+
+      ## Build and Start Frontend
+      1. Navigate to the `potpie-ui` directory:
+
+      ```bash
+      cd potpie-ui
+      ```
+
+      2. Build the frontend using `pnpm`:
+
+      ```bash
+      pnpm build
+      ```
+
+      3. Start the application:
+
+      ```bash
+      pnpm start
+      ```
+
+
    ```bash
    chmod +x start.sh
    ./start.sh
