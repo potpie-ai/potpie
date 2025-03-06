@@ -41,7 +41,7 @@ class ShareChatService:
         try:
             # Update the visibility directly on the object
             chat.visibility = visibility
-            
+
             if visibility == Visibility.PUBLIC:
                 self.db.commit()
                 return conversation_id
@@ -56,11 +56,11 @@ class ShareChatService:
                 if to_share:
                     updated_emails = existing_emails + list(to_share)
                     chat.shared_with_emails = updated_emails
-            
+
             # Always commit changes
             self.db.commit()
             return conversation_id
-            
+
         except IntegrityError as e:
             self.db.rollback()
             raise ShareChatServiceError(

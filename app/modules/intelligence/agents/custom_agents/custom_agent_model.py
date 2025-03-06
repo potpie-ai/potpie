@@ -29,7 +29,9 @@ class CustomAgent(Base):
 
     # Add relationships
     user = relationship("User", back_populates="custom_agents")
-    shares = relationship("CustomAgentShare", back_populates="agent", cascade="all, delete-orphan")
+    shares = relationship(
+        "CustomAgentShare", back_populates="agent", cascade="all, delete-orphan"
+    )
 
     @property
     def shared_with_users(self) -> List["User"]:
@@ -47,7 +49,9 @@ class CustomAgentShare(Base):
     # Add foreign key constraints
     __table_args__ = (
         ForeignKeyConstraint(["agent_id"], ["custom_agents.id"], ondelete="CASCADE"),
-        ForeignKeyConstraint(["shared_with_user_id"], ["users.uid"], ondelete="CASCADE"),
+        ForeignKeyConstraint(
+            ["shared_with_user_id"], ["users.uid"], ondelete="CASCADE"
+        ),
     )
 
     # Add relationships

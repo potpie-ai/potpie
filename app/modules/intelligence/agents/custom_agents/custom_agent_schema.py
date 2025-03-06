@@ -23,7 +23,7 @@ class TaskCreate(TaskBase):
 
 class Task(TaskBase):
     id: int
-    
+
     model_config = {"from_attributes": True}
 
 
@@ -91,18 +91,22 @@ class AgentSharingRequest(BaseModel):
     def model_post_init(self, __context) -> None:
         # If neither visibility nor email is provided, that's an error
         if self.visibility is None and not self.shared_with_email:
-            raise ValueError("Must provide either visibility change or email to share with")
-            
+            raise ValueError(
+                "Must provide either visibility change or email to share with"
+            )
+
         # Can't make public and share with specific user at the same time
         if self.visibility == AgentVisibility.PUBLIC and self.shared_with_email:
-            raise ValueError("Cannot both make agent public and share with specific user")
+            raise ValueError(
+                "Cannot both make agent public and share with specific user"
+            )
 
 
 class RevokeAgentAccessRequest(BaseModel):
     agent_id: str
     user_email: str
-    
-    
+
+
 class AgentSharesResponse(BaseModel):
     agent_id: str
     shared_with: list[str]

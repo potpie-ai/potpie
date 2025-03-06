@@ -164,8 +164,8 @@ async def get_custom_agent_info(
     except Exception as e:
         logger.error(f"Error retrieving custom agent info: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error") from e
-        
-        
+
+
 @router.get("/{agent_id}/shares", response_model=AgentSharesResponse)
 async def get_agent_shares(
     agent_id: str,
@@ -176,7 +176,9 @@ async def get_agent_shares(
     logger.info(f"Getting shares for agent_id: {agent_id}")
     custom_agent_controller = CustomAgentController(db)
     try:
-        shared_emails = await custom_agent_controller.list_agent_shares(agent_id, user["user_id"])
+        shared_emails = await custom_agent_controller.list_agent_shares(
+            agent_id, user["user_id"]
+        )
         return AgentSharesResponse(agent_id=agent_id, shared_with=shared_emails)
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve)) from ve
