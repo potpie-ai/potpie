@@ -66,7 +66,7 @@ class AgentsService:
         ]
 
         try:
-            custom_agents = CustomAgentService(self.db).list_agents(
+            custom_agents = await CustomAgentService(self.db).list_agents(
                 current_user["user_id"]
             )
         except Exception as e:
@@ -80,6 +80,7 @@ class AgentsService:
                 name=agent.role,
                 description=agent.goal,
                 status=agent.deployment_status,
+                visibility=agent.visibility,
             )
             for agent in custom_agents
         ]

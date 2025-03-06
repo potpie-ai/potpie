@@ -1,10 +1,10 @@
 from datetime import datetime
 from enum import Enum
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel
 
-from app.modules.conversations.conversation.conversation_model import ConversationStatus
+from app.modules.conversations.conversation.conversation_model import ConversationStatus, Visibility
 
 
 class CreateConversationRequest(BaseModel):
@@ -42,6 +42,7 @@ class ConversationInfoResponse(BaseModel):
     access_type: ConversationAccessType
     is_creator: bool
     creator_id: str
+    visibility: Optional[Visibility] = None
 
     class Config:
         from_attributes = True
