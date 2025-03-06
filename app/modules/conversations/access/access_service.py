@@ -38,49 +38,37 @@ class ShareChatService:
         # Default to PRIVATE if visibility is not specified
         visibility = visibility or Visibility.PRIVATE
 
-        if visibility == Visibility.PUBLIC:
-            chat.visibility = Visibility.PUBLIC
-            self.db.commit()
-            return conversation_id
+        try:
+            # Update the visibility directly on the object
+            chat.visibility = visibility
+            
+            if visibility == Visibility.PUBLIC:
+                self.db.commit()
+                return conversation_id
 
-        # Handle PRIVATE visibility (default case)
-        chat.visibility = Visibility.PRIVATE
-        if recipient_emails:
-            existing_emails = chat.shared_with_emails or []
-            existing_emails_set = set(existing_emails)
-            unique_new_emails_set = set(recipient_emails)
+            # Handle PRIVATE visibility case
+            if recipient_emails:
+                existing_emails = chat.shared_with_emails or []
+                existing_emails_set = set(existing_emails)
+                unique_new_emails_set = set(recipient_emails)
 
-            # if unique_new_emails_set.issubset(existing_emails_set):
-            #     raise HTTPException(
-            #         200, "All emails are already shared with this chat."
-            #     )
-
-            to_share = unique_new_emails_set - existing_emails_set
-            if to_share:
-                try:
+                to_share = unique_new_emails_set - existing_emails_set
+                if to_share:
                     updated_emails = existing_emails + list(to_share)
-                    self.db.query(Conversation).filter_by(id=conversation_id).update(
-                        {
-                            Conversation.shared_with_emails: updated_emails,
-                            Conversation.visibility: visibility,
-                        },
-                        synchronize_session=False,
-                    )
-                    self.db.commit()
-                except IntegrityError as e:
-                    self.db.rollback()
-                    raise ShareChatServiceError(
-                        "Failed to update shared chat due to a database integrity error."
-                    ) from e
+                    chat.shared_with_emails = updated_emails
+            
+            # Always commit changes
             self.db.commit()
             return conversation_id
-        else:
-            self.db.query(Conversation).filter_by(id=conversation_id).update(
-                {Conversation.visibility: visibility}, synchronize_session=False
-            )
-            self.db.commit()
-
-        return conversation_id
+            
+        except IntegrityError as e:
+            self.db.rollback()
+            raise ShareChatServiceError(
+                "Failed to update shared chat due to a database integrity error."
+            ) from e
+        except Exception as e:
+            self.db.rollback()
+            raise ShareChatServiceError(f"Failed to update shared chat: {str(e)}")
 
     async def get_shared_emails(self, conversation_id: str, user_id: str) -> List[str]:
         chat = (
