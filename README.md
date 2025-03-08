@@ -112,6 +112,40 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
 - Git installed (for repository access)
 - Python 3.10.x
 
+### Potpie UI
+  An easy to use interface to interact with your Agents
+  
+  ## Initialize the UI Submodule
+        To initialize the submodule:
+
+        ```bash
+        git submodule update --init
+        ```
+
+        ## Build and Start Frontend
+
+        Navigate to the `potpie-ui` directory:
+
+
+        ```bash
+        cd potpie-ui
+        ```
+
+        Build the frontend using `pnpm`:
+
+
+        ```bash
+        pnpm build
+        ```
+
+        Start the application:
+
+
+        ```bash
+        pnpm start
+        ```
+
+
 ### Setup Steps
 
 **Install Python 3.10**
@@ -152,36 +186,6 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
       pip install -r requirements.txt
 
 2. **Start Potpie**
-    ## Initialize the UI Submodule
-      To initialize the submodule:
-
-      ```bash
-      git submodule update --init
-      ```
-
-      ## Build and Start Frontend
-
-      Navigate to the `potpie-ui` directory:
-
-
-      ```bash
-      cd potpie-ui
-      ```
-
-      Build the frontend using `pnpm`:
-
-
-      ```bash
-      pnpm build
-      ```
-
-      Start the application:
-
-
-      ```bash
-      pnpm start
-      ```
-
 
    ```bash
    chmod +x start.sh
