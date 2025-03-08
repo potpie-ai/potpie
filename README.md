@@ -118,7 +118,7 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
 
 ### Potpie UI
   An easy to use interface to interact with your Agents
-  
+
   ## Initialize the UI Submodule
         To initialize the submodule:
 
