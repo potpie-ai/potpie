@@ -107,7 +107,7 @@ class ConfigProvider:
         else:
             redis_url = f"redis://{redishost}:{redisport}/0"
         return redis_url
-    
+
     def get_is_development_mode(self):
         return os.getenv("isDevelopmentMode", "disabled")
 

@@ -4,7 +4,7 @@ import os
 import random
 import re
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
 import git
@@ -175,7 +175,7 @@ class GithubService:
     async def get_repos_for_user(self, user_id: str):
         if config_provider.get_is_development_mode() == "enabled":
             return {"repositories": []}
-        
+
         import time  # Import the time module
 
         start_time = time.time()  # Start timing the entire method
@@ -431,7 +431,7 @@ class GithubService:
                 try:
                     # Handle local repository
                     local_repo = git.Repo(repo_name)
-                    
+
                     # Get the default branch
                     try:
                         default_branch = local_repo.git.symbolic_ref(
@@ -440,10 +440,14 @@ class GithubService:
                     except git.GitCommandError:
                         # If no remote HEAD is found, use the current branch
                         default_branch = local_repo.active_branch.name
-                    
+
                     # Get all local branches
-                    branches = [branch.name for branch in local_repo.heads if branch.name != default_branch]
-                    
+                    branches = [
+                        branch.name
+                        for branch in local_repo.heads
+                        if branch.name != default_branch
+                    ]
+
                     return {"branches": [default_branch] + branches}
                 except git.InvalidGitRepositoryError:
                     raise HTTPException(
@@ -452,7 +456,8 @@ class GithubService:
                     )
                 except Exception as e:
                     logger.error(
-                        f"Error fetching branches for local repo {repo_name}: {str(e)}", exc_info=True
+                        f"Error fetching branches for local repo {repo_name}: {str(e)}",
+                        exc_info=True,
                     )
                     raise HTTPException(
                         status_code=500,
