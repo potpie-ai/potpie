@@ -15,7 +15,8 @@ async def get_user_repos(
     user=Depends(AuthService.check_auth), db: Session = Depends(get_db)
 ):
     user_repo_list = await GithubController(db).get_user_repos(user=user)
-    user_repo_list["repositories"].extend(config_provider.get_demo_repo_list())
+    if not config_provider.get_is_development_mode():
+        user_repo_list["repositories"].extend(config_provider.get_demo_repo_list())
 
     # Remove duplicates while preserving order
     seen = set()

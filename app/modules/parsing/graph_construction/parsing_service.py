@@ -80,7 +80,7 @@ class ParsingService:
             repo, owner, auth = await self.parse_helper.clone_or_copy_repository(
                 repo_details, user_id
             )
-            if os.getenv("isDevelopmentMode") == "enabled":
+            if config_provider.get_is_development_mode():
                 (
                     extracted_dir,
                     project_id,
