@@ -118,36 +118,45 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
 
 ### Potpie UI
   An easy to use interface to interact with your Agents
-
   ## Initialize the UI Submodule
         To initialize the submodule:
 
         ```bash
         git submodule update --init
         ```
+              
+      ### 1. Navigate to the `potpie-ui` Directory  
 
-        ## Build and Start Frontend
+      ```bash
+      cd potpie-ui
+      ```
 
-        Navigate to the `potpie-ui` directory:
+      ### 2. Update the Main Branch and Checkout  
 
+      ```bash
+      git checkout main
+      git pull origin main
+      ```
 
-        ```bash
-        cd potpie-ui
-        ```
+      ### 3. Set Up the Environment  
 
-        Build the frontend using `pnpm`:
+      Create a `.env` file in the `potpie-ui` directory and copy the required configuration from `.env.template`.  
 
+      ```bash
+      cp .env.template .env
+      ```
 
-        ```bash
-        pnpm build
-        ```
+      ### 4. Build the Frontend  
 
-        Start the application:
+      ```bash
+      pnpm build
+      ```
 
+      ### 5. Start the Application  
 
-        ```bash
-        pnpm start
-        ```
+      ```bash
+      pnpm start
+      ```
 
 
 ### Setup Steps
