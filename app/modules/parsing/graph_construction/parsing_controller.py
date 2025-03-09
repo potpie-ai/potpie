@@ -11,6 +11,7 @@ from sqlalchemy import select, or_
 from uuid6 import uuid7
 
 from app.celery.tasks.parsing_tasks import process_parsing
+from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
@@ -46,9 +47,18 @@ class ParsingController:
         project_manager = ProjectService(db)
         parse_helper = ParseHelper(db)
         parsing_service = ParsingService(db, user_id)
-        repo_name = repo_details.repo_name or repo_details.repo_path.split("/")[-1]
-        if not repo_details.repo_name:
-            repo_details.repo_name = repo_name
+        if config_provider.get_is_development_mode():
+            # In dev mode: if repo_name exists, move it to repo_path and set repo_name to None
+            if repo_details.repo_name:
+                repo_details.repo_path = repo_details.repo_name
+                repo_details.repo_name = None
+        else:
+            # In non-dev mode: if repo_name is None but repo_path exists, extract repo_name from repo_path
+            if not repo_details.repo_name and repo_details.repo_path:
+                repo_details.repo_name = repo_details.repo_path.split("/")[-1]
+        
+        # For later use in the code
+        repo_name = repo_details.repo_name or (repo_details.repo_path.split("/")[-1] if repo_details.repo_path else None)
         repo_path = repo_details.repo_path
         if repo_path:
             if os.getenv("isDevelopmentMode") != "enabled":

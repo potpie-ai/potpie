@@ -48,6 +48,7 @@ class GithubService:
         self.max_workers = 10
         self.max_depth = 4
         self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
+        self.is_development_mode = config_provider.get_is_development_mode()
 
     def get_github_repo_details(self, repo_name: str) -> Tuple[Github, Dict, str]:
         private_key = (
@@ -400,7 +401,7 @@ class GithubService:
                 {
                     "id": project.id,
                     "name": project.repo_name.split("/")[-1],
-                    "full_name": project.repo_name,
+                    "full_name": project.repo_name if not self.is_development_mode else project.repo_path,
                     "private": False,
                     "url": f"https://github.com/{project.repo_name}",
                     "owner": project.repo_name.split("/")[0],

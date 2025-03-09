@@ -308,6 +308,8 @@ class ParseHelper:
             )
         )
         repo_path = getattr(repo_details, "repo_path", None)
+        if full_name is None:
+            full_name = repo_path.split("/")[-1]
         project = await self.project_manager.get_project_from_db(
             full_name, branch, user_id, repo_path
         )
