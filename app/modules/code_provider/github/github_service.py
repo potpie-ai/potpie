@@ -7,14 +7,14 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
-import chardet
+import git
 import requests
 from fastapi import HTTPException
 from github import Github
 from github.Auth import AppAuth
-from redis import Redis
 from sqlalchemy import func
 from sqlalchemy.orm import Session
+from redis import Redis
 
 from app.core.config_provider import config_provider
 from app.modules.projects.projects_model import Project
@@ -48,6 +48,7 @@ class GithubService:
         self.max_workers = 10
         self.max_depth = 4
         self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
+        self.is_development_mode = config_provider.get_is_development_mode()
 
     def get_github_repo_details(self, repo_name: str) -> Tuple[Github, Dict, str]:
         private_key = (
@@ -172,6 +173,9 @@ class GithubService:
         return links
 
     async def get_repos_for_user(self, user_id: str):
+        if config_provider.get_is_development_mode() == "enabled":
+            return {"repositories": []}
+
         import time  # Import the time module
 
         start_time = time.time()  # Start timing the entire method
@@ -397,7 +401,7 @@ class GithubService:
                 {
                     "id": project.id,
                     "name": project.repo_name.split("/")[-1],
-                    "full_name": project.repo_name,
+                    "full_name": project.repo_name if not self.is_development_mode else project.repo_path,
                     "private": False,
                     "url": f"https://github.com/{project.repo_name}",
                     "owner": project.repo_name.split("/")[0],
@@ -422,13 +426,52 @@ class GithubService:
 
     async def get_branch_list(self, repo_name: str):
         try:
-            github, repo = self.get_repo(repo_name)
-            default_branch = repo.default_branch
-            branches = repo.get_branches()
-            branch_list = [
-                branch.name for branch in branches if branch.name != default_branch
-            ]
-            return {"branches": [default_branch] + branch_list}
+            # Check if repo_name is a path to a local repository
+            if os.path.exists(repo_name) and os.path.isdir(repo_name):
+                try:
+                    # Handle local repository
+                    local_repo = git.Repo(repo_name)
+
+                    # Get the default branch
+                    try:
+                        default_branch = local_repo.git.symbolic_ref(
+                            "refs/remotes/origin/HEAD"
+                        ).split("/")[-1]
+                    except git.GitCommandError:
+                        # If no remote HEAD is found, use the current branch
+                        default_branch = local_repo.active_branch.name
+
+                    # Get all local branches
+                    branches = [
+                        branch.name
+                        for branch in local_repo.heads
+                        if branch.name != default_branch
+                    ]
+
+                    return {"branches": [default_branch] + branches}
+                except git.InvalidGitRepositoryError:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Not a valid git repository: {repo_name}",
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Error fetching branches for local repo {repo_name}: {str(e)}",
+                        exc_info=True,
+                    )
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Error fetching branches for local repo: {str(e)}",
+                    )
+            else:
+                # Handle GitHub repository (existing functionality)
+                github, repo = self.get_repo(repo_name)
+                default_branch = repo.default_branch
+                branches = repo.get_branches()
+                branch_list = [
+                    branch.name for branch in branches if branch.name != default_branch
+                ]
+                return {"branches": [default_branch] + branch_list}
         except HTTPException as he:
             raise he
         except Exception as e:
