@@ -401,7 +401,11 @@ class GithubService:
                 {
                     "id": project.id,
                     "name": project.repo_name.split("/")[-1],
-                    "full_name": project.repo_name if not self.is_development_mode else project.repo_path,
+                    "full_name": (
+                        project.repo_name
+                        if not self.is_development_mode
+                        else project.repo_path
+                    ),
                     "private": False,
                     "url": f"https://github.com/{project.repo_name}",
                     "owner": project.repo_name.split("/")[0],

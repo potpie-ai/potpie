@@ -56,9 +56,11 @@ class ParsingController:
             # In non-dev mode: if repo_name is None but repo_path exists, extract repo_name from repo_path
             if not repo_details.repo_name and repo_details.repo_path:
                 repo_details.repo_name = repo_details.repo_path.split("/")[-1]
-        
+
         # For later use in the code
-        repo_name = repo_details.repo_name or (repo_details.repo_path.split("/")[-1] if repo_details.repo_path else None)
+        repo_name = repo_details.repo_name or (
+            repo_details.repo_path.split("/")[-1] if repo_details.repo_path else None
+        )
         repo_path = repo_details.repo_path
         if repo_path:
             if os.getenv("isDevelopmentMode") != "enabled":
