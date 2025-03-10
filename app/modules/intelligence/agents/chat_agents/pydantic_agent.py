@@ -18,7 +18,6 @@ from pydantic_ai.messages import (
     TextPartDelta,
 )
 from langchain_core.tools import StructuredTool
-import agentops
 
 
 logger = setup_logger(__name__)

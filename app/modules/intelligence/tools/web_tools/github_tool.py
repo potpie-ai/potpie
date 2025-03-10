@@ -8,7 +8,7 @@ import requests
 from github import Github
 from github.Auth import AppAuth
 from github.GithubException import UnknownObjectException
-from langchain_core.tools import StructuredTool, Tool
+from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 

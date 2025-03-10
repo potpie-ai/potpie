@@ -3,7 +3,7 @@ import logging
 from typing import Any, Dict
 
 from fastapi import HTTPException
-from langchain_core.tools import StructuredTool, Tool
+from langchain_core.tools import StructuredTool
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 
