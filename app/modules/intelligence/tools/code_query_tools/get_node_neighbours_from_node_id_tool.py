@@ -117,7 +117,7 @@ class GetNodeNeighboursFromNodeIdTool:
             self.neo4j_driver.close()
 
 
-def get_node_neighbours_from_node_id_tool(sql_db: Session) -> Tool:
+def get_node_neighbours_from_node_id_tool(sql_db: Session) -> StructuredTool:
     tool_instance = GetNodeNeighboursFromNodeIdTool(sql_db)
     return StructuredTool.from_function(
         coroutine=tool_instance.arun,

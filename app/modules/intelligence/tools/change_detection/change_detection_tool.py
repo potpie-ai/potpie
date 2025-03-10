@@ -304,7 +304,7 @@ class ChangeDetectionTool:
         return asyncio.run(self.get_code_changes(project_id))
 
 
-def get_change_detection_tool(user_id: str) -> Tool:
+def get_change_detection_tool(user_id: str) -> StructuredTool:
     """
     Get a list of LangChain Tool objects for use in agents.
     """

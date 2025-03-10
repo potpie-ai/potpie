@@ -1,4 +1,5 @@
 import json
+from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
@@ -22,7 +23,7 @@ class IntegrationTestAgent(ChatAgent):
     ):
         self.llm_provider = llm_provider
         self.tools_provider = tools_provider
-        self.rag_agent = CrewAIAgent(
+        self.rag_agent = PydanticRagAgent(
             llm_provider,
             AgentConfig(
                 role="Integration Test Writer",

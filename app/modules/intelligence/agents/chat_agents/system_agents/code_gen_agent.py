@@ -1,3 +1,4 @@
+from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
@@ -17,7 +18,7 @@ class CodeGenAgent(ChatAgent):
         self.tools_provider = tools_provider
 
     def _build_agent(self) -> ChatAgent:
-        return CrewAIAgent(
+        return PydanticRagAgent(
             self.llm_provider,
             AgentConfig(
                 role="Code Generation Agent",

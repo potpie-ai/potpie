@@ -1,3 +1,4 @@
+from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
@@ -14,7 +15,7 @@ class DebugAgent(ChatAgent):
         tools_provider: ToolService,
     ):
         self.tools_provider = tools_provider
-        self.rag_agent = CrewAIAgent(
+        self.rag_agent = PydanticRagAgent(
             llm_provider,
             AgentConfig(
                 role="Context curation agent",
