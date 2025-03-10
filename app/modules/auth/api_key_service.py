@@ -8,6 +8,7 @@ from google.cloud import secretmanager
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.modules.users.user_model import User
 from app.modules.users.user_preferences_model import UserPreferences
 
 
@@ -104,18 +105,20 @@ class APIKeyService:
 
         hashed_key = APIKeyService.hash_api_key(api_key)
 
-        # Find user with matching hashed key using PostgreSQL JSONB operator
-        user_pref = (
-            db.query(UserPreferences)
+        # Find user with matching hashed key using PostgreSQL JSONB operator and join with User table
+        result = (
+            db.query(UserPreferences, User.email)
+            .join(User, UserPreferences.user_id == User.uid)
             .filter(text("preferences->>'api_key_hash' = :hashed_key"))
             .params(hashed_key=hashed_key)
             .first()
         )
 
-        if not user_pref:
+        if not result:
             return None
 
-        return {"user_id": user_pref.user_id, "auth_type": "api_key"}
+        user_pref, email = result
+        return {"user_id": user_pref.user_id, "email": email, "auth_type": "api_key"}
 
     @staticmethod
     async def revoke_api_key(user_id: str, db: Session) -> bool:
