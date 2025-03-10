@@ -86,3 +86,12 @@ class AgentPromptMappingResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class RequestModel(BaseModel):
+    conversation_id: str
+    prompt: str
+
+
+class EnhancedPromptResponse(BaseModel):
+    enhancedprompt: str
