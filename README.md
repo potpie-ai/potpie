@@ -189,14 +189,18 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
       ```
       **`LOW_REASONING_MODEL`** and **`HIGH_REASONING_MODEL`** correspond to the models that will be used for generating knowledge graph and for agent reasoning respectively. These model names should be in the format of `provider/model_name` format or as expected by Litellm. For more information, refer to the [Litellm documentation](https://docs.litellm.ai/docs/providers).
       <br>
+   -  Install uv package manager:
+      ```bash
+      curl -LsSf https://astral.sh/uv/install.sh | sh
+
    -  Create a Virtual Environment using Python 3.10:
       ```
-      python3.10 -m venv venv
+      uv venv venv --python=3.10
       source venv/bin/activate
 
     - Install dependencies in your venv:
       ```bash
-      pip install -r requirements.txt
+      uv pip install -r requirements.txt
 
 2. **Start Potpie**
 

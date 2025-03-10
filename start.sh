@@ -34,7 +34,7 @@ fi
 
 # Install python dependencies
 echo "Installing Python dependencies..."
-if ! pip install -r requirements.txt; then
+if ! uv pip install -r requirements.txt; then
  echo "Error: Failed to install Python dependencies"
  exit 1
 fi
