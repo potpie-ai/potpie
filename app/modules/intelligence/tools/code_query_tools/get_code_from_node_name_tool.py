@@ -3,7 +3,7 @@ import logging
 from typing import Any, Dict
 
 from fastapi import HTTPException
-from langchain_core.tools import StructuredTool, Tool
+from langchain_core.tools import StructuredTool
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 
@@ -142,7 +142,7 @@ class GetCodeFromNodeNameTool:
             self.neo4j_driver.close()
 
 
-def get_code_from_node_name_tool(sql_db: Session, user_id: str) -> Tool:
+def get_code_from_node_name_tool(sql_db: Session, user_id: str) -> StructuredTool:
     tool_instance = GetCodeFromNodeNameTool(sql_db, user_id)
     return StructuredTool.from_function(
         coroutine=tool_instance.arun,

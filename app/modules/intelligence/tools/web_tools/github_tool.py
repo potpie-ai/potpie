@@ -8,7 +8,7 @@ import requests
 from github import Github
 from github.Auth import AppAuth
 from github.GithubException import UnknownObjectException
-from langchain_core.tools import StructuredTool, Tool
+from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -233,7 +233,7 @@ class GithubTool:
             return None
 
 
-def github_tool(sql_db: Session, user_id: str) -> Optional[Tool]:
+def github_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
     if not os.getenv("GITHUB_APP_ID") or not config_provider.get_github_key():
         logging.warning(
             "GitHub app credentials not set, GitHub tool will not be initialized"
