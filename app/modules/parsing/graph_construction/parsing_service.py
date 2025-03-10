@@ -142,14 +142,53 @@ class ParsingService:
                 shutil.rmtree(extracted_dir, ignore_errors=True)
 
     def create_neo4j_indices(self, graph_manager):
-        graph_manager.create_entityId_index()
-        graph_manager.create_node_id_index()
-        graph_manager.create_function_name_index()
-        with graph_manager.driver.session() as session:
-            node_query = """
-                CREATE INDEX repo_id_node_id_NODE IF NOT EXISTS FOR (n:NODE) ON (n.repoId, n.node_id)
+        """Create and validate Neo4j indices for the graph."""
+        try:
+            graph_manager.create_entityId_index()
+            graph_manager.create_node_id_index()
+            graph_manager.create_function_name_index()
+            
+            with graph_manager.driver.session() as session:
+                # Create composite index for repo_id and node_id
+                node_query = """
+                    CREATE INDEX repo_id_node_id_NODE IF NOT EXISTS 
+                    FOR (n:NODE) ON (n.repoId, n.node_id)
                 """
-            session.run(node_query)
+                session.run(node_query)
+                
+                # Create composite index for content hash and repo_id
+                content_hash_query = """
+                    CREATE INDEX content_hash_repo_NODE IF NOT EXISTS 
+                    FOR (n:NODE) ON (n.repoId, n.content_hash)
+                """
+                session.run(content_hash_query)
+                
+                # Validate indices
+                validation_query = """
+                    CALL db.indexes()
+                    YIELD name, type, labelsOrTypes, properties, state
+                    WHERE name IN ['repo_id_node_id_NODE', 'content_hash_repo_NODE']
+                    RETURN name, state, properties
+                """
+                results = session.run(validation_query)
+                
+                # Log index status
+                for record in results:
+                    logger.info(
+                        f"Index {record['name']} status:\n"
+                        f"State: {record['state']}\n"
+                        f"Properties: {record['properties']}"
+                    )
+                    
+                    if record['state'] != 'ONLINE':
+                        logger.warning(
+                            f"Index {record['name']} is not online. "
+                            f"Current state: {record['state']}"
+                        )
+                        
+        except Exception as e:
+            logger.error(f"Error creating or validating indices: {str(e)}")
+            raise
 
     async def analyze_directory(
         self,
