@@ -237,7 +237,7 @@ class CustomAgentService(BaseAgentService):
             raise
 
     async def list_agents(
-        self, user_id: str, include_public: bool = True, include_shared: bool = True
+        self, user_id: str, include_public: bool = False, include_shared: bool = True
     ) -> List[Agent]:
         """List all agents accessible to the user"""
         try:
