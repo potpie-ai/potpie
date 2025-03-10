@@ -430,9 +430,9 @@ PROMPTS = {
        - Expected outcome
 
     Examples:
-    1. History: "Our marketing team needs to target millennials better. We have customer demographic data but aren't using it effectively."
-       Query: "Help me with targeting."
-       Enhanced: "What data-driven marketing approaches could we use to better target millennial customers based on our existing demographic information?"
+    1. History: "I've been working on a React app that fetches data from an API. The data loads slowly when there are many records."
+       Query: "How can I make it faster?"
+       Enhanced: "What techniques could I use to improve performance in my React app when fetching large datasets from an API? I'm specifically looking for ways to optimize loading times."
 
     2. History: "I'm building a Django GET API to fetch order details."
        Query: "My API isn't working. What's wrong?"
@@ -458,9 +458,9 @@ PROMPTS = {
        - Expected outcome
 
     Examples:
-    1. History: "I need to fetch total sales per month from my PostgreSQL sales table."
-       Query: "My query is slow. Fix it."
-       Enhanced: "My PostgreSQL query for monthly sales is slow. I indexed date, but it's still lagging. Would partitioning help?"
+    1. History: "I've been working on a React app that fetches data from an API. The data loads slowly when there are many records."
+       Query: "How can I make it faster?"
+       Enhanced: "What techniques could I use to improve performance in my React app when fetching large datasets from an API? I'm specifically looking for ways to optimize loading times."
 
     2. History: "I'm building a Django GET API to fetch order details."
        Query: "My API isn't working. What's wrong?"
