@@ -86,7 +86,7 @@ class WebpageExtractorTool:
         }
 
 
-def webpage_extractor_tool(sql_db: Session, user_id: str) -> Optional[Tool]:
+def webpage_extractor_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
     if not os.getenv("FIRECRAWL_API_KEY"):
         logging.warning(
             "FIRECRAWL_API_KEY not set, webpage extractor tool will not be initialized"
