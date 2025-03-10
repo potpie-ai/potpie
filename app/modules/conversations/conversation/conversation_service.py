@@ -664,6 +664,7 @@ class ConversationService:
                 access_type=access_type,
                 is_creator=is_creator,
                 creator_id=conversation.user_id,
+                visibility=conversation.visibility,
             )
         except ConversationNotFoundError as e:
             logger.warning(str(e))

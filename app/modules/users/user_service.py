@@ -97,7 +97,7 @@ class UserService:
                 email_verified=True,
                 created_at=datetime.utcnow(),
                 last_login_at=datetime.utcnow(),
-                provider_info={},
+                provider_info={"access_token": "dummy_token"},
                 provider_username="self",
             )
             uid, message, error = user_service.create_user(user)
@@ -156,6 +156,22 @@ class UserService:
                 return None
         except Exception as e:
             logger.error(f"Error fetching user ID by email {email}: {e}")
+            return None
+
+    async def get_user_by_email(self, email: str) -> User:
+        """
+        Get a user by their email address.
+        Returns the full User object or None if not found.
+        """
+        try:
+            # Use an optimized query that only fetches the user once
+            user = self.db.query(User).filter(User.email == email).first()
+            return user
+        except SQLAlchemyError as e:
+            logger.error(f"Database error fetching user by email {email}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error fetching user by email {email}: {e}")
             return None
 
     def get_user_ids_by_emails(self, emails: List[str]) -> List[str]:

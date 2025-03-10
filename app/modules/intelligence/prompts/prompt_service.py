@@ -21,6 +21,10 @@ from app.modules.intelligence.prompts.prompt_schema import (
     PromptUpdate,
 )
 
+from app.modules.conversations.message.message_schema import MessageResponse
+from app.modules.intelligence.prompts.prompt_schema import EnhancedPromptResponse
+from app.modules.intelligence.provider.provider_service import ProviderService
+
 logger = logging.getLogger(__name__)
 
 
@@ -338,3 +342,130 @@ class PromptService:
             raise PromptServiceError(
                 "Failed to get prompts by agent ID and types"
             ) from e
+
+    async def enhance_prompt(
+        self,
+        prompt: str,
+        last_messages: List[MessageResponse],
+        user: dict,
+        agent_ids=None,
+        available_agents=None,
+    ) -> str:
+
+        if agent_ids and available_agents:
+            inputs = {
+                "query": prompt,
+                "history": [msg.content for msg in last_messages],
+                "agent_id": agent_ids,
+                "available_agents": available_agents,
+            }
+
+            messages = [
+                {
+                    "role": "system",
+                    "content": get_prompt("Enhancer_Prompt_With_Classification"),
+                },
+                {
+                    "role": "user",
+                    "content": f"Query: {inputs['query']}\nHistory: {inputs['history']}\nCurent Agent Id: {inputs['agent_id']}\nAvailable Agents: {inputs['available_agents']}\n\n",
+                },
+            ]
+
+        else:
+            inputs = {
+                "query": prompt,
+                "history": [msg.content for msg in last_messages],
+            }
+
+            messages = [
+                {"role": "system", "content": get_prompt("Enhancer_Prompt")},
+                {
+                    "role": "user",
+                    "content": f"Query: {inputs['query']}\nHistory: {inputs['history']}\n\n",
+                },
+            ]
+
+        try:
+            provider_service = ProviderService(self.db, user["user_id"])
+            result = await provider_service.call_llm_with_structured_output(
+                messages=messages, output_schema=EnhancedPromptResponse, size="large"
+            )
+            return result.enhancedprompt
+        except Exception as e:
+            logger.error(f"Enhancing failed: {e}")
+            raise
+
+
+def get_prompt(prompt_key: str) -> str:
+    return PROMPTS.get(prompt_key, "Prompt not found.")
+
+
+PROMPTS = {
+    "Enhancer_Prompt_With_Classification": """You are a prompt enhancer. Your primary purpose is to improve user queries by adding context and clarity.
+    Process:
+    1. INTERNAL STEP ONLY: Classify the most appropriate agent based on the query and agent descriptions. This classification is only to help you understand which expertise domain to enhance the prompt for.
+    2. Enhance the original query using conversation history and the relevant expertise domain identified in step 1.
+
+    Input:
+    - Query: {query}
+    - Current Agent ID: {agent_id}
+    - Conversation History: {history}
+    - Available Agents: {agent_descriptions}
+
+    Agent Selection Process:
+    1. Identify key topics, technical terms, and user intent from the query
+    2. Compare query elements against each agent's specialty description
+    3. Apply contextual weighting:
+       - Current agent advantage: +0.15 for direct expertise, +0.1 for related knowledge
+       - For new topics outside current agent's domain, evaluate all agents equally
+    4. Use confidence scoring (0.9-1.0: ideal match, 0.7-0.9: strong match, 0.5-0.7: partial match, <0.5: weak match)
+
+    Query Enhancement Guidelines:
+    1. Resolve ambiguous references using conversation history
+    2. Incorporate relevant context from previous exchanges
+    3. Maintain factual integrity (no invented information)
+    4. Restructure ambiguous queries by clarifying:
+       - Problem statement
+       - Contextual details
+       - Expected outcome
+
+    Examples:
+    1. History: "I've been working on a React app that fetches data from an API. The data loads slowly when there are many records."
+       Query: "How can I make it faster?"
+       Enhanced: "What techniques could I use to improve performance in my React app when fetching large datasets from an API? I'm specifically looking for ways to optimize loading times."
+
+    2. History: "I'm building a Django GET API to fetch order details."
+       Query: "My API isn't working. What's wrong?"
+       Enhanced: "My Django GET API for fetching order details isn't working. I'm getting errors when attempting to retrieve the data."
+
+    Output Format:
+    Return ONLY the enhanced query text with no additional commentary or explanation.""",
+    "Enhancer_Prompt": """You are a prompt enhancer. Your primary purpose is to improve user queries by adding context and clarity.
+    Process:
+    1. Enhance the original query using conversation history.
+
+    Input:
+    - Query: {query}
+    - Conversation History: {history}
+
+    Query Enhancement Guidelines:
+    1. Resolve ambiguous references using conversation history
+    2. Incorporate relevant context from previous exchanges
+    3. Maintain factual integrity (no invented information)
+    4. Restructure ambiguous queries by clarifying:
+       - Problem statement
+       - Contextual details
+       - Expected outcome
+
+    Examples:
+    1. History: "I've been working on a React app that fetches data from an API. The data loads slowly when there are many records."
+       Query: "How can I make it faster?"
+       Enhanced: "What techniques could I use to improve performance in my React app when fetching large datasets from an API? I'm specifically looking for ways to optimize loading times."
+
+    2. History: "I'm building a Django GET API to fetch order details."
+       Query: "My API isn't working. What's wrong?"
+       Enhanced: "My Django GET API for fetching order details isn't working. I'm getting errors when attempting to retrieve the data."
+
+    Output Format:
+    Return ONLY the enhanced query text with no additional commentary or explanation.""",
+}

@@ -1,6 +1,9 @@
 import os
-from typing import List
+from typing import List, Optional
 
+from app.modules.intelligence.agents.custom_agents.custom_agent_schema import (
+    AgentVisibility,
+)
 from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
     CustomAgentService,
 )
@@ -37,6 +40,7 @@ class AgentInfo(BaseModel):
     name: str
     description: str
     status: str
+    visibility: Optional[AgentVisibility] = None
 
 
 class AgentsService:
@@ -172,7 +176,7 @@ class AgentsService:
         ]
 
         try:
-            custom_agents = self.custom_agent_service.list_agents(
+            custom_agents = await CustomAgentService(self.db).list_agents(
                 current_user["user_id"]
             )
         except Exception as e:
@@ -186,6 +190,7 @@ class AgentsService:
                 name=agent.role,
                 description=agent.goal,
                 status=agent.deployment_status,
+                visibility=agent.visibility,
             )
             for agent in custom_agents
         ]
