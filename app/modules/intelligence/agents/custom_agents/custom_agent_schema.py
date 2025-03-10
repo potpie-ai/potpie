@@ -1,7 +1,8 @@
 from datetime import datetime
+from enum import Enum
 from typing import Any, List, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class TaskBase(BaseModel):
@@ -9,7 +10,7 @@ class TaskBase(BaseModel):
     tools: List[str]
     expected_output: Any = Field(description="A JSON object")
 
-    @validator("expected_output")
+    @field_validator("expected_output")
     def validate_json_object(cls, v):
         if not isinstance(v, dict):
             raise ValueError("Expected a JSON object")
@@ -23,8 +24,7 @@ class TaskCreate(TaskBase):
 class Task(TaskBase):
     id: int
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class AgentBase(BaseModel):
@@ -34,10 +34,16 @@ class AgentBase(BaseModel):
     system_prompt: str
 
 
+class AgentVisibility(str, Enum):
+    PRIVATE = "private"
+    PUBLIC = "public"
+    SHARED = "shared"
+
+
 class AgentCreate(AgentBase):
     tasks: List[TaskCreate]
 
-    @validator("tasks")
+    @field_validator("tasks")
     def validate_tasks(cls, tasks):
         if not tasks:
             raise ValueError("At least one task is required")
@@ -52,6 +58,7 @@ class AgentUpdate(BaseModel):
     backstory: Optional[str] = None
     system_prompt: Optional[str] = None
     tasks: Optional[List[TaskCreate]] = None
+    visibility: Optional[AgentVisibility] = None
 
 
 class Agent(AgentBase):
@@ -62,9 +69,52 @@ class Agent(AgentBase):
     created_at: datetime
     updated_at: datetime
     deployment_status: Optional[str]
+    visibility: AgentVisibility = AgentVisibility.PRIVATE
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
+
+
+class AgentShare(BaseModel):
+    agent_id: str
+    shared_with_user_id: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AgentSharingRequest(BaseModel):
+    agent_id: str
+    visibility: Optional[AgentVisibility] = None
+    shared_with_email: Optional[str] = None
+
+    # Use model_post_init instead of field validator to validate entire model
+    def model_post_init(self, __context) -> None:
+        # If neither visibility nor email is provided, that's an error
+        if self.visibility is None and not self.shared_with_email:
+            raise ValueError(
+                "Must provide either visibility change or email to share with"
+            )
+
+        # Can't make public and share with specific user at the same time
+        if self.visibility == AgentVisibility.PUBLIC and self.shared_with_email:
+            raise ValueError(
+                "Cannot both make agent public and share with specific user"
+            )
+
+
+class RevokeAgentAccessRequest(BaseModel):
+    agent_id: str
+    user_email: str
+
+
+class AgentSharesResponse(BaseModel):
+    agent_id: str
+    shared_with: list[str]
+
+
+class ListAgentsRequest(BaseModel):
+    include_public: bool = True
+    include_shared: bool = True
 
 
 class NodeContext(BaseModel):
