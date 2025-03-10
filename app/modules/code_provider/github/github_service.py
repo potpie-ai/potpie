@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
+import chardet
 import git
 import requests
 from fastapi import HTTPException
