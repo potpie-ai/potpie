@@ -17,14 +17,23 @@ https://www.python.org/downloads/release/python-3100/
    ```
    alternatively, you can also use the `virtualenv` library.
 
+   Install uv package manager:
+      ```bash
+      curl -LsSf https://astral.sh/uv/install.sh | sh
+
+   Create a Virtual Environment using Python 3.10:
+      ```
+      uv venv venv --python=3.10
+      source venv/bin/activate
+   
    Install dependencies in your venv:
    ```bash
-   pip install -r requirements.txt
+   uv pip install -r requirements.txt
    ```
-   If you face any issues with the dependencies, you can try installing the dependencies using the following command:
+   <!-- If you face any issues with the dependencies, you can try installing the dependencies using the following command:
    ```bash
-   pip install -r requirements.txt --use-deprecated=legacy-resolver
-   ```
+   uv pip install -r requirements.txt --use-deprecated=legacy-resolver
+   ``` -->
 
 3. You can use the following env config to run potpie with local models:
    ```
