@@ -31,6 +31,10 @@
     <img src="https://img.shields.io/badge/Join%20our-Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join our Discord">
 </a>
 </br>
+<a href="https://marketplace.visualstudio.com/items?itemName=PotpieAI.potpie-vscode-extension">
+    <img src="https://custom-icon-badges.demolab.com/badge/Visual%20Studio%20Code-0078d7.svg?logo=vsc&logoColor=white" alt="VS Code Extension">
+</a>
+</br>
 <a href="https://twitter.com/intent/tweet?text=I%20created%20custom%20engineering%20agents%20for%20my%20codebase%20in%20minutes%20with%20potpie.ai%20@potpiedotai%20!🥧">
     <img alt="tweet" src="https://img.shields.io/twitter/url/http/shields.io.svg?style=social">
 </a>
@@ -112,6 +116,49 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
 - Git installed (for repository access)
 - Python 3.10.x
 
+### Potpie UI
+  An easy to use interface to interact with your Agents
+  ## Initialize the UI Submodule
+  To initialize the submodule:
+
+  ```bash
+  git submodule update --init
+  ```
+
+  ### 1. Navigate to the `potpie-ui` Directory
+
+  ```bash
+  cd potpie-ui
+  ```
+
+  ### 2. Update the Main Branch and Checkout
+
+  ```bash
+  git checkout main
+  git pull origin main
+  ```
+
+  ### 3. Set Up the Environment
+
+  Create a `.env` file in the `potpie-ui` directory and copy the required configuration from `.env.template`.
+
+  ```bash
+  cp .env.template .env
+  ```
+
+  ### 4. Build the Frontend
+
+  ```bash
+  pnpm build
+  ```
+
+  ### 5. Start the Application
+
+  ```bash
+  pnpm start
+  ```
+
+
 ### Setup Steps
 
 **Install Python 3.10**
@@ -152,6 +199,7 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
       pip install -r requirements.txt
 
 2. **Start Potpie**
+
    ```bash
    chmod +x start.sh
    ./start.sh

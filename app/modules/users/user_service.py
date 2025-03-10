@@ -97,7 +97,7 @@ class UserService:
                 email_verified=True,
                 created_at=datetime.utcnow(),
                 last_login_at=datetime.utcnow(),
-                provider_info={},
+                provider_info={"access_token": "dummy_token"},
                 provider_username="self",
             )
             uid, message, error = user_service.create_user(user)
