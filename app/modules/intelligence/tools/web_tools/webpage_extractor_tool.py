@@ -4,7 +4,7 @@ import os
 from typing import Any, Dict, Optional
 
 from firecrawl import FirecrawlApp
-from langchain_core.tools import StructuredTool, Tool
+from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
