@@ -4,7 +4,10 @@ from typing import List, Optional
 
 from pydantic import BaseModel
 
-from app.modules.conversations.conversation.conversation_model import ConversationStatus, Visibility
+from app.modules.conversations.conversation.conversation_model import (
+    ConversationStatus,
+    Visibility,
+)
 
 
 class CreateConversationRequest(BaseModel):
