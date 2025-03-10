@@ -25,7 +25,7 @@ https://www.python.org/downloads/release/python-3100/
       ```
       uv venv venv --python=3.10
       source venv/bin/activate
-   
+
    Install dependencies in your venv:
    ```bash
    uv pip install -r requirements.txt
