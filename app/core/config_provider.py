@@ -13,6 +13,7 @@ class ConfigProvider:
             "password": os.getenv("NEO4J_PASSWORD"),
         }
         self.github_key = os.getenv("GITHUB_PRIVATE_KEY")
+        self.is_development_mode = os.getenv("isDevelopmentMode", "disabled") 
 
     def get_neo4j_config(self):
         return self.neo4j_config
@@ -109,7 +110,7 @@ class ConfigProvider:
         return redis_url
 
     def get_is_development_mode(self):
-        return os.getenv("isDevelopmentMode", "disabled")
+        return self.is_development_mode == "enabled"
 
 
 config_provider = ConfigProvider()
