@@ -158,6 +158,22 @@ class UserService:
             logger.error(f"Error fetching user ID by email {email}: {e}")
             return None
 
+    async def get_user_by_email(self, email: str) -> User:
+        """
+        Get a user by their email address.
+        Returns the full User object or None if not found.
+        """
+        try:
+            # Use an optimized query that only fetches the user once
+            user = self.db.query(User).filter(User.email == email).first()
+            return user
+        except SQLAlchemyError as e:
+            logger.error(f"Database error fetching user by email {email}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error fetching user by email {email}: {e}")
+            return None
+
     def get_user_ids_by_emails(self, emails: List[str]) -> List[str]:
         try:
             users = self.db.query(User).filter(User.email.in_(emails)).all()

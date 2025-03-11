@@ -250,6 +250,11 @@ class SecretManager:
                 .filter(UserPreferences.user_id == customer_id)
                 .first()
             )
+            if not user_pref:
+                user_pref = UserPreferences(user_id=customer_id, preferences={})
+                db.add(user_pref)
+                db.flush()  # Ensure the new record is created before modifying preferences
+
             encrypted_key = user_pref.preferences.get(f"api_key_{provider}")
             if not encrypted_key:
                 raise HTTPException(
