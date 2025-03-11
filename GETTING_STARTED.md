@@ -30,10 +30,10 @@ https://www.python.org/downloads/release/python-3100/
    ```bash
    uv pip install -r requirements.txt
    ```
-   <!-- If you face any issues with the dependencies, you can try installing the dependencies using the following command:
+   (If you are using pip)If you face any issues with the dependencies, you can try installing the dependencies using the following command:
    ```bash
-   uv pip install -r requirements.txt --use-deprecated=legacy-resolver
-   ``` -->
+   pip install -r requirements.txt --use-deprecated=legacy-resolver
+   ```
 
 3. You can use the following env config to run potpie with local models:
    ```
