@@ -125,4 +125,4 @@ class AdaptiveAgent(ChatAgent):
         # build llm response
         messages = await self._get_messages(ctx)
         async for chunk in await self.llm_provider.call_llm(messages=messages, stream=True):  # type: ignore
-            yield ChatAgentResponse(response=chunk, citations=[])
+            yield ChatAgentResponse(response=chunk, citations=[], tool_calls=[])

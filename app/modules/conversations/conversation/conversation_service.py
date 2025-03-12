@@ -308,7 +308,7 @@ class ConversationService:
                         all_citations = all_citations + chunk.citations
 
                     yield ChatMessageResponse(
-                        message=full_message, citations=all_citations
+                        message=full_message, citations=all_citations, tool_calls=[]
                     )
 
         except AccessTypeReadError:
@@ -417,7 +417,9 @@ class ConversationService:
                     full_message += chunk.message
                     all_citations = all_citations + chunk.citations
 
-                yield ChatMessageResponse(message=full_message, citations=all_citations)
+                yield ChatMessageResponse(
+                    message=full_message, citations=all_citations, tool_calls=[]
+                )
 
         except AccessTypeReadError:
             raise
@@ -478,8 +480,11 @@ class ConversationService:
         # Extract the 'message' and 'citations'
         message: str = data.get("message", "")
         citations: List[str] = data.get("citations", [])
+        tool_calls: List[dict] = data.get("tool_calls", [])
 
-        return ChatMessageResponse(message=message, citations=citations)
+        return ChatMessageResponse(
+            message=message, citations=citations, tool_calls=tool_calls
+        )
 
     async def _generate_and_stream_ai_response(
         self,
@@ -524,7 +529,9 @@ class ConversationService:
                         agent_id, user_id, query, node_ids, project_id, conversation.id
                     )
                 )
-                yield ChatMessageResponse(message=response["message"], citations=[])
+                yield ChatMessageResponse(
+                    message=response["message"], citations=[], tool_calls=[]
+                )
             else:
                 res = self.agent_service.execute_stream(
                     ChatContext(
@@ -544,7 +551,12 @@ class ConversationService:
                         citations=chunk.citations,
                     )
                     yield ChatMessageResponse(
-                        message=chunk.response, citations=chunk.citations
+                        message=chunk.response,
+                        citations=chunk.citations,
+                        tool_calls=[
+                            tool_call.model_dump_json()
+                            for tool_call in chunk.tool_calls
+                        ],
                     )
                 self.history_manager.flush_message_buffer(
                     conversation_id, MessageType.AI_GENERATED

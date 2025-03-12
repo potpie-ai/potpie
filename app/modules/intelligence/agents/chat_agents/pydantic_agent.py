@@ -1,16 +1,29 @@
+from abc import abstractmethod
+from contextlib import asynccontextmanager
 import re
-from typing import List, AsyncGenerator
+from typing import AsyncIterator, List, AsyncGenerator
 
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
+    AgentProvider,
 )
 from .crewai_agent import AgentConfig, TaskConfig
 from app.modules.utils.logger import setup_logger
 
-from ..chat_agent import ChatAgent, ChatAgentResponse, ChatContext
+from ..chat_agent import (
+    ChatAgent,
+    ChatAgentResponse,
+    ChatContext,
+    ToolCallEventType,
+    ToolCallResponse,
+)
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, Tool
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.usage import Usage
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -19,13 +32,98 @@ from pydantic_ai.messages import (
 )
 from langchain_core.tools import StructuredTool
 
-
 logger = setup_logger(__name__)
 
 
 class ActionWrapper(BaseModel):
     action: str
     action_input: str
+
+
+# class AgentResponse(StreamedResponse):
+#     response: str
+
+
+# class PydanticAIModel(Model):
+
+#     def __init__(self):
+#         pass
+
+#     async def request(
+#         self,
+#         messages: list[ModelMessage],
+#         model_settings: ModelSettings | None,
+#         model_request_parameters: ModelRequestParameters,
+#     ) -> tuple[ModelResponse, Usage]:
+#         """Make a request to the model."""
+#         logger.info("Requesting to the model")
+#         return ModelResponse(parts=[TextPart(content="")]), Usage()
+
+#     @asynccontextmanager
+#     async def request_stream(
+#         self,
+#         messages: list[ModelMessage],
+#         model_settings: ModelSettings | None,
+#         model_request_parameters: ModelRequestParameters,
+#     ) -> AsyncIterator[StreamedResponse]:
+#         """Make a request to the model and return a streaming response."""
+
+#         yield AgentResponse(response="streaming response")
+
+#     @property
+#     def model_name(self) -> str:
+#         return "PydanticAI"
+
+#     @property
+#     def system(self) -> str | None:
+#         """The system / model provider, ex: openai."""
+#         return "PydanticAI"
+
+
+def get_tool_run_message(tool_name: str):
+    match tool_name:
+        case "GetCodeanddocstringFromProbableNodeName":
+            return "Retrieving code from referenced names"
+        case "Getcodechanges":
+            return "Fetching code changes from your repo"
+        case "GetNodesfromTags":
+            return "Fetching nodes from tags"
+        case "AskKnowledgeGraphQueries":
+            return "Traversing the knowledge graph"
+        case "GetCodeanddocstringFromMultipleNodeIDs":
+            return "Fetching code and docstrings"
+        case "get_code_file_structure":
+            return "Loading the file structure of the repo"
+        case "GetNodeNeighboursFromNodeID":
+            return "Identifying referenced code"
+        case "WebpageContentExtractor":
+            return "Querying information from the web"
+        case "GitHubContentFetcher":
+            return "Fetching content from github"
+        case _:
+            return "Fetching code"
+
+
+def get_tool_response_message(tool_name: str):
+    match tool_name:
+        case "Getcodechanges":
+            return "Code changes fetched successfully"
+        case "GetNodesfromTags":
+            return "Fetched nodes from tags"
+        case "AskKnowledgeGraphQueries":
+            return "Knowledge graph queries successful"
+        case "GetCodeanddocstringFromMultipleNodeIDs":
+            return "Fetched code and docstrings"
+        case "get_code_file_structure":
+            return "File structure of the repo loaded successfully"
+        case "GetNodeNeighboursFromNodeID":
+            return "Fetched referenced code"
+        case "WebpageContentExtractor":
+            return "Information retrieved from web"
+        case "GitHubContentFetcher":
+            return "File contents fetched from github"
+        case _:
+            return "Code fetched"
 
 
 class PydanticRagAgent(ChatAgent):
@@ -45,7 +143,8 @@ class PydanticRagAgent(ChatAgent):
             tools[i].name = re.sub(r" ", "", tool.name)
 
         self.agent = Agent(
-            model="openai:gpt-4o",
+            # model=llm_provider.get_small_llm(AgentProvider.PYDANTICAI),  # type: ignore
+            model="gpt-4o-mini",
             tools=[
                 Tool(
                     name=tool.name,
@@ -123,6 +222,7 @@ class PydanticRagAgent(ChatAgent):
 
             return ChatAgentResponse(
                 response=resp.data,
+                tool_calls=[],
                 citations=[],
             )
 
@@ -135,7 +235,6 @@ class PydanticRagAgent(ChatAgent):
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         task = self._create_task_description(self.tasks[0], ctx)
         try:
-
             async with self.agent.iter(
                 user_prompt=task,
             ) as run:
@@ -150,22 +249,46 @@ class PydanticRagAgent(ChatAgent):
                                 ):
                                     yield ChatAgentResponse(
                                         response=event.delta.content_delta,
+                                        tool_calls=[],
                                         citations=[],
                                     )
-
                     elif Agent.is_call_tools_node(node):
                         async with node.stream(run.ctx) as handle_stream:
                             async for event in handle_stream:
                                 if isinstance(event, FunctionToolCallEvent):
                                     yield ChatAgentResponse(
                                         # response=f"\n[Tools] The LLM calls tool={event.part.tool_name!r} {event.part.args_as_json_str}\n",
-                                        response=f"\n<ToolCall>{event.part.tool_name}</ToolCall>\n",
+                                        response="",
+                                        tool_calls=[
+                                            ToolCallResponse(
+                                                call_id=event.part.tool_call_id or "",
+                                                event_type=ToolCallEventType.CALL,
+                                                tool_name=event.part.tool_name,
+                                                tool_response=get_tool_run_message(
+                                                    event.part.tool_name
+                                                ),
+                                                tool_call_details={},
+                                            )
+                                        ],
                                         citations=[],
                                     )
                                 if isinstance(event, FunctionToolResultEvent):
                                     yield ChatAgentResponse(
                                         # response=f"\n[Tools] Tool call {event.result.tool_name!r}\n",
-                                        response=f"\n<ToolCallResult>{event.result.tool_name}</ToolCallResult>\n",
+                                        response="",
+                                        tool_calls=[
+                                            ToolCallResponse(
+                                                call_id=event.result.tool_call_id or "",
+                                                event_type=ToolCallEventType.RESULT,
+                                                tool_name=event.result.tool_name
+                                                or "unknown tool",
+                                                tool_response=get_tool_response_message(
+                                                    event.result.tool_name
+                                                    or "unknown tool"
+                                                ),
+                                                tool_call_details={},
+                                            )
+                                        ],
                                         citations=[],
                                     )
 

@@ -1,6 +1,32 @@
 from abc import ABC, abstractmethod
-from typing import AsyncGenerator, List, Optional
+from enum import Enum
+from typing import Any, AsyncGenerator, Dict, List, Optional
 from pydantic import BaseModel, Field
+
+
+class ToolCallEventType(Enum):
+    CALL = "call"
+    RESULT = "result"
+
+
+class ToolCallResponse(BaseModel):
+    call_id: str = Field(
+        ...,
+        description="ID of the tool call",
+    )
+    event_type: ToolCallEventType = Field(..., description="Type of the event")
+    tool_name: str = Field(
+        ...,
+        description="Name of the tool",
+    )
+    tool_response: str = Field(
+        ...,
+        description="Response from the tool",
+    )
+    tool_call_details: Dict[str, Any] = Field(
+        ...,
+        description="Details of the tool call",
+    )
 
 
 class ChatAgentResponse(BaseModel):
@@ -8,6 +34,7 @@ class ChatAgentResponse(BaseModel):
         ...,
         description="Full response to the query",
     )
+    tool_calls: List[ToolCallResponse] = Field([], description="List of tool calls")
     citations: List[str] = Field(
         ...,
         description="List of file names extracted from context and referenced in the response",
