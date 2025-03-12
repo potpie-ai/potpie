@@ -1,11 +1,8 @@
-from abc import abstractmethod
-from contextlib import asynccontextmanager
 import re
-from typing import AsyncIterator, List, AsyncGenerator
+from typing import List, AsyncGenerator
 
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
-    AgentProvider,
 )
 from .crewai_agent import AgentConfig, TaskConfig
 from app.modules.utils.logger import setup_logger
@@ -20,10 +17,6 @@ from ..chat_agent import (
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, Tool
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
-from pydantic_ai.usage import Usage
-from pydantic_ai.settings import ModelSettings
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
