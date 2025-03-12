@@ -52,7 +52,6 @@ class MainApp:
         self.app = FastAPI()
         self.setup_cors()
         self.initialize_database()
-        self.check_and_set_env_vars()
         self.setup_data()
         self.include_routers()
 
@@ -89,15 +88,6 @@ class MainApp:
     def initialize_database(self):
         # Initialize database tables
         Base.metadata.create_all(bind=engine)
-
-    def check_and_set_env_vars(self):
-        required_env_vars = [
-            "OPENAI_API_KEY",
-        ]
-        for env_var in required_env_vars:
-            if env_var not in os.environ:
-                value = input(f"Enter value for {env_var}: ")
-                os.environ[env_var] = value
 
     def include_routers(self):
         self.app.include_router(auth_router, prefix="/api/v1", tags=["Auth"])
