@@ -48,14 +48,14 @@ class AutoRouterAgent(ChatAgent):
             {"role": "user", "content": prompt},
         ]
 
-        classification: ClassificationRespone = (
-            await self.llm_provider.call_llm_with_structured_output(
-                messages=messages,
-                output_schema=ClassificationRespone,  # type: ignore
-            )
-        )
-
         try:
+            classification: ClassificationResponse = (
+                await self.llm_provider.call_llm_with_structured_output(
+                    messages=messages,
+                    output_schema=ClassificationResponse,  # type: ignore
+                )
+            )
+
             agent_id = classification.agent_id
             confidence = float(classification.confidence_score)
             selected_agent_id = (
@@ -64,7 +64,7 @@ class AutoRouterAgent(ChatAgent):
                 else ctx.curr_agent_id
             )
             logger.info(f"Classification successful: using {selected_agent_id} agent")
-        except (ValueError, TypeError, KeyError) as e:
+        except (ValueError, TypeError, KeyError, Exception) as e:
             logger.error("Classification error, falling back to current agent: %e", e)
             selected_agent_id = ctx.curr_agent_id
 
@@ -82,7 +82,7 @@ class AutoRouterAgent(ChatAgent):
             yield chunk
 
 
-class ClassificationRespone(BaseModel):
+class ClassificationResponse(BaseModel):
     agent_id: str = Field(description="agent_id of the best matching agent")
     confidence_score: str = Field(
         description="confidence score of the best matching agent, should be the maximum confidence score and be a valid floating point number"

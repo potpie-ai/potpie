@@ -4,7 +4,7 @@ from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
-from ..crewai_agent import AgentConfig, TaskConfig
+from ..crewai_agent import AgentConfig, CrewAIAgent, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator, List
 from pydantic import BaseModel
@@ -23,30 +23,32 @@ class IntegrationTestAgent(ChatAgent):
     ):
         self.llm_provider = llm_provider
         self.tools_provider = tools_provider
-        self.rag_agent = PydanticRagAgent(
-            llm_provider,
-            AgentConfig(
-                role="Integration Test Writer",
-                goal="Create a comprehensive integration test suite for the provided codebase. Analyze the code, determine the appropriate testing language and framework, and write tests that cover all major integration points.",
-                backstory="""
+
+        agent_config = AgentConfig(
+            role="Integration Test Writer",
+            goal="Create a comprehensive integration test suite for the provided codebase. Analyze the code, determine the appropriate testing language and framework, and write tests that cover all major integration points.",
+            backstory="""
                     You are an expert in writing unit tests for code using latest features of the popular testing libraries for the given programming language.
                 """,
-                tasks=[
-                    TaskConfig(
-                        description=integration_test_task_prompt,
-                        expected_output="Write COMPLETE CODE for integration tests for each node based on the test plan.",
-                    )
-                ],
-            ),
-            tools=self.tools_provider.get_tools(
-                [
-                    "get_code_from_multiple_node_ids",
-                    "get_code_from_probable_node_name",
-                    "webpage_extractor",
-                    "github_tool",
-                ]
-            ),
+            tasks=[
+                TaskConfig(
+                    description=integration_test_task_prompt,
+                    expected_output="Write COMPLETE CODE for integration tests for each node based on the test plan.",
+                )
+            ],
         )
+        tools = self.tools_provider.get_tools(
+            [
+                "get_code_from_multiple_node_ids",
+                "get_code_from_probable_node_name",
+                "webpage_extractor",
+                "github_tool",
+            ]
+        )
+
+        self.rag_agent = CrewAIAgent(llm_provider, agent_config, tools)
+        if llm_provider.is_current_model_supported_by_pydanticai():
+            self.rag_agent = PydanticRagAgent(llm_provider, agent_config, tools)
 
     def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if not ctx.node_ids or len(ctx.node_ids) == 0:

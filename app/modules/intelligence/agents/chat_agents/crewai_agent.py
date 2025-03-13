@@ -147,6 +147,7 @@ class CrewAIAgent(ChatAgent):
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         """Main execution flow"""
         try:
+            logger.info(f"running crew-ai agent")
             # agentops.init(
             #     os.getenv("AGENTOPS_API_KEY"), default_tags=["openai-gpt-notebook"]
             # )
@@ -182,4 +183,5 @@ class CrewAIAgent(ChatAgent):
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
+        logger.info(f"running crew-ai agent stream")
         yield await self.run(ctx)  # CrewAI doesn't support streaming response

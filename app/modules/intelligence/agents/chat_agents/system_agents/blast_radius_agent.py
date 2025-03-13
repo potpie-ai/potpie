@@ -3,7 +3,7 @@ from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
-from ..crewai_agent import AgentConfig, TaskConfig
+from ..crewai_agent import AgentConfig, CrewAIAgent, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator
 
@@ -18,30 +18,31 @@ class BlastRadiusAgent(ChatAgent):
         self.llm_provider = llm_provider
 
     def _build_agent(self):
-        return PydanticRagAgent(
-            self.llm_provider,
-            AgentConfig(
-                role="Blast Radius Analyzer",
-                goal="Analyze the impact of code changes",
-                backstory="You are an AI expert in analyzing how code changes affect the rest of the codebase.",
-                tasks=[
-                    TaskConfig(
-                        description=blast_radius_task_prompt,
-                        expected_output="Comprehensive impact analysis of the code changes on the codebase and answers to the users query about them.",
-                    )
-                ],
-            ),
-            tools=self.tools_provider.get_tools(
-                [
-                    "get_nodes_from_tags",
-                    "ask_knowledge_graph_queries",
-                    "get_code_from_multiple_node_ids",
-                    "change_detection",
-                    "webpage_extractor",
-                    "github_tool",
-                ]
-            ),
+        agent_config = AgentConfig(
+            role="Blast Radius Analyzer",
+            goal="Analyze the impact of code changes",
+            backstory="You are an AI expert in analyzing how code changes affect the rest of the codebase.",
+            tasks=[
+                TaskConfig(
+                    description=blast_radius_task_prompt,
+                    expected_output="Comprehensive impact analysis of the code changes on the codebase and answers to the users query about them.",
+                )
+            ],
         )
+        tools = self.tools_provider.get_tools(
+            [
+                "get_nodes_from_tags",
+                "ask_knowledge_graph_queries",
+                "get_code_from_multiple_node_ids",
+                "change_detection",
+                "webpage_extractor",
+                "github_tool",
+            ]
+        )
+        if self.llm_provider.is_current_model_supported_by_pydanticai():
+            return PydanticRagAgent(self.llm_provider, agent_config, tools)
+        else:
+            return CrewAIAgent(self.llm_provider, agent_config, tools)
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         return await self._build_agent().run(ctx)

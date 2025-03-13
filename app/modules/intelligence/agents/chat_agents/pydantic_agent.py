@@ -3,6 +3,7 @@ from typing import List, AsyncGenerator
 
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
+    AgentProvider,
 )
 from .crewai_agent import AgentConfig, TaskConfig
 from app.modules.utils.logger import setup_logger
@@ -14,7 +15,6 @@ from ..chat_agent import (
     ToolCallEventType,
     ToolCallResponse,
 )
-from pydantic import BaseModel
 
 from pydantic_ai import Agent, Tool
 from pydantic_ai.messages import (
@@ -26,51 +26,6 @@ from pydantic_ai.messages import (
 from langchain_core.tools import StructuredTool
 
 logger = setup_logger(__name__)
-
-
-class ActionWrapper(BaseModel):
-    action: str
-    action_input: str
-
-
-# class AgentResponse(StreamedResponse):
-#     response: str
-
-
-# class PydanticAIModel(Model):
-
-#     def __init__(self):
-#         pass
-
-#     async def request(
-#         self,
-#         messages: list[ModelMessage],
-#         model_settings: ModelSettings | None,
-#         model_request_parameters: ModelRequestParameters,
-#     ) -> tuple[ModelResponse, Usage]:
-#         """Make a request to the model."""
-#         logger.info("Requesting to the model")
-#         return ModelResponse(parts=[TextPart(content="")]), Usage()
-
-#     @asynccontextmanager
-#     async def request_stream(
-#         self,
-#         messages: list[ModelMessage],
-#         model_settings: ModelSettings | None,
-#         model_request_parameters: ModelRequestParameters,
-#     ) -> AsyncIterator[StreamedResponse]:
-#         """Make a request to the model and return a streaming response."""
-
-#         yield AgentResponse(response="streaming response")
-
-#     @property
-#     def model_name(self) -> str:
-#         return "PydanticAI"
-
-#     @property
-#     def system(self) -> str | None:
-#         """The system / model provider, ex: openai."""
-#         return "PydanticAI"
 
 
 def get_tool_run_message(tool_name: str):
@@ -136,8 +91,8 @@ class PydanticRagAgent(ChatAgent):
             tools[i].name = re.sub(r" ", "", tool.name)
 
         self.agent = Agent(
-            # model=llm_provider.get_small_llm(AgentProvider.PYDANTICAI),  # type: ignore
-            model="gpt-4o-mini",
+            model=llm_provider.get_pydantic_model(),
+            # model="gpt-4o-mini",
             tools=[
                 Tool(
                     name=tool.name,
@@ -200,6 +155,7 @@ class PydanticRagAgent(ChatAgent):
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         """Main execution flow"""
+        logger.info(f"running pydantic-ai agent")
         try:
             # agentops.init(
             #     os.getenv("AGENTOPS_API_KEY"), default_tags=["openai-gpt-notebook"]
@@ -226,6 +182,7 @@ class PydanticRagAgent(ChatAgent):
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
+        logger.info(f"running pydantic-ai agent stream")
         task = self._create_task_description(self.tasks[0], ctx)
         try:
             async with self.agent.iter(
