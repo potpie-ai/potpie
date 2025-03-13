@@ -3,7 +3,6 @@ from typing import List, AsyncGenerator
 
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
-    AgentProvider,
 )
 from .crewai_agent import AgentConfig, TaskConfig
 from app.modules.utils.logger import setup_logger
@@ -155,7 +154,7 @@ class PydanticRagAgent(ChatAgent):
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         """Main execution flow"""
-        logger.info(f"running pydantic-ai agent")
+        logger.info("running pydantic-ai agent")
         try:
             # agentops.init(
             #     os.getenv("AGENTOPS_API_KEY"), default_tags=["openai-gpt-notebook"]
@@ -182,7 +181,7 @@ class PydanticRagAgent(ChatAgent):
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        logger.info(f"running pydantic-ai agent stream")
+        logger.info("running pydantic-ai agent stream")
         task = self._create_task_description(self.tasks[0], ctx)
         try:
             async with self.agent.iter(
