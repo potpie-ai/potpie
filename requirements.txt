@@ -22,7 +22,7 @@ grep-ast==0.4.1
 pygments==2.18.0
 networkx==3.4.2
 blar-graph==1.1.6
-openai==1.65.1
+openai==1.66.3
 uuid6==2024.7.10
 aiohttp==3.11.9
 langchain==0.3.16
@@ -63,4 +63,4 @@ tiktoken==0.7.0
 agentops==0.3.26
 pydantic[email]==2.10.3
 firecrawl-py==1.11.1
-pydantic_ai==0.0.35
+pydantic_ai==0.0.39

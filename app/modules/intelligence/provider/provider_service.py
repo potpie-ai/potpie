@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from pydantic_ai.models import Model
 from litellm import litellm, AsyncOpenAI, acompletion
 import instructor
+import httpx
 from portkey_ai import createHeaders, PORTKEY_GATEWAY_URL
 
 from app.modules.key_management.secret_manager import SecretManager
@@ -513,13 +514,15 @@ class ProviderService:
             model_name = model
 
         match provider:
-            case "openai" | "":
+            case "openai":
                 return OpenAIModel(
                     model_name=model_name,
                     provider=OpenAIProvider(
-                        openai_client=AsyncOpenAI(
-                            api_key=api_key, base_url=base_url, default_headers=headers
-                        )
+                        api_key=api_key,
+                        http_client=httpx.AsyncClient(
+                            base_url=base_url or "",
+                            headers=headers,
+                        ),
                     ),
                 )
             case "anthropic":
