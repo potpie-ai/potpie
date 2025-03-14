@@ -15,7 +15,9 @@ class DebugAgent(ChatAgent):
         tools_provider: ToolService,
     ):
         self.tools_provider = tools_provider
+        self.llm_provider = llm_provider
 
+    def _build_agent(self) -> ChatAgent:
         agent_config = AgentConfig(
             role="Context curation agent",
             goal="Handle querying the knowledge graph and refining the results to provide accurate and contextually rich responses.",
@@ -48,9 +50,10 @@ class DebugAgent(ChatAgent):
             ]
         )
 
-        self.rag_agent = CrewAIAgent(llm_provider, agent_config, tools)
-        if llm_provider.is_current_model_supported_by_pydanticai():
-            self.rag_agent = PydanticRagAgent(llm_provider, agent_config, tools)
+        if self.llm_provider.is_current_model_supported_by_pydanticai():
+            return PydanticRagAgent(self.llm_provider, agent_config, tools)
+        else:
+            return CrewAIAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if ctx.node_ids and len(ctx.node_ids) > 0:
@@ -63,12 +66,14 @@ class DebugAgent(ChatAgent):
         return ctx
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
-        return await self.rag_agent.run(ctx)
+        ctx = await self._enriched_context(ctx)
+        return await self._build_agent().run(ctx)
 
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        async for chunk in self.rag_agent.run_stream(ctx):
+        ctx = await self._enriched_context(ctx)
+        async for chunk in self._build_agent().run_stream(ctx):
             yield chunk
 
 

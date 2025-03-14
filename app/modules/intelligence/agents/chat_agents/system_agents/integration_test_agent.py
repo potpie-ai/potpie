@@ -24,6 +24,7 @@ class IntegrationTestAgent(ChatAgent):
         self.llm_provider = llm_provider
         self.tools_provider = tools_provider
 
+    def _build_agent(self) -> ChatAgent:
         agent_config = AgentConfig(
             role="Integration Test Writer",
             goal="Create a comprehensive integration test suite for the provided codebase. Analyze the code, determine the appropriate testing language and framework, and write tests that cover all major integration points.",
@@ -46,9 +47,10 @@ class IntegrationTestAgent(ChatAgent):
             ]
         )
 
-        self.rag_agent = CrewAIAgent(llm_provider, agent_config, tools)
-        if llm_provider.is_current_model_supported_by_pydanticai():
-            self.rag_agent = PydanticRagAgent(llm_provider, agent_config, tools)
+        if self.llm_provider.is_current_model_supported_by_pydanticai():
+            return PydanticRagAgent(self.llm_provider, agent_config, tools)
+        else:
+            return CrewAIAgent(self.llm_provider, agent_config, tools)
 
     def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if not ctx.node_ids or len(ctx.node_ids) == 0:
@@ -113,13 +115,13 @@ class IntegrationTestAgent(ChatAgent):
         return ctx
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
-        return await self.rag_agent.run(self._enriched_context(ctx))
+        return await self._build_agent().run(self._enriched_context(ctx))
 
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         ctx = self._enriched_context(ctx)
-        async for chunk in self.rag_agent.run_stream(ctx):
+        async for chunk in self._build_agent().run_stream(ctx):
             yield chunk
 
 
