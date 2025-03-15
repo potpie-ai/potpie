@@ -2,7 +2,7 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
-from langchain_core.tools import StructuredTool, Tool
+from langchain_core.tools import StructuredTool
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 
@@ -208,7 +208,7 @@ class GetCodeGraphFromNodeIdTool:
             self.neo4j_driver.close()
 
 
-def get_code_graph_from_node_id_tool(sql_db: Session) -> Tool:
+def get_code_graph_from_node_id_tool(sql_db: Session) -> StructuredTool:
     tool_instance = GetCodeGraphFromNodeIdTool(sql_db)
     return StructuredTool.from_function(
         coroutine=tool_instance.arun,

@@ -1,8 +1,9 @@
+from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
-from ..crewai_agent import CrewAIAgent, AgentConfig, TaskConfig
+from ..crewai_agent import AgentConfig, CrewAIAgent, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator
 
@@ -17,35 +18,37 @@ class LowLevelDesignAgent(ChatAgent):
         self.tools_provider = tools_provider
 
     def _build_agent(self) -> ChatAgent:
-        return CrewAIAgent(
-            self.llm_provider,
-            AgentConfig(
-                role="Design Planner",
-                goal="Create a detailed low-level design plan for implementing new features",
-                backstory="""
+        agent_config = AgentConfig(
+            role="Design Planner",
+            goal="Create a detailed low-level design plan for implementing new features",
+            backstory="""
                     You are a senior software architect specializing in creating detailed,
                     actionable design plans. Your expertise lies in breaking down complex features into
                     manageable steps and providing clear guidance for implementation.
                 """,
-                tasks=[
-                    TaskConfig(
-                        description=lld_task_prompt,
-                        expected_output="Low-level design plan for implementing the new feature",
-                    )
-                ],
-            ),
-            tools=self.tools_provider.get_tools(
-                [
-                    "get_code_from_multiple_node_ids",
-                    "get_node_neighbours_from_node_id",
-                    "get_code_from_probable_node_name",
-                    "ask_knowledge_graph_queries",
-                    "get_nodes_from_tags",
-                    "webpage_extractor",
-                    "github_tool",
-                ]
-            ),
+            tasks=[
+                TaskConfig(
+                    description=lld_task_prompt,
+                    expected_output="Low-level design plan for implementing the new feature",
+                )
+            ],
         )
+        tools = self.tools_provider.get_tools(
+            [
+                "get_code_from_multiple_node_ids",
+                "get_node_neighbours_from_node_id",
+                "get_code_from_probable_node_name",
+                "ask_knowledge_graph_queries",
+                "get_nodes_from_tags",
+                "webpage_extractor",
+                "github_tool",
+            ]
+        )
+
+        if self.llm_provider.is_current_model_supported_by_pydanticai():
+            return PydanticRagAgent(self.llm_provider, agent_config, tools)
+        else:
+            return CrewAIAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if ctx.node_ids and len(ctx.node_ids) > 0:

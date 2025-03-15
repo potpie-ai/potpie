@@ -1,8 +1,9 @@
+from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
-from ..crewai_agent import CrewAIAgent, AgentConfig, TaskConfig
+from ..crewai_agent import AgentConfig, CrewAIAgent, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator
 
@@ -17,12 +18,10 @@ class CodeGenAgent(ChatAgent):
         self.tools_provider = tools_provider
 
     def _build_agent(self) -> ChatAgent:
-        return CrewAIAgent(
-            self.llm_provider,
-            AgentConfig(
-                role="Code Generation Agent",
-                goal="Generate precise, copy-paste ready code modifications that maintain project consistency and handle all dependencies",
-                backstory="""
+        agent_config = AgentConfig(
+            role="Code Generation Agent",
+            goal="Generate precise, copy-paste ready code modifications that maintain project consistency and handle all dependencies",
+            backstory="""
                     You are an expert code generation agent specialized in creating production-ready,
                     immediately usable code modifications. Your primary responsibilities include:
                     1. Analyzing existing codebase context and understanding dependencies
@@ -38,26 +37,29 @@ class CodeGenAgent(ChatAgent):
                     - Maintain exact indentation and spacing patterns from original code
                     - Include clear section markers for where code should be inserted/modified
                 """,
-                tasks=[
-                    TaskConfig(
-                        description=code_gen_task_prompt,
-                        expected_output="User-friendly, clearly structured code changes with comprehensive dependency analysis, implementation details for ALL impacted files, and complete verification steps",
-                    )
-                ],
-            ),
-            tools=self.tools_provider.get_tools(
-                [
-                    "get_code_from_multiple_node_ids",
-                    "get_node_neighbours_from_node_id",
-                    "get_code_from_probable_node_name",
-                    "ask_knowledge_graph_queries",
-                    "get_nodes_from_tags",
-                    "get_code_file_structure",
-                    "webpage_extractor",
-                    "github_tool",
-                ]
-            ),
+            tasks=[
+                TaskConfig(
+                    description=code_gen_task_prompt,
+                    expected_output="User-friendly, clearly structured code changes with comprehensive dependency analysis, implementation details for ALL impacted files, and complete verification steps",
+                )
+            ],
         )
+        tools = self.tools_provider.get_tools(
+            [
+                "get_code_from_multiple_node_ids",
+                "get_node_neighbours_from_node_id",
+                "get_code_from_probable_node_name",
+                "ask_knowledge_graph_queries",
+                "get_nodes_from_tags",
+                "get_code_file_structure",
+                "webpage_extractor",
+                "github_tool",
+            ]
+        )
+        if self.llm_provider.is_current_model_supported_by_pydanticai():
+            return PydanticRagAgent(self.llm_provider, agent_config, tools)
+        else:
+            return CrewAIAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if ctx.node_ids and len(ctx.node_ids) > 0:

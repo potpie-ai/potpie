@@ -49,12 +49,13 @@ class AutoRouterAgent(ChatAgent):
         ]
 
         try:
-            classification: ClassificationRespone = (
+            classification: ClassificationResponse = (
                 await self.llm_provider.call_llm_with_structured_output(
                     messages=messages,
-                    output_schema=ClassificationRespone,  # type: ignore
+                    output_schema=ClassificationResponse,  # type: ignore
                 )
             )
+
             agent_id = classification.agent_id
             confidence = float(classification.confidence_score)
             selected_agent_id = (
@@ -81,7 +82,7 @@ class AutoRouterAgent(ChatAgent):
             yield chunk
 
 
-class ClassificationRespone(BaseModel):
+class ClassificationResponse(BaseModel):
     agent_id: str = Field(description="agent_id of the best matching agent")
     confidence_score: str = Field(
         description="confidence score of the best matching agent, should be the maximum confidence score and be a valid floating point number"

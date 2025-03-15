@@ -41,7 +41,7 @@ class LangchainRagAgent(ChatAgent):
             tools[i].name = re.sub(r" ", "", tool.name)
 
         self.agent = create_react_agent(
-            model=llm_provider.get_large_llm(AgentProvider.LANGCHAIN),
+            model=llm_provider.get_large_llm(AgentProvider.LANGCHAIN),  # type: ignore
             tools=ToolExecutor(tools),
             debug=True,
         )
@@ -118,8 +118,7 @@ class LangchainRagAgent(ChatAgent):
             # session and session.end_session("Success")
 
             return ChatAgentResponse(
-                response=res["messages"][-1].content,
-                citations=[],
+                response=res["messages"][-1].content, citations=[], tool_calls=[]
             )
 
         except Exception as e:
@@ -145,6 +144,7 @@ class LangchainRagAgent(ChatAgent):
                     yield ChatAgentResponse(
                         response=str(chunk["agent"]["messages"][0].content),
                         citations=[],
+                        tool_calls=[],
                     )
 
         except Exception as e:

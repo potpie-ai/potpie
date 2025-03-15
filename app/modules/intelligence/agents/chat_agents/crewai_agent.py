@@ -6,7 +6,7 @@ from app.modules.intelligence.provider.provider_service import (
     AgentProvider,
 )
 from crewai import Agent, Crew, Process, Task
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.modules.utils.logger import setup_logger
 from ..chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 
@@ -28,6 +28,17 @@ class AgentConfig(BaseModel):
     backstory: str
     tasks: List[TaskConfig]
     max_iter: int = 15
+
+
+class CrewAIResponse(BaseModel):
+    response: str = Field(
+        ...,
+        description="Full response to the query",
+    )
+    citations: List[str] = Field(
+        ...,
+        description="List of file names extracted from context and referenced in the response",
+    )
 
 
 class CrewAIAgent(ChatAgent):
@@ -128,7 +139,7 @@ class CrewAIAgent(ChatAgent):
             description=task_description,
             agent=self.agent,
             expected_output="Markdown formatted response with code context and explanations",
-            output_pydantic=ChatAgentResponse,
+            output_pydantic=CrewAIResponse,
         )
 
         return task
@@ -136,6 +147,7 @@ class CrewAIAgent(ChatAgent):
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         """Main execution flow"""
         try:
+            logger.info("running crew-ai agent")
             # agentops.init(
             #     os.getenv("AGENTOPS_API_KEY"), default_tags=["openai-gpt-notebook"]
             # )
@@ -156,9 +168,13 @@ class CrewAIAgent(ChatAgent):
 
             logger.info(f"Starting Crew AI kickoff with {len(tasks)} tasks")
             result = await crew.kickoff_async()
-            response: ChatAgentResponse = result.tasks_output[0].pydantic
+            response: CrewAIResponse = result.tasks_output[0].pydantic
             # agentops.end_session("success")
-            return response
+            return ChatAgentResponse(
+                response=response.response,
+                tool_calls=[],
+                citations=response.citations,
+            )
 
         except Exception as e:
             logger.error(f"Error in run method: {str(e)}", exc_info=True)
@@ -167,4 +183,5 @@ class CrewAIAgent(ChatAgent):
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
+        logger.info("running crew-ai agent stream")
         yield await self.run(ctx)  # CrewAI doesn't support streaming response

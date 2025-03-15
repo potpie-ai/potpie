@@ -1,8 +1,9 @@
+from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
-from ..crewai_agent import CrewAIAgent, AgentConfig, TaskConfig
+from ..crewai_agent import AgentConfig, CrewAIAgent, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator
 
@@ -14,12 +15,13 @@ class DebugAgent(ChatAgent):
         tools_provider: ToolService,
     ):
         self.tools_provider = tools_provider
-        self.rag_agent = CrewAIAgent(
-            llm_provider,
-            AgentConfig(
-                role="Context curation agent",
-                goal="Handle querying the knowledge graph and refining the results to provide accurate and contextually rich responses.",
-                backstory="""
+        self.llm_provider = llm_provider
+
+    def _build_agent(self) -> ChatAgent:
+        agent_config = AgentConfig(
+            role="Context curation agent",
+            goal="Handle querying the knowledge graph and refining the results to provide accurate and contextually rich responses.",
+            backstory="""
                     You are a highly efficient and intelligent RAG agent capable of querying complex knowledge graphs and refining the results to generate precise and comprehensive responses.
                     Your tasks include:
                     1. Analyzing the user's query and formulating an effective strategy to extract relevant information from the code knowledge graph.
@@ -28,26 +30,30 @@ class DebugAgent(ChatAgent):
                     4. Maintaining traceability by including relevant citations and references in your output.
                     5. Including relevant citations in the response.
                 """,
-                tasks=[
-                    TaskConfig(
-                        description=code_gen_task_prompt,
-                        expected_output="Markdown formatted chat response to user's query grounded in provided code context and tool results",
-                    )
-                ],
-            ),
-            tools=self.tools_provider.get_tools(
-                [
-                    "get_code_from_multiple_node_ids",
-                    "get_node_neighbours_from_node_id",
-                    "get_code_from_probable_node_name",
-                    "ask_knowledge_graph_queries",
-                    "get_nodes_from_tags",
-                    "get_code_file_structure",
-                    "webpage_extractor",
-                    "github_tool",
-                ]
-            ),
+            tasks=[
+                TaskConfig(
+                    description=code_gen_task_prompt,
+                    expected_output="Markdown formatted chat response to user's query grounded in provided code context and tool results",
+                )
+            ],
         )
+        tools = self.tools_provider.get_tools(
+            [
+                "get_code_from_multiple_node_ids",
+                "get_node_neighbours_from_node_id",
+                "get_code_from_probable_node_name",
+                "ask_knowledge_graph_queries",
+                "get_nodes_from_tags",
+                "get_code_file_structure",
+                "webpage_extractor",
+                "github_tool",
+            ]
+        )
+
+        if self.llm_provider.is_current_model_supported_by_pydanticai():
+            return PydanticRagAgent(self.llm_provider, agent_config, tools)
+        else:
+            return CrewAIAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if ctx.node_ids and len(ctx.node_ids) > 0:
@@ -60,12 +66,14 @@ class DebugAgent(ChatAgent):
         return ctx
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
-        return await self.rag_agent.run(ctx)
+        ctx = await self._enriched_context(ctx)
+        return await self._build_agent().run(ctx)
 
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        async for chunk in self.rag_agent.run_stream(ctx):
+        ctx = await self._enriched_context(ctx)
+        async for chunk in self._build_agent().run_stream(ctx):
             yield chunk
 
 

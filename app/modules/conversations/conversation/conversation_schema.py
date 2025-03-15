@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from pydantic import BaseModel
 
@@ -54,6 +54,7 @@ class ConversationInfoResponse(BaseModel):
 class ChatMessageResponse(BaseModel):
     message: str
     citations: List[str]
+    tool_calls: List[Any]
 
 
 # Resolve forward references

@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Dict, List
 
 from sqlalchemy.orm import Session
 
@@ -43,6 +43,7 @@ from app.modules.intelligence.tools.web_tools.github_tool import github_tool
 from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import (
     webpage_extractor_tool,
 )
+from langchain_core.tools import StructuredTool
 
 
 class ToolService:
@@ -58,7 +59,7 @@ class ToolService:
         self.file_structure_tool = GetCodeFileStructureTool(db)
         self.tools = self._initialize_tools()
 
-    def get_tools(self, tool_names: List[str]) -> List[Any]:
+    def get_tools(self, tool_names: List[str]) -> List[StructuredTool]:
         """get tools if exists"""
         tools = []
         for tool_name in tool_names:
@@ -66,7 +67,7 @@ class ToolService:
                 tools.append(self.tools[tool_name])
         return tools
 
-    def _initialize_tools(self) -> Dict[str, Any]:
+    def _initialize_tools(self) -> Dict[str, StructuredTool]:
         tools = {
             "get_code_from_probable_node_name": get_code_from_probable_node_name_tool(
                 self.db, self.user_id

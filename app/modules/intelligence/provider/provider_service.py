@@ -3,10 +3,13 @@ import os
 from enum import Enum
 from typing import List, Dict, Any, Union, AsyncGenerator, Optional
 import uuid
+from anthropic import AsyncAnthropic
 from crewai import LLM
 from pydantic import BaseModel
+from pydantic_ai.models import Model
 from litellm import litellm, AsyncOpenAI, acompletion
 import instructor
+import httpx
 from portkey_ai import createHeaders, PORTKEY_GATEWAY_URL
 
 from app.modules.key_management.secret_manager import SecretManager
@@ -15,10 +18,15 @@ from app.modules.utils.posthog_helper import PostHogClient
 
 from .provider_schema import ProviderInfo, GetProviderResponse
 
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
 
 class AgentProvider(Enum):
     CREWAI = "CREWAI"
     LANGCHAIN = "LANGCHAIN"
+    PYDANTICAI = "PYDANTICAI"
 
 
 PLATFORM_PROVIDERS = [
@@ -403,17 +411,17 @@ class ProviderService:
         """
         params = self._build_llm_params(provider, size)
         routing_provider = params.pop("routing_provider", None)
+        headers = createHeaders(
+            api_key=self.portkey_api_key,
+            provider=routing_provider,
+            trace_id=str(uuid.uuid4())[:8],
+        )
         if agent_type == AgentProvider.CREWAI:
             crewai_params = {"model": params["model"], **params}
             if "default_headers" in params:
                 crewai_params["headers"] = params["default_headers"]
             if self.portkey_api_key and routing_provider != "ollama":
                 # ollama + portkey is not supported currently
-                headers = createHeaders(
-                    api_key=self.portkey_api_key,
-                    provider=routing_provider,
-                    trace_id=str(uuid.uuid4())[:8],
-                )
                 crewai_params["extra_headers"] = headers
                 crewai_params["base_url"] = PORTKEY_GATEWAY_URL
             return LLM(**crewai_params)
@@ -474,3 +482,88 @@ class ProviderService:
                 high_reasoning_model if high_reasoning_model else default_large_model
             ),
         )
+
+    def is_current_model_supported_by_pydanticai(self) -> bool:
+        provider = self._get_provider_config("large")
+        if provider in [
+            "openai",
+            "anthropic",
+        ]:
+            return True
+        return False
+
+    def get_pydantic_model(self) -> Model | None:
+        provider = self._get_provider_config("large")
+        params = self._build_llm_params(provider, "large")
+        routing_provider = params.pop("routing_provider", None)
+        api_key = params["api_key"]
+
+        # pick model name => convert "openai/gpt-4o" to "gpt-4o"
+        model_name: str = params["model"]
+        model = model_name.split("/")[-1]
+
+        # if portkey is enabled
+        if self.portkey_api_key:
+            match provider:
+                case "openai":
+                    return OpenAIModel(
+                        model_name=model,
+                        provider=OpenAIProvider(
+                            api_key=api_key,
+                            base_url=PORTKEY_GATEWAY_URL,
+                            http_client=httpx.AsyncClient(
+                                headers=createHeaders(
+                                    api_key=self.portkey_api_key,
+                                    provider=routing_provider,
+                                    trace_id=str(uuid.uuid4())[:8],
+                                ),
+                            ),
+                        ),
+                    )
+                case "anthropic":
+                    return AnthropicModel(
+                        model_name=model,
+                        anthropic_client=AsyncAnthropic(
+                            base_url=PORTKEY_GATEWAY_URL,
+                            api_key=api_key,
+                            default_headers=createHeaders(
+                                api_key=self.portkey_api_key,
+                                provider=routing_provider,
+                                trace_id=str(uuid.uuid4())[:8],
+                            ),
+                        ),
+                    )
+                # case "deepseek":
+                #     model_name: str = params["model"]
+                #     model_name = model_name.split("/", 1)[1]
+                #     return OpenAIModel(
+                #         model_name=model_name if model_name else model,
+                #         # model_name="gpt-4o-mini",
+                #         provider=OpenAIProvider(
+                #             api_key=api_key,
+                #             base_url="https://openrouter.ai/api/v1",
+                #             http_client=httpx.AsyncClient(
+                #                 headers=createHeaders(
+                #                     # api_key=self.portkey_api_key,
+                #                     provider=routing_provider,
+                #                     trace_id=str(uuid.uuid4())[:8],
+                #                 ),
+                #             ),
+                #         ),
+                #     )
+
+        match provider:
+            case "openai":
+                return OpenAIModel(
+                    model_name=model,
+                    provider=OpenAIProvider(
+                        api_key=api_key,
+                    ),
+                )
+            case "anthropic":
+                return AnthropicModel(
+                    model_name=model,
+                    anthropic_client=AsyncAnthropic(
+                        api_key=api_key,
+                    ),
+                )

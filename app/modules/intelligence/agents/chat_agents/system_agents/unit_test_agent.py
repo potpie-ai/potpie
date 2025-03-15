@@ -1,8 +1,9 @@
+from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
-from ..crewai_agent import CrewAIAgent, AgentConfig, TaskConfig
+from ..crewai_agent import AgentConfig, CrewAIAgent, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator
 
@@ -17,29 +18,30 @@ class UnitTestAgent(ChatAgent):
         self.tools_provider = tools_provider
 
     def _build_agent(self) -> ChatAgent:
-        return CrewAIAgent(
-            self.llm_provider,
-            AgentConfig(
-                role="Test Plan and Unit Test Expert",
-                goal="Create test plans and write unit tests based on user requirements",
-                backstory="""You are a seasoned AI test engineer specializing in creating robust test plans and unit tests.
+        agent_config = AgentConfig(
+            role="Test Plan and Unit Test Expert",
+            goal="Create test plans and write unit tests based on user requirements",
+            backstory="""You are a seasoned AI test engineer specializing in creating robust test plans and unit tests.
                         You aim to assist users effectively in generating and refining test plans and unit tests, ensuring they are comprehensive and tailored to the user's project requirements.""",
-                tasks=[
-                    TaskConfig(
-                        description=qna_task_prompt,
-                        expected_output="Outline the test plan and write unit tests for each node based on the test plan.",
-                    )
-                ],
-            ),
-            tools=self.tools_provider.get_tools(
-                [
-                    "get_code_from_node_id",
-                    "get_code_from_probable_node_name",
-                    "webpage_extractor",
-                    "github_tool",
-                ]
-            ),
+            tasks=[
+                TaskConfig(
+                    description=qna_task_prompt,
+                    expected_output="Outline the test plan and write unit tests for each node based on the test plan.",
+                )
+            ],
         )
+        tools = self.tools_provider.get_tools(
+            [
+                "get_code_from_node_id",
+                "get_code_from_probable_node_name",
+                "webpage_extractor",
+                "github_tool",
+            ]
+        )
+        if self.llm_provider.is_current_model_supported_by_pydanticai():
+            return PydanticRagAgent(self.llm_provider, agent_config, tools)
+        else:
+            return CrewAIAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if ctx.node_ids and len(ctx.node_ids) > 0:

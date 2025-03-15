@@ -1,8 +1,9 @@
+from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
-from ..crewai_agent import CrewAIAgent, AgentConfig, TaskConfig
+from ..crewai_agent import AgentConfig, CrewAIAgent, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator
 
@@ -17,12 +18,10 @@ class QnAAgent(ChatAgent):
         self.tools_provider = tools_provider
 
     def _build_agent(self) -> ChatAgent:
-        return CrewAIAgent(
-            self.llm_provider,
-            AgentConfig(
-                role="QNA Agent",
-                goal="Answer queries of the repo in a detail fashion",
-                backstory="""
+        agent_config = AgentConfig(
+            role="QNA Agent",
+            goal="Answer queries of the repo in a detail fashion",
+            backstory="""
                     You are a highly efficient and intelligent RAG agent capable of querying complex knowledge graphs and refining the results to generate precise and comprehensive responses.
                     Your tasks include:
                     1. Analyzing the user's query and formulating an effective strategy to extract relevant information from the code knowledge graph.
@@ -31,26 +30,30 @@ class QnAAgent(ChatAgent):
                     4. Maintaining traceability by including relevant citations and references in your output.
                     5. Including relevant citations in the response.
                 """,
-                tasks=[
-                    TaskConfig(
-                        description=qna_task_prompt,
-                        expected_output="Markdown formatted chat response to user's query grounded in provided code context and tool results",
-                    )
-                ],
-            ),
-            tools=self.tools_provider.get_tools(
-                [
-                    "get_code_from_multiple_node_ids",
-                    "get_node_neighbours_from_node_id",
-                    "get_code_from_probable_node_name",
-                    "ask_knowledge_graph_queries",
-                    "get_nodes_from_tags",
-                    "get_code_file_structure",
-                    "webpage_extractor",
-                    "github_tool",
-                ]
-            ),
+            tasks=[
+                TaskConfig(
+                    description=qna_task_prompt,
+                    expected_output="Markdown formatted chat response to user's query grounded in provided code context and tool results",
+                )
+            ],
         )
+        tools = self.tools_provider.get_tools(
+            [
+                "get_code_from_multiple_node_ids",
+                "get_node_neighbours_from_node_id",
+                "get_code_from_probable_node_name",
+                "ask_knowledge_graph_queries",
+                "get_nodes_from_tags",
+                "get_code_file_structure",
+                "webpage_extractor",
+                "github_tool",
+            ]
+        )
+
+        if self.llm_provider.is_current_model_supported_by_pydanticai():
+            return PydanticRagAgent(self.llm_provider, agent_config, tools)
+        else:
+            return CrewAIAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if ctx.node_ids and len(ctx.node_ids) > 0:
