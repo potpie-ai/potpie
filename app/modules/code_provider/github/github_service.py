@@ -174,7 +174,7 @@ class GithubService:
         return links
 
     async def get_repos_for_user(self, user_id: str):
-        if config_provider.get_is_development_mode() == "enabled":
+        if self.is_development_mode:
             return {"repositories": []}
 
         import time  # Import the time module
