@@ -64,7 +64,7 @@ class AutoRouterAgent(ChatAgent):
                 else ctx.curr_agent_id
             )
             logger.info(f"Classification successful: using {selected_agent_id} agent")
-        except (ValueError, TypeError, KeyError) as e:
+        except (ValueError, TypeError, KeyError, Exception) as e:
             logger.error("Classification error, falling back to current agent: %e", e)
             selected_agent_id = ctx.curr_agent_id
 
