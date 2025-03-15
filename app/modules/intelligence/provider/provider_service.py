@@ -484,7 +484,7 @@ class ProviderService:
         )
 
     def is_current_model_supported_by_pydanticai(self) -> bool:
-        provider = self._get_provider_config("small")
+        provider = self._get_provider_config("large")
         if provider in [
             "openai",
             "anthropic",
@@ -493,8 +493,8 @@ class ProviderService:
         return False
 
     def get_pydantic_model(self) -> Model | None:
-        provider = self._get_provider_config("small")
-        params = self._build_llm_params(provider, "small")
+        provider = self._get_provider_config("large")
+        params = self._build_llm_params(provider, "large")
         routing_provider = params.pop("routing_provider", None)
         api_key = params["api_key"]
 
