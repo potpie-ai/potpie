@@ -3,13 +3,24 @@ from typing import List
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.modules.intelligence.agents.agents_schema import AgentInfo
+from app.modules.intelligence.agents.agents_service import AgentInfo
 from app.modules.intelligence.agents.agents_service import AgentsService
+from app.modules.intelligence.provider.provider_service import ProviderService
+from app.modules.intelligence.agents.chat_agents.adaptive_agent import (
+    PromptService,
+)
+from app.modules.intelligence.tools.tool_service import ToolService
 
 
 class AgentsController:
-    def __init__(self, db: Session):
-        self.service = AgentsService(db)
+    def __init__(
+        self,
+        db: Session,
+        llm_provider: ProviderService,
+        prompt_provider: PromptService,
+        tools_provider: ToolService,
+    ):
+        self.service = AgentsService(db, llm_provider, prompt_provider, tools_provider)
 
     async def list_available_agents(
         self, current_user: dict, list_system_agents: bool
