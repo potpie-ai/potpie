@@ -485,7 +485,10 @@ class ProviderService:
 
     def is_current_model_supported_by_pydanticai(self) -> bool:
         provider = self._get_provider_config("small")
-        if provider in ["openai", "anthropic"]:
+        if provider in [
+            "openai",
+            "anthropic",
+        ]:
             return True
         return False
 
@@ -493,42 +496,74 @@ class ProviderService:
         provider = self._get_provider_config("small")
         params = self._build_llm_params(provider, "small")
         routing_provider = params.pop("routing_provider", None)
-
-        base_url = None
         api_key = params["api_key"]
-        headers = None
-
-        # if portkey is enabled
-        if self.portkey_api_key:
-            base_url = PORTKEY_GATEWAY_URL
-            headers = createHeaders(
-                api_key=self.portkey_api_key,
-                provider=routing_provider,
-                trace_id=str(uuid.uuid4())[:8],
-            )
 
         # pick model name => convert "openai/gpt-4o" to "gpt-4o"
         model_name: str = params["model"]
-        [provider_name, model] = model_name.split("/", 1)
-        if provider_name in PLATFORM_PROVIDERS:
-            model_name = model
+        model = model_name.split("/")[-1]
+
+        # if portkey is enabled
+        if self.portkey_api_key:
+            match provider:
+                case "openai":
+                    return OpenAIModel(
+                        model_name=model,
+                        provider=OpenAIProvider(
+                            api_key=api_key,
+                            base_url=PORTKEY_GATEWAY_URL,
+                            http_client=httpx.AsyncClient(
+                                headers=createHeaders(
+                                    api_key=self.portkey_api_key,
+                                    provider=routing_provider,
+                                    trace_id=str(uuid.uuid4())[:8],
+                                ),
+                            ),
+                        ),
+                    )
+                case "anthropic":
+                    return AnthropicModel(
+                        model_name=model,
+                        anthropic_client=AsyncAnthropic(
+                            base_url=PORTKEY_GATEWAY_URL,
+                            api_key=api_key,
+                            default_headers=createHeaders(
+                                api_key=self.portkey_api_key,
+                                provider=routing_provider,
+                                trace_id=str(uuid.uuid4())[:8],
+                            ),
+                        ),
+                    )
+                # case "deepseek":
+                #     model_name: str = params["model"]
+                #     model_name = model_name.split("/", 1)[1]
+                #     return OpenAIModel(
+                #         model_name=model_name if model_name else model,
+                #         # model_name="gpt-4o-mini",
+                #         provider=OpenAIProvider(
+                #             api_key=api_key,
+                #             base_url="https://openrouter.ai/api/v1",
+                #             http_client=httpx.AsyncClient(
+                #                 headers=createHeaders(
+                #                     # api_key=self.portkey_api_key,
+                #                     provider=routing_provider,
+                #                     trace_id=str(uuid.uuid4())[:8],
+                #                 ),
+                #             ),
+                #         ),
+                #     )
 
         match provider:
             case "openai":
                 return OpenAIModel(
-                    model_name=model_name,
+                    model_name=model,
                     provider=OpenAIProvider(
                         api_key=api_key,
-                        http_client=httpx.AsyncClient(
-                            base_url=base_url or "",
-                            headers=headers,
-                        ),
                     ),
                 )
             case "anthropic":
                 return AnthropicModel(
-                    model_name=model_name,
+                    model_name=model,
                     anthropic_client=AsyncAnthropic(
-                        api_key=api_key, base_url=base_url, default_headers=headers
+                        api_key=api_key,
                     ),
                 )
