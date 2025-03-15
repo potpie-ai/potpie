@@ -48,14 +48,13 @@ class AutoRouterAgent(ChatAgent):
             {"role": "user", "content": prompt},
         ]
 
-        classification: ClassificationRespone = (
-            await self.llm_provider.call_llm_with_structured_output(
-                messages=messages,
-                output_schema=ClassificationRespone,  # type: ignore
-            )
-        )
-
         try:
+            classification: ClassificationRespone = (
+                await self.llm_provider.call_llm_with_structured_output(
+                    messages=messages,
+                    output_schema=ClassificationRespone,  # type: ignore
+                )
+            )
             agent_id = classification.agent_id
             confidence = float(classification.confidence_score)
             selected_agent_id = (
