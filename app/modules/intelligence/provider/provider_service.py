@@ -554,7 +554,7 @@ class ProviderService:
                 #         ),
                 #     )
 
-        match provider:
+        match routing_provider:
             case "openai":
                 return OpenAIModel(
                     model_name=model,
