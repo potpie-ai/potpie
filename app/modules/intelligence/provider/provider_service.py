@@ -485,7 +485,9 @@ class ProviderService:
 
     def is_current_model_supported_by_pydanticai(self) -> bool:
         provider = self._get_provider_config("large")
-        if provider in [
+        params = self._build_llm_params(provider, "large")
+        routing_provider = params.pop("routing_provider", None)
+        if routing_provider in [
             "openai",
             "anthropic",
         ]:
@@ -504,7 +506,7 @@ class ProviderService:
 
         # if portkey is enabled
         if self.portkey_api_key:
-            match provider:
+            match routing_provider:
                 case "openai":
                     return OpenAIModel(
                         model_name=model,
