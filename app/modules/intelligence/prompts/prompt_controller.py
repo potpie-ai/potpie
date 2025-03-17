@@ -23,6 +23,8 @@ from app.modules.conversations.message.message_model import (
     MessageStatus,
 )
 from app.modules.conversations.message.message_schema import MessageResponse
+from app.modules.intelligence.provider.provider_service import ProviderService
+from app.modules.intelligence.tools.tool_service import ToolService
 
 
 class PromptController:
@@ -118,7 +120,12 @@ class PromptController:
             for message in messages
         ]
 
-        agents_service = AgentsService(db)
+        # Instantiate the required services
+        llm_provider = ProviderService(db, user["user_id"])  # Assuming user_id is in user dict
+        prompt_provider = PromptService(db)
+        tools_provider = ToolService(db, user["user_id"])  # Assuming user_id is in user dict
+
+        agents_service = AgentsService(db, llm_provider, prompt_provider, tools_provider)
         available_agents = await agents_service.list_available_agents(
             user, list_system_agents=True
         )
