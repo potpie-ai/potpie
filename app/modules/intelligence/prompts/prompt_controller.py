@@ -125,7 +125,9 @@ class PromptController:
         prompt_provider = PromptService(db)
         tools_provider = ToolService(db, user["user_id"]) 
 
-        agents_service = AgentsService(db, llm_provider, prompt_provider, tools_provider)
+        agents_service = AgentsService(
+            db, llm_provider, prompt_provider, tools_provider
+        )
         available_agents = await agents_service.list_available_agents(
             user, list_system_agents=True
         )
