@@ -120,10 +120,9 @@ class PromptController:
             for message in messages
         ]
 
-        
-        llm_provider = ProviderService(db, user["user_id"])  
+        llm_provider = ProviderService(db, user["user_id"])
         prompt_provider = PromptService(db)
-        tools_provider = ToolService(db, user["user_id"]) 
+        tools_provider = ToolService(db, user["user_id"])
 
         agents_service = AgentsService(
             db, llm_provider, prompt_provider, tools_provider
