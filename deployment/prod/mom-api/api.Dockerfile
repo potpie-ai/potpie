@@ -10,17 +10,21 @@ WORKDIR /app
 # Copy the requirements file into the container -
 COPY requirements.txt .
 
+#install uv
+
+RUN pip install uv
+
 # Install any needed packages specified in requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN uv pip install --no-cache-dir -r requirements.txt
 
 # Install supervisor
 RUN apt-get update && apt-get install -y supervisor
 
 # Install Celery and Flower
-RUN pip install --no-cache-dir celery flower
+RUN uv pip install --no-cache-dir celery flower
 
 # Install NLTK and download required data
-RUN pip install --no-cache-dir nltk
+RUN uv pip install --no-cache-dir nltk
 RUN python -c "import nltk; nltk.download('punkt');"
 
 # Copy the rest of the application code into the container
