@@ -121,11 +121,17 @@ class PromptController:
         ]
 
         # Instantiate the required services
-        llm_provider = ProviderService(db, user["user_id"])  # Assuming user_id is in user dict
+        llm_provider = ProviderService(
+            db, user["user_id"]
+        )  # Assuming user_id is in user dict
         prompt_provider = PromptService(db)
-        tools_provider = ToolService(db, user["user_id"])  # Assuming user_id is in user dict
+        tools_provider = ToolService(
+            db, user["user_id"]
+        )  # Assuming user_id is in user dict
 
-        agents_service = AgentsService(db, llm_provider, prompt_provider, tools_provider)
+        agents_service = AgentsService(
+            db, llm_provider, prompt_provider, tools_provider
+        )
         available_agents = await agents_service.list_available_agents(
             user, list_system_agents=True
         )
