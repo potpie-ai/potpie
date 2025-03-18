@@ -428,6 +428,7 @@ PROMPTS = {
        - Problem statement
        - Contextual details
        - Expected outcome
+    5. DO NOT respond to the user directly. Instead, return only the enhanced query. If there is insufficient context from the conversation history, enhance the query using general knowledge without making assumptions or fabricating details. Do not ask the user for more information—either refine the prompt based on available data or return it unchanged.
 
     Examples:
     1. History: "I've been working on a React app that fetches data from an API. The data loads slowly when there are many records."
@@ -456,6 +457,7 @@ PROMPTS = {
        - Problem statement
        - Contextual details
        - Expected outcome
+    5. DO NOT respond to the user directly. Instead, return only the enhanced query. If there is insufficient context from the conversation history, enhance the query using general knowledge without making assumptions or fabricating details. Do not ask the user for more information—either refine the prompt based on available data or return it unchanged.
 
     Examples:
     1. History: "I've been working on a React app that fetches data from an API. The data loads slowly when there are many records."
