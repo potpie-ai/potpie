@@ -306,7 +306,7 @@ class ProviderService:
             api_key=self.portkey_api_key,
             provider=routing_provider,
             trace_id=str(uuid.uuid4())[:8],
-            custom_host=os.environ.get("LLM_API_KEY"),
+            custom_host=os.environ.get("LLM_API_BASE"),
             api_version=os.environ.get("LLM_API_VERSION"),
         )
         if self.portkey_api_key and routing_provider != "ollama":
