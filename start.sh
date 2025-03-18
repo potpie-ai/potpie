@@ -9,42 +9,25 @@ export GOOGLE_APPLICATION_CREDENTIALS="./service-account.json"
 # Check if the credentials file exists
 if [ ! -f "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
     echo "Error: Service Account Credentials file not found at $GOOGLE_APPLICATION_CREDENTIALS"
-    echo "Please ensure the service-account.json file is in the current directory if you are working outside developmentMode"
+    echo "Please ensure the service-account.json file is in the current directory."
+    exit 1
 fi
 
-
 echo "Starting Docker Compose..."
-docker compose up -d
+docker compose -f dev-docker-compose.yml up -d
 
-# Wait for postgres to be ready
-echo "Waiting for postgres to be ready..."
+# Wait for Postgres to be ready
+echo "Waiting for Postgres to be ready..."
 until docker exec potpie_postgres pg_isready -U postgres; do
   echo "Postgres is unavailable - sleeping"
   sleep 2
 done
 
-echo "Postgres is up - applying database migrations"
+# Wait for Redis to be ready
+echo "Waiting for Redis to be ready..."
+until docker exec potpie_redis_broker redis-cli ping | grep PONG; do
+  echo "Redis is unavailable - sleeping"
+  sleep 2
+done
 
-
-# Verify virtual environment is active
-if [ -z "$VIRTUAL_ENV" ]; then
- echo "Error: No virtual environment is active. Please activate your virtual environment first."
- exit 1
-fi
-
-# Install python dependencies
-echo "Installing Python dependencies..."
-if ! pip install -r requirements.txt; then
- echo "Error: Failed to install Python dependencies"
- exit 1
-fi
-
-# Apply database migrations
-alembic upgrade head
-
-echo "Starting momentum application..."
-gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app &
-
-echo "Starting Celery worker"
-# Start Celery worker with the new setup
-celery -A app.celery.celery_app worker --loglevel=debug -Q "${CELERY_QUEUE_NAME}_process_repository" -E --concurrency=1 --pool=solo &
+echo "All set!"
