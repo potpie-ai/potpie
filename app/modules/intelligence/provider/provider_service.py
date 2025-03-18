@@ -318,36 +318,6 @@ class ProviderService:
             extra_params["api_version"] = os.environ.get("LLM_API_VERSION")
         return extra_params, headers
 
-    def _initialize_llm(self, provider: str, size: str, agent_type: AgentProvider):
-        """
-        Initialize LLM based on provider, size, and agent type.
-        Although agent_type and provider are passed, with simplified config, they are less relevant now.
-        Kept for potential future differentiated initialization.
-        """
-        params = self._build_llm_params(provider, size)
-        routing_provider = params.pop("routing_provider", None)
-        extra_params, headers = self._get_extra_params_and_headers(routing_provider)
-        if agent_type == AgentProvider.CREWAI:
-            crewai_params = {"model": params["model"], **params}
-            if "default_headers" in params:
-                crewai_params["headers"] = params["default_headers"]
-
-            crewai_params.update(extra_params)
-            return LLM(**crewai_params)
-        else:
-            return None
-
-    def get_large_llm(self, agent_type: AgentProvider):
-        provider = self._get_provider_config("large")
-        logging.info(f"Initializing {provider.capitalize()} LLM")
-        self.llm = self._initialize_llm(provider, "large", agent_type)
-        return self.llm
-
-    def get_small_llm(self, agent_type: AgentProvider):
-        provider = self._get_provider_config("small")
-        self.llm = self._initialize_llm(provider, "small", agent_type)
-        return self.llm
-
     async def call_llm(
         self, messages: list, size: str = "small", stream: bool = False
     ) -> Union[str, AsyncGenerator[str, None]]:
@@ -436,6 +406,36 @@ class ProviderService:
         except Exception as e:
             logging.error(f"LLM call with structured output failed: {e}")
             raise e
+
+    def _initialize_llm(self, provider: str, size: str, agent_type: AgentProvider):
+        """
+        Initialize LLM based on provider, size, and agent type.
+        Although agent_type and provider are passed, with simplified config, they are less relevant now.
+        Kept for potential future differentiated initialization.
+        """
+        params = self._build_llm_params(provider, size)
+        routing_provider = params.pop("routing_provider", None)
+        extra_params, headers = self._get_extra_params_and_headers(routing_provider)
+        if agent_type == AgentProvider.CREWAI:
+            crewai_params = {"model": params["model"], **params}
+            if "default_headers" in params:
+                crewai_params["headers"] = params["default_headers"]
+
+            crewai_params.update(extra_params)
+            return LLM(**crewai_params)
+        else:
+            return None
+
+    def get_large_llm(self, agent_type: AgentProvider):
+        provider = self._get_provider_config("large")
+        logging.info(f"Initializing {provider.capitalize()} LLM")
+        self.llm = self._initialize_llm(provider, "large", agent_type)
+        return self.llm
+
+    def get_small_llm(self, agent_type: AgentProvider):
+        provider = self._get_provider_config("small")
+        self.llm = self._initialize_llm(provider, "small", agent_type)
+        return self.llm
 
     async def get_global_ai_provider(self, user_id: str) -> GetProviderResponse:
         user_pref = (
