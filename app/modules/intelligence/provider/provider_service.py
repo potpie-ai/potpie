@@ -300,6 +300,54 @@ class ProviderService:
 
         return params
 
+    def _get_extra_params_and_headers(self, routing_provider: Optional[str]) -> Dict[str, Any]:
+        extra_params = {}
+        headers = createHeaders(
+            api_key=self.portkey_api_key,
+            provider=routing_provider,
+            trace_id=str(uuid.uuid4())[:8],
+            custom_host=os.environ.get("LLM_API_KEY"),
+            api_version=os.environ.get("LLM_API_VERSION"),
+        )
+        if self.portkey_api_key and routing_provider != "ollama":
+            # ollama + portkey is not supported currently
+            extra_params["base_url"] = PORTKEY_GATEWAY_URL
+            extra_params["extra_headers"] = headers
+        elif routing_provider == "azure":
+            extra_params["api_base"] = os.environ.get("LLM_API_BASE")
+            extra_params["api_version"] = os.environ.get("LLM_API_VERSION")
+        return extra_params, headers
+
+    def _initialize_llm(self, provider: str, size: str, agent_type: AgentProvider):
+        """
+        Initialize LLM based on provider, size, and agent type.
+        Although agent_type and provider are passed, with simplified config, they are less relevant now.
+        Kept for potential future differentiated initialization.
+        """
+        params = self._build_llm_params(provider, size)
+        routing_provider = params.pop("routing_provider", None)
+        extra_params, headers = self._get_extra_params_and_headers(routing_provider)
+        if agent_type == AgentProvider.CREWAI:
+            crewai_params = {"model": params["model"], **params}
+            if "default_headers" in params:
+                crewai_params["headers"] = params["default_headers"]
+
+            crewai_params.update(extra_params)
+            return LLM(**crewai_params)
+        else:
+            return None
+
+    def get_large_llm(self, agent_type: AgentProvider):
+        provider = self._get_provider_config("large")
+        logging.info(f"Initializing {provider.capitalize()} LLM")
+        self.llm = self._initialize_llm(provider, "large", agent_type)
+        return self.llm
+
+    def get_small_llm(self, agent_type: AgentProvider):
+        provider = self._get_provider_config("small")
+        self.llm = self._initialize_llm(provider, "small", agent_type)
+        return self.llm
+
     async def call_llm(
         self, messages: list, size: str = "small", stream: bool = False
     ) -> Union[str, AsyncGenerator[str, None]]:
@@ -310,23 +358,10 @@ class ProviderService:
         provider = self._get_provider_config(size)
         params = self._build_llm_params(provider, size)
         routing_provider = params.pop("routing_provider", None)
-        extra_params = {}
-        if self.portkey_api_key and routing_provider != "ollama":
-            # ollama + portkey is not supported currently
-            extra_params["base_url"] = PORTKEY_GATEWAY_URL
-            extra_params["extra_headers"] = createHeaders(
-                api_key=self.portkey_api_key,
-                provider=routing_provider,
-                custom_host=os.environ.get("LLM_API_BASE"),
-                api_version=os.environ.get("LLM_API_VERSION"),
-            )
-        elif provider == "azure":
-            extra_params["api_base"] = os.environ.get("LLM_API_BASE")
-            extra_params["api_version"] = os.environ.get("LLM_API_VERSION")
+        extra_params, _ = self._get_extra_params_and_headers(routing_provider)
 
         try:
             if stream:
-
                 async def generator() -> AsyncGenerator[str, None]:
                     response = await acompletion(
                         model=params["model"],
@@ -369,20 +404,7 @@ class ProviderService:
         provider = self._get_provider_config(size)
         params = self._build_llm_params(provider, size)
         routing_provider = params.pop("routing_provider", None)
-
-        extra_params = {}
-        if self.portkey_api_key and routing_provider != "ollama":
-            # ollama + portkey is not supported currently
-            extra_params["base_url"] = PORTKEY_GATEWAY_URL
-            extra_params["extra_headers"] = createHeaders(
-                api_key=self.portkey_api_key,
-                provider=routing_provider,
-                custom_host=os.environ.get("LLM_API_BASE"),
-                api_version=os.environ.get("LLM_API_VERSION"),
-            )
-        elif provider == "azure":
-            extra_params["api_base"] = os.environ.get("LLM_API_BASE")
-            extra_params["api_version"] = os.environ.get("LLM_API_VERSION")
+        extra_params, _ = self._get_extra_params_and_headers(routing_provider)
 
         try:
             if provider == "ollama":
@@ -414,48 +436,6 @@ class ProviderService:
         except Exception as e:
             logging.error(f"LLM call with structured output failed: {e}")
             raise e
-
-    def _initialize_llm(self, provider: str, size: str, agent_type: AgentProvider):
-        """
-        Initialize LLM based on provider, size, and agent type.
-        Although agent_type and provider are passed, with simplified config, they are less relevant now.
-        Kept for potential future differentiated initialization.
-        """
-        params = self._build_llm_params(provider, size)
-        routing_provider = params.pop("routing_provider", None)
-        headers = createHeaders(
-            api_key=self.portkey_api_key,
-            provider=routing_provider,
-            trace_id=str(uuid.uuid4())[:8],
-            custom_host=os.environ.get("LLM_API_KEY"),
-            api_version=os.environ.get("LLM_API_VERSION"),
-        )
-        if agent_type == AgentProvider.CREWAI:
-            crewai_params = {"model": params["model"], **params}
-            if "default_headers" in params:
-                crewai_params["headers"] = params["default_headers"]
-
-            if self.portkey_api_key and routing_provider != "ollama":
-                # ollama + portkey is not supported currently
-                crewai_params["extra_headers"] = headers
-                crewai_params["base_url"] = PORTKEY_GATEWAY_URL
-            elif routing_provider == "azure":
-                crewai_params["api_base"] = os.environ.get("LLM_API_BASE")
-                crewai_params["api_version"] = os.environ.get("LLM_API_VERSION")
-            return LLM(**crewai_params)
-        else:
-            return None
-
-    def get_large_llm(self, agent_type: AgentProvider):
-        provider = self._get_provider_config("large")
-        logging.info(f"Initializing {provider.capitalize()} LLM")
-        self.llm = self._initialize_llm(provider, "large", agent_type)
-        return self.llm
-
-    def get_small_llm(self, agent_type: AgentProvider):
-        provider = self._get_provider_config("small")
-        self.llm = self._initialize_llm(provider, "small", agent_type)
-        return self.llm
 
     async def get_global_ai_provider(self, user_id: str) -> GetProviderResponse:
         user_pref = (
