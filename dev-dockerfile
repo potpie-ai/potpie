@@ -1,0 +1,26 @@
+
+# Use an official Python runtime as a parent image
+FROM python:3.10-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y git procps && rm -rf /var/lib/apt/lists/*
+
+# Set the working directory
+WORKDIR /app
+
+# Copy the requirements file and install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install Celery and NLTK
+RUN pip install --no-cache-dir celery nltk
+RUN python -c "import nltk; nltk.download('punkt')"
+
+# Copy the entire application code into the container
+COPY . .
+
+# Expose the application port
+EXPOSE 8001
+
+# Define the entrypoint
+CMD ["bash"]
