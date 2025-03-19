@@ -1,70 +1,44 @@
 from typing import Dict, Any, Optional
+import os
 
-# Model configuration mappings
-CHAT_MODEL_CONFIG_MAP = {
-    "openai": {
-        "provider": "openai",
-        "low_reasoning_model": "openai/gpt-4o-mini",
-        "high_reasoning_model": "openai/gpt-4o",
-        "default_params": {"temperature": 0.3},
-    },
-    "anthropic": {
-        "provider": "anthropic",
-        "low_reasoning_model": "anthropic/claude-3-5-haiku-20241022",
-        "high_reasoning_model": "anthropic/claude-3-7-sonnet-20250219",
-        "default_params": {"temperature": 0.3},
-    },
-    "deepseek": {
-        "provider": "deepseek",
-        "low_reasoning_model": "openrouter/deepseek/deepseek-chat",
-        "high_reasoning_model": "openrouter/deepseek/deepseek-chat",
-        "default_params": {"temperature": 0.3},
-    },
-    "meta-llama": {
-        "provider": "meta-llama",
-        "low_reasoning_model": "openrouter/meta-llama/llama-3.3-70b-instruct",
-        "high_reasoning_model": "openrouter/meta-llama/llama-3.3-70b-instruct",
-        "default_params": {"temperature": 0.3},
-    },
-    "gemini": {
-        "provider": "gemini",
-        "low_reasoning_model": "openrouter/google/gemini-2.0-flash-001",
-        "high_reasoning_model": "openrouter/google/gemini-2.0-flash-001",
-        "default_params": {"temperature": 0.3},
-    },
-}
+# Default models
+DEFAULT_CHAT_MODEL = "openai/gpt-4o"
+DEFAULT_INFERENCE_MODEL = "openai/gpt-4o-mini"
 
-# Mapping for inference models
-INFERENCE_MODEL_CONFIG_MAP = {
-    "openai": {
+# Model configuration mappings - now keyed by full model name
+MODEL_CONFIG_MAP = {
+    # OpenAI Models
+    "openai/gpt-4o": {
         "provider": "openai",
-        "low_reasoning_model": "openai/gpt-4o-mini",
-        "high_reasoning_model": "openai/gpt-4o",
+        "default_params": {"temperature": 0.3},
+    },
+    "openai/gpt-4o-mini": {
+        "provider": "openai",
         "default_params": {"temperature": 0.2},
     },
-    "anthropic": {
+    # Anthropic Models
+    "anthropic/claude-3-7-sonnet-20250219": {
         "provider": "anthropic",
-        "low_reasoning_model": "anthropic/claude-3-5-haiku-20241022",
-        "high_reasoning_model": "anthropic/claude-3-7-sonnet-20250219",
-        "default_params": {"temperature": 0.2},
+        "default_params": {"temperature": 0.3, "max_tokens": 8000},
     },
-    "deepseek": {
+    "anthropic/claude-3-5-haiku-20241022": {
+        "provider": "anthropic",
+        "default_params": {"temperature": 0.2, "max_tokens": 8000},
+    },
+    # DeepSeek Models
+    "openrouter/deepseek/deepseek-chat": {
         "provider": "deepseek",
-        "low_reasoning_model": "openrouter/deepseek/deepseek-chat",
-        "high_reasoning_model": "openrouter/deepseek/deepseek-chat",
-        "default_params": {"temperature": 0.2},
+        "default_params": {"temperature": 0.3, "max_tokens": 8000},
     },
-    "meta-llama": {
+    # Meta-Llama Models
+    "openrouter/meta-llama/llama-3.3-70b-instruct": {
         "provider": "meta-llama",
-        "low_reasoning_model": "openrouter/meta-llama/llama-3.3-70b-instruct",
-        "high_reasoning_model": "openrouter/meta-llama/llama-3.3-70b-instruct",
-        "default_params": {"temperature": 0.2},
+        "default_params": {"temperature": 0.3},
     },
-    "gemini": {
+    # Gemini Models
+    "openrouter/google/gemini-2.0-flash-001": {
         "provider": "gemini",
-        "low_reasoning_model": "openrouter/google/gemini-2.0-flash-001",
-        "high_reasoning_model": "openrouter/google/gemini-2.0-flash-001",
-        "default_params": {"temperature": 0.2},
+        "default_params": {"temperature": 0.3},
     },
 }
 
@@ -73,73 +47,80 @@ class LLMProviderConfig:
     def __init__(
         self,
         provider: str,
-        low_reasoning_model: str,
-        high_reasoning_model: str,
+        model: str,
         default_params: Dict[str, Any],
     ):
         self.provider = provider
-        self.low_reasoning_model = low_reasoning_model
-        self.high_reasoning_model = high_reasoning_model
+        self.model = model
         self.default_params = default_params
 
-    def get_model(self, size: str) -> str:
-        """Get the model name based on the size."""
-        return self.low_reasoning_model if size == "small" else self.high_reasoning_model
-
-    def get_llm_params(self, size: str, api_key: str) -> Dict[str, Any]:
+    def get_llm_params(self, api_key: str) -> Dict[str, Any]:
         """Build a complete parameter dictionary for LLM calls."""
-        model_name = self.get_model(size)
         params = {
-            "model": model_name,
+            "model": self.model,
             "temperature": self.default_params.get("temperature", 0.3),
             "api_key": api_key,
         }
-        # Provider-specific tweaks can be added here
-        if self.provider in ["deepseek", "anthropic"]:
-            params["max_tokens"] = 8000
+        # Add any additional default parameters
+        for key, value in self.default_params.items():
+            if key != "temperature":  # temperature already handled above
+                params[key] = value
         return params
+
+
+def parse_model_string(model_string: str) -> tuple[str, str]:
+    """Parse a model string into provider and model name."""
+    try:
+        provider = model_string.split('/')[0]
+        return provider, model_string
+    except (IndexError, AttributeError):
+        return "openai", DEFAULT_CHAT_MODEL
+
+
+def get_config_for_model(model_string: str) -> Dict[str, Any]:
+    """Get configuration for a specific model, with fallback to defaults."""
+    if model_string in MODEL_CONFIG_MAP:
+        return MODEL_CONFIG_MAP[model_string]
+    # If model not found, use default configuration based on provider
+    provider, _ = parse_model_string(model_string)
+    return {
+        "provider": provider,
+        "default_params": {"temperature": 0.3},
+    }
 
 
 def build_llm_provider_config(
     user_pref: dict, config_type: str = "chat"
 ) -> LLMProviderConfig:
     """
-    Build an LLMProviderConfig based on the user preferences.
-    config_type can be 'chat' or 'inference'
+    Build an LLMProviderConfig based on the environment variables, user preferences, and defaults.
+    Config type can be 'chat' or 'inference'.
+    
+    Priority order:
+    1. Environment variables (CHAT_MODEL or INFERENCE_MODEL)
+    2. User preferences (chat_model or inference_model)
+    3. Built-in defaults
     """
+    # Determine which model to use based on config_type and priority order
     if config_type == "chat":
-        mapping = CHAT_MODEL_CONFIG_MAP
-        selected_model = user_pref.get("chat_provider")
-        default_model = "openai"
+        model_string = (
+            os.environ.get("CHAT_MODEL")
+            or user_pref.get("chat_model")
+            or DEFAULT_CHAT_MODEL
+        )
     else:
-        mapping = INFERENCE_MODEL_CONFIG_MAP
-        selected_model = user_pref.get("llm_provider")
-        default_model = "openai"
+        model_string = (
+            os.environ.get("INFERENCE_MODEL")
+            or user_pref.get("inference_model")
+            or DEFAULT_INFERENCE_MODEL
+        )
 
-    # Use selected model if valid, otherwise use default
-    if selected_model and selected_model in mapping:
-        config_data = mapping[selected_model]
-    else:
-        config_data = mapping[default_model]
-
-    # Override with custom model names if specified
-    low_model_key = (
-        "low_reasoning_chat_model"
-        if config_type == "chat"
-        else "low_reasoning_inference_model"
-    )
-    high_model_key = (
-        "high_reasoning_chat_model"
-        if config_type == "chat"
-        else "high_reasoning_inference_model"
-    )
-
-    low_reasoning_model = user_pref.get(low_model_key) or config_data["low_reasoning_model"]
-    high_reasoning_model = user_pref.get(high_model_key) or config_data["high_reasoning_model"]
+    # Get provider and configuration for the model
+    provider, full_model_name = parse_model_string(model_string)
+    config_data = get_config_for_model(full_model_name)
 
     return LLMProviderConfig(
         provider=config_data["provider"],
-        low_reasoning_model=low_reasoning_model,
-        high_reasoning_model=high_reasoning_model,
+        model=full_model_name,
         default_params=config_data["default_params"],
     ) 

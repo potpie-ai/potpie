@@ -688,7 +688,7 @@ Ensure that your response is a properly formatted JSON object that can be parsed
         formatted_prompt = template.format(prompt=prompt, tools=tools)
         messages = [{"role": "user", "content": formatted_prompt}]
         provider_service = ProviderService(self.db, user_id)
-        response = await provider_service.call_llm(messages, size="large", config_type="chat")
+        response = await provider_service.call_llm(messages, config_type="chat")
         return response
 
     async def enhance_task_description(
@@ -747,7 +747,7 @@ String with the following format:
         )
         messages = [{"role": "user", "content": formatted_prompt}]
         provider_service = ProviderService(self.db, user_id)
-        response = await provider_service.call_llm(messages, size="large", config_type="chat")
+        response = await provider_service.call_llm(messages, config_type="chat")
         return response
 
     async def create_agent_from_prompt(

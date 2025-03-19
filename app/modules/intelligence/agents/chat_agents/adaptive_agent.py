@@ -91,7 +91,7 @@ class AdaptiveAgent(ChatAgent):
         ]
 
         try:
-            response = await self.llm_provider.call_llm(messages=messages, size="small", config_type="chat")
+            response = await self.llm_provider.call_llm(messages=messages, config_type="chat")
             return parser.parse(response).classification  # type: ignore
         except Exception as e:
             logger.warning("Classification failed: %s", e)
