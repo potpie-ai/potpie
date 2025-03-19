@@ -485,14 +485,14 @@ class ProviderService:
 
     def is_current_model_supported_by_pydanticai(self) -> bool:
         # TODO: enabled pydantic after optimization
-        # provider = self._get_provider_config("large")
-        # params = self._build_llm_params(provider, "large")
-        # routing_provider = params.pop("routing_provider", None)
-        # if routing_provider in [
-        #     "openai",
-        #     "anthropic",
-        # ]:
-        #     return True
+        provider = self._get_provider_config("large")
+        params = self._build_llm_params(provider, "large")
+        routing_provider = params.pop("routing_provider", None)
+        if routing_provider in [
+            "openai",
+            "anthropic",
+        ]:
+            return True
         return False
 
     def get_pydantic_model(self) -> Model | None:
