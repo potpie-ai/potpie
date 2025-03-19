@@ -363,7 +363,7 @@ class ConversationService:
             {"role": "user", "content": prompt},
         ]
         generated_title: str = await self.provider_service.call_llm(
-            messages=messages, size="small"
+            messages=messages, size="small", config_type="chat"
         )  # type: ignore
 
         if len(generated_title) > 50:

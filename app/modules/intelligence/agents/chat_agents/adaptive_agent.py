@@ -91,7 +91,7 @@ class AdaptiveAgent(ChatAgent):
         ]
 
         try:
-            response = await self.llm_provider.call_llm(messages=messages, size="small")
+            response = await self.llm_provider.call_llm(messages=messages, size="small", config_type="chat")
             return parser.parse(response).classification  # type: ignore
         except Exception as e:
             logger.warning("Classification failed: %s", e)
@@ -106,7 +106,7 @@ class AdaptiveAgent(ChatAgent):
 
         # build llm response
         messages = await self._get_messages(ctx)
-        res = await self.llm_provider.call_llm(messages=messages)
+        res = await self.llm_provider.call_llm(messages=messages, config_type="chat")
         return ChatAgentResponse(response=res, citations=[])  # type: ignore
 
     async def run_stream(
@@ -124,5 +124,5 @@ class AdaptiveAgent(ChatAgent):
 
         # build llm response
         messages = await self._get_messages(ctx)
-        async for chunk in await self.llm_provider.call_llm(messages=messages, stream=True):  # type: ignore
+        async for chunk in await self.llm_provider.call_llm(messages=messages, stream=True, config_type="chat"):  # type: ignore
             yield ChatAgentResponse(response=chunk, citations=[], tool_calls=[])
