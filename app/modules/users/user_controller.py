@@ -34,6 +34,7 @@ class UserController:
             custom_agent_name = None
 
             custom_agent = self.sql_db.query(CustomAgent).filter_by(id=agent_id).first()
+<<<<<<< HEAD
             display_agent_id = custom_agent.role if custom_agent else conversation.agent_ids[0]
             response.append(
                 UserConversationListResponse(
@@ -48,6 +49,40 @@ class UserController:
                     created_at=conversation.created_at.isoformat(),
                     updated_at=conversation.updated_at.isoformat(),
                     shared_with_emails=conversation.shared_with_emails,
+=======
+            if custom_agent:
+                custom_agent_name = custom_agent.role
+                response.append(
+                    UserConversationListResponse(
+                        id=conversation.id,
+                        user_id=conversation.user_id,
+                        title=conversation.title,
+                        status=conversation.status,
+                        project_ids=conversation.project_ids,
+                        repository=repo_name,
+                        branch=branch_name,
+                        agent_id=custom_agent_name,
+                        created_at=conversation.created_at.isoformat(),
+                        updated_at=conversation.updated_at.isoformat(),
+                        shared_with_emails=conversation.shared_with_emails,
+                    )
+                )
+            else:
+                response.append(
+                    UserConversationListResponse(
+                        id=conversation.id,
+                        user_id=conversation.user_id,
+                        title=conversation.title,
+                        status=conversation.status,
+                        project_ids=conversation.project_ids,
+                        repository=repo_name,
+                        branch=branch_name,
+                        agent_id=conversation.agent_ids[0],
+                        created_at=conversation.created_at.isoformat(),
+                        updated_at=conversation.updated_at.isoformat(),
+                        shared_with_emails=conversation.shared_with_emails,
+                    )
+>>>>>>> d86445e4d4b269e97d5e1cebff026a917199b749
                 )
             )
 

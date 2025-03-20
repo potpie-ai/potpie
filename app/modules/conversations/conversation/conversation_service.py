@@ -646,9 +646,7 @@ class ConversationService:
     ) -> ConversationInfoResponse:
         try:
             conversation = (
-                self.sql_db.query(Conversation)
-                .filter_by(id=conversation_id)
-                .first()
+                self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
             )
             if not conversation:
                 raise ConversationNotFoundError(
@@ -677,8 +675,21 @@ class ConversationService:
                     self.sql_db.query(CustomAgent).filter_by(id=agent_id).first()
                 )
                 if custom_agent:
-                    agent_ids = [custom_agent.role]
-
+                    custom_agent_name = [custom_agent.role]
+                    return ConversationInfoResponse(
+                        id=conversation.id,
+                        title=conversation.title,
+                        status=conversation.status,
+                        project_ids=conversation.project_ids,
+                        created_at=conversation.created_at,
+                        updated_at=conversation.updated_at,
+                        total_messages=total_messages,
+                        agent_ids=custom_agent_name,
+                        access_type=access_type,
+                        is_creator=is_creator,
+                        creator_id=conversation.user_id,
+                        visibility=conversation.visibility,
+                    )
             return ConversationInfoResponse(
                 id=conversation.id,
                 title=conversation.title,
