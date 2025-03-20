@@ -219,45 +219,36 @@ class ProviderService:
             # Get current models from preferences or environment
             chat_model_id = (
                 os.environ.get("CHAT_MODEL")
-                or (
-                    user_pref.preferences.get("chat_model")
-                    if user_pref and user_pref.preferences
-                    else None
-                )
+                or (user_pref.preferences.get("chat_model") if user_pref and user_pref.preferences else None)
                 or "openai/gpt-4o"
             )
-
+            
             inference_model_id = (
                 os.environ.get("INFERENCE_MODEL")
-                or (
-                    user_pref.preferences.get("inference_model")
-                    if user_pref and user_pref.preferences
-                    else None
-                )
+                or (user_pref.preferences.get("inference_model") if user_pref and user_pref.preferences else None)
                 or "openai/gpt-4o-mini"
             )
 
             # Look up friendly names from AVAILABLE_MODELS
             chat_model = chat_model_id
             inference_model = inference_model_id
+            provider_id = chat_model_id.split("/")[0] if chat_model_id else inference_model_id.split("/")[0]
+            provider = provider_id.title()  # Default formatting
 
+            # Find matching model in AVAILABLE_MODELS to get proper names
             for model in AVAILABLE_MODELS:
                 if model.id == chat_model_id:
                     chat_model = model.name
+                    provider = model.provider.title()
                 if model.id == inference_model_id:
                     inference_model = model.name
-
-            # Extract provider from chat model (or inference model if chat not available)
-            provider = (
-                chat_model_id.split("/")[0]
-                if chat_model_id
-                else inference_model_id.split("/")[0]
-            )
+                    if chat_model_id is None:  # Only use inference model provider if no chat model
+                        provider = model.provider.title()
 
             return GetProviderResponse(
                 chat_model=chat_model,
                 inference_model=inference_model,
-                provider=provider,
+                provider=provider
             )
         except Exception as e:
             logging.error(f"Error getting global AI provider: {e}")
