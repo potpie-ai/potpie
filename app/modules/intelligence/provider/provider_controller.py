@@ -26,7 +26,7 @@ class ProviderController:
             raise HTTPException(
                 status_code=500, detail=f"Error listing LLM providers: {str(e)}"
             )
-            
+
     async def list_available_models(self) -> AvailableModelsResponse:
         """List available models for both chat and inference."""
         try:

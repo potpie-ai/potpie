@@ -1,4 +1,4 @@
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 import os
 
 # Default models
@@ -71,7 +71,7 @@ class LLMProviderConfig:
 def parse_model_string(model_string: str) -> tuple[str, str]:
     """Parse a model string into provider and model name."""
     try:
-        provider = model_string.split('/')[0]
+        provider = model_string.split("/")[0]
         return provider, model_string
     except (IndexError, AttributeError):
         return "openai", DEFAULT_CHAT_MODEL
@@ -95,7 +95,7 @@ def build_llm_provider_config(
     """
     Build an LLMProviderConfig based on the environment variables, user preferences, and defaults.
     Config type can be 'chat' or 'inference'.
-    
+
     Priority order:
     1. Environment variables (CHAT_MODEL or INFERENCE_MODEL)
     2. User preferences (chat_model or inference_model)
@@ -123,4 +123,4 @@ def build_llm_provider_config(
         provider=config_data["provider"],
         model=full_model_name,
         default_params=config_data["default_params"],
-    ) 
+    )
