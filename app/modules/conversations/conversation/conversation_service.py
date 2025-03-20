@@ -25,6 +25,7 @@ from app.modules.conversations.message.message_model import (
     MessageStatus,
     MessageType,
 )
+from app.modules.intelligence.agents.custom_agents.custom_agent_model import CustomAgent
 from app.modules.conversations.message.message_schema import (
     MessageRequest,
     MessageResponse,
@@ -664,6 +665,17 @@ class ConversationService:
                 .filter_by(conversation_id=conversation_id, status=MessageStatus.ACTIVE)
                 .count()
             )
+
+            agent_id = conversation.agent_ids[0] if conversation.agent_ids else None
+
+            agent_ids = conversation.agent_ids
+            if agent_id:
+                custom_agent = (
+                    self.sql_db.query(CustomAgent).filter_by(id=agent_id).first()
+                )
+                if custom_agent:
+                    agent_ids = [custom_agent.role]
+
             return ConversationInfoResponse(
                 id=conversation.id,
                 title=conversation.title,
@@ -672,7 +684,7 @@ class ConversationService:
                 created_at=conversation.created_at,
                 updated_at=conversation.updated_at,
                 total_messages=total_messages,
-                agent_ids=conversation.agent_ids,
+                agent_ids=agent_ids,
                 access_type=access_type,
                 is_creator=is_creator,
                 creator_id=conversation.user_id,
