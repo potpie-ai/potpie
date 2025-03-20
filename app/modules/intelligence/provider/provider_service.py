@@ -1,7 +1,7 @@
 import logging
 import os
 from enum import Enum
-from typing import List, Dict, Any, Union, AsyncGenerator, Optional
+from typing import List, Dict, Any, Union, AsyncGenerator
 import uuid
 from anthropic import AsyncAnthropic
 from crewai import LLM
@@ -23,7 +23,7 @@ from .provider_schema import (
     AvailableModelOption,
     SetProviderRequest,
 )
-from .llm_config import LLMProviderConfig, build_llm_provider_config, MODEL_CONFIG_MAP
+from .llm_config import LLMProviderConfig, build_llm_provider_config
 
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.models.anthropic import AnthropicModel
@@ -104,14 +104,18 @@ class ProviderService:
         self.llm = None
         self.user_id = user_id
         self.portkey_api_key = os.environ.get("PORTKEY_API_KEY", None)
-        
+
         # Load user preferences
         user_pref = db.query(UserPreferences).filter_by(user_id=user_id).first()
-        user_config = user_pref.preferences if user_pref and user_pref.preferences else {}
-        
+        user_config = (
+            user_pref.preferences if user_pref and user_pref.preferences else {}
+        )
+
         # Create configurations based on user input (or fallback defaults)
         self.chat_config = build_llm_provider_config(user_config, config_type="chat")
-        self.inference_config = build_llm_provider_config(user_config, config_type="inference")
+        self.inference_config = build_llm_provider_config(
+            user_config, config_type="inference"
+        )
 
     @classmethod
     def create(cls, db, user_id: str):
@@ -143,7 +147,9 @@ class ProviderService:
             preferences.preferences = {}
 
         # Create a new dictionary with existing preferences
-        updated_preferences = preferences.preferences.copy() if preferences.preferences else {}
+        updated_preferences = (
+            preferences.preferences.copy() if preferences.preferences else {}
+        )
 
         # Update chat model if provided
         if request.chat_model:
@@ -153,11 +159,13 @@ class ProviderService:
         # Update inference model if provided
         if request.inference_model:
             updated_preferences["inference_model"] = request.inference_model
-            self.inference_config = build_llm_provider_config(updated_preferences, "inference")
+            self.inference_config = build_llm_provider_config(
+                updated_preferences, "inference"
+            )
 
         # Explicitly assign the new dictionary to mark it as modified
         preferences.preferences = updated_preferences
-        
+
         # Ensure changes are flushed to the database
         self.db.flush()
         self.db.commit()
@@ -166,13 +174,13 @@ class ProviderService:
         # Send analytics event
         if request.chat_model:
             PostHogClient().send_event(
-                user_id, "chat_model_change_event",
-                {"model": request.chat_model}
+                user_id, "chat_model_change_event", {"model": request.chat_model}
             )
         if request.inference_model:
             PostHogClient().send_event(
-                user_id, "inference_model_change_event",
-                {"model": request.inference_model}
+                user_id,
+                "inference_model_change_event",
+                {"model": request.inference_model},
             )
 
         return {"message": "AI provider configuration updated successfully"}
@@ -209,31 +217,55 @@ class ProviderService:
             )
 
             # Get current models from preferences or environment
-            chat_model = (
+            chat_model_id = (
                 os.environ.get("CHAT_MODEL")
-                or (user_pref.preferences.get("chat_model") if user_pref and user_pref.preferences else None)
+                or (
+                    user_pref.preferences.get("chat_model")
+                    if user_pref and user_pref.preferences
+                    else None
+                )
                 or "openai/gpt-4o"
             )
-            
-            inference_model = (
+
+            inference_model_id = (
                 os.environ.get("INFERENCE_MODEL")
-                or (user_pref.preferences.get("inference_model") if user_pref and user_pref.preferences else None)
+                or (
+                    user_pref.preferences.get("inference_model")
+                    if user_pref and user_pref.preferences
+                    else None
+                )
                 or "openai/gpt-4o-mini"
             )
 
+            # Look up friendly names from AVAILABLE_MODELS
+            chat_model = chat_model_id
+            inference_model = inference_model_id
+
+            for model in AVAILABLE_MODELS:
+                if model.id == chat_model_id:
+                    chat_model = model.name
+                if model.id == inference_model_id:
+                    inference_model = model.name
+
             # Extract provider from chat model (or inference model if chat not available)
-            provider = chat_model.split('/')[0] if chat_model else inference_model.split('/')[0]
+            provider = (
+                chat_model_id.split("/")[0]
+                if chat_model_id
+                else inference_model_id.split("/")[0]
+            )
 
             return GetProviderResponse(
                 chat_model=chat_model,
                 inference_model=inference_model,
-                provider=provider
+                provider=provider,
             )
         except Exception as e:
             logging.error(f"Error getting global AI provider: {e}")
             raise e
 
-    def is_current_model_supported_by_pydanticai(self, config_type: str = "chat") -> bool:
+    def is_current_model_supported_by_pydanticai(
+        self, config_type: str = "chat"
+    ) -> bool:
         """Check if the current model is supported by PydanticAI."""
         config = self.chat_config if config_type == "chat" else self.inference_config
         return config.provider in ["openai", "anthropic"]
@@ -244,7 +276,7 @@ class ProviderService:
         """Call LLM with the specified messages."""
         # Select the appropriate config based on config_type
         config = self.chat_config if config_type == "chat" else self.inference_config
-        
+
         # Build parameters using the config object
         params = self._build_llm_params(config)
         routing_provider = config.model.split("/")[0]
@@ -255,7 +287,7 @@ class ProviderService:
                 api_key=self.portkey_api_key,
                 provider=routing_provider,
                 trace_id=str(uuid.uuid4())[:8],
-                mode="litellm"
+                mode="litellm",
             )
             params["extra_headers"] = portkey_headers
             params["base_url"] = PORTKEY_GATEWAY_URL
@@ -263,6 +295,7 @@ class ProviderService:
         # Handle streaming response if requested
         if stream:
             try:
+
                 async def generator() -> AsyncGenerator[str, None]:
                     response = await acompletion(
                         messages=messages, stream=True, **params
@@ -292,7 +325,7 @@ class ProviderService:
         """Call LLM and parse the response into a structured output using a Pydantic model."""
         # Select the appropriate config
         config = self.chat_config if config_type == "chat" else self.inference_config
-        
+
         # Build parameters
         params = self._build_llm_params(config)
         routing_provider = config.model.split("/")[0]
@@ -403,7 +436,7 @@ class ProviderService:
                             ),
                         ),
                     )
-        
+
         match config.model.split("/")[0]:
             case "openai":
                 return OpenAIModel(
