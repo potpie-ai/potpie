@@ -34,7 +34,9 @@ class UserController:
             custom_agent_name = None
 
             custom_agent = self.sql_db.query(CustomAgent).filter_by(id=agent_id).first()
-            display_agent_id = custom_agent.role if custom_agent else conversation.agent_ids[0]
+            display_agent_id = (
+                custom_agent.role if custom_agent else conversation.agent_ids[0]
+            )
             response.append(
                 UserConversationListResponse(
                     id=conversation.id,
