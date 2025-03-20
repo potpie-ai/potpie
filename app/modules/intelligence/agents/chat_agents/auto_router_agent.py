@@ -85,7 +85,7 @@ class AutoRouterAgent(ChatAgent):
 class ClassificationResponse(BaseModel):
     agent_id: str = Field(description="agent_id of the best matching agent")
     confidence_score: float = Field(
-        description="confidence score of the best matching agent, should be the maximum confidence score and be a valid string denoting a number between 0 and 1"
+        description="confidence score of the best matching agent, should be the maximum confidence score and be a valid floating point number between 0 and 1"
     )
 
 

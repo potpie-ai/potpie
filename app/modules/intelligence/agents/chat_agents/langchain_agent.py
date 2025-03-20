@@ -41,7 +41,7 @@ class LangchainRagAgent(ChatAgent):
             tools[i].name = re.sub(r" ", "", tool.name)
 
         self.agent = create_react_agent(
-            model=llm_provider.get_large_llm(AgentProvider.LANGCHAIN),  # type: ignore
+            model=llm_provider.get_llm(AgentProvider.LANGCHAIN),  # type: ignore
             tools=ToolExecutor(tools),
             debug=True,
         )

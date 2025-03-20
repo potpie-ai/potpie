@@ -196,7 +196,7 @@ class ProviderService:
 
     def _build_llm_params(self, config: LLMProviderConfig) -> Dict[str, Any]:
         """Build a dictionary of parameters for LLM initialization."""
-        api_key = self._get_api_key(config.provider)
+        api_key = self._get_api_key(config.model.split("/")[0])
         return config.get_llm_params(api_key)
 
     async def get_global_ai_provider(self, user_id: str) -> GetProviderResponse:
@@ -233,9 +233,10 @@ class ProviderService:
             logging.error(f"Error getting global AI provider: {e}")
             raise e
 
-    def is_current_model_supported_by_pydanticai(self) -> bool:
+    def is_current_model_supported_by_pydanticai(self, config_type: str = "chat") -> bool:
         """Check if the current model is supported by PydanticAI."""
-        return self.inference_config.provider in ["openai", "anthropic"]
+        config = self.chat_config if config_type == "chat" else self.inference_config
+        return config.provider in ["openai", "anthropic"]
 
     async def call_llm(
         self, messages: list, stream: bool = False, config_type: str = "chat"
@@ -246,12 +247,13 @@ class ProviderService:
         
         # Build parameters using the config object
         params = self._build_llm_params(config)
+        routing_provider = config.model.split("/")[0]
 
         # Add Portkey headers if available
         if self.portkey_api_key:
             portkey_headers = createHeaders(
                 api_key=self.portkey_api_key,
-                provider=config.provider,
+                provider=routing_provider,
                 trace_id=str(uuid.uuid4())[:8],
                 mode="litellm"
             )
@@ -293,7 +295,7 @@ class ProviderService:
         
         # Build parameters
         params = self._build_llm_params(config)
-        routing_provider = config.provider
+        routing_provider = config.model.split("/")[0]
 
         extra_params = {}
         if self.portkey_api_key and routing_provider != "ollama":
@@ -338,24 +340,22 @@ class ProviderService:
         """Initialize LLM for the specified agent type."""
         params = self._build_llm_params(config)
         api_key = params.pop("api_key", None)
-
+        headers = createHeaders(
+            api_key=self.portkey_api_key,
+            provider=config.model.split("/")[0],
+            trace_id=str(uuid.uuid4())[:8],
+        )
         if agent_type == AgentProvider.CREWAI:
-            # For CrewAI
-            if config.provider == "anthropic":
-                self.llm = LLM(
-                    provider="anthropic",
-                    model=params["model"],
-                    api_key=api_key,
-                    temperature=params.get("temperature", 0.3),
-                )
-            else:  # default to OpenAI
-                self.llm = LLM(
-                    provider="openai",
-                    model=params["model"],
-                    api_key=api_key,
-                    temperature=params.get("temperature", 0.3),
-                    config={"base_url": params.get("api_base", None)},
-                )
+            crewai_params = {"model": params["model"], **params}
+            if "default_headers" in params:
+                crewai_params["headers"] = params["default_headers"]
+            if self.portkey_api_key and config.provider != "ollama":
+                # ollama + portkey is not supported currently
+                crewai_params["extra_headers"] = headers
+                crewai_params["base_url"] = PORTKEY_GATEWAY_URL
+            self.llm = LLM(**crewai_params)
+        else:
+            return None
 
     def get_llm(self, agent_type: AgentProvider, config_type: str = "chat"):
         """Get LLM for the specified agent type."""
@@ -403,13 +403,19 @@ class ProviderService:
                             ),
                         ),
                     )
-        # No portkey, use direct provider integration
-        if config.provider == "openai":
-            return OpenAIModel(
-                openai_provider=OpenAIProvider(api_key=api_key),
-                model_name=model_name,
-            )
-        elif config.provider == "anthropic":
-            return AnthropicModel(api_key=api_key, model_name=model_name)
-        else:
-            return None
+        
+        match config.model.split("/")[0]:
+            case "openai":
+                return OpenAIModel(
+                    model_name=model_name,
+                    provider=OpenAIProvider(
+                        api_key=api_key,
+                    ),
+                )
+            case "anthropic":
+                return AnthropicModel(
+                    model_name=model_name,
+                    anthropic_client=AsyncAnthropic(
+                        api_key=api_key,
+                    ),
+                )
