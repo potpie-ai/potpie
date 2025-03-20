@@ -667,7 +667,6 @@ class ConversationService:
             )
 
             agent_id = conversation.agent_ids[0] if conversation.agent_ids else None
-            custom_agent_name = []
 
             agent_ids = conversation.agent_ids
             if agent_id:
@@ -675,21 +674,8 @@ class ConversationService:
                     self.sql_db.query(CustomAgent).filter_by(id=agent_id).first()
                 )
                 if custom_agent:
-                    custom_agent_name = [custom_agent.role]
-                    return ConversationInfoResponse(
-                        id=conversation.id,
-                        title=conversation.title,
-                        status=conversation.status,
-                        project_ids=conversation.project_ids,
-                        created_at=conversation.created_at,
-                        updated_at=conversation.updated_at,
-                        total_messages=total_messages,
-                        agent_ids=custom_agent_name,
-                        access_type=access_type,
-                        is_creator=is_creator,
-                        creator_id=conversation.user_id,
-                        visibility=conversation.visibility,
-                    )
+                    agent_ids = [custom_agent.role]
+
             return ConversationInfoResponse(
                 id=conversation.id,
                 title=conversation.title,
