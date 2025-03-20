@@ -31,7 +31,6 @@ class UserController:
             branch_name = projects[0].branch_name
 
             agent_id = conversation.agent_ids[0] if conversation.agent_ids else None
-            custom_agent_name = None
 
             custom_agent = self.sql_db.query(CustomAgent).filter_by(id=agent_id).first()
             display_agent_id = (
