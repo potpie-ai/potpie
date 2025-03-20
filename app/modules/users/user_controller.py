@@ -35,7 +35,7 @@ class UserController:
 
             custom_agent = self.sql_db.query(CustomAgent).filter_by(id=agent_id).first()
             if custom_agent:
-                custom_agent_name = custom_agent.role  
+                custom_agent_name = custom_agent.role
                 response.append(
                     UserConversationListResponse(
                         id=conversation.id,
@@ -45,7 +45,7 @@ class UserController:
                         project_ids=conversation.project_ids,
                         repository=repo_name,
                         branch=branch_name,
-                        agent_id= custom_agent_name,
+                        agent_id=custom_agent_name,
                         created_at=conversation.created_at.isoformat(),
                         updated_at=conversation.updated_at.isoformat(),
                         shared_with_emails=conversation.shared_with_emails,
