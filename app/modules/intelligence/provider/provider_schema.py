@@ -26,10 +26,15 @@ class SetProviderRequest(BaseModel):
     inference_model: Optional[str] = None  # Full model identifier for inference
 
 
+class ModelInfo(BaseModel):
+    provider: str
+    id: str
+    name: str
+
+
 class GetProviderResponse(BaseModel):
-    chat_model: Optional[str] = None  # Full model identifier for chat
-    inference_model: Optional[str] = None  # Full model identifier for inference
-    provider: str  # Current provider (derived from model)
+    chat_model: Optional[ModelInfo] = None
+    inference_model: Optional[ModelInfo] = None
 
 
 class DualProviderConfig(BaseModel):

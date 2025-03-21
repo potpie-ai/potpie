@@ -22,6 +22,7 @@ from .provider_schema import (
     AvailableModelsResponse,
     AvailableModelOption,
     SetProviderRequest,
+    ModelInfo,
 )
 from .llm_config import LLMProviderConfig, build_llm_provider_config
 
@@ -126,8 +127,8 @@ class ProviderService:
         providers = {
             model.provider: ProviderInfo(
                 id=model.provider,
-                name=model.provider.title(),
-                description=f"Provider for {model.provider.title()} models",
+                name=model.provider,
+                description=f"Provider for {model.provider} models",
             )
             for model in AVAILABLE_MODELS
         }
@@ -248,26 +249,35 @@ class ProviderService:
                 or "openai/gpt-4o-mini"
             )
 
-            # Look up friendly names from AVAILABLE_MODELS
-            chat_model = chat_model_id
-            inference_model = inference_model_id
-            provider_id = chat_model_id.split("/")[0] if chat_model_id else inference_model_id.split("/")[0]
-            provider = provider_id.title()  # Default formatting
+            # Default values
+            chat_provider = chat_model_id.split("/")[0] if chat_model_id else ""
+            chat_model_name = chat_model_id
+            
+            inference_provider = inference_model_id.split("/")[0] if inference_model_id else ""
+            inference_model_name = inference_model_id
 
             # Find matching model in AVAILABLE_MODELS to get proper names
             for model in AVAILABLE_MODELS:
                 if model.id == chat_model_id:
-                    chat_model = model.name
-                    provider = model.provider.title()
+                    chat_model_name = model.name
+                    chat_provider = model.provider
+                    
                 if model.id == inference_model_id:
-                    inference_model = model.name
-                    if chat_model_id is None:  # Only use inference model provider if no chat model
-                        provider = model.provider.title()
+                    inference_model_name = model.name
+                    inference_provider = model.provider
 
+            # Create response with nested ModelInfo objects
             return GetProviderResponse(
-                chat_model=chat_model,
-                inference_model=inference_model,
-                provider=provider
+                chat_model=ModelInfo(
+                    provider=chat_provider,
+                    id=chat_model_id,
+                    name=chat_model_name
+                ),
+                inference_model=ModelInfo(
+                    provider=inference_provider,
+                    id=inference_model_id,
+                    name=inference_model_name
+                )
             )
         except Exception as e:
             logging.error(f"Error getting global AI provider: {e}")
