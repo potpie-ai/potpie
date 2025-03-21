@@ -300,6 +300,26 @@ class ProviderService:
 
         return params
 
+    def _get_extra_params_and_headers(
+        self, routing_provider: Optional[str]
+    ) -> tuple[dict[str, str | None | Any], Any]:
+        extra_params = {}
+        headers = createHeaders(
+            api_key=self.portkey_api_key,
+            provider=routing_provider,
+            trace_id=str(uuid.uuid4())[:8],
+            custom_host=os.environ.get("LLM_API_BASE"),
+            api_version=os.environ.get("LLM_API_VERSION"),
+        )
+        if self.portkey_api_key and routing_provider != "ollama":
+            # ollama + portkey is not supported currently
+            extra_params["base_url"] = PORTKEY_GATEWAY_URL
+            extra_params["extra_headers"] = headers
+        elif routing_provider == "azure":
+            extra_params["api_base"] = os.environ.get("LLM_API_BASE")
+            extra_params["api_version"] = os.environ.get("LLM_API_VERSION")
+        return extra_params, headers
+
     async def call_llm(
         self, messages: list, size: str = "small", stream: bool = False
     ) -> Union[str, AsyncGenerator[str, None]]:

@@ -39,11 +39,12 @@ class AutoRouterAgent(ChatAgent):
             agent_id=ctx.curr_agent_id,
             agent_descriptions=agent_descriptions,
             query=ctx.query,
+            history=" ,".join(message for message in ctx.history),
         )
         messages = [
             {
                 "role": "system",
-                "content": "You are an expert agent classifier that helps route queries to the most appropriate agent.",
+                "content": "You are an expert agent classifier that helps route queries to the most appropriate agent. Agents have full access to the users code repository",
             },
             {"role": "user", "content": prompt},
         ]
@@ -92,8 +93,11 @@ class ClassificationResponse(BaseModel):
 classification_prompt = """
     Given the user query and the current agent ID, select the most appropriate agent by comparing the query’s requirements with each agent’s specialties.
 
-    Query: {query}
+    User Query: {query}
     Current Agent ID: {agent_id}
+    Chat history: 
+    {history}
+    --- end of Chat history ----
 
     Available agents and their specialties:
     {agent_descriptions}
@@ -109,6 +113,7 @@ classification_prompt = """
     2. **Contextual Weighting:**
     - If the query strongly aligns with the current agent’s known capabilities, add +0.15 confidence for direct core expertise and +0.1 for related domain knowledge.
     - If the query introduces new topics outside the current agent’s domain, do not apply the current agent bias. Instead, evaluate all agents equally based on their described expertise.
+    - Refer to the chat history but classify only based on the current query, it's only the current query that is being routed to the appropriate agent
 
     3. **Multi-Agent Evaluation:**
     - Consider all agents’ described specialties thoroughly, not just the current agent.
@@ -120,5 +125,9 @@ classification_prompt = """
     - 0.7-0.9: Strong match with the agent’s known capabilities.
     - 0.5-0.7: Partial or related match, not a direct specialty.
     - Below 0.5: Weak match; consider if another agent is more suitable, but still choose the best available option.
+    
+    IMPORTANT:
+    - Select general purpose agent only if the agent doesn't need to go through the repository to answer query
+    - Don't choose general purpose agent if has to user repository since general purpose agent doesn't have tools that have access to the codebase
 
 """

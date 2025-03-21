@@ -1,6 +1,9 @@
 import os
 from typing import List, Optional
 
+from app.modules.intelligence.agents.chat_agents.system_agents.general_purpose_agent import (
+    GeneralPurposeAgent,
+)
 from app.modules.intelligence.agents.custom_agents.custom_agent_schema import (
     AgentVisibility,
 )
@@ -150,6 +153,15 @@ class AgentsService:
                     prompt_provider,
                     rag_agent=code_gen_agent.CodeGenAgent(llm_provider, tools_provider),
                     agent_type=AgentType.CODE_CHANGES,
+                ),
+            ),
+            "general_purpose_agent": AgentWithInfo(
+                id="general_purpose_agent",
+                name="General Purpose Agent",
+                description="Agent for queries not needing understanding of or access to the users code repository",
+                agent=GeneralPurposeAgent(
+                    llm_provider,
+                    tools_provider,
                 ),
             ),
             # ... add more here
