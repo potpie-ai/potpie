@@ -300,7 +300,9 @@ class ProviderService:
 
         return params
 
-    def _get_extra_params_and_headers(self, routing_provider: Optional[str]) -> tuple[dict[str, str | None | Any], Any]:
+    def _get_extra_params_and_headers(
+        self, routing_provider: Optional[str]
+    ) -> tuple[dict[str, str | None | Any], Any]:
         extra_params = {}
         headers = createHeaders(
             api_key=self.portkey_api_key,
@@ -332,6 +334,7 @@ class ProviderService:
 
         try:
             if stream:
+
                 async def generator() -> AsyncGenerator[str, None]:
                     response = await acompletion(
                         model=params["model"],
