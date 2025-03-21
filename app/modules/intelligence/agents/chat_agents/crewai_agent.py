@@ -63,7 +63,7 @@ class CrewAIAgent(ChatAgent):
             tools=tools,
             allow_delegation=False,
             verbose=True,
-            llm=llm_provider.get_large_llm(AgentProvider.CREWAI),
+            llm=llm_provider.get_llm(AgentProvider.CREWAI),
             max_iter=config.max_iter,
         )
 
