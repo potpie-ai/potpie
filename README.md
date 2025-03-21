@@ -182,12 +182,11 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
       CELERY_QUEUE_NAME=dev
       defaultUsername=defaultuser
       PROJECT_PATH=projects #repositories will be downloaded/cloned to this path on your system.
-      LLM_PROVIDER=openrouter #any provider supported by litellm
-      LLM_API_KEY=sk-or-your-key #your provider key
-      LOW_REASONING_MODEL=openrouter/deepseek/deepseek-chat #provider model name
-      HIGH_REASONING_MODEL=openrouter/deepseek/deepseek-chat #provider model name
+      {PROVIDER}_API_KEY=sk-proj-your-key #your provider key e.g. ANTHROPIC_API_KEY for Anthropic
+      INFERENCE_MODEL=openai/gpt-4o-mini #provider model name
+      CHAT_MODEL=openai/gpt-4o #provider model name
       ```
-      **`LOW_REASONING_MODEL`** and **`HIGH_REASONING_MODEL`** correspond to the models that will be used for generating knowledge graph and for agent reasoning respectively. These model names should be in the format of `provider/model_name` format or as expected by Litellm. For more information, refer to the [Litellm documentation](https://docs.litellm.ai/docs/providers).
+      **`INFERENCE_MODEL`** and **`CHAT_MODEL`** correspond to the models that will be used for generating knowledge graph and for agent reasoning respectively. These model names should be in the format of `provider/model_name` format or as expected by Litellm. For more information, refer to the [Litellm documentation](https://docs.litellm.ai/docs/providers).
       <br>
    -  Create a Virtual Environment using Python 3.10:
       ```

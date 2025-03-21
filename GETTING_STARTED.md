@@ -28,20 +28,17 @@ https://www.python.org/downloads/release/python-3100/
 
 3. You can use the following env config to run potpie with local models:
    ```
-   LLM_PROVIDER=ollama
-   LLM_API_KEY=ollama
-   LOW_REASONING_MODEL=ollama_chat/qwen2.5-coder:7b
-   HIGH_REASONING_MODEL=ollama_chat/qwen2.5-coder:7b
+   INFERENCE_MODEL=ollama_chat/qwen2.5-coder:7b
+   CHAT_MODEL=ollama_chat/qwen2.5-coder:7b
    ```
 
    To run potpie with any other models, you can use the following env configuration:
    ```
-   LLM_PROVIDER=openrouter #any other provider supported by litellm
-   LLM_API_KEY=sk-or-your-key #your provider key
-   LOW_REASONING_MODEL=openrouter/deepseek/deepseek-chat #provider model name
-   HIGH_REASONING_MODEL=openrouter/deepseek/deepseek-chat #provider model name
+   {PROVIDER}_API_KEY=sk-or-your-key #your provider key e.g. OPENAI_API_KEY for Openai
+   INFERENCE_MODEL=openrouter/deepseek/deepseek-chat #provider model name
+   CHAT_MODEL=openrouter/deepseek/deepseek-chat #provider model name
    ```
-   **`LOW_REASONING_MODEL`** and **`HIGH_REASONING_MODEL`** correspond to the models that will be used for generating knowledge graph and for agent reasoning respectively. These model names should be in the format of `provider/model_name` format or as expected by Litellm. For more information, refer to the [Litellm documentation](https://docs.litellm.ai/docs/providers).
+   **`INFERENCE_MODEL`** and **`CHAT_MODEL`** correspond to the models that will be used for generating knowledge graph and for agent reasoning respectively. These model names should be in the format of `provider/model_name` format or as expected by Litellm. For more information, refer to the [Litellm documentation](https://docs.litellm.ai/docs/providers).
    <br>
 4. **Run Potpie**: Execute the following command:
    ```bash
