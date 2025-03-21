@@ -207,7 +207,9 @@ class ProviderService:
         api_key = self._get_api_key(config.model.split("/")[0])
         return config.get_llm_params(api_key)
 
-    def _get_extra_params_and_headers(self, routing_provider: Optional[str]) -> tuple[dict[str, Any], Any]:
+    def _get_extra_params_and_headers(
+        self, routing_provider: Optional[str]
+    ) -> tuple[dict[str, Any], Any]:
         """Get extra parameters and headers for API calls."""
         extra_params = {}
         headers = createHeaders(
@@ -238,20 +240,32 @@ class ProviderService:
             # Get current models from preferences or environment
             chat_model_id = (
                 os.environ.get("CHAT_MODEL")
-                or (user_pref.preferences.get("chat_model") if user_pref and user_pref.preferences else None)
+                or (
+                    user_pref.preferences.get("chat_model")
+                    if user_pref and user_pref.preferences
+                    else None
+                )
                 or "openai/gpt-4o"
             )
-            
+
             inference_model_id = (
                 os.environ.get("INFERENCE_MODEL")
-                or (user_pref.preferences.get("inference_model") if user_pref and user_pref.preferences else None)
+                or (
+                    user_pref.preferences.get("inference_model")
+                    if user_pref and user_pref.preferences
+                    else None
+                )
                 or "openai/gpt-4o-mini"
             )
 
             # Look up friendly names from AVAILABLE_MODELS
             chat_model = chat_model_id
             inference_model = inference_model_id
-            provider_id = chat_model_id.split("/")[0] if chat_model_id else inference_model_id.split("/")[0]
+            provider_id = (
+                chat_model_id.split("/")[0]
+                if chat_model_id
+                else inference_model_id.split("/")[0]
+            )
             provider = provider_id.title()  # Default formatting
 
             # Find matching model in AVAILABLE_MODELS to get proper names
@@ -261,13 +275,15 @@ class ProviderService:
                     provider = model.provider.title()
                 if model.id == inference_model_id:
                     inference_model = model.name
-                    if chat_model_id is None:  # Only use inference model provider if no chat model
+                    if (
+                        chat_model_id is None
+                    ):  # Only use inference model provider if no chat model
                         provider = model.provider.title()
 
             return GetProviderResponse(
                 chat_model=chat_model,
                 inference_model=inference_model,
-                provider=provider
+                provider=provider,
             )
         except Exception as e:
             logging.error(f"Error getting global AI provider: {e}")
@@ -298,6 +314,7 @@ class ProviderService:
         # Handle streaming response if requested
         try:
             if stream:
+
                 async def generator() -> AsyncGenerator[str, None]:
                     response = await acompletion(
                         messages=messages, stream=True, **params
@@ -372,7 +389,7 @@ class ProviderService:
             crewai_params = {"model": params["model"], **params}
             if "default_headers" in params:
                 crewai_params["headers"] = params["default_headers"]
-            
+
             # Update with extra parameters
             crewai_params.update(extra_params)
             self.llm = LLM(**crewai_params)
