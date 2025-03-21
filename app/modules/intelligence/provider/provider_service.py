@@ -298,7 +298,8 @@ class ProviderService:
     ) -> bool:
         """Check if the current model is supported by PydanticAI."""
         config = self.chat_config if config_type == "chat" else self.inference_config
-        return config.provider in ["openai", "anthropic"]
+        # return config.provider in ["openai", "anthropic"]
+        return False
 
     async def call_llm(
         self, messages: list, stream: bool = False, config_type: str = "chat"
