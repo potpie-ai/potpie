@@ -262,8 +262,10 @@ class ProviderService:
             # Default values
             chat_provider = chat_model_id.split("/")[0] if chat_model_id else ""
             chat_model_name = chat_model_id
-            
-            inference_provider = inference_model_id.split("/")[0] if inference_model_id else ""
+
+            inference_provider = (
+                inference_model_id.split("/")[0] if inference_model_id else ""
+            )
             inference_model_name = inference_model_id
 
             # Find matching model in AVAILABLE_MODELS to get proper names
@@ -271,7 +273,7 @@ class ProviderService:
                 if model.id == chat_model_id:
                     chat_model_name = model.name
                     chat_provider = model.provider
-                    
+
                 if model.id == inference_model_id:
                     inference_model_name = model.name
                     inference_provider = model.provider
@@ -279,15 +281,13 @@ class ProviderService:
             # Create response with nested ModelInfo objects
             return GetProviderResponse(
                 chat_model=ModelInfo(
-                    provider=chat_provider,
-                    id=chat_model_id,
-                    name=chat_model_name
+                    provider=chat_provider, id=chat_model_id, name=chat_model_name
                 ),
                 inference_model=ModelInfo(
                     provider=inference_provider,
                     id=inference_model_id,
-                    name=inference_model_name
-                )
+                    name=inference_model_name,
+                ),
             )
         except Exception as e:
             logging.error(f"Error getting global AI provider: {e}")
