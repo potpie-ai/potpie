@@ -262,7 +262,8 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
    curl -X POST 'http://localhost:8001/api/v1/conversations/your-conversation-id/message/' \
      -H 'Content-Type: application/json' \
      -d '{
-       "content": "Your question or request here"
+       "content": "Your question or request here",
+       "node_ids":[]
      }'
    ```
 
