@@ -1,7 +1,7 @@
 import logging
 import os
 from enum import Enum
-from typing import List, Dict, Any, Union, AsyncGenerator
+from typing import List, Dict, Any, Union, AsyncGenerator, Optional
 import uuid
 from anthropic import AsyncAnthropic
 from crewai import LLM
@@ -207,6 +207,25 @@ class ProviderService:
         api_key = self._get_api_key(config.model.split("/")[0])
         return config.get_llm_params(api_key)
 
+    def _get_extra_params_and_headers(self, routing_provider: Optional[str]) -> tuple[dict[str, Any], Any]:
+        """Get extra parameters and headers for API calls."""
+        extra_params = {}
+        headers = createHeaders(
+            api_key=self.portkey_api_key,
+            provider=routing_provider,
+            trace_id=str(uuid.uuid4())[:8],
+            custom_host=os.environ.get("LLM_API_BASE"),
+            api_version=os.environ.get("LLM_API_VERSION"),
+        )
+        if self.portkey_api_key and routing_provider != "ollama":
+            # ollama + portkey is not supported currently
+            extra_params["base_url"] = PORTKEY_GATEWAY_URL
+            extra_params["extra_headers"] = headers
+        elif routing_provider == "azure":
+            extra_params["api_base"] = os.environ.get("LLM_API_BASE")
+            extra_params["api_version"] = os.environ.get("LLM_API_VERSION")
+        return extra_params, headers
+
     async def get_global_ai_provider(self, user_id: str) -> GetProviderResponse:
         """Get the current global AI provider configuration."""
         try:
@@ -272,21 +291,13 @@ class ProviderService:
         params = self._build_llm_params(config)
         routing_provider = config.model.split("/")[0]
 
-        # Add Portkey headers if available
-        if self.portkey_api_key:
-            portkey_headers = createHeaders(
-                api_key=self.portkey_api_key,
-                provider=routing_provider,
-                trace_id=str(uuid.uuid4())[:8],
-                mode="litellm",
-            )
-            params["extra_headers"] = portkey_headers
-            params["base_url"] = PORTKEY_GATEWAY_URL
+        # Get extra parameters and headers for API calls
+        extra_params, _ = self._get_extra_params_and_headers(routing_provider)
+        params.update(extra_params)
 
         # Handle streaming response if requested
-        if stream:
-            try:
-
+        try:
+            if stream:
                 async def generator() -> AsyncGenerator[str, None]:
                     response = await acompletion(
                         messages=messages, stream=True, **params
@@ -295,20 +306,14 @@ class ProviderService:
                         yield chunk.choices[0].delta.content or ""
 
                 return generator()
-            except Exception as e:
-                logging.error(
-                    f"Error calling LLM with streaming: {e}, params: {params}, messages: {messages}"
-                )
-                raise e
-        else:
-            try:
+            else:
                 response = await acompletion(messages=messages, **params)
                 return response.choices[0].message.content
-            except Exception as e:
-                logging.error(
-                    f"Error calling LLM: {e}, params: {params}, messages: {messages}"
-                )
-                raise e
+        except Exception as e:
+            logging.error(
+                f"Error calling LLM: {e}, params: {params}, messages: {messages}"
+            )
+            raise e
 
     async def call_llm_with_structured_output(
         self, messages: list, output_schema: BaseModel, config_type: str = "chat"
@@ -321,13 +326,8 @@ class ProviderService:
         params = self._build_llm_params(config)
         routing_provider = config.model.split("/")[0]
 
-        extra_params = {}
-        if self.portkey_api_key and routing_provider != "ollama":
-            # ollama + portkey is not supported currently
-            extra_params["base_url"] = PORTKEY_GATEWAY_URL
-            extra_params["extra_headers"] = createHeaders(
-                api_key=self.portkey_api_key, provider=routing_provider
-            )
+        # Get extra parameters and headers
+        extra_params, _ = self._get_extra_params_and_headers(routing_provider)
 
         try:
             if config.provider == "ollama":
@@ -363,20 +363,18 @@ class ProviderService:
     def _initialize_llm(self, config: LLMProviderConfig, agent_type: AgentProvider):
         """Initialize LLM for the specified agent type."""
         params = self._build_llm_params(config)
-        api_key = params.pop("api_key", None)
-        headers = createHeaders(
-            api_key=self.portkey_api_key,
-            provider=config.model.split("/")[0],
-            trace_id=str(uuid.uuid4())[:8],
-        )
+        routing_provider = config.model.split("/")[0]
+
+        # Get extra parameters and headers
+        extra_params, headers = self._get_extra_params_and_headers(routing_provider)
+
         if agent_type == AgentProvider.CREWAI:
             crewai_params = {"model": params["model"], **params}
             if "default_headers" in params:
                 crewai_params["headers"] = params["default_headers"]
-            if self.portkey_api_key and config.provider != "ollama":
-                # ollama + portkey is not supported currently
-                crewai_params["extra_headers"] = headers
-                crewai_params["base_url"] = PORTKEY_GATEWAY_URL
+            
+            # Update with extra parameters
+            crewai_params.update(extra_params)
             self.llm = LLM(**crewai_params)
         else:
             return None

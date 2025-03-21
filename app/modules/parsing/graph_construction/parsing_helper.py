@@ -134,6 +134,7 @@ class ParseHelper:
             "md",
             "mdx",
             "xsq",
+            "proto",
         ]
         if ext in exclude_extensions:
             return False
