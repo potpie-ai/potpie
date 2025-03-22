@@ -97,6 +97,9 @@ AVAILABLE_MODELS = [
     ),
 ]
 
+# Extract unique platform providers from the available models
+PLATFORM_PROVIDERS = list({model.provider for model in AVAILABLE_MODELS})
+
 
 class ProviderService:
     def __init__(self, db, user_id: str):

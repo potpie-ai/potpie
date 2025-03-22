@@ -12,6 +12,7 @@ from app.modules.auth.api_key_service import APIKeyService
 from app.modules.auth.auth_service import AuthService
 from app.modules.key_management.secrets_schema import (
     APIKeyResponse,
+    BaseSecret,
     CreateSecretRequest,
     UpdateSecretRequest,
 )
@@ -114,6 +115,67 @@ class SecretManager:
             return True  # Secret exists in UserPreferences
         return False  # Secret not found anywhere
 
+    @staticmethod
+    def _process_config(
+        config: BaseSecret,
+        config_type: Literal["chat", "inference"],
+        customer_id: str,
+        client,
+        project_id,
+        preferences: dict,
+        updated_providers: list,
+    ) -> None:
+        """Helper method to process chat or inference configuration."""
+        if not config:
+            return
+
+        # Update preferences
+        preferences[f"{config_type}_model"] = config.model
+        provider = config.model.split("/")[0]
+        updated_providers.append(provider)
+
+        if client and project_id:
+            # Store/Update in Google Secret Manager
+            secret_id = SecretManager.get_secret_id(provider, customer_id)
+            parent = f"projects/{project_id}/secrets/{secret_id}"
+            version = {"payload": {"data": config.api_key.encode("UTF-8")}}
+
+            try:
+                # Try to update existing secret
+                client.add_secret_version(
+                    request={"parent": parent, "payload": version["payload"]}
+                )
+            except Exception as e:
+                # The secret might not exist yet, try creating it
+                if "not found" in str(e).lower() or "404" in str(e) or "409" in str(e):
+                    try:
+                        secret = {"replication": {"automatic": {}}}
+                        response = client.create_secret(
+                            request={
+                                "parent": f"projects/{project_id}",
+                                "secret_id": secret_id,
+                                "secret": secret,
+                            }
+                        )
+                        client.add_secret_version(
+                            request={
+                                "parent": response.name,
+                                "payload": version["payload"],
+                            }
+                        )
+                    except Exception as create_error:
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Failed to create {config_type} secret: {str(create_error)}",
+                        )
+                else:
+                    # Some other error, re-raise
+                    raise e
+        else:
+            # Fallback: store encrypted API key in UserPreferences
+            encrypted_key = SecretManager.encrypt_api_key(config.api_key)
+            preferences[f"api_key_{provider}"] = encrypted_key
+
     @router.post("/secrets")
     def create_secret(
         request: CreateSecretRequest,
@@ -137,29 +199,27 @@ class SecretManager:
 
             # Create a copy of preferences to avoid modifying the dict directly
             preferences = user_pref.preferences.copy() if user_pref.preferences else {}
-            preferences["provider"] = request.provider
-            if request.low_reasoning_model:
-                preferences["low_reasoning_model"] = request.low_reasoning_model
-            if request.high_reasoning_model:
-                preferences["high_reasoning_model"] = request.high_reasoning_model
+            updated_providers = []
 
-            if client and project_id:
-                # Use Google Secret Manager for API Key
-                api_key = request.api_key
-                secret_id = SecretManager.get_secret_id(request.provider, customer_id)
-                parent = f"projects/{project_id}"
-                secret = {"replication": {"automatic": {}}}
-                response = client.create_secret(
-                    request={"parent": parent, "secret_id": secret_id, "secret": secret}
-                )
-                version = {"payload": {"data": api_key.encode("UTF-8")}}
-                client.add_secret_version(
-                    request={"parent": response.name, "payload": version["payload"]}
-                )
-            else:
-                # Fallback: store encrypted API key and model configs in UserPreferences
-                encrypted_key = SecretManager.encrypt_api_key(request.api_key)
-                preferences[f"api_key_{request.provider}"] = encrypted_key
+            # Process configurations
+            SecretManager._process_config(
+                request.chat_config,
+                "chat",
+                customer_id,
+                client,
+                project_id,
+                preferences,
+                updated_providers,
+            )
+            SecretManager._process_config(
+                request.inference_config,
+                "inference",
+                customer_id,
+                client,
+                project_id,
+                preferences,
+                updated_providers,
+            )
 
             # Update the preferences after all operations are successful
             user_pref.preferences = preferences
@@ -169,7 +229,7 @@ class SecretManager:
             PostHogClient().send_event(
                 customer_id,
                 "secret_creation_event",
-                {"provider": request.provider, "key_added": "true"},
+                {"providers": updated_providers, "key_added": "true"},
             )
             return {"message": "Secret created successfully"}
         except Exception as e:
@@ -200,16 +260,54 @@ class SecretManager:
         )
         if not user_pref:
             raise HTTPException(
-                status_code=404, detail="Secret not found for this provider"
+                status_code=404, detail="No secrets found for this user"
             )
 
         if provider == "all":
-            provider = user_pref.preferences.get("provider")
-            if not provider:
+            # Get both chat and inference configurations
+            chat_model = user_pref.preferences.get("chat_model")
+            inference_model = user_pref.preferences.get("inference_model")
+
+            result = {"chat_config": None, "inference_config": None}
+
+            # Process chat configuration if it exists
+            if chat_model:
+                chat_provider = chat_model.split("/")[0]
+                try:
+                    chat_secret = SecretManager.get_secret(
+                        chat_provider, customer_id, db
+                    )
+                    result["chat_config"] = {
+                        "provider": chat_provider,
+                        "model": chat_model,
+                        "api_key": chat_secret["api_key"],
+                    }
+                except HTTPException:
+                    pass  # Skip if secret not found
+
+            # Process inference configuration if it exists
+            if inference_model:
+                inference_provider = inference_model.split("/")[0]
+                try:
+                    inference_secret = SecretManager.get_secret(
+                        inference_provider, customer_id, db
+                    )
+                    result["inference_config"] = {
+                        "provider": inference_provider,
+                        "model": inference_model,
+                        "api_key": inference_secret["api_key"],
+                    }
+                except HTTPException:
+                    pass  # Skip if secret not found
+
+            if result["chat_config"] is None and result["inference_config"] is None:
                 raise HTTPException(
-                    status_code=404, detail="No provider stored for this user"
+                    status_code=404, detail="No secrets found for this user"
                 )
 
+            return result
+
+        # For single provider requests, maintain existing behavior
         return SecretManager.get_secret(provider, customer_id, db)
 
     @staticmethod
@@ -284,52 +382,40 @@ class SecretManager:
 
             # Create a copy of preferences to avoid modifying the dict directly
             preferences = user_pref.preferences.copy() if user_pref.preferences else {}
+            updated_providers = []
 
-            # Handle Google Secret Manager if available
+            # Get client and project_id
             client, project_id = SecretManager.get_client_and_project()
-            if client and project_id:
-                secret_id = SecretManager.get_secret_id(request.provider, customer_id)
-                parent = f"projects/{project_id}/secrets/{secret_id}"
-                try:
-                    version = {"payload": {"data": request.api_key.encode("UTF-8")}}
-                    client.add_secret_version(
-                        request={"parent": parent, "payload": version["payload"]}
-                    )
-                except Exception:
-                    # If secret doesn't exist, create it
-                    secret = {"replication": {"automatic": {}}}
-                    response = client.create_secret(
-                        request={
-                            "parent": f"projects/{project_id}",
-                            "secret_id": secret_id,
-                            "secret": secret,
-                        }
-                    )
-                    version = {"payload": {"data": request.api_key.encode("UTF-8")}}
-                    client.add_secret_version(
-                        request={"parent": response.name, "payload": version["payload"]}
-                    )
-            else:
-                # Fallback: update encrypted API key in UserPreferences
-                encrypted_key = SecretManager.encrypt_api_key(request.api_key)
-                preferences[f"api_key_{request.provider}"] = encrypted_key
 
-            # Update provider and models in preferences
-            preferences["provider"] = request.provider
-            if request.low_reasoning_model:
-                preferences["low_reasoning_model"] = request.low_reasoning_model
-            if request.high_reasoning_model:
-                preferences["high_reasoning_model"] = request.high_reasoning_model
+            # Process configurations
+            SecretManager._process_config(
+                request.chat_config,
+                "chat",
+                customer_id,
+                client,
+                project_id,
+                preferences,
+                updated_providers,
+            )
+            SecretManager._process_config(
+                request.inference_config,
+                "inference",
+                customer_id,
+                client,
+                project_id,
+                preferences,
+                updated_providers,
+            )
 
             # Update the preferences after all operations are successful
             user_pref.preferences = preferences
             db.commit()
-            db.refresh(user_pref)  # Refresh to ensure we have the latest state
+            db.refresh(user_pref)
 
             PostHogClient().send_event(
                 customer_id,
                 "secret_update_event",
-                {"provider": request.provider, "key_updated": "true"},
+                {"providers": updated_providers, "key_updated": "true"},
             )
             return {"message": "Secret updated successfully"}
         except Exception as e:
@@ -352,11 +438,10 @@ class SecretManager:
         user=Depends(AuthService.check_auth),
         db: Session = Depends(get_db),
     ):
+        customer_id = user["user_id"]
         from app.modules.intelligence.provider.provider_service import (
             PLATFORM_PROVIDERS,
         )
-
-        customer_id = user["user_id"]
 
         async def delete_single_provider(prov: str) -> dict:
             """Helper function to delete a single provider's secret"""
@@ -438,6 +523,11 @@ class SecretManager:
                         del preferences["low_reasoning_model"]
                     if "high_reasoning_model" in preferences:
                         del preferences["high_reasoning_model"]
+                    if "chat_model" in preferences:
+                        del preferences["chat_model"]
+                    if "inference_model" in preferences:
+                        del preferences["inference_model"]
+
                     user_pref.preferences = preferences
                     db.commit()
 
@@ -513,6 +603,8 @@ class SecretManager:
                 )
             return {"api_key": api_key}
         except Exception as e:
+            if e.status_code == 404:
+                raise e
             raise HTTPException(
                 status_code=500, detail=f"Failed to retrieve API key: {str(e)}"
             )
