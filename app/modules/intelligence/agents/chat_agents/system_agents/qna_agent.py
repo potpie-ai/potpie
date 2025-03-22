@@ -20,7 +20,7 @@ class QnAAgent(ChatAgent):
     def _build_agent(self) -> ChatAgent:
         agent_config = AgentConfig(
             role="QNA Agent",
-            goal="Answer queries of the repo in a detail fashion",
+            goal="Answer queries of the repo in a detailed fashion",
             backstory="""
                     You are a highly efficient and intelligent RAG agent capable of querying complex knowledge graphs and refining the results to generate precise and comprehensive responses.
                     Your tasks include:

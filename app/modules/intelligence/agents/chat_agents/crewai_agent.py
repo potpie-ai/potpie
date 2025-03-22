@@ -168,7 +168,7 @@ class CrewAIAgent(ChatAgent):
 
             logger.info(f"Starting Crew AI kickoff with {len(tasks)} tasks")
             result = await crew.kickoff_async()
-            response: CrewAIResponse = result.tasks_output[0].pydantic
+            response: CrewAIResponse = result.tasks_output[0].pydantic  # type: ignore
             # agentops.end_session("success")
             return ChatAgentResponse(
                 response=response.response,

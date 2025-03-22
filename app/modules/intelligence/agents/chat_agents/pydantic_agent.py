@@ -21,6 +21,8 @@ from pydantic_ai.messages import (
     FunctionToolResultEvent,
     PartDeltaEvent,
     TextPartDelta,
+    ModelResponse,
+    TextPart,
 )
 from langchain_core.tools import StructuredTool
 
@@ -91,7 +93,6 @@ class PydanticRagAgent(ChatAgent):
 
         self.agent = Agent(
             model=llm_provider.get_pydantic_model(),
-            # model="gpt-4o-mini",
             tools=[
                 Tool(
                     name=tool.name,
@@ -103,10 +104,10 @@ class PydanticRagAgent(ChatAgent):
             system_prompt=f"Role: {config.role}\nGoal: {config.goal}\nBackstory: {config.backstory}. Respond to the user query",
             result_type=str,
             retries=3,
-            result_retries=3,
-            model_settings={
-                "parallel_tool_calls": True,
-            },
+            result_retries=10,
+            defer_model_check=True,
+            end_strategy="exhaustive",
+            model_settings={"parallel_tool_calls": True, "max_tokens": 10000},
         )
 
     def _create_task_description(
@@ -125,8 +126,7 @@ class PydanticRagAgent(ChatAgent):
                 User Query: {ctx.query}
                 Project ID: {ctx.project_id}
                 Node IDs: {" ,".join(ctx.node_ids)}
-
-                Consider the chat history for any specific instructions or context: {" ,".join(ctx.history) if len(ctx.history) > 0 else "no chat history"}
+                Project Name (this is name from github. i.e. owner/repo): {ctx.project_name}
 
                 Additional Context:
                 {ctx.additional_context if ctx.additional_context != "" else "no additional context"}
@@ -186,13 +186,15 @@ class PydanticRagAgent(ChatAgent):
         try:
             async with self.agent.iter(
                 user_prompt=task,
+                message_history=[
+                    ModelResponse([TextPart(content=msg)]) for msg in ctx.history
+                ],
             ) as run:
                 async for node in run:
                     if Agent.is_model_request_node(node):
                         # A model request node => We can stream tokens from the model's request
                         async with node.stream(run.ctx) as request_stream:
                             async for event in request_stream:
-
                                 if isinstance(event, PartDeltaEvent) and isinstance(
                                     event.delta, TextPartDelta
                                 ):
@@ -201,6 +203,8 @@ class PydanticRagAgent(ChatAgent):
                                         tool_calls=[],
                                         citations=[],
                                     )
+                                else:
+                                    logger.info(f"event {event}")
                     elif Agent.is_call_tools_node(node):
                         async with node.stream(run.ctx) as handle_stream:
                             async for event in handle_stream:
@@ -216,14 +220,23 @@ class PydanticRagAgent(ChatAgent):
                                                 tool_response=get_tool_run_message(
                                                     event.part.tool_name
                                                 ),
-                                                tool_call_details={},
+                                                tool_call_details={
+                                                    "summary": event.part.args
+                                                },
                                             )
                                         ],
                                         citations=[],
                                     )
                                 if isinstance(event, FunctionToolResultEvent):
+                                    summary = ""
+                                    if (
+                                        isinstance(event.result.content, List)
+                                        and len(event.result.content) > 0
+                                    ):
+                                        summary = str(event.result.content[0])
+                                    elif isinstance(event.result.content, str):
+                                        summary = event.result.content
                                     yield ChatAgentResponse(
-                                        # response=f"\n[Tools] Tool call {event.result.tool_name!r}\n",
                                         response="",
                                         tool_calls=[
                                             ToolCallResponse(
@@ -235,7 +248,7 @@ class PydanticRagAgent(ChatAgent):
                                                     event.result.tool_name
                                                     or "unknown tool"
                                                 ),
-                                                tool_call_details={},
+                                                tool_call_details={"summary": summary},
                                             )
                                         ],
                                         citations=[],
