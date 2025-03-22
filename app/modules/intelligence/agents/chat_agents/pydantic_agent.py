@@ -107,9 +107,7 @@ class PydanticRagAgent(ChatAgent):
             result_retries=10,
             defer_model_check=True,
             end_strategy="exhaustive",
-            model_settings={
-                "parallel_tool_calls": True,
-            },
+            model_settings={"parallel_tool_calls": True, "max_tokens": 10000},
         )
 
     def _create_task_description(
@@ -128,6 +126,7 @@ class PydanticRagAgent(ChatAgent):
                 User Query: {ctx.query}
                 Project ID: {ctx.project_id}
                 Node IDs: {" ,".join(ctx.node_ids)}
+                Project Name (this is name from github. i.e. owner/repo): {ctx.project_name}
 
                 Additional Context:
                 {ctx.additional_context if ctx.additional_context != "" else "no additional context"}
