@@ -10,12 +10,8 @@ from app.modules.intelligence.agents.custom_agents.custom_agent_schema import (
 from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
     CustomAgentService,
 )
-from app.modules.intelligence.prompts.classification_prompts import (
-    AgentType,
-)
 from app.modules.utils.logger import setup_logger
 from .chat_agent import AgentWithInfo, ChatContext
-from .chat_agents.adaptive_agent import AdaptiveAgent
 from .chat_agents.system_agents import (
     blast_radius_agent,
     code_gen_agent,
