@@ -107,10 +107,9 @@ class MainApp:
         self.app.include_router(
             potpie_api_router, prefix="/api/v2", tags=["Potpie API"]
         )
-        if os.getenv("isDevelopmentMode") != "enabled":
-            self.app.include_router(
-                secret_manager_router, prefix="/api/v1", tags=["Secret Manager"]
-            )
+        self.app.include_router(
+            secret_manager_router, prefix="/api/v1", tags=["Secret Manager"]
+        )
 
     def add_health_check(self):
         @self.app.get("/health", tags=["Health"])

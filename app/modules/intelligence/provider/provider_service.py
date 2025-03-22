@@ -16,7 +16,15 @@ from app.modules.key_management.secret_manager import SecretManager
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.posthog_helper import PostHogClient
 
-from .provider_schema import ProviderInfo, GetProviderResponse
+from .provider_schema import (
+    ProviderInfo,
+    GetProviderResponse,
+    AvailableModelsResponse,
+    AvailableModelOption,
+    SetProviderRequest,
+    ModelInfo,
+)
+from .llm_config import LLMProviderConfig, build_llm_provider_config
 
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.models.anthropic import AnthropicModel
@@ -29,13 +37,68 @@ class AgentProvider(Enum):
     PYDANTICAI = "PYDANTICAI"
 
 
-PLATFORM_PROVIDERS = [
-    "openai",
-    "anthropic",
-    "deepseek",
-    "meta-llama",
-    "gemini",
+# Available models with their metadata
+AVAILABLE_MODELS = [
+    AvailableModelOption(
+        id="openai/gpt-4o",
+        name="GPT-4o",
+        description="High-intelligence model for complex tasks",
+        provider="openai",
+        is_chat_model=True,
+        is_inference_model=False,
+    ),
+    AvailableModelOption(
+        id="openai/gpt-4o-mini",
+        name="GPT-4o Mini",
+        description="Smaller model for fast, lightweight tasks",
+        provider="openai",
+        is_chat_model=False,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="anthropic/claude-3-7-sonnet-20250219",
+        name="Claude 3.7 Sonnet",
+        description="Highest level of intelligence and capability with toggleable extended thinking",
+        provider="anthropic",
+        is_chat_model=True,
+        is_inference_model=False,
+    ),
+    AvailableModelOption(
+        id="anthropic/claude-3-5-haiku-20241022",
+        name="Claude 3.5 Haiku",
+        description="Faster, more efficient Claude model",
+        provider="anthropic",
+        is_chat_model=False,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="openrouter/deepseek/deepseek-chat",
+        name="DeepSeek V3",
+        description="DeepSeek's latest chat model",
+        provider="deepseek",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="openrouter/meta-llama/llama-3.3-70b-instruct",
+        name="Llama 3.3 70B",
+        description="Meta's latest Llama model",
+        provider="meta-llama",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="openrouter/google/gemini-2.0-flash-001",
+        name="Gemini 2.0 Flash",
+        description="Google's Gemini model optimized for speed",
+        provider="gemini",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
 ]
+
+# Extract unique platform providers from the available models
+PLATFORM_PROVIDERS = list({model.provider for model in AVAILABLE_MODELS})
 
 
 class ProviderService:
@@ -46,173 +109,88 @@ class ProviderService:
         self.user_id = user_id
         self.portkey_api_key = os.environ.get("PORTKEY_API_KEY", None)
 
+        # Load user preferences
+        user_pref = db.query(UserPreferences).filter_by(user_id=user_id).first()
+        user_config = (
+            user_pref.preferences if user_pref and user_pref.preferences else {}
+        )
+
+        # Create configurations based on user input (or fallback defaults)
+        self.chat_config = build_llm_provider_config(user_config, config_type="chat")
+        self.inference_config = build_llm_provider_config(
+            user_config, config_type="inference"
+        )
+
     @classmethod
     def create(cls, db, user_id: str):
         return cls(db, user_id)
 
     async def list_available_llms(self) -> List[ProviderInfo]:
-        return [
-            ProviderInfo(
-                id="openai",
-                name="OpenAI",
-                description="A leading LLM provider, known for GPT models like GPT-3, GPT-4.",
-            ),
-            ProviderInfo(
-                id="anthropic",
-                name="Anthropic",
-                description="An AI safety-focused company known for models like Claude.",
-            ),
-            ProviderInfo(
-                id="deepseek",
-                name="DeepSeek",
-                description="An open-source AI company known for powerful chat and reasoning models.",
-            ),
-            ProviderInfo(
-                id="meta-llama",
-                name="Meta Llama",
-                description="Meta's family of large language models.",
-            ),
-            ProviderInfo(
-                id="gemini",
-                name="Google Gemini",
-                description="Google Gemini models.",
-            ),
-        ]
+        # Get unique providers from available models
+        providers = {
+            model.provider: ProviderInfo(
+                id=model.provider,
+                name=model.provider,
+                description=f"Provider for {model.provider} models",
+            )
+            for model in AVAILABLE_MODELS
+        }
+        return list(providers.values())
 
-    async def set_global_ai_provider(
-        self,
-        user_id: str,
-        provider: str,
-        low_reasoning_model: Optional[str] = None,
-        high_reasoning_model: Optional[str] = None,
-    ):
-        provider = provider.lower()
+    async def list_available_models(self) -> AvailableModelsResponse:
+        return AvailableModelsResponse(models=AVAILABLE_MODELS)
+
+    async def set_global_ai_provider(self, user_id: str, request: SetProviderRequest):
+        """Update the global AI provider configuration with new model selections."""
         preferences = self.db.query(UserPreferences).filter_by(user_id=user_id).first()
 
         if not preferences:
-            preferences = UserPreferences(
-                user_id=user_id, preferences={"llm_provider": provider}
-            )
+            preferences = UserPreferences(user_id=user_id, preferences={})
             self.db.add(preferences)
-        else:
-            if preferences.preferences is None:
-                preferences.preferences = {}
-            preferences.preferences["llm_provider"] = provider
+        elif preferences.preferences is None:
+            preferences.preferences = {}
 
-        if provider in PLATFORM_PROVIDERS:
-            # For platform providers, allow model update only if API key is set
-            api_key_set = await SecretManager.check_secret_exists_for_user(
-                provider, user_id, self.db
-            ) or (
-                os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
-            )  # check env keys too for platform providers
-            if (
-                low_reasoning_model or high_reasoning_model
-            ):  # if user is trying to set custom models for platform provider
-                if not api_key_set:
-                    raise ValueError(
-                        f"To set custom models for {provider}, please set your API key first."
-                    )
-
-        if low_reasoning_model:
-            preferences.preferences["low_reasoning_model"] = low_reasoning_model
-        if high_reasoning_model:
-            preferences.preferences["high_reasoning_model"] = high_reasoning_model
-
-        self.db.query(UserPreferences).filter_by(user_id=user_id).update(
-            {"preferences": preferences.preferences}
+        # Create a new dictionary with existing preferences
+        updated_preferences = (
+            preferences.preferences.copy() if preferences.preferences else {}
         )
 
-        PostHogClient().send_event(
-            user_id, "provider_change_event", {"provider": provider}
-        )
+        # Update chat model if provided
+        if request.chat_model:
+            updated_preferences["chat_model"] = request.chat_model
+            self.chat_config = build_llm_provider_config(updated_preferences, "chat")
+
+        # Update inference model if provided
+        if request.inference_model:
+            updated_preferences["inference_model"] = request.inference_model
+            self.inference_config = build_llm_provider_config(
+                updated_preferences, "inference"
+            )
+
+        # Explicitly assign the new dictionary to mark it as modified
+        preferences.preferences = updated_preferences
+
+        # Ensure changes are flushed to the database
+        self.db.flush()
         self.db.commit()
-        return {"message": f"AI provider set to {provider}"}
+        self.db.refresh(preferences)
 
-    # Model configurations
-    MODEL_CONFIGS = {
-        "openai": {
-            "small": {"model": "openai/gpt-4o-mini"},
-            "large": {"model": "openai/gpt-4o"},
-        },
-        "anthropic": {
-            "small": {"model": "anthropic/claude-3-5-haiku-20241022"},
-            "large": {"model": "anthropic/claude-3-7-sonnet-20250219"},
-        },
-        "deepseek": {
-            "small": {"model": "openrouter/deepseek/deepseek-chat"},
-            "large": {
-                "model": "openrouter/deepseek/deepseek-chat"
-            },  # r1 is slow and unstable rn
-        },
-        "meta-llama": {
-            "small": {"model": "openrouter/meta-llama/llama-3.3-70b-instruct"},
-            "large": {"model": "openrouter/meta-llama/llama-3.3-70b-instruct"},
-        },
-        "gemini": {
-            "small": {"model": "openrouter/google/gemini-2.0-flash-001"},
-            "large": {
-                "model": "openrouter/google/gemini-2.0-flash-001"
-            },  # TODO: add pro model after it moves out of experimentsl and gets higher rate
-        },
-    }
+        # Send analytics event
+        if request.chat_model:
+            PostHogClient().send_event(
+                user_id, "chat_model_change_event", {"model": request.chat_model}
+            )
+        if request.inference_model:
+            PostHogClient().send_event(
+                user_id,
+                "inference_model_change_event",
+                {"model": request.inference_model},
+            )
 
-    def _get_provider_config(self, size: str) -> str:
-        """
-        Return the provider from environment variable LLM_PROVIDER if set;
-        otherwise, fall back to user preferences, then default to 'openai'.
-        """
-        env_provider = os.environ.get("LLM_PROVIDER")
-        if env_provider:
-            return env_provider.lower()
-        if self.user_id == "dummy":
-            return "openai"
-        user_pref = (
-            self.db.query(UserPreferences)
-            .filter(UserPreferences.user_id == self.user_id)
-            .first()
-        )
-        return (
-            user_pref.preferences.get("llm_provider", "openai")
-            if user_pref and user_pref.preferences
-            else "openai"
-        )
-
-    def _get_reasoning_model_config(self, size: str) -> str:
-        """
-        Return the reasoning model from environment variables or user preferences,
-        falling back to defaults if not set.
-        """
-        env_low_model = os.environ.get("LOW_REASONING_MODEL")
-        env_high_model = os.environ.get("HIGH_REASONING_MODEL")
-
-        user_pref = (
-            self.db.query(UserPreferences)
-            .filter(UserPreferences.user_id == self.user_id)
-            .first()
-        )
-
-        if size == "small":
-            if env_low_model:
-                return env_low_model
-            elif user_pref and user_pref.preferences.get("low_reasoning_model"):
-                return user_pref.preferences.get("low_reasoning_model")
-            else:
-                provider = self._get_provider_config(size)
-                return self.MODEL_CONFIGS[provider]["small"]["model"]
-        elif size == "large":
-            if env_high_model:
-                return env_high_model
-            elif user_pref and user_pref.preferences.get("high_reasoning_model"):
-                return user_pref.preferences.get("high_reasoning_model")
-            else:
-                provider = self._get_provider_config(size)
-                return self.MODEL_CONFIGS[provider]["large"]["model"]
-        return None
+        return {"message": "AI provider configuration updated successfully"}
 
     def _get_api_key(self, provider: str) -> str:
         """Get API key for the specified provider."""
-
         env_key = os.getenv("LLM_API_KEY", None)
         if env_key:
             return env_key
@@ -225,84 +203,18 @@ class ProviderService:
                 env_key = os.getenv(f"{provider.upper()}_API_KEY")
                 if env_key:
                     return env_key
-                return None  # No API key found in secret manager or env for platform provider
+                return None
             raise e
 
-    def _build_llm_params(self, provider: str, size: str) -> Dict[str, Any]:
-        """
-        Build a dictionary of parameters for LLM initialization.
-        Model is determined by _get_reasoning_model_config.
-        """
-        if (
-            provider not in self.MODEL_CONFIGS and provider not in PLATFORM_PROVIDERS
-        ):  # Allow non-platform providers
-            # For non-platform providers, model names must be user specified, retrieve from user preferences
-            user_pref = (
-                self.db.query(UserPreferences)
-                .filter(UserPreferences.user_id == self.user_id)
-                .first()
-            )
-            if size == "small":
-                low_reasoning_model = os.environ.get("LOW_REASONING_MODEL", None)
-                model_name = (
-                    low_reasoning_model
-                    if low_reasoning_model
-                    else (
-                        user_pref.preferences.get("low_reasoning_model")
-                        if user_pref and user_pref.preferences
-                        else None
-                    )
-                )
-            elif size == "large":
-                high_reasoning_model = os.environ.get("HIGH_REASONING_MODEL", None)
-                model_name = (
-                    high_reasoning_model
-                    if high_reasoning_model
-                    else (
-                        user_pref.preferences.get("high_reasoning_model")
-                        if user_pref and user_pref.preferences
-                        else None
-                    )
-                )
-            if not model_name:
-                raise ValueError(
-                    f"Model name for {size} size for provider {provider} is not set in preferences."
-                )
-            params = {
-                "temperature": 0.3,
-                "api_key": self._get_api_key(provider),
-                "model": model_name,
-                "routing_provider": (
-                    model_name.split("/")[0] if "/" in model_name else provider
-                ),
-            }
-
-        elif (
-            provider in self.MODEL_CONFIGS
-        ):  # platform providers with default model configs
-            params = {
-                "temperature": 0.3,
-                "api_key": self._get_api_key(provider),
-                "model": self._get_reasoning_model_config(size),
-                "routing_provider": self._get_reasoning_model_config(size).split("/")[
-                    0
-                ],
-            }
-        else:
-            raise ValueError(f"Invalid LLM provider: {provider}")
-
-        # For deepseek large model, add extra parameters.
-        if provider == "deepseek":
-            params.update({"max_tokens": 8000})
-
-        if provider == "anthropic":
-            params.update({"max_tokens": 8000})
-
-        return params
+    def _build_llm_params(self, config: LLMProviderConfig) -> Dict[str, Any]:
+        """Build a dictionary of parameters for LLM initialization."""
+        api_key = self._get_api_key(config.model.split("/")[0])
+        return config.get_llm_params(api_key)
 
     def _get_extra_params_and_headers(
         self, routing_provider: Optional[str]
-    ) -> tuple[dict[str, str | None | Any], Any]:
+    ) -> tuple[dict[str, Any], Any]:
+        """Get extra parameters and headers for API calls."""
         extra_params = {}
         headers = createHeaders(
             api_key=self.portkey_api_key,
@@ -320,80 +232,130 @@ class ProviderService:
             extra_params["api_version"] = os.environ.get("LLM_API_VERSION")
         return extra_params, headers
 
-    async def call_llm(
-        self, messages: list, size: str = "small", stream: bool = False
-    ) -> Union[str, AsyncGenerator[str, None]]:
-        """
-        Call LLM using LiteLLM's asynchronous completion.
-        API key and model are dynamically configured.
-        """
-        provider = self._get_provider_config(size)
-        params = self._build_llm_params(provider, size)
-        routing_provider = params.pop("routing_provider", None)
-        extra_params = {}
-        if self.portkey_api_key and routing_provider != "ollama":
-            # ollama + portkey is not supported currently
-            extra_params["base_url"] = PORTKEY_GATEWAY_URL
-            extra_params["extra_headers"] = createHeaders(
-                api_key=self.portkey_api_key, provider=routing_provider
+    async def get_global_ai_provider(self, user_id: str) -> GetProviderResponse:
+        """Get the current global AI provider configuration."""
+        try:
+            user_pref = (
+                self.db.query(UserPreferences)
+                .filter(UserPreferences.user_id == user_id)
+                .first()
             )
 
+            # Get current models from preferences or environment
+            chat_model_id = (
+                os.environ.get("CHAT_MODEL")
+                or (
+                    user_pref.preferences.get("chat_model")
+                    if user_pref and user_pref.preferences
+                    else None
+                )
+                or "openai/gpt-4o"
+            )
+
+            inference_model_id = (
+                os.environ.get("INFERENCE_MODEL")
+                or (
+                    user_pref.preferences.get("inference_model")
+                    if user_pref and user_pref.preferences
+                    else None
+                )
+                or "openai/gpt-4o-mini"
+            )
+
+            # Default values
+            chat_provider = chat_model_id.split("/")[0] if chat_model_id else ""
+            chat_model_name = chat_model_id
+
+            inference_provider = (
+                inference_model_id.split("/")[0] if inference_model_id else ""
+            )
+            inference_model_name = inference_model_id
+
+            # Find matching model in AVAILABLE_MODELS to get proper names
+            for model in AVAILABLE_MODELS:
+                if model.id == chat_model_id:
+                    chat_model_name = model.name
+                    chat_provider = model.provider
+
+                if model.id == inference_model_id:
+                    inference_model_name = model.name
+                    inference_provider = model.provider
+
+            # Create response with nested ModelInfo objects
+            return GetProviderResponse(
+                chat_model=ModelInfo(
+                    provider=chat_provider, id=chat_model_id, name=chat_model_name
+                ),
+                inference_model=ModelInfo(
+                    provider=inference_provider,
+                    id=inference_model_id,
+                    name=inference_model_name,
+                ),
+            )
+        except Exception as e:
+            logging.error(f"Error getting global AI provider: {e}")
+            raise e
+
+    def is_current_model_supported_by_pydanticai(
+        self, config_type: str = "chat"
+    ) -> bool:
+        """Check if the current model is supported by PydanticAI."""
+        config = self.chat_config if config_type == "chat" else self.inference_config
+        # return config.provider in ["openai", "anthropic"]
+        return False
+
+    async def call_llm(
+        self, messages: list, stream: bool = False, config_type: str = "chat"
+    ) -> Union[str, AsyncGenerator[str, None]]:
+        """Call LLM with the specified messages."""
+        # Select the appropriate config based on config_type
+        config = self.chat_config if config_type == "chat" else self.inference_config
+
+        # Build parameters using the config object
+        params = self._build_llm_params(config)
+        routing_provider = config.model.split("/")[0]
+
+        # Get extra parameters and headers for API calls
+        extra_params, _ = self._get_extra_params_and_headers(routing_provider)
+        params.update(extra_params)
+
+        # Handle streaming response if requested
         try:
             if stream:
 
                 async def generator() -> AsyncGenerator[str, None]:
                     response = await acompletion(
-                        model=params["model"],
-                        messages=messages,
-                        temperature=params.get("temperature", 0.3),
-                        max_tokens=params.get("max_tokens"),
-                        stream=True,
-                        api_key=params.get("api_key"),
-                        **extra_params,
+                        messages=messages, stream=True, **params
                     )
                     async for chunk in response:
-                        content = chunk.choices[0].delta.content
-                        if content:
-                            yield content
+                        yield chunk.choices[0].delta.content or ""
 
                 return generator()
             else:
-                response = await acompletion(
-                    model=params["model"],
-                    messages=messages,
-                    temperature=params.get("temperature", 0.3),
-                    max_tokens=params.get("max_tokens"),
-                    stream=False,
-                    api_key=params.get("api_key"),
-                    **extra_params,
-                )
+                response = await acompletion(messages=messages, **params)
                 return response.choices[0].message.content
         except Exception as e:
-            logging.error(f"LLM call failed: {e}")
+            logging.error(
+                f"Error calling LLM: {e}, params: {params}, messages: {messages}"
+            )
             raise e
 
     async def call_llm_with_structured_output(
-        self, messages: list, output_schema: BaseModel, size: str = "small"
+        self, messages: list, output_schema: BaseModel, config_type: str = "chat"
     ) -> Any:
-        """
-        Call LLM and parse the response into a structured output using a Pydantic model.
-        Uses Instructor's integration with LiteLLM for structured outputs.
-        API key and model are dynamically configured.
-        """
-        provider = self._get_provider_config(size)
-        params = self._build_llm_params(provider, size)
-        routing_provider = params.pop("routing_provider", None)
+        """Call LLM and parse the response into a structured output using a Pydantic model."""
+        # Select the appropriate config
+        config = self.chat_config if config_type == "chat" else self.inference_config
 
-        extra_params = {}
-        if self.portkey_api_key and routing_provider != "ollama":
-            # ollama + portkey is not supported currently
-            extra_params["base_url"] = PORTKEY_GATEWAY_URL
-            extra_params["extra_headers"] = createHeaders(
-                api_key=self.portkey_api_key, provider=routing_provider
-            )
+        # Build parameters
+        params = self._build_llm_params(config)
+        routing_provider = config.model.split("/")[0]
+
+        # Get extra parameters and headers
+        extra_params, _ = self._get_extra_params_and_headers(routing_provider)
 
         try:
-            if provider == "ollama":
+            if config.provider == "ollama":
                 # use openai client to call ollama because of https://github.com/BerriAI/litellm/issues/7355
                 client = instructor.from_openai(
                     AsyncOpenAI(base_url="http://localhost:11434/v1", api_key="ollama"),
@@ -423,121 +385,53 @@ class ProviderService:
             logging.error(f"LLM call with structured output failed: {e}")
             raise e
 
-    def _initialize_llm(self, provider: str, size: str, agent_type: AgentProvider):
-        """
-        Initialize LLM based on provider, size, and agent type.
-        Although agent_type and provider are passed, with simplified config, they are less relevant now.
-        Kept for potential future differentiated initialization.
-        """
-        params = self._build_llm_params(provider, size)
-        routing_provider = params.pop("routing_provider", None)
-        headers = createHeaders(
-            api_key=self.portkey_api_key,
-            provider=routing_provider,
-            trace_id=str(uuid.uuid4())[:8],
-        )
+    def _initialize_llm(self, config: LLMProviderConfig, agent_type: AgentProvider):
+        """Initialize LLM for the specified agent type."""
+        params = self._build_llm_params(config)
+        routing_provider = config.model.split("/")[0]
+
+        # Get extra parameters and headers
+        extra_params, headers = self._get_extra_params_and_headers(routing_provider)
+
         if agent_type == AgentProvider.CREWAI:
             crewai_params = {"model": params["model"], **params}
             if "default_headers" in params:
                 crewai_params["headers"] = params["default_headers"]
-            if self.portkey_api_key and routing_provider != "ollama":
-                # ollama + portkey is not supported currently
-                crewai_params["extra_headers"] = headers
-                crewai_params["base_url"] = PORTKEY_GATEWAY_URL
-            return LLM(**crewai_params)
+
+            # Update with extra parameters
+            crewai_params.update(extra_params)
+            self.llm = LLM(**crewai_params)
         else:
             return None
 
-    def get_large_llm(self, agent_type: AgentProvider):
-        provider = self._get_provider_config("large")
-        logging.info(f"Initializing {provider.capitalize()} LLM")
-        self.llm = self._initialize_llm(provider, "large", agent_type)
+    def get_llm(self, agent_type: AgentProvider, config_type: str = "chat"):
+        """Get LLM for the specified agent type."""
+        config = self.chat_config if config_type == "chat" else self.inference_config
+        self._initialize_llm(config, agent_type)
         return self.llm
-
-    def get_small_llm(self, agent_type: AgentProvider):
-        provider = self._get_provider_config("small")
-        self.llm = self._initialize_llm(provider, "small", agent_type)
-        return self.llm
-
-    async def get_global_ai_provider(self, user_id: str) -> GetProviderResponse:
-        user_pref = (
-            self.db.query(UserPreferences)
-            .filter(UserPreferences.user_id == user_id)
-            .first()
-        )
-        provider = (
-            user_pref.preferences.get("llm_provider", "openai")
-            if user_pref and user_pref.preferences
-            else "openai"
-        )
-        low_reasoning_model = (
-            user_pref.preferences.get("low_reasoning_model")
-            if user_pref and user_pref.preferences
-            else None
-        )
-        high_reasoning_model = (
-            user_pref.preferences.get("high_reasoning_model")
-            if user_pref and user_pref.preferences
-            else None
-        )
-
-        default_small_model = (
-            self.MODEL_CONFIGS[provider]["small"]["model"]
-            if provider in self.MODEL_CONFIGS
-            else "openai/gpt-4o-mini"
-        )  # Fallback in case provider is invalid in user_prefs
-        default_large_model = (
-            self.MODEL_CONFIGS[provider]["large"]["model"]
-            if provider in self.MODEL_CONFIGS
-            else "openai/gpt-4o"
-        )  # Fallback in case provider is invalid in user_prefs
-
-        return GetProviderResponse(
-            preferred_llm=provider,
-            model_type="global",  # or any other relevant type, if needed
-            low_reasoning_model=(
-                low_reasoning_model if low_reasoning_model else default_small_model
-            ),
-            high_reasoning_model=(
-                high_reasoning_model if high_reasoning_model else default_large_model
-            ),
-        )
-
-    def is_current_model_supported_by_pydanticai(self) -> bool:
-        # TODO: enabled pydantic after optimization
-        provider = self._get_provider_config("large")
-        params = self._build_llm_params(provider, "large")
-        routing_provider = params.pop("routing_provider", None)
-        if routing_provider in [
-            "openai",
-            "anthropic",
-        ]:
-            return True
-        return False
 
     def get_pydantic_model(self) -> Model | None:
-        provider = self._get_provider_config("large")
-        params = self._build_llm_params(provider, "large")
-        routing_provider = params.pop("routing_provider", None)
-        api_key = params["api_key"]
+        """Get the appropriate PydanticAI model based on the current provider."""
+        config = self.chat_config
+        model_name = config.model.split("/")[-1]
+        api_key = self._get_api_key(config.provider)
 
-        # pick model name => convert "openai/gpt-4o" to "gpt-4o"
-        model_name: str = params["model"]
-        model = model_name.split("/")[-1]
+        if not api_key:
+            return None
 
-        # if portkey is enabled
+        # if portkey is enabled, use portkey gateway
         if self.portkey_api_key:
-            match routing_provider:
+            match config.provider:
                 case "openai":
                     return OpenAIModel(
-                        model_name=model,
+                        model_name=model_name,
                         provider=OpenAIProvider(
                             api_key=api_key,
                             base_url=PORTKEY_GATEWAY_URL,
                             http_client=httpx.AsyncClient(
                                 headers=createHeaders(
                                     api_key=self.portkey_api_key,
-                                    provider=routing_provider,
+                                    provider=config.provider,
                                     trace_id=str(uuid.uuid4())[:8],
                                 ),
                             ),
@@ -545,47 +439,29 @@ class ProviderService:
                     )
                 case "anthropic":
                     return AnthropicModel(
-                        model_name=model,
+                        model_name=model_name,
                         anthropic_client=AsyncAnthropic(
                             base_url=PORTKEY_GATEWAY_URL,
                             api_key=api_key,
                             default_headers=createHeaders(
                                 api_key=self.portkey_api_key,
-                                provider=routing_provider,
+                                provider=config.provider,
                                 trace_id=str(uuid.uuid4())[:8],
                             ),
                         ),
                     )
-                # case "deepseek":
-                #     model_name: str = params["model"]
-                #     model_name = model_name.split("/", 1)[1]
-                #     return OpenAIModel(
-                #         model_name=model_name if model_name else model,
-                #         # model_name="gpt-4o-mini",
-                #         provider=OpenAIProvider(
-                #             api_key=api_key,
-                #             base_url="https://openrouter.ai/api/v1",
-                #             http_client=httpx.AsyncClient(
-                #                 headers=createHeaders(
-                #                     # api_key=self.portkey_api_key,
-                #                     provider=routing_provider,
-                #                     trace_id=str(uuid.uuid4())[:8],
-                #                 ),
-                #             ),
-                #         ),
-                #     )
 
-        match routing_provider:
+        match config.model.split("/")[0]:
             case "openai":
                 return OpenAIModel(
-                    model_name=model,
+                    model_name=model_name,
                     provider=OpenAIProvider(
                         api_key=api_key,
                     ),
                 )
             case "anthropic":
                 return AnthropicModel(
-                    model_name=model,
+                    model_name=model_name,
                     anthropic_client=AsyncAnthropic(
                         api_key=api_key,
                     ),
