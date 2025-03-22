@@ -21,6 +21,8 @@ from pydantic_ai.messages import (
     FunctionToolResultEvent,
     PartDeltaEvent,
     TextPartDelta,
+    ModelResponse,
+    TextPart,
 )
 from langchain_core.tools import StructuredTool
 
@@ -91,7 +93,6 @@ class PydanticRagAgent(ChatAgent):
 
         self.agent = Agent(
             model=llm_provider.get_pydantic_model(),
-            # model="gpt-4o-mini",
             tools=[
                 Tool(
                     name=tool.name,
@@ -127,8 +128,6 @@ class PydanticRagAgent(ChatAgent):
                 User Query: {ctx.query}
                 Project ID: {ctx.project_id}
                 Node IDs: {" ,".join(ctx.node_ids)}
-
-                Consider the chat history for any specific instructions or context: {" ,".join(ctx.history) if len(ctx.history) > 0 else "no chat history"}
 
                 Additional Context:
                 {ctx.additional_context if ctx.additional_context != "" else "no additional context"}
@@ -188,13 +187,15 @@ class PydanticRagAgent(ChatAgent):
         try:
             async with self.agent.iter(
                 user_prompt=task,
+                message_history=[
+                    ModelResponse([TextPart(content=msg)]) for msg in ctx.history
+                ],
             ) as run:
                 async for node in run:
                     if Agent.is_model_request_node(node):
                         # A model request node => We can stream tokens from the model's request
                         async with node.stream(run.ctx) as request_stream:
                             async for event in request_stream:
-
                                 if isinstance(event, PartDeltaEvent) and isinstance(
                                     event.delta, TextPartDelta
                                 ):

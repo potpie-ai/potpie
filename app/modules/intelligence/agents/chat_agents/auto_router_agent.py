@@ -54,6 +54,7 @@ class AutoRouterAgent(ChatAgent):
                 await self.llm_provider.call_llm_with_structured_output(
                     messages=messages,
                     output_schema=ClassificationResponse,  # type: ignore
+                    size="large",
                 )
             )
 
@@ -91,6 +92,7 @@ class ClassificationResponse(BaseModel):
 
 
 classification_prompt = """
+    You are part of the ai agentic system that has deep understanding of the users codebase/repository. You are being used to route the query to appropriate specialized agent
     Given the user query and the current agent ID, select the most appropriate agent by comparing the query’s requirements with each agent’s specialties.
 
     User Query: {query}
@@ -127,7 +129,9 @@ classification_prompt = """
     - Below 0.5: Weak match; consider if another agent is more suitable, but still choose the best available option.
     
     IMPORTANT:
+    - Classify based on the current query, history data is already present. You are choosing agent to process current query only
     - Select general purpose agent only if the agent doesn't need to go through the repository to answer query
-    - Don't choose general purpose agent if has to user repository since general purpose agent doesn't have tools that have access to the codebase
+    - Don't choose general purpose agent if the agent has to access user repository since general purpose agent doesn't have tools that have access to the codebase
+    - Use general purpose agent for queries like greetings, simple web lookups or follow-up questions etc that don't require repository access
 
 """
