@@ -204,6 +204,8 @@ class PydanticRagAgent(ChatAgent):
                                         tool_calls=[],
                                         citations=[],
                                     )
+                                else:
+                                    logger.info(f"event {event}")
                     elif Agent.is_call_tools_node(node):
                         async with node.stream(run.ctx) as handle_stream:
                             async for event in handle_stream:
@@ -219,14 +221,23 @@ class PydanticRagAgent(ChatAgent):
                                                 tool_response=get_tool_run_message(
                                                     event.part.tool_name
                                                 ),
-                                                tool_call_details={},
+                                                tool_call_details={
+                                                    "summary": event.part.args
+                                                },
                                             )
                                         ],
                                         citations=[],
                                     )
                                 if isinstance(event, FunctionToolResultEvent):
+                                    summary = ""
+                                    if (
+                                        isinstance(event.result.content, List)
+                                        and len(event.result.content) > 0
+                                    ):
+                                        summary = str(event.result.content[0])
+                                    elif isinstance(event.result.content, str):
+                                        summary = event.result.content
                                     yield ChatAgentResponse(
-                                        # response=f"\n[Tools] Tool call {event.result.tool_name!r}\n",
                                         response="",
                                         tool_calls=[
                                             ToolCallResponse(
@@ -238,7 +249,7 @@ class PydanticRagAgent(ChatAgent):
                                                     event.result.tool_name
                                                     or "unknown tool"
                                                 ),
-                                                tool_call_details={},
+                                                tool_call_details={"summary": summary},
                                             )
                                         ],
                                         citations=[],
