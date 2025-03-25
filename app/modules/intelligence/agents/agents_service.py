@@ -74,105 +74,62 @@ class AgentsService:
                 id="codebase_qna_agent",
                 name="Codebase Q&A Agent",
                 description="An agent specialized in answering questions about the codebase using the knowledge graph and code analysis tools.",
-                # agent=AdaptiveAgent(
-                #     llm_provider,
-                #     prompt_provider,
-                #     rag_agent=qna_agent.QnAAgent(llm_provider, tools_provider),
-                #     agent_type=AgentType.QNA,
-                # ),
-                agent=qna_agent.QnAAgent(llm_provider, tools_provider),
+                agent=qna_agent.QnAAgent(llm_provider, tools_provider, prompt_provider),
             ),
             "debugging_agent": AgentWithInfo(
                 id="debugging_agent",
                 name="Debugging with Knowledge Graph Agent",
                 description="An agent specialized in debugging using knowledge graphs.",
-                # agent=AdaptiveAgent(
-                #     llm_provider,
-                #     prompt_provider,
-                #     rag_agent=debug_agent.DebugAgent(llm_provider, tools_provider),
-                #     agent_type=AgentType.DEBUGGING,
-                # ),
-                agent=debug_agent.DebugAgent(llm_provider, tools_provider),
+                agent=debug_agent.DebugAgent(
+                    llm_provider, tools_provider, prompt_provider
+                ),
             ),
             "unit_test_agent": AgentWithInfo(
                 id="unit_test_agent",
                 name="Unit Test Agent",
                 description="An agent specialized in generating unit tests for code snippets for given function names",
-                # agent=AdaptiveAgent(
-                #     llm_provider,
-                #     prompt_provider,
-                #     rag_agent=unit_test_agent.UnitTestAgent(
-                #         llm_provider, tools_provider
-                #     ),
-                #     agent_type=AgentType.UNIT_TEST,
-                # ),
-                agent=unit_test_agent.UnitTestAgent(llm_provider, tools_provider),
+                agent=unit_test_agent.UnitTestAgent(
+                    llm_provider, tools_provider, prompt_provider
+                ),
             ),
             "integration_test_agent": AgentWithInfo(
                 id="integration_test_agent",
                 name="Integration Test Agent",
                 description="An agent specialized in generating integration tests for code snippets from the knowledge graph based on given function names of entry points. Works best with Py, JS, TS",
-                # agent=AdaptiveAgent(
-                #     llm_provider,
-                #     prompt_provider,
-                #     rag_agent=integration_test_agent.IntegrationTestAgent(
-                #         llm_provider, tools_provider
-                #     ),
-                #     agent_type=AgentType.INTEGRATION_TEST,
-                # ),
                 agent=integration_test_agent.IntegrationTestAgent(
-                    llm_provider, tools_provider
+                    llm_provider, tools_provider, prompt_provider
                 ),
             ),
             "LLD_agent": AgentWithInfo(
                 id="LLD_agent",
                 name="Low-Level Design Agent",
                 description="An agent specialized in generating a low-level design plan for implementing a new feature.",
-                # agent=AdaptiveAgent(
-                #     llm_provider,
-                #     prompt_provider,
-                #     rag_agent=low_level_design_agent.LowLevelDesignAgent(
-                #         llm_provider, tools_provider
-                #     ),
-                #     agent_type=AgentType.QNA,  # TODO: fix this, currently LLD prompt doesn't exist
-                # ),
                 agent=low_level_design_agent.LowLevelDesignAgent(
-                    llm_provider, tools_provider
+                    llm_provider, tools_provider, prompt_provider
                 ),
             ),
             "code_changes_agent": AgentWithInfo(
                 id="code_changes_agent",
                 name="Code Changes Agent",
                 description="An agent specialized in generating blast radius of the code changes in your current branch compared to default branch. Use this for functional review of your code changes. Works best with Py, JS, TS",
-                # agent=AdaptiveAgent(
-                #     llm_provider,
-                #     prompt_provider,
-                #     rag_agent=blast_radius_agent.BlastRadiusAgent(
-                #         llm_provider, tools_provider
-                #     ),
-                #     agent_type=AgentType.CODE_CHANGES,
-                # ),
-                agent=blast_radius_agent.BlastRadiusAgent(llm_provider, tools_provider),
+                agent=blast_radius_agent.BlastRadiusAgent(
+                    llm_provider, tools_provider, prompt_provider
+                ),
             ),
             "code_generation_agent": AgentWithInfo(
                 id="code_generation_agent",
                 name="Code Generation Agent",
                 description="An agent specialized in generating code for new features or fixing bugs.",
-                # agent=AdaptiveAgent(
-                #     llm_provider,
-                #     prompt_provider,
-                #     rag_agent=code_gen_agent.CodeGenAgent(llm_provider, tools_provider),
-                #     agent_type=AgentType.CODE_CHANGES,
-                # ),
-                agent=code_gen_agent.CodeGenAgent(llm_provider, tools_provider),
+                agent=code_gen_agent.CodeGenAgent(
+                    llm_provider, tools_provider, prompt_provider
+                ),
             ),
             "general_purpose_agent": AgentWithInfo(
                 id="general_purpose_agent",
                 name="General Purpose Agent",
                 description="Agent for queries not needing understanding of or access to the users code repository",
                 agent=GeneralPurposeAgent(
-                    llm_provider,
-                    tools_provider,
+                    llm_provider, tools_provider, prompt_provider
                 ),
             ),
             # ... add more here

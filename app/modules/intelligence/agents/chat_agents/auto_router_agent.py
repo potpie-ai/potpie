@@ -54,7 +54,6 @@ class AutoRouterAgent(ChatAgent):
                 await self.llm_provider.call_llm_with_structured_output(
                     messages=messages,
                     output_schema=ClassificationResponse,  # type: ignore
-                    size="large",
                 )
             )
 

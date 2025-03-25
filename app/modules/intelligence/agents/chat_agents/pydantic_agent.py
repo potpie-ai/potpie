@@ -1,6 +1,12 @@
 import re
 from typing import List, AsyncGenerator
 
+from .tool_helpers import (
+    get_tool_call_info_content,
+    get_tool_response_message,
+    get_tool_result_info_content,
+    get_tool_run_message,
+)
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
@@ -19,6 +25,7 @@ from pydantic_ai import Agent, Tool
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    PartStartEvent,
     PartDeltaEvent,
     TextPartDelta,
     ModelResponse,
@@ -27,52 +34,6 @@ from pydantic_ai.messages import (
 from langchain_core.tools import StructuredTool
 
 logger = setup_logger(__name__)
-
-
-def get_tool_run_message(tool_name: str):
-    match tool_name:
-        case "GetCodeanddocstringFromProbableNodeName":
-            return "Retrieving code from referenced names"
-        case "Getcodechanges":
-            return "Fetching code changes from your repo"
-        case "GetNodesfromTags":
-            return "Fetching nodes from tags"
-        case "AskKnowledgeGraphQueries":
-            return "Traversing the knowledge graph"
-        case "GetCodeanddocstringFromMultipleNodeIDs":
-            return "Fetching code and docstrings"
-        case "get_code_file_structure":
-            return "Loading the file structure of the repo"
-        case "GetNodeNeighboursFromNodeID":
-            return "Identifying referenced code"
-        case "WebpageContentExtractor":
-            return "Querying information from the web"
-        case "GitHubContentFetcher":
-            return "Fetching content from github"
-        case _:
-            return "Fetching code"
-
-
-def get_tool_response_message(tool_name: str):
-    match tool_name:
-        case "Getcodechanges":
-            return "Code changes fetched successfully"
-        case "GetNodesfromTags":
-            return "Fetched nodes from tags"
-        case "AskKnowledgeGraphQueries":
-            return "Knowledge graph queries successful"
-        case "GetCodeanddocstringFromMultipleNodeIDs":
-            return "Fetched code and docstrings"
-        case "get_code_file_structure":
-            return "File structure of the repo loaded successfully"
-        case "GetNodeNeighboursFromNodeID":
-            return "Fetched referenced code"
-        case "WebpageContentExtractor":
-            return "Information retrieved from web"
-        case "GitHubContentFetcher":
-            return "File contents fetched from github"
-        case _:
-            return "Code fetched"
 
 
 class PydanticRagAgent(ChatAgent):
@@ -195,6 +156,14 @@ class PydanticRagAgent(ChatAgent):
                         # A model request node => We can stream tokens from the model's request
                         async with node.stream(run.ctx) as request_stream:
                             async for event in request_stream:
+                                if isinstance(event, PartStartEvent) and isinstance(
+                                    event.part, TextPart
+                                ):
+                                    yield ChatAgentResponse(
+                                        response=event.part.content,
+                                        tool_calls=[],
+                                        citations=[],
+                                    )
                                 if isinstance(event, PartDeltaEvent) and isinstance(
                                     event.delta, TextPartDelta
                                 ):
@@ -203,8 +172,8 @@ class PydanticRagAgent(ChatAgent):
                                         tool_calls=[],
                                         citations=[],
                                     )
-                                else:
-                                    logger.info(f"event {event}")
+                                # logger.info(f"event {event}")
+
                     elif Agent.is_call_tools_node(node):
                         async with node.stream(run.ctx) as handle_stream:
                             async for event in handle_stream:
@@ -221,7 +190,10 @@ class PydanticRagAgent(ChatAgent):
                                                     event.part.tool_name
                                                 ),
                                                 tool_call_details={
-                                                    "summary": event.part.args
+                                                    "summary": get_tool_call_info_content(
+                                                        event.part.tool_name,
+                                                        event.part.args_as_dict(),
+                                                    )
                                                 },
                                             )
                                         ],
@@ -248,7 +220,13 @@ class PydanticRagAgent(ChatAgent):
                                                     event.result.tool_name
                                                     or "unknown tool"
                                                 ),
-                                                tool_call_details={"summary": summary},
+                                                tool_call_details={
+                                                    "summary": get_tool_result_info_content(
+                                                        event.result.tool_name
+                                                        or "unknown tool",
+                                                        event.result.content,
+                                                    )
+                                                },
                                             )
                                         ],
                                         citations=[],

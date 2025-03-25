@@ -558,7 +558,9 @@ class GithubService:
                     # Check if the path exists in the repository
                     repo.get_contents(path)
                 except Exception:
-                    logger.info(f"Path {path} not found in repository")
+                    raise HTTPException(
+                        status_code=404, detail=f"Path {path} not found in repository"
+                    )
 
             # Start structure fetch from the specified path with depth 0
             structure = await self._fetch_repo_structure_async(
