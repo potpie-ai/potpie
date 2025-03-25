@@ -11,6 +11,7 @@ class AgentType(Enum):
     INTEGRATION_TEST = "INTEGRATION_TEST_AGENT"
     CODE_CHANGES = "CODE_CHANGES_AGENT"
     LLD = "LLD_AGENT"
+    GENERAL = "GENERAL"
 
 
 class ClassificationResult(Enum):
@@ -482,6 +483,45 @@ class ClassificationPrompts:
             "classification": "AGENT_REQUIRED"
         }}
         Reason: Requires analysis of existing event handling patterns in codebase even without specific file references.
+
+        {format_instructions}
+        """,
+        AgentType.GENERAL: """
+        You are a general purpose query classifier. Your task is to determine if the query can be answered with just given history or
+        will require access to internet
+
+        Given:
+        - query: The user's current query
+        {query}
+        - history: A list of recent messages from the chat history
+        {history}
+
+        Classification Guidelines:
+        1. LLM_SUFFICIENT if the combined context (query + history):
+        - If the query could be responded well with just the query and history
+
+        2. AGENT_REQUIRED if the combined context (query + history):
+        - If we need internet access and deep thinking
+
+        Output your response in this format:
+        {{
+            "classification": "[LLM_SUFFICIENT or AGENT_REQUIRED]"
+        }}
+
+        Examples:
+        1. History: "*Some code snippet*"
+           Query: "Can you refactor above code to accomodate dependency injection?"
+        {{
+            "classification": "LLM_SUFFICIENT"
+        }}
+        Reason: No need to access external content
+
+        2. History: "PydanticAI helps to build ai agents from scratch"
+           Query: "How can i implement retry mechanism in pydanticai agents"
+        {{
+            "classification": "AGENT_REQUIRED"
+        }}
+        Reason: Requires fetching documentation and other resources from the web
 
         {format_instructions}
         """,
