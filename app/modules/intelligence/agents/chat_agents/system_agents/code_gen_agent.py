@@ -61,7 +61,9 @@ class CodeGenAgent(ChatAgent):
                 "github_tool",
             ]
         )
-        if self.llm_provider.is_current_model_supported_by_pydanticai():
+        if self.llm_provider.is_current_model_supported_by_pydanticai(
+            config_type="chat"
+        ):
             return PydanticRagAgent(self.llm_provider, agent_config, tools)
         else:
             return AdaptiveAgent(
