@@ -4,53 +4,51 @@ from typing import Any, Dict, List
 def get_tool_run_message(tool_name: str):
     match tool_name:
         case "GetCodeanddocstringFromProbableNodeName":
-            return "retrieving code from probable nodes"
+            return "Retrieving code"
         case "GetCodeanddocstringFromNodeID":
-            return "retrieving code for referenced node"
+            return "Retrieving code for referenced mentions"
         case "Getcodechanges":
-            return "fetching code changes from your repo"
+            return "Fetching code changes from your repo"
         case "GetNodesfromTags":
-            return "fetching nodes from tags"
+            return "Fetching code"
         case "AskKnowledgeGraphQueries":
-            return "traversing the knowledge graph"
+            return "Traversing the knowledge graph"
         case "GetCodeanddocstringFromMultipleNodeIDs":
-            return "fetching code and docstrings"
+            return "Fetching code and docstrings"
         case "get_code_file_structure":
-            return "loading the dir structure"
+            return "Loading the dir structure"
         case "GetNodeNeighboursFromNodeID":
-            return "identifying referenced code"
+            return "Expanding code context"
         case "WebpageContentExtractor":
-            return "querying information from the web"
+            return "Querying information from the web"
         case "GitHubContentFetcher":
-            return "fetching content from github"
+            return "Fetching content from github"
         case _:
-            return "querying data"
+            return "Querying data"
 
 
 def get_tool_response_message(tool_name: str):
     match tool_name:
         case "GetCodeanddocstringFromProbableNodeName":
-            return "code retrieved for probable nodes"
-        case "GetCodeanddocstringFromNodeID":
-            return "code retrieved for referenced node"
+            return "Code retrieved"
         case "Getcodechanges":
-            return "code changes fetched successfully"
+            return "Code changes fetched successfully"
         case "GetNodesfromTags":
-            return "fetched nodes from tags"
+            return "Code fetched"
         case "AskKnowledgeGraphQueries":
-            return "knowledge graph queries successful"
+            return "Knowledge graph queries successful"
         case "GetCodeanddocstringFromMultipleNodeIDs":
-            return "fetched code and docstrings"
+            return "Fetched code and docstrings"
         case "get_code_file_structure":
-            return "dir structure loaded successfully"
+            return "Project file structure loaded successfully"
         case "GetNodeNeighboursFromNodeID":
-            return "fetched referenced code"
+            return "Fetched referenced code"
         case "WebpageContentExtractor":
-            return "information retrieved from web"
+            return "Information retrieved from web"
         case "GitHubContentFetcher":
-            return "file contents fetched from github"
+            return "File contents fetched from github"
         case _:
-            return "data queried successfully"
+            return "Data queried successfully"
 
 
 def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
@@ -61,7 +59,7 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
                 return "-> checking following nodes: \n" + "\n- ".join(node_names)
             return "-> checking probable nodes"
         case "Getcodechanges":
-            return str(args)
+            return ""
         case "GetNodesfromTags":
             return ""
         case "AskKnowledgeGraphQueries":
@@ -110,7 +108,7 @@ def get_tool_result_info_content(tool_name: str, content: List[Any] | str | Any)
                 return res
             return ""
         case "Getcodechanges":
-            return "Code changes fetched successfully"
+            return "successfull"
         case "GetNodesfromTags":
             return ""
         case "AskKnowledgeGraphQueries":
@@ -139,7 +137,7 @@ def get_tool_result_info_content(tool_name: str, content: List[Any] | str | Any)
             """
             return "File structure of the repo loaded successfully"
         case "GetNodeNeighboursFromNodeID":
-            return "Fetched referenced code"
+            return "successful"
         case "WebpageContentExtractor":
             if isinstance(content, Dict):
                 res = content.get("content")
@@ -169,13 +167,9 @@ description:
                 code = content.get("code_content")
                 res = f"""
 # {path}
-
-```
-{code}
-```
-
+```{code}```
 """
                 return res[: min(len(res), 600)] + " ..."
-            return str(content)
+            return ""
         case _:
             return ""
