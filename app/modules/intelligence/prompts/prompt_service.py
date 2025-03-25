@@ -388,7 +388,8 @@ class PromptService:
         try:
             provider_service = ProviderService(self.db, user["user_id"])
             result = await provider_service.call_llm_with_structured_output(
-                messages=messages, output_schema=EnhancedPromptResponse, size="large"
+                messages=messages,
+                output_schema=EnhancedPromptResponse,  # type: ignore
             )
             return result.enhancedprompt
         except Exception as e:
