@@ -127,7 +127,7 @@ class GetCodeFromNodeIdTool:
             projects_index = parts.index("projects")
             return "/".join(parts[projects_index + 2 :])
         except ValueError:
-            logger.warning(f"'projects' not found in file path: {file_path}")
+            #logger.warning(f"'projects' not found in file path: {file_path}")
             return file_path
 
     def __del__(self):

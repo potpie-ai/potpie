@@ -1,5 +1,5 @@
 import json
-from typing import Any, List, AsyncGenerator
+from typing import Any, List, AsyncGenerator, Optional
 
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
@@ -18,7 +18,7 @@ class TaskConfig(BaseModel):
 
     description: str
     expected_output: str
-
+    context: Optional[Task] = None
 
 class AgentConfig(BaseModel):
     """Model for agent configuration from agent_config.json"""
@@ -138,9 +138,11 @@ class CrewAIAgent(ChatAgent):
         task = Task(
             description=task_description,
             agent=self.agent,
-            expected_output="Markdown formatted response with code context and explanations",
+            expected_output=task_config.expected_output,
             output_pydantic=CrewAIResponse,
         )
+        if task_config.context:
+            task.context = [task_config.context]
 
         return task
 
@@ -154,6 +156,8 @@ class CrewAIAgent(ChatAgent):
             # Create all tasks
             tasks = []
             for i, task_config in enumerate(self.tasks):
+                if len(tasks)>0:
+                    task_config.context = tasks[-1]
                 task = await self._create_task(task_config, ctx)
                 tasks.append(task)
                 logger.info(f"Created task {i+1}/{len(self.tasks)}")
@@ -168,7 +172,7 @@ class CrewAIAgent(ChatAgent):
 
             logger.info(f"Starting Crew AI kickoff with {len(tasks)} tasks")
             result = await crew.kickoff_async()
-            response: CrewAIResponse = result.tasks_output[0].pydantic
+            response: CrewAIResponse = result.tasks_output[-1].pydantic
             # agentops.end_session("success")
             return ChatAgentResponse(
                 response=response.response,

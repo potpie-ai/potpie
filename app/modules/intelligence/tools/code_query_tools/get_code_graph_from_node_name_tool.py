@@ -93,16 +93,16 @@ class GetCodeGraphFromNodeNameTool:
         """Retrieve graph data from Neo4j."""
         query = """
         MATCH (start:NODE {repoId: $project_id})
-        WHERE toLower(start.name) = toLower($node_name)
+        WHERE start.name =~ ('(?i)' + $node_name)
         CALL apoc.path.subgraphAll(start, {
             relationshipFilter: "CONTAINS|CALLS|FUNCTION_DEFINITION|IMPORTS|INSTANTIATES|CLASS_DEFINITION>",
             maxLevel: 10
         })
         YIELD nodes, relationships
-        UNWIND nodes AS node
-        OPTIONAL MATCH (node)-[r]->(child:NODE)
+        UNWIND nodes AS n
+        OPTIONAL MATCH (n)-[r]->(child:NODE)
         WHERE child IN nodes AND type(r) <> 'IS_LEAF'
-        WITH node, collect({
+        WITH n, collect({
             id: child.node_id,
             name: child.name,
             type: head(labels(child)),
@@ -112,12 +112,12 @@ class GetCodeGraphFromNodeNameTool:
             relationship: type(r)
         }) as children
         RETURN {
-            id: node.node_id,
-            name: node.name,
-            type: head(labels(node)),
-            file_path: node.file_path,
-            start_line: node.start_line,
-            end_line: node.end_line,
+            id: n.node_id,
+            name: n.name,
+            type: head(labels(n)),
+            file_path: n.file_path,
+            start_line: n.start_line,
+            end_line: n.end_line,
             children: children
         } as node_data
         """

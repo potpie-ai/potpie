@@ -17,10 +17,14 @@ from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id
     GetCodeGraphFromNodeIdTool,
 )
 from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_name_tool import (
+    GetCodeGraphFromNodeNameTool,
     get_code_graph_from_node_name_tool,
 )
 from app.modules.intelligence.tools.code_query_tools.get_node_neighbours_from_node_id_tool import (
     get_node_neighbours_from_node_id_tool,
+)
+from app.modules.intelligence.tools.code_query_tools.intelligent_code_graph_tool import (
+    get_intelligent_code_graph_tool,
 )
 from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import (
     get_ask_knowledge_graph_queries_tool,
@@ -43,7 +47,9 @@ from app.modules.intelligence.tools.web_tools.github_tool import github_tool
 from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import (
     webpage_extractor_tool,
 )
+from app.modules.intelligence.provider.provider_service import ProviderService
 from langchain_core.tools import StructuredTool
+from .code_query_tools.think_tool import get_think_tool
 
 
 class ToolService:
@@ -56,7 +62,9 @@ class ToolService:
             self.db, self.user_id
         )
         self.get_code_graph_from_node_id_tool = GetCodeGraphFromNodeIdTool(db)
+        self.get_code_graph_from_node_name_tool = GetCodeGraphFromNodeNameTool(db)
         self.file_structure_tool = GetCodeFileStructureTool(db)
+        self.provider_service = ProviderService.create(db, user_id)
         self.tools = self._initialize_tools()
 
     def get_tools(self, tool_names: List[str]) -> List[StructuredTool]:
@@ -92,6 +100,10 @@ class ToolService:
             "get_node_neighbours_from_node_id": get_node_neighbours_from_node_id_tool(
                 self.db
             ),
+            "intelligent_code_graph": get_intelligent_code_graph_tool(
+                self.db, self.provider_service, self.user_id
+            ),
+            "think": get_think_tool(self.db),
         }
 
         if self.webpage_extractor_tool:
