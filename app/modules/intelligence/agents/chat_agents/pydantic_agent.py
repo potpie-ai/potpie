@@ -44,6 +44,8 @@ def get_tool_run_message(tool_name: str):
         case "GetNodeNeighboursFromNodeID":
             return "Identifying referenced code"
         case "WebpageContentExtractor":
+            return "Querying information from a webpage"
+        case "WebSearchTool":
             return "Querying information from the web"
         case "GitHubContentFetcher":
             return "Fetching content from github"
@@ -66,7 +68,9 @@ def get_tool_response_message(tool_name: str):
         case "GetNodeNeighboursFromNodeID":
             return "Fetched referenced code"
         case "WebpageContentExtractor":
-            return "Information retrieved from web"
+            return "Content retrieved from webpage"
+        case "WebSearchTool":
+            return "Querying information from the web"
         case "GitHubContentFetcher":
             return "File contents fetched from github"
         case _:
