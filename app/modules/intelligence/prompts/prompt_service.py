@@ -390,6 +390,7 @@ class PromptService:
             result = await provider_service.call_llm_with_structured_output(
                 messages=messages,
                 output_schema=EnhancedPromptResponse,  # type: ignore
+                config_type="chat",
             )
             return result.enhancedprompt
         except Exception as e:
