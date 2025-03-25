@@ -48,7 +48,7 @@ class PydanticRagAgent(ChatAgent):
         self.tasks = config.tasks
         self.max_iter = config.max_iter
 
-        # tool name can't have spaces for langgraph agents
+        # tool name can't have spaces for langgraph/pydantic agents
         for i, tool in enumerate(tools):
             tools[i].name = re.sub(r" ", "", tool.name)
 
@@ -172,14 +172,12 @@ class PydanticRagAgent(ChatAgent):
                                         tool_calls=[],
                                         citations=[],
                                     )
-                                # logger.info(f"event {event}")
 
                     elif Agent.is_call_tools_node(node):
                         async with node.stream(run.ctx) as handle_stream:
                             async for event in handle_stream:
                                 if isinstance(event, FunctionToolCallEvent):
                                     yield ChatAgentResponse(
-                                        # response=f"\n[Tools] The LLM calls tool={event.part.tool_name!r} {event.part.args_as_json_str}\n",
                                         response="",
                                         tool_calls=[
                                             ToolCallResponse(
@@ -200,14 +198,6 @@ class PydanticRagAgent(ChatAgent):
                                         citations=[],
                                     )
                                 if isinstance(event, FunctionToolResultEvent):
-                                    summary = ""
-                                    if (
-                                        isinstance(event.result.content, List)
-                                        and len(event.result.content) > 0
-                                    ):
-                                        summary = str(event.result.content[0])
-                                    elif isinstance(event.result.content, str):
-                                        summary = event.result.content
                                     yield ChatAgentResponse(
                                         response="",
                                         tool_calls=[
