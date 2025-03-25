@@ -1,6 +1,12 @@
 import re
 from typing import List, AsyncGenerator
 
+from .tool_helpers import (
+    get_tool_call_info_content,
+    get_tool_response_message,
+    get_tool_result_info_content,
+    get_tool_run_message,
+)
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
@@ -19,58 +25,15 @@ from pydantic_ai import Agent, Tool
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    PartStartEvent,
     PartDeltaEvent,
     TextPartDelta,
+    ModelResponse,
+    TextPart,
 )
 from langchain_core.tools import StructuredTool
 
 logger = setup_logger(__name__)
-
-
-def get_tool_run_message(tool_name: str):
-    match tool_name:
-        case "GetCodeanddocstringFromProbableNodeName":
-            return "Retrieving code from referenced names"
-        case "Getcodechanges":
-            return "Fetching code changes from your repo"
-        case "GetNodesfromTags":
-            return "Fetching nodes from tags"
-        case "AskKnowledgeGraphQueries":
-            return "Traversing the knowledge graph"
-        case "GetCodeanddocstringFromMultipleNodeIDs":
-            return "Fetching code and docstrings"
-        case "get_code_file_structure":
-            return "Loading the file structure of the repo"
-        case "GetNodeNeighboursFromNodeID":
-            return "Identifying referenced code"
-        case "WebpageContentExtractor":
-            return "Querying information from the web"
-        case "GitHubContentFetcher":
-            return "Fetching content from github"
-        case _:
-            return "Fetching code"
-
-
-def get_tool_response_message(tool_name: str):
-    match tool_name:
-        case "Getcodechanges":
-            return "Code changes fetched successfully"
-        case "GetNodesfromTags":
-            return "Fetched nodes from tags"
-        case "AskKnowledgeGraphQueries":
-            return "Knowledge graph queries successful"
-        case "GetCodeanddocstringFromMultipleNodeIDs":
-            return "Fetched code and docstrings"
-        case "get_code_file_structure":
-            return "File structure of the repo loaded successfully"
-        case "GetNodeNeighboursFromNodeID":
-            return "Fetched referenced code"
-        case "WebpageContentExtractor":
-            return "Information retrieved from web"
-        case "GitHubContentFetcher":
-            return "File contents fetched from github"
-        case _:
-            return "Code fetched"
 
 
 class PydanticRagAgent(ChatAgent):
@@ -91,7 +54,6 @@ class PydanticRagAgent(ChatAgent):
 
         self.agent = Agent(
             model=llm_provider.get_pydantic_model(),
-            # model="gpt-4o-mini",
             tools=[
                 Tool(
                     name=tool.name,
@@ -103,10 +65,10 @@ class PydanticRagAgent(ChatAgent):
             system_prompt=f"Role: {config.role}\nGoal: {config.goal}\nBackstory: {config.backstory}. Respond to the user query",
             result_type=str,
             retries=3,
-            result_retries=3,
-            model_settings={
-                "parallel_tool_calls": True,
-            },
+            result_retries=10,
+            defer_model_check=True,
+            end_strategy="exhaustive",
+            model_settings={"parallel_tool_calls": True, "max_tokens": 10000},
         )
 
     def _create_task_description(
@@ -125,8 +87,7 @@ class PydanticRagAgent(ChatAgent):
                 User Query: {ctx.query}
                 Project ID: {ctx.project_id}
                 Node IDs: {" ,".join(ctx.node_ids)}
-
-                Consider the chat history for any specific instructions or context: {" ,".join(ctx.history) if len(ctx.history) > 0 else "no chat history"}
+                Project Name (this is name from github. i.e. owner/repo): {ctx.project_name}
 
                 Additional Context:
                 {ctx.additional_context if ctx.additional_context != "" else "no additional context"}
@@ -186,13 +147,23 @@ class PydanticRagAgent(ChatAgent):
         try:
             async with self.agent.iter(
                 user_prompt=task,
+                message_history=[
+                    ModelResponse([TextPart(content=msg)]) for msg in ctx.history
+                ],
             ) as run:
                 async for node in run:
                     if Agent.is_model_request_node(node):
                         # A model request node => We can stream tokens from the model's request
                         async with node.stream(run.ctx) as request_stream:
                             async for event in request_stream:
-
+                                if isinstance(event, PartStartEvent) and isinstance(
+                                    event.part, TextPart
+                                ):
+                                    yield ChatAgentResponse(
+                                        response=event.part.content,
+                                        tool_calls=[],
+                                        citations=[],
+                                    )
                                 if isinstance(event, PartDeltaEvent) and isinstance(
                                     event.delta, TextPartDelta
                                 ):
@@ -201,6 +172,8 @@ class PydanticRagAgent(ChatAgent):
                                         tool_calls=[],
                                         citations=[],
                                     )
+                                # logger.info(f"event {event}")
+
                     elif Agent.is_call_tools_node(node):
                         async with node.stream(run.ctx) as handle_stream:
                             async for event in handle_stream:
@@ -216,14 +189,26 @@ class PydanticRagAgent(ChatAgent):
                                                 tool_response=get_tool_run_message(
                                                     event.part.tool_name
                                                 ),
-                                                tool_call_details={},
+                                                tool_call_details={
+                                                    "summary": get_tool_call_info_content(
+                                                        event.part.tool_name,
+                                                        event.part.args_as_dict(),
+                                                    )
+                                                },
                                             )
                                         ],
                                         citations=[],
                                     )
                                 if isinstance(event, FunctionToolResultEvent):
+                                    summary = ""
+                                    if (
+                                        isinstance(event.result.content, List)
+                                        and len(event.result.content) > 0
+                                    ):
+                                        summary = str(event.result.content[0])
+                                    elif isinstance(event.result.content, str):
+                                        summary = event.result.content
                                     yield ChatAgentResponse(
-                                        # response=f"\n[Tools] Tool call {event.result.tool_name!r}\n",
                                         response="",
                                         tool_calls=[
                                             ToolCallResponse(
@@ -235,7 +220,13 @@ class PydanticRagAgent(ChatAgent):
                                                     event.result.tool_name
                                                     or "unknown tool"
                                                 ),
-                                                tool_call_details={},
+                                                tool_call_details={
+                                                    "summary": get_tool_result_info_content(
+                                                        event.result.tool_name
+                                                        or "unknown tool",
+                                                        event.result.content,
+                                                    )
+                                                },
                                             )
                                         ],
                                         citations=[],

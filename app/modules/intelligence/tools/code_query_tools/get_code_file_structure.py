@@ -35,10 +35,16 @@ class GetCodeFileStructureTool:
         return await self.github_service.get_project_structure_async(project_id, path)
 
     async def arun(self, project_id: str, path: Optional[str] = None) -> str:
-        return await self.fetch_repo_structure(project_id, path)
+        try:
+            return await self.fetch_repo_structure(project_id, path)
+        except:
+            return "error fetching data"
 
     def run(self, project_id: str, path: Optional[str] = None) -> str:
-        return asyncio.run(self.fetch_repo_structure(project_id, path))
+        try:
+            return asyncio.run(self.fetch_repo_structure(project_id, path))
+        except:
+            return "error fetching data"
 
 
 def get_code_file_structure_tool(db: Session) -> StructuredTool:
