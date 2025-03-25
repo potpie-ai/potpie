@@ -83,8 +83,8 @@ general_purpose_agent_prompt = """
     Note:
 
     - Use markdown for code snippets with language name in the code block like python or javascript
-    
-    Ground your responses in provided code context and tool results. Use markdown for code snippets. Be concise and avoid repetition. If unsure, state it clearly. 
+
+    Ground your responses in provided code context and tool results. Use markdown for code snippets. Be concise and avoid repetition. If unsure, state it clearly.
     For debugging, unit testing, or unrelated code explanations, suggest specialized agents.
     Tailor your response based on question type:
 

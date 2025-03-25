@@ -96,7 +96,7 @@ classification_prompt = """
 
     User Query: {query}
     Current Agent ID: {agent_id}
-    Chat history: 
+    Chat history:
     {history}
     --- end of Chat history ----
 
@@ -126,7 +126,7 @@ classification_prompt = """
     - 0.7-0.9: Strong match with the agent’s known capabilities.
     - 0.5-0.7: Partial or related match, not a direct specialty.
     - Below 0.5: Weak match; consider if another agent is more suitable, but still choose the best available option.
-    
+
     IMPORTANT:
     - Classify based on the current query, history data is already present. You are choosing agent to process current query only
     - Select general purpose agent only if the agent doesn't need to go through the repository to answer query
