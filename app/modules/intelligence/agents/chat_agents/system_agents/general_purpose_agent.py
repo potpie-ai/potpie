@@ -64,7 +64,6 @@ class GeneralPurposeAgent(ChatAgent):
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        print("here running inside")
         async for chunk in self._build_agent().run_stream(ctx):
             yield chunk
 
