@@ -36,6 +36,7 @@ class BlastRadiusAgent(ChatAgent):
                 "get_code_from_multiple_node_ids",
                 "change_detection",
                 "webpage_extractor",
+                "web_search_tool",
                 "github_tool",
             ]
         )
