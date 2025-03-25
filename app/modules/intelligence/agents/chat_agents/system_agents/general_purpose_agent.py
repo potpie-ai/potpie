@@ -42,11 +42,7 @@ class GeneralPurposeAgent(ChatAgent):
                 )
             ],
         )
-        tools = self.tools_provider.get_tools(
-            [
-                "webpage_extractor",
-            ]
-        )
+        tools = self.tools_provider.get_tools(["webpage_extractor", "github_tool"])
 
         if self.llm_provider.is_current_model_supported_by_pydanticai():
             return PydanticRagAgent(self.llm_provider, agent_config, tools)
