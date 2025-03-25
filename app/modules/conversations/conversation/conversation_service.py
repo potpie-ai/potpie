@@ -542,7 +542,7 @@ class ConversationService:
                         project_id=str(project_id),
                         project_name=project_name,
                         curr_agent_id=str(agent_id),
-                        history=validated_history[-10:],
+                        history=validated_history[-8:],
                         node_ids=[node.node_id for node in node_ids],
                         query=query,
                     )

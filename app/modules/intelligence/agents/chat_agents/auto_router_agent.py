@@ -114,7 +114,8 @@ classification_prompt = """
     2. **Contextual Weighting:**
     - If the query strongly aligns with the current agent’s known capabilities, add +0.15 confidence for direct core expertise and +0.1 for related domain knowledge.
     - If the query introduces new topics outside the current agent’s domain, do not apply the current agent bias. Instead, evaluate all agents equally based on their described expertise.
-    - Refer to the chat history but classify only based on the current query, it's only the current query that is being routed to the appropriate agent
+    - Refer to the chat history to get context about current query and it's possible answer but classify only based on the current query, \
+      it's only the current query that is being routed to the appropriate agent along with the chat history
 
     3. **Multi-Agent Evaluation:**
     - Consider all agents’ described specialties thoroughly, not just the current agent.

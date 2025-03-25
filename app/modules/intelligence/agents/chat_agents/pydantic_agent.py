@@ -65,10 +65,9 @@ class PydanticRagAgent(ChatAgent):
             system_prompt=f"Role: {config.role}\nGoal: {config.goal}\nBackstory: {config.backstory}. Respond to the user query",
             result_type=str,
             retries=3,
-            result_retries=10,
             defer_model_check=True,
             end_strategy="exhaustive",
-            model_settings={"parallel_tool_calls": True, "max_tokens": 10000},
+            model_settings={"parallel_tool_calls": True, "max_tokens": 8000},
         )
 
     def _create_task_description(
