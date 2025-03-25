@@ -154,7 +154,7 @@ def get_tool_result_info_content(tool_name: str, content: List[Any] | str | Any)
 
 # ***{title}***
 
-## status: {status} 
+## status: {status}
 description:
 {body}
 """
