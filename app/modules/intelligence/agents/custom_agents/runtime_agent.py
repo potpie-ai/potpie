@@ -73,8 +73,8 @@ class RuntimeAgent:
         self.history_manager = ChatHistoryService(self.db)
         self.project_id = None
         self.agent = None
-        self.llm = ProviderService(self.db, self.user_id).get_large_llm(
-            AgentProvider.CREWAI
+        self.llm = ProviderService(self.db, self.user_id).get_llm(
+            AgentProvider.CREWAI, config_type="chat"
         )
         # Initialize tools
         self.tool_service = ToolService(db, self.user_id)
