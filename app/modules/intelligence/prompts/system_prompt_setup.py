@@ -377,8 +377,6 @@ class SystemPromptSetup:
                         - Avoid rigid structures unless specifically helpful
                         - Feel free to ask questions to guide the conversation
                         - Use transitional phrases to maintain flow
-
-                        input: {input}
                         """,
                         "type": PromptType.HUMAN,
                         "stage": 2,
