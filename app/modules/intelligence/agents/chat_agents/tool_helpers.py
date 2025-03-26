@@ -118,12 +118,13 @@ def get_tool_result_info_content(tool_name: str, content: List[Any] | str | Any)
                 res = content.values()
                 text = ""
                 for item in res:
-                    path = item.get("relative_file_path")
-                    code_content = item.get("code_content")
-                    if code_content:
-                        text += f"{path}\n```{code_content[:min(len(code_content),300)]}``` \n"
-                    elif item.get("error") != None:
-                        text += f"Error: {item.get('error')} \n"
+                    if item and isinstance(item, Dict):
+                        path = item.get("relative_file_path")
+                        code_content = item.get("code_content")
+                        if code_content:
+                            text += f"{path}\n```{code_content[:min(len(code_content),300)]}``` \n"
+                        elif item.get("error") != None:
+                            text += f"Error: {item.get('error')} \n"
                 return text
             return ""
         case "get_code_file_structure":
