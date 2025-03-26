@@ -43,6 +43,10 @@ from app.modules.intelligence.tools.web_tools.github_tool import github_tool
 from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import (
     webpage_extractor_tool,
 )
+from app.modules.intelligence.tools.linear_tools import (
+    get_linear_issue_tool,
+    update_linear_issue_tool,
+)
 from langchain_core.tools import StructuredTool
 
 
@@ -92,6 +96,8 @@ class ToolService:
             "get_node_neighbours_from_node_id": get_node_neighbours_from_node_id_tool(
                 self.db
             ),
+            "get_linear_issue": get_linear_issue_tool(),
+            "update_linear_issue": update_linear_issue_tool(),
         }
 
         if self.webpage_extractor_tool:
