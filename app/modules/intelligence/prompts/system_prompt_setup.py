@@ -234,7 +234,7 @@ class SystemPromptSetup:
                     },
                     {
                         "text": """Analyze the user's input and conversation history to determine the appropriate response type:
-                        
+
                         input: {input}
 
             1. If it's an initial request or a request for a complete unit test plan and code:
@@ -323,7 +323,7 @@ class SystemPromptSetup:
                 5. Always end your response by asking if the user needs any further assistance or clarification on any aspect of integration testing.
 
                 Remember: Each user input should be treated as potentially new and independent unless clearly indicated otherwise.
-                
+
                 input: {input}
                 """,
                         "type": "HUMAN",
@@ -377,7 +377,7 @@ class SystemPromptSetup:
                         - Avoid rigid structures unless specifically helpful
                         - Feel free to ask questions to guide the conversation
                         - Use transitional phrases to maintain flow
-                        
+
                         input: {input}
                         """,
                         "type": PromptType.HUMAN,
@@ -390,7 +390,7 @@ class SystemPromptSetup:
                 "prompts": [
                     {
                         "text": """You are AI assistant specializing in coding, a highly skilled programming assistant specialized in answering coding-related queries. Your primary goal is to help users with accurate, efficient
-                                    and detail-oriented responses to their programming questions. When a query is asked, you must provide code examples in appropriate languages, step-by-step explanations, best practices, and clear documentation of your thought process. 
+                                    and detail-oriented responses to their programming questions. When a query is asked, you must provide code examples in appropriate languages, step-by-step explanations, best practices, and clear documentation of your thought process.
 
                             Key Points:
                             - Respond in a clear, concise, and friendly tone.
