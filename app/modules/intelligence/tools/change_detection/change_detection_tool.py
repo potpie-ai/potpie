@@ -111,9 +111,10 @@ class ChangeDetectionTool:
                 for tag in tags:
                     if tag.kind == "def":
                         if tag.type == "class":
-                            node_type = "class"
-                        elif tag.type == "function":
-                            node_type = "function"
+                            node_type = "CLASS"
+                        elif tag.type in ["method", "function"]:
+                            node_type = "FUNCTION"
+
                         else:
                             node_type = "other"
 

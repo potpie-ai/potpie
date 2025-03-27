@@ -49,7 +49,7 @@ from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import (
 )
 from app.modules.intelligence.provider.provider_service import ProviderService
 from langchain_core.tools import StructuredTool
-from .code_query_tools.think_tool import get_think_tool
+from .think_tool import think_tool
 
 
 class ToolService:
@@ -103,7 +103,7 @@ class ToolService:
             "intelligent_code_graph": get_intelligent_code_graph_tool(
                 self.db, self.provider_service, self.user_id
             ),
-            "think": get_think_tool(self.db),
+            "think": think_tool(self.db, self.user_id),
         }
 
         if self.webpage_extractor_tool:

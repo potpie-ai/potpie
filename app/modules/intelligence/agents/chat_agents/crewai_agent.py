@@ -139,7 +139,7 @@ class CrewAIAgent(ChatAgent):
             description=task_description,
             agent=self.agent,
             expected_output=task_config.expected_output,
-            output_pydantic=CrewAIResponse,
+            #output_pydantic=CrewAIResponse,
         )
         if task_config.context:
             task.context = [task_config.context]
@@ -172,13 +172,14 @@ class CrewAIAgent(ChatAgent):
 
             logger.info(f"Starting Crew AI kickoff with {len(tasks)} tasks")
             result = await crew.kickoff_async()
-            response: CrewAIResponse = result.tasks_output[-1].pydantic
+            response: CrewAIResponse = result.tasks_output[-1].raw
+            pydantic_response = result.tasks_output[-1].pydantic
             # agentops.end_session("success")
-            return ChatAgentResponse(
-                response=response.response,
+            print(ChatAgentResponse(
+                response=response,
                 tool_calls=[],
-                citations=response.citations,
-            )
+                citations=pydantic_response.citations,
+            ))
 
         except Exception as e:
             logger.error(f"Error in run method: {str(e)}", exc_info=True)

@@ -23,106 +23,218 @@ class QnAAgent(ChatAgent):
         self.tools_provider = tools_provider
 
     def _build_agent(self) -> ChatAgent:
-        # The agent configuration now focuses on generating test files with precise implementation patterns
         agent_config = AgentConfig(
             role="Senior Test Automation Engineer",
             goal=(
-                "Extract detailed implementation patterns from project code to generate production-ready functional tests that "
-                "exactly match the project's existing structure, utility usage, JSON handling, mock configuration, and assertion patterns."
+                "Analyze code changes and existing tests to generate comprehensive test plans and implementations that maintain "
+                "test coverage while adhering to the project's established testing patterns and standards."
             ),
             backstory="""
-You are a senior test automation engineer with years of expertise in this specific project's codebase. 
-You have a photographic memory of the project's test architecture, utility classes, file organization, and coding standards.
-You focus first on extracting concrete implementation details from the provided code, identifying specific patterns for:
-1. Test class structure, package names, and import statements
-2. JSON file locations and loading mechanisms using project-specific utilities
-3. External service mocking with the exact helper methods used in the project
-4. Assertion patterns using the project's custom assertor classes
-5. Test lifecycle management including setup/teardown with the project's established methods
+You are a senior test automation engineer with deep expertise in test planning and implementation. Your approach is methodical:
+1. You first analyze code changes to understand what's been modified
+2. You examine existing tests to understand current coverage and patterns
+3. You create precise test plans that maintain or improve coverage
+4. You implement tests following the project's exact patterns and standards
 
-You never make assumptions about implementation patterns - you extract them directly from the provided code examples.
-You generate complete, production-ready test files that could be committed directly to the codebase without modifications.
+You have a systematic mind that:
+- Thinks step-by-step through complex testing scenarios
+- Identifies edge cases and boundary conditions
+- Maintains consistency with existing test patterns
+- Ensures complete test coverage of code changes
             """,
             tasks=[
                 TaskConfig(
                     description="""
-## Task 1: Extract Test Implementation Patterns
+<task>Analyze Changes and Gather Test Context</task>
 
-Analyze the provided code nodes to create a concrete implementation guide for generating tests in this project. Your output must include:
+<objective>Build a comprehensive understanding of code changes and existing test patterns to enable precise test implementation.</objective>
 
-### 1. Test Structure Specification
-- Exact package naming convention with examples from the code (e.g., `package com.swiggy.api.functional.cart`)
-- Complete import statement pattern with all required classes
-- Test class naming pattern with concrete examples
-- Test method naming pattern with concrete examples
+<context>
+You must gather all necessary information to write complete, production-ready tests:
+- Identify all modified functions and their entry points
+- Locate and analyze existing test files for similar components
+- Extract exact test implementation patterns
+- Map all dependencies and interactions
+</context>
 
-### 2. JSON Data Management Specification
-- Extract exact paths to JSON test files from the code (e.g., `src/functionalTest/resources/requestJson/cartUpdate/`)
-- Identify specific JSON file names used for similar test cases
-- Extract the exact code pattern used to load and parse JSON files, including:
-  - The utility classes used (with import statements)
-  - The method calls for loading and deserializing JSON
-  - The object types JSON is parsed into
+<steps>
+1. Code Change Analysis
+   - Use change detection to identify modified functions and their entry points
+   - Analyze the nature of changes (new features, modifications, bug fixes)
+   - Map dependencies and potential impact areas
+   - Extract concrete examples of modified code patterns
 
-### 3. Mock Configuration Specification
-- Extract the exact initialization pattern for WireMock and gRPC stubs
-- Identify helper classes and methods used for specific mock configurations
-- Extract concrete examples of mock setup code for services related to the functionality under test
-- Identify patterns for different mock response types (success, error, timeout)
+2. Existing Test Discovery
+   - Search for test files corresponding to changed components
+   - Extract exact test implementation patterns:
+     * Package and import statements
+     * Test class structure and naming
+     * Test method organization
+     * Test data loading mechanisms
+     * Mock configuration setup
+     * Assertion patterns and helper methods
+     * Test lifecycle management (@BeforeClass, @AfterClass)
 
-### 4. Assertion Pattern Specification
-- Identify assertor classes used for the functionality under test
-- Extract concrete assertion method calls with parameters
-- Document assertion hierarchy and organization
+3. Test Resource Analysis
+   - Map JSON test data locations and patterns:
+     * Exact file paths (e.g., src/functionalTest/resources/requestJson/)
+     * File naming conventions
+     * Data structure patterns
+   - Document mock configuration patterns:
+     * WireMock/gRPC initialization code
+     * Helper methods and utilities
+     * Response type patterns
+   - Identify assertion utilities:
+     * Assertion classes and methods
+     * Validation patterns
+     * Custom assertors
 
-### 5. Test Lifecycle Management Specification
-- Extract exact @BeforeClass and @AfterClass method implementations
-- Identify helper methods called during setup (e.g., commonUOMSSetup())
-- Extract pattern for test cleanup and resource management
+4. Test Coverage Analysis
+   - Identify existing tests that need updates
+   - Map areas requiring new tests
+   - Document test dependencies and shared utilities
+   - Note any tests that need to be removed
 
-### 6. Business Logic Analysis
-- Document the key functionality of the component under test
-- Identify input parameters, expected outputs, and error conditions
-- Map the component's interactions with other services
-
-Your output must include direct code examples extracted from the provided code nodes for each section, showing the exact patterns used in the project. Do not provide general guidelines - extract and document the specific implementation patterns from the code.
                     """,
-                    expected_output="Comprehensive implementation pattern guide with concrete code examples extracted from the project for test structure, JSON handling, mocking, assertions, and lifecycle management."
+                    expected_output="""Complete analysis of code changes and test patterns with concrete implementation examples from the project in the following format: \n <output_format>
+{
+  "code_changes": {
+    "modified_functions": [{
+      "name": str,
+      "type": "new|modified|deleted",
+      "code": str,
+      "dependencies": [str]
+    }],
+    "entry_points": [{
+      "name": str,
+      "code": str,
+      "callers": [str]
+    }]
+  },
+  "test_patterns": {
+    "package_structure": {
+      "base_package": str,
+      "imports": [str],
+      "example_test_class": str
+    },
+    "test_resources": {
+      "json_paths": {
+        "request_json": str,
+        "response_json": str
+      },
+      "example_files": [str]
+    },
+    "mock_setup": {
+      "initialization_code": str,
+      "helper_methods": [{
+        "name": str,
+        "code": str,
+        "usage": str
+      }],
+      "example_usage": str
+    },
+    "assertions": {
+      "assertor_classes": [{
+        "name": str,
+        "methods": [str],
+        "example_usage": str
+      }]
+    },
+    "lifecycle": {
+      "setup_code": str,
+      "cleanup_code": str,
+      "helper_utilities": [str]
+    }
+  },
+  "existing_tests": {
+    "related_files": [{
+      "path": str,
+      "coverage": str,
+      "patterns_used": [str]
+    }],
+    "to_update": [{
+      "path": str,
+      "reason": str
+    }],
+    "to_create": [{
+      "component": str,
+      "patterns_to_use": [str]
+    }]
+  }
+}
+</output_format> """
                 ),
                 TaskConfig(
                     description="""
-## Task 2: Generate Production-Ready Test Implementation
+<task>Generate Complete Test Implementation</task>
 
-Using your implementation pattern guide, create a complete, production-ready test file for the functionality under test. Your implementation must:
+<objective>Create production-ready test files that exactly match the project's patterns and provide comprehensive coverage of code changes.</objective>
 
-1. Follow the exact package structure identified in Task 1
-2. Include all necessary import statements based on extracted patterns
-3. Implement the correct test class structure with proper naming
-4. Include proper test lifecycle methods (@BeforeClass, @AfterClass) with exactly the helper methods identified in Task 1
-5. Load test data using the exact JSON file paths and utility methods identified in the project
-6. Configure mocks using the exact helper methods and patterns identified in the project
-7. Implement test methods covering:
-   - Happy path scenario
-   - Error handling scenarios
-   - Edge cases
-8. Use the exact assertion patterns and assertor classes identified in the project
-9. Implement proper cleanup using the exact patterns identified in the project
+<context>
+Using the analysis from Task 1, implement complete test files that:
+- Follow exact package structure and naming conventions
+- Include all necessary imports and dependencies
+- Use correct test data and mock configurations
+- Implement proper lifecycle management
+- Provide comprehensive test coverage
+</context>
 
-Your output must be a complete, compilable Java test file that exactly matches the project's structure and patterns. The file should be ready to commit to the codebase without any modifications.
+<steps>
+1. Test File Implementation
+   - Create complete test files with proper package and imports
+   - Implement test class with correct naming and structure
+   - Add all necessary test lifecycle methods
+   - Implement test data loading and mock configuration
+   - Write comprehensive test methods for all scenarios
 
-Be extremely precise with:
-- Package declaration
-- Import statements
-- Class structure and naming
-- Method implementations
-- JSON file paths and loading
-- Mock configuration
-- Test assertions
-- Documentation style and formatting
+2. Test Method Implementation
+   - Implement happy path test cases
+   - Add error scenario tests
+   - Cover edge cases and boundary conditions
+   - Use correct assertion patterns
+   - Add proper documentation
 
-Ensure your implementation pattern matches exactly what was observed in the project code. The generated test must be virtually indistinguishable from a test written by an engineer familiar with the project's codebase.
+3. Resource Implementation
+   - Create/update JSON test data files
+   - Configure mock responses
+   - Set up test utilities as needed
+   - Implement cleanup handlers
+
+4. Documentation
+   - Add class and method documentation
+   - Document test scenarios and coverage
+   - Include setup instructions if needed
+   - Document any new patterns or utilities
+
+The output must be complete, compilable test files that match the project's patterns exactly. Include all necessary files, resources, and configurations.
+
                     """,
-                    expected_output="Complete, production-ready integration test file that exactly matches the project's structure and patterns, ready for immediate use without modifications."
+                    expected_output="""Complete, production-ready test files that exactly match the project's patterns and can be committed without modifications. Follow the following output format: \n <output_format>
+// The complete test file implementation
+package com.example.test;
+
+import ...;
+
+/**
+ * Test class documentation
+ */
+@Test
+public class ExampleTest {
+    // Complete test implementation
+    // Including:
+    // - All imports
+    // - Class structure
+    // - Setup/teardown
+    // - Test methods
+    // - Assertions
+    // - Documentation
+}
+
+// Additional resource files if needed:
+// - JSON test data
+// - Mock configurations
+// - Helper utilities
+</output_format>"""
                 ),
             ],
         )
@@ -133,10 +245,36 @@ Ensure your implementation pattern matches exactly what was observed in the proj
             "get_code_file_structure",
             "intelligent_code_graph",
             "think",
+            "change_detection",
         ])
         return CrewAIAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
+        # First, get code changes if project_id is available
+        if ctx.project_id:
+            try:
+                changes = await self.tools_provider.tools["change_detection"].arun(ctx.project_id)
+                if changes and changes.changes:
+                    ctx.additional_context += "\nCode Changes Detected:\n"
+                    for change in changes.changes:
+                        ctx.additional_context += f"\nModified Code:\n{change.updated_code}\n"
+                        ctx.additional_context += f"Entry Point:\n{change.entrypoint_code}\n"
+                        ctx.additional_context += f"Affected Files:\n{', '.join(change.citations)}\n"
+                    ctx.additional_context += "\nCode Patches:\n"
+                    for file_path, patch in changes.patches.items():
+                        ctx.additional_context += f"\nFile: {file_path}\n"
+                        ctx.additional_context += f"Patch:\n{patch}\n"
+                    
+                    # Add the changed files to node_ids for further processing
+                    if not ctx.node_ids:
+                        ctx.node_ids = []
+                    for change in changes.changes:
+                        for citation in change.citations:
+                            if citation not in ctx.node_ids:
+                                ctx.node_ids.append(citation)
+            except Exception as e:
+                ctx.additional_context += f"\nError detecting code changes: {str(e)}\n"
+
         if ctx.node_ids and len(ctx.node_ids) > 0:
             # Retrieve graphs for each node to understand component relationships, using the intelligent code graph tool
             graphs = {}
