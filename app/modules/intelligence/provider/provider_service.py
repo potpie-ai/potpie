@@ -375,6 +375,7 @@ class ProviderService:
                     model=params["model"],
                     messages=messages,
                     response_model=output_schema,
+                    strict=True,
                     temperature=params.get("temperature", 0.3),
                     max_tokens=params.get("max_tokens"),
                     api_key=params.get("api_key"),
