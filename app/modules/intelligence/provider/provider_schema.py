@@ -44,6 +44,7 @@ class DualProviderConfig(BaseModel):
 
 class ThinkResponse(BaseModel):
     """Schema for the Think tool response"""
+
     thoughts: List[str]
     conclusion: str
     confidence: float

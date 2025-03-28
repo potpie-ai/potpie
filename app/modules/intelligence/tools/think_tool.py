@@ -12,7 +12,7 @@ class ThinkToolInput(BaseModel):
 
 class ThinkTool:
     """Tool for thinking and processing thoughts."""
-    
+
     name = "think"
     description = """Use the tool to think about something. It will not obtain new information or make any changes to the repository, but just log the thought. Use it when complex reasoning or brainstorming is needed. For example, if you explore the repo and discover the source of a bug, call this tool to brainstorm several unique ways of fixing the bug, and assess which change(s) are likely to be simplest and most effective. Alternatively, if you receive some test results, call this tool to brainstorm ways to fix the failing tests."""
 
@@ -30,7 +30,7 @@ class ThinkTool:
         - List the specific rules that apply to the current request
         - Check if all required information is collected
         - Verify that the planned action complies with all policies
-        - Iterate over tool results for correctness 
+        - Iterate over tool results for correctness
 
         Here are some examples of what to iterate over inside the think tool:
         <think_tool_example_1>
@@ -71,12 +71,17 @@ class ThinkTool:
         """
 
         messages = [
-            {"role": "system", "content": "You are an expert at structured thinking and analysis."},
-            {"role": "user", "content": prompt.format(thought=thought)}
+            {
+                "role": "system",
+                "content": "You are an expert at structured thinking and analysis.",
+            },
+            {"role": "user", "content": prompt.format(thought=thought)},
         ]
 
         try:
-            response = await self.provider_service.call_llm(messages=messages, config_type="chat")
+            response = await self.provider_service.call_llm(
+                messages=messages, config_type="chat"
+            )
             return {"success": True, "analysis": response}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -89,7 +94,7 @@ class ThinkTool:
             # If there is no event loop in current thread, create a new one
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-        
+
         try:
             return loop.run_until_complete(self.arun(thought))
         finally:
@@ -107,4 +112,4 @@ def think_tool(sql_db: Session, user_id: str) -> StructuredTool:
         name="think",
         description=tool_instance.description,
         args_schema=ThinkToolInput,
-    ) 
+    )

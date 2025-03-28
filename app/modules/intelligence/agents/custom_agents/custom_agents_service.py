@@ -384,21 +384,7 @@ class CustomAgentService:
                 tasks_dict, agent_data.goal, available_tools, user_id
             )
 
-            agent_id = str(uuid4())
-            agent_model = CustomAgentModel(
-                id=agent_id,
-                user_id=user_id,
-                role=agent_data.role,
-                goal=agent_data.goal,
-                backstory=agent_data.backstory,
-                system_prompt=agent_data.system_prompt,
-                tasks=enhanced_tasks,
-            )
-
-            self.db.add(agent_model)
-            self.db.commit()
-            self.db.refresh(agent_model)
-            return self._convert_to_agent_schema(agent_model)
+            return self.persist_agent(user_id, agent_data, enhanced_tasks)
         except SQLAlchemyError as e:
             self.db.rollback()
             logger.error(f"Database error while creating agent: {str(e)}")
@@ -406,6 +392,26 @@ class CustomAgentService:
         except Exception as e:
             logger.error(f"Error creating agent: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
+
+    def persist_agent(self, user_id, agent_data, tasks):
+        agent_id = str(uuid4())
+        if isinstance(tasks[0], TaskCreate):
+            tasks = [task.dict() for task in tasks]
+
+        agent_model = CustomAgentModel(
+            id=agent_id,
+            user_id=user_id,
+            role=agent_data.role,
+            goal=agent_data.goal,
+            backstory=agent_data.backstory,
+            system_prompt=agent_data.system_prompt,
+            tasks=tasks,
+        )
+
+        self.db.add(agent_model)
+        self.db.commit()
+        self.db.refresh(agent_model)
+        return self._convert_to_agent_schema(agent_model)
 
     async def update_agent(
         self, agent_id: str, user_id: str, agent_data: AgentUpdate
@@ -644,6 +650,7 @@ class CustomAgentService:
                 agent_id, query, project_id, conversation_id, node_ids
             )
             return {"message": result["response"]}
+
         except Exception as e:
             logger.error(f"Error executing agent {agent_id}: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
@@ -652,38 +659,7 @@ class CustomAgentService:
         self, user_id: str, prompt: str, tools: List[str]
     ) -> Dict[str, Any]:
         """Create a plan for the agent using LLM"""
-        template = """You are an expert AI agent designer with advanced reasoning capabilities. Your task is to design a structured agent plan that uses the user's prompt and the available tools to achieve a clear, actionable goal.
-
-User Prompt: {prompt}
-Available Tools: {tools}
-
-Using your expertise, create a comprehensive agent plan that includes:
-
-1. **Role Definition**: Specify a clear professional title and role that aligns with the task.
-2. **Goal Statement**: Derive a specific and actionable goal from the user prompt.
-3. **Backstory**: Develop a concise professional backstory that establishes your credibility in AI agent design.
-4. **System Prompt**: Write a detailed system prompt that guides the agent's behavior with precision.
-5. **Task Breakdown**: Provide exactly **one** concrete task the agent must perform. The task should include:
-   - A step-by-step description of the task.
-   - The required tools to complete the task.
-   - The expected output format as a JSON object.
-
-Your final output must be a single, valid JSON object with the following structure:
-{{
-    "role": "Professional title and role",
-    "goal": "Clear, actionable goal statement",
-    "backstory": "Professional backstory",
-    "system_prompt": "Detailed system prompt",
-    "tasks": [
-        {{
-            "description": "Step-by-step task description",
-            "tools": ["tool_id_1", "tool_id_2"],
-            "expected_output": {{"key": "value"}}
-        }}
-    ]
-}}
-
-Ensure that your response is a properly formatted JSON object that can be parsed directly, with no extraneous text."""
+        template = self.CREATE_AGENT_FROM_PROMPT
 
         formatted_prompt = template.format(prompt=prompt, tools=tools)
         messages = [{"role": "user", "content": formatted_prompt}]
@@ -695,53 +671,7 @@ Ensure that your response is a properly formatted JSON object that can be parsed
         self, user_id: str, description: str, goal: str, tools: List[str]
     ) -> str:
         """Enhance a single task description using LLM"""
-        template = """You are a task description enhancement expert. Your job is to transform a task description into a detailed execution plan.
-
-Original Task Description: {description}
-Task Goal: {goal}
-Available Tools: {tools}
-
-Analyze the task and create an enhanced description that:
-1. Shows understanding of the task's intent
-2. Provides step-by-step execution strategy
-3. Specifies when and how to use each tool
-4. Includes validation steps
-
-Follow patterns for each tool:
-
-get_nodes_from_tags:
-- Transform search queries into tags
-- Use for broad code search
-- Generate multiple tag variations
-
-get_code_file_structure:
-- Start with structure analysis
-- For hidden directories ("└── ..."):
-a. Get complete structure first
-b. Extract full file paths
-- Never skip structure retrieval
-
-get_code_from_probable_node_name:
-- Only use with complete paths
-- Never with directory paths
-- Validate retrieved content
-
-ask_knowledge_graph_queries:
-- Use function-based phrases
-- Include technical terms
-- Generate query variations
-
-get_node_neighbours_from_node_id:
-- Map dependencies
-- Check relationships
-- Follow code paths
-
-Response format:
-String with the following format:
-1. Analysis & Intent
-2. Step-by-Step Plan
-3. Tool Usage Guide
-"""
+        template = self.TASK_ENHANCEMENT_PROMPT
         formatted_prompt = template.format(
             description=description, goal=goal, tools=tools
         )
@@ -816,7 +746,7 @@ String with the following format:
                 tasks=[TaskCreate(**task) for task in plan_dict["tasks"]],
             )
 
-            return await self.create_agent(user_id, agent_data)
+            return self.persist_agent(user_id, agent_data, agent_data.tasks)
 
         except json.JSONDecodeError as e:
             logger.error(
@@ -926,3 +856,263 @@ String with the following format:
         except SQLAlchemyError as e:
             logger.error(f"Error validating agent {agent_id}: {str(e)}")
             raise e
+
+    CREATE_AGENT_FROM_PROMPT = """
+You are an expert AI agent designer specializing in creating optimal agent configurations for the Potpie system. Your goal is to analyze user input and create a comprehensive agent plan that either preserves detailed existing instructions or expands minimal prompts with best practices.
+
+### INPUT ANALYSIS PHASE
+User Prompt: {prompt}
+
+Available Tools:
+{tools}
+
+### REASONING STEPS
+
+## Step 1: Analyze the input prompt's detail level
+- Is the prompt highly detailed with specific requirements?
+- Or is it minimal/vague requiring expansion?
+- What is the core objective the user is trying to accomplish?
+
+## Step 2: Identify the key components needed
+- What role would best accomplish this objective?
+- What specific goal needs to be articulated?
+- What professional backstory would establish credibility?
+- What system prompt guidelines are needed?
+
+## Step 3: Analyze available tools and their optimal applications
+- For each available tool, identify:
+  * What specific capabilities does it offer?
+  * What types of tasks is it best suited for?
+  * What limitations or constraints should be considered?
+  * How can it be optimally combined with other tools?
+
+## Step 4: Match requirements to appropriate tools
+- Which tools are essential for the core requirements?
+- Which additional tools could enhance the solution?
+- What is the optimal sequence of tool usage?
+- How should tools be configured for maximum effectiveness?
+
+## Step 5: Design the comprehensive single task structure
+- How can all required operations be consolidated into one robust task?
+- What detailed step-by-step instructions will ensure complete success?
+- What specific parameters should be passed to each tool?
+- What validation steps should be included?
+- What is the expected output format for the task?
+
+### CRAFTING AN EFFECTIVE COMPREHENSIVE TASK DESCRIPTION
+
+The task description is the MOST CRITICAL component of your agent plan. It directly determines how well the agent will reason and perform. Your single comprehensive task should:
+
+1. Begin with a clear objective statement that sets the context
+2. Include explicit reasoning prompts like "Let's think through this step by step" or "First, I need to understand..."
+3. Break the complex operation into discrete, sequential steps within the single task
+4. For each tool usage:
+   - Explain WHY this specific tool is being used
+   - Detail EXACTLY what parameters to use and their format
+   - Describe HOW to interpret the results
+   - Include validation checks for the output
+5. Anticipate potential errors and include recovery strategies
+6. Connect steps with logical transitions explaining the flow
+7. End with verification steps to ensure the output meets requirements
+8. Use specific examples where helpful
+
+Example comprehensive task description structure:
+
+[Objective Statement]
+
+Let's think through this step by step:
+
+1. First, I need to understand [specific aspect]. I'll use [Tool A] because [specific reason].
+   - Input parameters: [exact parameter details]
+   - Expected output: [specific output format]
+   - Validation: [how to verify the output is correct]
+   - If [potential error occurs], then [specific recovery action]
+
+2. Next, I'll [next logical step] using [Tool B] to [specific purpose].
+   - Input: [specific input derived from previous step]
+   - Process: [detailed processing steps]
+   - Output validation: [specific validation criteria]
+
+3. **Tool-Specific Guidance**
+   For each tool, provide detailed guidance on:
+
+   **get_nodes_from_tags:**
+   - Transform specific search requirements into effective tags
+   - Generate multiple semantic variations to ensure comprehensive results
+   - Format: Specify exactly how tags should be formatted
+   - Validation: How to verify the search returned useful results
+   - Handling: What to do if results are insufficient or too broad
+
+   **get_code_file_structure:**
+   - Begin with complete structure analysis before diving into details
+   - For hidden directories ("└── ..."), explicitly get the complete structure
+   - Extract and validate complete file paths
+   - Never skip structure retrieval steps
+   - Verification: How to confirm the structure is complete
+
+   **get_code_from_probable_node_name:**
+   - Use only with complete, validated file paths
+   - Never use with directory paths
+   - Verify the retrieved content is complete and relevant
+   - Error handling: Steps to take if file cannot be found or is incomplete
+
+   **ask_knowledge_graph_queries:**
+   - Formulate precise queries using function-based phrasing
+   - Include essential technical terminology
+   - Generate multiple query variations for comprehensive results
+   - Validation: How to assess if the returned information is sufficient
+
+   **get_node_neighbours_from_node_id:**
+   - Systematically map dependencies and relationships
+   - Follow code paths methodically
+   - Verify all connections are properly identified
+   - Use for creating a complete understanding of code relationships
+
+
+4. Finally, I'll [concluding action] to ensure [specific quality criteria].
+   - Verification steps: [list of verification actions]
+   - Output formatting: [format as human-readable markdown with appropriate headings, lists, and code blocks]
+
+
+The complete result should be presented in clear, well-structured markdown that contains [specific elements] and satisfies [specific criteria].
+
+### OUTPUT REQUIREMENTS
+
+Based on your analysis, create a comprehensive agent plan as a valid JSON object with the following structure:
+
+{{
+    "role": "Precise professional title tailored to the specific task",
+    "goal": "Clear, actionable goal statement preserving original intent and detail",
+    "backstory": "Credible professional context that establishes expertise",
+    "system_prompt": "Detailed guidelines that preserve original instructions while adding necessary context",
+    "tasks": [
+        {{
+            "description": "Comprehensive, step-by-step instructions including specific tool usage guidance, parameters to use, and validation steps for the entire solution process",
+            "tools": ["tool_id_1", "tool_id_2", "tool_id_3"],
+            "expected_output": {{"markdown_result": "Human-readable markdown output with all necessary details and information and any relevant code blocks. Do not wrap the complete output in code blocks."}}
+        }}
+    ]
+}}
+
+IMPORTANT GUIDELINES:
+1. If the user prompt is already detailed, PRESERVE all that detail in your plan - do not simplify or reduce specificity.
+2. If the user prompt is minimal, EXPAND it with best practices based on the available tools.
+3. STRICTLY LIMIT output to ONE TASK ONLY, but make this single task comprehensive enough to achieve the complete objective.
+4. Provide DETAILED instructions on HOW to use each required tool, including specific parameters and validation steps.
+5. The expected_output MUST specify that the final result will be in markdown format readable by humans, containing all necessary details and information.
+6. ALWAYS incorporate explicit reasoning prompts in the task description to encourage step-by-step thinking.
+7. Include error handling and recovery strategies in the task description.
+8. Design the single task to incorporate iteration and refinement based on intermediate results if needed.
+9. Ensure the task includes ALL necessary steps to achieve the complete objective.
+10. The final output delivered to the user MUST be in human-readable markdown format with proper formatting, headings, lists, and code blocks if needed.
+
+Return ONLY the valid JSON object with no additional text.
+"""
+
+    TASK_ENHANCEMENT_PROMPT = """
+You are an advanced task planning specialist who transforms task descriptions into comprehensive execution plans that encourage optimal reasoning and tool usage. Your enhanced task descriptions will directly determine the reasoning quality and performance of AI agents using Potpie's tools.
+
+### INPUT
+Original Task Description: {description}
+Task Goal: {goal}
+Available Tools: {tools}
+
+### REASONING STEPS
+
+## Step 1: Deeply analyze the task requirements
+- What is the core objective of this task?
+- What specific challenges must be addressed?
+- What expertise is needed to accomplish this task effectively?
+- Is the original description already detailed (preserve detail) or minimal (expand strategically)?
+
+## Step 2: Understand available tools and their optimal applications
+For each available tool, analyze:
+- What specific capabilities does it provide?
+- When is this tool most effectively applied?
+- What parameters and formatting requirements does it have?
+- What limitations or edge cases should be considered?
+- How can its output be validated?
+
+## Step 3: Design an optimal execution strategy
+- What is the logical sequence of operations needed?
+- How do the available tools complement each other?
+- What intermediate validations should be performed?
+- What potential errors or edge cases might occur?
+- How should the agent handle unexpected outcomes?
+
+### CRAFTING THE ENHANCED TASK DESCRIPTION
+
+Your enhanced task description should follow this structure:
+
+1. **Task Objective Statement**
+   A clear, concise statement of what needs to be accomplished that preserves the original intent.
+
+2. **Reasoning Framework**
+   Include explicit reasoning prompts like "Let's think through this step by step" or "I'll approach this methodically by..."
+
+3. **Detailed Execution Plan**
+   Break down the task into sequential steps, each containing:
+   - Clear purpose of this step
+   - Exact tool to use with specific parameters
+   - Expected output and how to interpret it
+   - Validation criteria to ensure correctness
+   - Error handling and recovery strategies
+   - Transition to the next step
+
+4. **Tool-Specific Guidance**
+   For each tool, provide detailed guidance on:
+
+   **get_nodes_from_tags:**
+   - Transform specific search requirements into effective tags
+   - Generate multiple semantic variations to ensure comprehensive results
+   - Format: Specify exactly how tags should be formatted
+   - Validation: How to verify the search returned useful results
+   - Handling: What to do if results are insufficient or too broad
+
+   **get_code_file_structure:**
+   - Begin with complete structure analysis before diving into details
+   - For hidden directories ("└── ..."), explicitly get the complete structure
+   - Extract and validate complete file paths
+   - Never skip structure retrieval steps
+   - Verification: How to confirm the structure is complete
+
+   **get_code_from_probable_node_name:**
+   - Use only with complete, validated file paths
+   - Never use with directory paths
+   - Verify the retrieved content is complete and relevant
+   - Error handling: Steps to take if file cannot be found or is incomplete
+
+   **ask_knowledge_graph_queries:**
+   - Formulate precise queries using function-based phrasing
+   - Include essential technical terminology
+   - Generate multiple query variations for comprehensive results
+   - Validation: How to assess if the returned information is sufficient
+
+   **get_node_neighbours_from_node_id:**
+   - Systematically map dependencies and relationships
+   - Follow code paths methodically
+   - Verify all connections are properly identified
+   - Use for creating a complete understanding of code relationships
+
+5. **Verification and Validation Strategy**
+   - Specific criteria to verify the task was completed successfully
+   - Tests to confirm all requirements were met
+   - How to format and present the final output
+
+6. **Error Recovery Approaches**
+   - Anticipate potential failure points
+   - Provide specific recovery strategies for each
+   - Include alternative approaches when primary methods fail
+
+The most effective task descriptions incorporate chain-of-thought reasoning by including phrases like:
+- "First, I need to understand..."
+- "Let me reason through this step by step..."
+- "I should verify this by..."
+- "If I encounter [specific error], I'll need to..."
+
+### OUTPUT FORMAT
+
+Your enhanced task description should be returned as a detailed, step-by-step string that maintains all original requirements while adding structure, reasoning guidance, and specific tool usage instructions. Do not simplify or reduce detail that was present in the original description.
+
+Remember: The agent's performance depends directly on how thoroughly you structure this task description to encourage deliberate reasoning and methodical execution.
+    """

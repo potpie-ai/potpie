@@ -20,6 +20,7 @@ class TaskConfig(BaseModel):
     expected_output: str
     context: Optional[Task] = None
 
+
 class AgentConfig(BaseModel):
     """Model for agent configuration from agent_config.json"""
 
@@ -139,7 +140,7 @@ class CrewAIAgent(ChatAgent):
             description=task_description,
             agent=self.agent,
             expected_output=task_config.expected_output,
-            #output_pydantic=CrewAIResponse,
+            output_pydantic=CrewAIResponse,
         )
         if task_config.context:
             task.context = [task_config.context]
@@ -156,7 +157,7 @@ class CrewAIAgent(ChatAgent):
             # Create all tasks
             tasks = []
             for i, task_config in enumerate(self.tasks):
-                if len(tasks)>0:
+                if len(tasks) > 0:
                     task_config.context = tasks[-1]
                 task = await self._create_task(task_config, ctx)
                 tasks.append(task)
@@ -175,11 +176,11 @@ class CrewAIAgent(ChatAgent):
             response: CrewAIResponse = result.tasks_output[-1].raw
             pydantic_response = result.tasks_output[-1].pydantic
             # agentops.end_session("success")
-            print(ChatAgentResponse(
+            return ChatAgentResponse(
                 response=response,
                 tool_calls=[],
                 citations=pydantic_response.citations,
-            ))
+            )
 
         except Exception as e:
             logger.error(f"Error in run method: {str(e)}", exc_info=True)

@@ -1,16 +1,14 @@
+from app.modules.intelligence.agents.chat_agents.adaptive_agent import AdaptiveAgent
 from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
-from app.modules.intelligence.provider.provider_service import ProviderService
+from app.modules.intelligence.prompts.classification_prompts import AgentType
+from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.provider.provider_service import (
+    ProviderService,
+)
 from app.modules.intelligence.tools.tool_service import ToolService
 from ..crewai_agent import AgentConfig, CrewAIAgent, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
-from typing import AsyncGenerator, List
-from pydantic import BaseModel
-import json
-
-
-class NodeContext(BaseModel):
-    node_id: str
-    name: str
+from typing import AsyncGenerator
 
 
 class QnAAgent(ChatAgent):
@@ -18,384 +16,166 @@ class QnAAgent(ChatAgent):
         self,
         llm_provider: ProviderService,
         tools_provider: ToolService,
+        prompt_provider: PromptService,
     ):
         self.llm_provider = llm_provider
         self.tools_provider = tools_provider
+        self.prompt_provider = prompt_provider
 
     def _build_agent(self) -> ChatAgent:
         agent_config = AgentConfig(
-            role="Senior Test Automation Engineer",
-            goal=(
-                "Analyze code changes and existing tests to generate comprehensive test plans and implementations that maintain "
-                "test coverage while adhering to the project's established testing patterns and standards."
-            ),
+            role="QNA Agent",
+            goal="Answer queries of the repo in a detailed fashion",
             backstory="""
-You are a senior test automation engineer with deep expertise in test planning and implementation. Your approach is methodical:
-1. You first analyze code changes to understand what's been modified
-2. You examine existing tests to understand current coverage and patterns
-3. You create precise test plans that maintain or improve coverage
-4. You implement tests following the project's exact patterns and standards
-
-You have a systematic mind that:
-- Thinks step-by-step through complex testing scenarios
-- Identifies edge cases and boundary conditions
-- Maintains consistency with existing test patterns
-- Ensures complete test coverage of code changes
-            """,
+                    You are a highly efficient and intelligent RAG agent capable of querying complex knowledge graphs and refining the results to generate precise and comprehensive responses.
+                    Your tasks include:
+                    1. Analyzing the user's query and formulating an effective strategy to extract relevant information from the code knowledge graph.
+                    2. Executing the query with minimal iterations, ensuring accuracy and relevance.
+                    3. Refining and enriching the initial results to provide a detailed and contextually appropriate response.
+                    4. Maintaining traceability by including relevant citations and references in your output.
+                    5. Including relevant citations in the response.
+                """,
             tasks=[
                 TaskConfig(
-                    description="""
-<task>Analyze Changes and Gather Test Context</task>
-
-<objective>Build a comprehensive understanding of code changes and existing test patterns to enable precise test implementation.</objective>
-
-<context>
-You must gather all necessary information to write complete, production-ready tests:
-- Identify all modified functions and their entry points
-- Locate and analyze existing test files for similar components
-- Extract exact test implementation patterns
-- Map all dependencies and interactions
-</context>
-
-<steps>
-1. Code Change Analysis
-   - Use change detection to identify modified functions and their entry points
-   - Analyze the nature of changes (new features, modifications, bug fixes)
-   - Map dependencies and potential impact areas
-   - Extract concrete examples of modified code patterns
-
-2. Existing Test Discovery
-   - Search for test files corresponding to changed components
-   - Extract exact test implementation patterns:
-     * Package and import statements
-     * Test class structure and naming
-     * Test method organization
-     * Test data loading mechanisms
-     * Mock configuration setup
-     * Assertion patterns and helper methods
-     * Test lifecycle management (@BeforeClass, @AfterClass)
-
-3. Test Resource Analysis
-   - Map JSON test data locations and patterns:
-     * Exact file paths (e.g., src/functionalTest/resources/requestJson/)
-     * File naming conventions
-     * Data structure patterns
-   - Document mock configuration patterns:
-     * WireMock/gRPC initialization code
-     * Helper methods and utilities
-     * Response type patterns
-   - Identify assertion utilities:
-     * Assertion classes and methods
-     * Validation patterns
-     * Custom assertors
-
-4. Test Coverage Analysis
-   - Identify existing tests that need updates
-   - Map areas requiring new tests
-   - Document test dependencies and shared utilities
-   - Note any tests that need to be removed
-
-                    """,
-                    expected_output="""Complete analysis of code changes and test patterns with concrete implementation examples from the project in the following format: \n <output_format>
-{
-  "code_changes": {
-    "modified_functions": [{
-      "name": str,
-      "type": "new|modified|deleted",
-      "code": str,
-      "dependencies": [str]
-    }],
-    "entry_points": [{
-      "name": str,
-      "code": str,
-      "callers": [str]
-    }]
-  },
-  "test_patterns": {
-    "package_structure": {
-      "base_package": str,
-      "imports": [str],
-      "example_test_class": str
-    },
-    "test_resources": {
-      "json_paths": {
-        "request_json": str,
-        "response_json": str
-      },
-      "example_files": [str]
-    },
-    "mock_setup": {
-      "initialization_code": str,
-      "helper_methods": [{
-        "name": str,
-        "code": str,
-        "usage": str
-      }],
-      "example_usage": str
-    },
-    "assertions": {
-      "assertor_classes": [{
-        "name": str,
-        "methods": [str],
-        "example_usage": str
-      }]
-    },
-    "lifecycle": {
-      "setup_code": str,
-      "cleanup_code": str,
-      "helper_utilities": [str]
-    }
-  },
-  "existing_tests": {
-    "related_files": [{
-      "path": str,
-      "coverage": str,
-      "patterns_used": [str]
-    }],
-    "to_update": [{
-      "path": str,
-      "reason": str
-    }],
-    "to_create": [{
-      "component": str,
-      "patterns_to_use": [str]
-    }]
-  }
-}
-</output_format> """
-                ),
-                TaskConfig(
-                    description="""
-<task>Generate Complete Test Implementation</task>
-
-<objective>Create production-ready test files that exactly match the project's patterns and provide comprehensive coverage of code changes.</objective>
-
-<context>
-Using the analysis from Task 1, implement complete test files that:
-- Follow exact package structure and naming conventions
-- Include all necessary imports and dependencies
-- Use correct test data and mock configurations
-- Implement proper lifecycle management
-- Provide comprehensive test coverage
-</context>
-
-<steps>
-1. Test File Implementation
-   - Create complete test files with proper package and imports
-   - Implement test class with correct naming and structure
-   - Add all necessary test lifecycle methods
-   - Implement test data loading and mock configuration
-   - Write comprehensive test methods for all scenarios
-
-2. Test Method Implementation
-   - Implement happy path test cases
-   - Add error scenario tests
-   - Cover edge cases and boundary conditions
-   - Use correct assertion patterns
-   - Add proper documentation
-
-3. Resource Implementation
-   - Create/update JSON test data files
-   - Configure mock responses
-   - Set up test utilities as needed
-   - Implement cleanup handlers
-
-4. Documentation
-   - Add class and method documentation
-   - Document test scenarios and coverage
-   - Include setup instructions if needed
-   - Document any new patterns or utilities
-
-The output must be complete, compilable test files that match the project's patterns exactly. Include all necessary files, resources, and configurations.
-
-                    """,
-                    expected_output="""Complete, production-ready test files that exactly match the project's patterns and can be committed without modifications. Follow the following output format: \n <output_format>
-// The complete test file implementation
-package com.example.test;
-
-import ...;
-
-/**
- * Test class documentation
- */
-@Test
-public class ExampleTest {
-    // Complete test implementation
-    // Including:
-    // - All imports
-    // - Class structure
-    // - Setup/teardown
-    // - Test methods
-    // - Assertions
-    // - Documentation
-}
-
-// Additional resource files if needed:
-// - JSON test data
-// - Mock configurations
-// - Helper utilities
-</output_format>"""
-                ),
+                    description=qna_task_prompt,
+                    expected_output="Markdown formatted chat response to user's query grounded in provided code context and tool results",
+                )
             ],
         )
-        tools = self.tools_provider.get_tools([
-            "get_code_from_multiple_node_ids",
-            "get_code_from_probable_node_name",
-            "ask_knowledge_graph_queries",
-            "get_code_file_structure",
-            "intelligent_code_graph",
-            "think",
-            "change_detection",
-        ])
-        return CrewAIAgent(self.llm_provider, agent_config, tools)
+        tools = self.tools_provider.get_tools(
+            [
+                "get_code_from_multiple_node_ids",
+                "get_node_neighbours_from_node_id",
+                "get_code_from_probable_node_name",
+                "ask_knowledge_graph_queries",
+                "get_nodes_from_tags",
+                "get_code_file_structure",
+                "webpage_extractor",
+                "github_tool",
+            ]
+        )
+
+        if self.llm_provider.is_current_model_supported_by_pydanticai(
+            config_type="chat"
+        ):
+            return PydanticRagAgent(self.llm_provider, agent_config, tools)
+        else:
+            return AdaptiveAgent(
+                llm_provider=self.llm_provider,
+                prompt_provider=self.prompt_provider,
+                rag_agent=CrewAIAgent(self.llm_provider, agent_config, tools),
+                agent_type=AgentType.QNA,
+            )
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
-        # First, get code changes if project_id is available
-        if ctx.project_id:
-            try:
-                changes = await self.tools_provider.tools["change_detection"].arun(ctx.project_id)
-                if changes and changes.changes:
-                    ctx.additional_context += "\nCode Changes Detected:\n"
-                    for change in changes.changes:
-                        ctx.additional_context += f"\nModified Code:\n{change.updated_code}\n"
-                        ctx.additional_context += f"Entry Point:\n{change.entrypoint_code}\n"
-                        ctx.additional_context += f"Affected Files:\n{', '.join(change.citations)}\n"
-                    ctx.additional_context += "\nCode Patches:\n"
-                    for file_path, patch in changes.patches.items():
-                        ctx.additional_context += f"\nFile: {file_path}\n"
-                        ctx.additional_context += f"Patch:\n{patch}\n"
-                    
-                    # Add the changed files to node_ids for further processing
-                    if not ctx.node_ids:
-                        ctx.node_ids = []
-                    for change in changes.changes:
-                        for citation in change.citations:
-                            if citation not in ctx.node_ids:
-                                ctx.node_ids.append(citation)
-            except Exception as e:
-                ctx.additional_context += f"\nError detecting code changes: {str(e)}\n"
-
         if ctx.node_ids and len(ctx.node_ids) > 0:
-            # Retrieve graphs for each node to understand component relationships, using the intelligent code graph tool
-            graphs = {}
-            all_node_contexts: List[NodeContext] = []
-            for node_id in ctx.node_ids:
-                if not node_id:
-                    continue  # Skip empty node_ids
-                    
-                try:
-                    # Use intelligent_code_graph with named parameters in a dictionary
-                    graph = self.tools_provider.tools["intelligent_code_graph"].run({
-                        "project_id": ctx.project_id, 
-                        "node_id": node_id, 
-                        "relevance_threshold": 0.7,  # Only include highly relevant nodes
-                        "max_depth": 5  # Reasonable depth for full context
-                    })
-                    
-                    # Check if there was an error
-                    if graph and "error" in graph:
-                        ctx.additional_context += f"Error processing node {node_id}: {graph['error']}\n"
-                        continue
-                        
-                    graphs[node_id] = graph
+            code_results = await self.tools_provider.get_code_from_multiple_node_ids_tool.run_multiple(
+                ctx.project_id, ctx.node_ids
+            )
+            ctx.additional_context += (
+                f"Code Graph context of the node_ids in query:\n {code_results}"
+            )
 
-                    def extract_unique_node_contexts(node, visited=None):
-                        if visited is None:
-                            visited = set()
-                        node_contexts: List[NodeContext] = []
-                        if node["id"] not in visited:
-                            visited.add(node["id"])
-                            node_contexts.append(NodeContext(node_id=node["id"], name=node["name"]))
-                            for child in node.get("children", []):
-                                node_contexts.extend(extract_unique_node_contexts(child, visited))
-                        return node_contexts
-
-                    node_contexts = extract_unique_node_contexts(graph["graph"]["root_node"])
-                    all_node_contexts.extend(node_contexts)
-                except Exception as e:
-                    ctx.additional_context += f"Error processing node {node_id}: {str(e)}\n"
-
-            if not graphs:
-                ctx.additional_context += "Unable to retrieve any code graphs. Please check the provided node IDs.\n"
-                return ctx
-
-            seen = set()
-            unique_node_contexts: List[NodeContext] = []
-            for node in all_node_contexts:
-                if node.node_id not in seen:
-                    seen.add(node.node_id)
-                    unique_node_contexts.append(node)
-
-            formatted_graphs = {}
-            for node_id, graph in graphs.items():
-                formatted_graphs[node_id] = {
-                    "name": next((node.name for node in unique_node_contexts if node.node_id == node_id), "Unknown"),
-                    "structure": graph["graph"]["root_node"],
-                }
-
-            ctx.additional_context += f"- Code structure and component relationships from INTELLIGENT knowledge graph (noise filtered):\n{json.dumps(formatted_graphs, indent=2)}\n"
-
-            # Add summary of filtering
-            total_evaluated = sum(graph["graph"].get("nodes_evaluated", 0) for graph in graphs.values())
-            total_included = sum(graph["graph"].get("nodes_included", 0) for graph in graphs.values())
-            if total_evaluated > 0:
-                ctx.additional_context += f"- The intelligent context builder evaluated {total_evaluated} nodes and included only the {total_included} most relevant ones ({(total_included/total_evaluated)*100:.1f}%), filtering out noise.\n\n"
-
-            expanded_node_ids = [node.node_id for node in unique_node_contexts]
-            if expanded_node_ids:
-                code_results = await self.tools_provider.get_code_from_multiple_node_ids_tool.run_multiple(ctx.project_id, expanded_node_ids)
-                ctx.additional_context += f"Code for all RELEVANT components in the integration flow:\n{code_results}\n"
-                ctx.node_ids = expanded_node_ids
-            else:
-                ctx.additional_context += "No relevant code components were found after filtering.\n"
-
-        # Identify test data structure
-        json_structure = await self.tools_provider.tools["get_code_file_structure"].arun({
-            "project_id": ctx.project_id,
-            "path": "src/functionalTest/resources"
-        })
-        ctx.additional_context += f"Test data structure in the project:\n{json_structure}\n"
-
-        # Original context building - Get file structure
-        file_structure = await self.tools_provider.file_structure_tool.fetch_repo_structure(ctx.project_id)
-        ctx.additional_context += f"File Structure of the project:\n{file_structure}\n"
-
-        test_related_paths = [
-            path for path in file_structure.split('\n')
-            if any(test_term in path.lower() for test_term in ["test", "mock", "stub", "assert", "functional", "integration"])
-        ]
-        if test_related_paths:
-            ctx.additional_context += "Test-related paths identified:\n" + "\n".join(test_related_paths) + "\n"
-
-        ctx.additional_context += (
-            "\nImportant: Generated tests must reuse JSON templates from src/functionalTest/resources/requestJson and src/functionalTest/resources/responseJson (please fetch file structure for these directories to get more detailed json file names)"
-            "configure mocks using existing helper methods (e.g., SetWiremockStub, GripMockDataStubbing), and utilize centralized assertor classes for validations."
+        file_structure = (
+            await self.tools_provider.file_structure_tool.fetch_repo_structure(
+                ctx.project_id
+            )
         )
-
-        ctx.additional_context += (
-            "\nComprehensive Functional Test Writing Guidelines:\n"
-            "1. Test Data Setup: Store JSON templates in structured directories; use getObjectMapper().readValue() for deserialization.\n"
-            "2. External Service Mocking: Configure mocks with WireMock and gRPC stub helpers; simulate behaviors and reset mocks as required.\n"
-            "3. Assertions & Validations: Use assertor classes (e.g., CartUpdateAssertor) for detailed, field-level checks.\n"
-            "4. Test Lifecycle: Employ @BeforeClass and @AfterClass with helper methods like commonUOMSSetup and commonUOMSCleanup.\n"
-            "5. Test Organization: Group tests by feature in designated directories with consistent naming conventions.\n"
-        )
-
-        ctx.additional_context += (
-            "\nIntegration Test Specific Guidelines:\n"
-            "1. Component Relationships: Understand the complete flow between components from the code graph.\n"
-            "2. Data Flow: Trace data transformations through the integration chain.\n"
-            "3. Boundary Testing: Validate interfaces between components for correct data handling.\n"
-            "4. Error Propagation: Verify that errors propagate and are handled as expected.\n"
-        )
+        ctx.additional_context += f"File Structure of the project:\n {file_structure}"
 
         return ctx
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
-        enriched_ctx = await self._enriched_context(ctx)
-        return await self._build_agent().run(enriched_ctx)
+        return await self._build_agent().run(await self._enriched_context(ctx))
 
-    async def run_stream(self, ctx: ChatContext) -> AsyncGenerator[ChatAgentResponse, None]:
-        enriched_ctx = await self._enriched_context(ctx)
-        async for chunk in self._build_agent().run_stream(enriched_ctx):
+    async def run_stream(
+        self, ctx: ChatContext
+    ) -> AsyncGenerator[ChatAgentResponse, None]:
+        ctx = await self._enriched_context(ctx)
+        async for chunk in self._build_agent().run_stream(ctx):
             yield chunk
+
+
+qna_task_prompt = """
+    1. Analyze project structure:
+
+    - Identify key directories, files, and modules
+    - Guide search strategy and provide context
+    - For directories of interest that show "└── ...", use "Get Code File Structure" tool with the directory path to reveal nested files
+    - Only after getting complete file paths, use "Get Code and docstring From Probable Node Name" tool
+    - Locate relevant files or subdirectory path
+
+
+    Directory traversal strategy:
+
+    - Start with high-level file structure analysis
+    - When encountering a directory with hidden contents (indicated by "└── ..."):
+        a. First: Use "Get Code File Structure" tool with the directory path
+        b. Then: From the returned structure, identify relevant files
+        c. Finally: Use "Get Code and docstring From Probable Node Name" tool with the complete file paths
+    - Subdirectories with hidden nested files are followed by "│   │   │          └── ..."
+
+
+    2. Initial context retrieval:
+        - Analyze provided Code Results for user node ids
+        - If code results are not relevant move to next step`
+
+    3. Knowledge graph query (if needed):
+        - Transform query for knowledge graph tool
+        - Execute query and analyze results
+
+    Additional context retrieval (if needed):
+
+    - For each relevant directory with hidden contents:
+        a. FIRST: Call "Get Code File Structure" tool with directory path
+        b. THEN: From returned structure, extract complete file paths
+        c. THEN: For each relevant file, call "Get Code and docstring From Probable Node Name" tool
+    - Never call "Get Code and docstring From Probable Node Name" tool with directory paths
+    - Always ensure you have complete file paths before using the probable node tool
+    - Extract hidden file names from the file structure subdirectories that seem relevant
+    - Extract probable node names. Nodes can be files or functions/classes. But not directories.
+
+
+    5. Use "Get Nodes from Tags" tool as last resort only if absolutely necessary
+
+    6. Analyze and enrich results:
+        - Evaluate relevance, identify gaps
+        - Develop scoring mechanism
+        - Retrieve code only if docstring insufficient
+
+    7. Compose response:
+        - Organize results logically
+        - Include citations and references
+        - Provide comprehensive, focused answer
+
+    8. Final review:
+        - Check coherence and relevance
+        - Identify areas for improvement
+        - Format the file paths as follows (only include relevant project details from file path):
+            path: potpie/projects/username-reponame-branchname-userid/gymhero/models/training_plan.py
+            output: gymhero/models/training_plan.py
+
+
+    Note:
+
+    - Always traverse directories before attempting to access files
+    - Never skip the directory structure retrieval step
+    - Use available tools in the correct order: structure first, then code
+    - Use markdown for code snippets with language name in the code block like python or javascript
+    - Prioritize "Get Code and docstring From Probable Node Name" tool for stacktraces or specific file/function mentions
+    - Prioritize "Get Code File Structure" tool to get the nested file structure of a relevant subdirectory when deeper levels are not provided
+    - Use available tools as directed
+    - Proceed to next step if insufficient information found
+
+    Ground your responses in provided code context and tool results. Use markdown for code snippets. Be concise and avoid repetition. If unsure, state it clearly. For debugging, unit testing, or unrelated code explanations, suggest specialized agents.
+    Tailor your response based on question type:
+
+    - New questions: Provide comprehensive answers
+    - Follow-ups: Build on previous explanations from the chat history
+    - Clarifications: Offer clear, concise explanations
+    - Comments/feedback: Incorporate into your understanding
+
+    Indicate when more information is needed. Use specific code references. Adapt to user's expertise level. Maintain a conversational tone and context from previous exchanges.
+    Ask clarifying questions if needed. Offer follow-up suggestions to guide the conversation.
+    Provide a comprehensive response with deep context, relevant file paths, include relevant code snippets wherever possible. Format it in markdown format.
+"""
