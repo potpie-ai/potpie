@@ -11,9 +11,6 @@ from app.core.database import get_db
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.code_provider.github.github_service import GithubService
 from app.modules.code_provider.local_repo.local_repo_service import LocalRepoService
-from app.modules.intelligence.tools.code_query_tools.get_code_from_node_name_tool import (
-    GetCodeFromNodeNameTool,
-)
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     GetCodeFromNodeIdTool,
 )
@@ -253,9 +250,9 @@ class ChangeDetectionTool:
                                 node_ids.append(node_id)
                         else:
                             node_ids.append(
-                                GetCodeFromNodeNameTool(
+                                GetCodeFromNodeIdTool(
                                     self.sql_db, self.user_id
-                                ).get_node_data(project_id, identifier)["node_id"]
+                                ).run(project_id, identifier)["node_id"]
                             )
 
                     # Fetch code for node ids and store in a dict

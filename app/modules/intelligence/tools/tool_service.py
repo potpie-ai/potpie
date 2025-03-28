@@ -9,16 +9,10 @@ from app.modules.intelligence.tools.code_query_tools.get_code_file_structure imp
     get_code_file_structure_tool,
     GetCodeFileStructureTool,
 )
-from app.modules.intelligence.tools.code_query_tools.get_code_from_node_name_tool import (
-    get_code_from_node_name_tool,
-)
+
 from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id_tool import (
     get_code_graph_from_node_id_tool,
     GetCodeGraphFromNodeIdTool,
-)
-from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_name_tool import (
-    GetCodeGraphFromNodeNameTool,
-    get_code_graph_from_node_name_tool,
 )
 from app.modules.intelligence.tools.code_query_tools.get_node_neighbours_from_node_id_tool import (
     get_node_neighbours_from_node_id_tool,
@@ -62,7 +56,6 @@ class ToolService:
             self.db, self.user_id
         )
         self.get_code_graph_from_node_id_tool = GetCodeGraphFromNodeIdTool(db)
-        self.get_code_graph_from_node_name_tool = GetCodeGraphFromNodeNameTool(db)
         self.file_structure_tool = GetCodeFileStructureTool(db)
         self.provider_service = ProviderService.create(db, user_id)
         self.tools = self._initialize_tools()
@@ -88,13 +81,7 @@ class ToolService:
                 self.db, self.user_id
             ),
             "get_nodes_from_tags": get_nodes_from_tags_tool(self.db, self.user_id),
-            "get_code_from_node_name": get_code_from_node_name_tool(
-                self.db, self.user_id
-            ),
             "get_code_graph_from_node_id": get_code_graph_from_node_id_tool(self.db),
-            "get_code_graph_from_node_name": get_code_graph_from_node_name_tool(
-                self.db
-            ),
             "change_detection": get_change_detection_tool(self.user_id),
             "get_code_file_structure": get_code_file_structure_tool(self.db),
             "get_node_neighbours_from_node_id": get_node_neighbours_from_node_id_tool(
