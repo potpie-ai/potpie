@@ -40,3 +40,5 @@ class GetProviderResponse(BaseModel):
 class DualProviderConfig(BaseModel):
     chat_config: GetProviderResponse
     inference_config: GetProviderResponse
+
+

@@ -73,7 +73,7 @@ class QnAAgent(ChatAgent):
                 ctx.project_id, ctx.node_ids
             )
             ctx.additional_context += (
-                f"Code Graph context of the node_ids in query:\n {code_results}"
+                f"Code context of the node_ids in query:\n {code_results}"
             )
 
         file_structure = (
