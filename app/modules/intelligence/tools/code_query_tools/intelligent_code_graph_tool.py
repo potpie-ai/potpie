@@ -46,8 +46,8 @@ class RelevantNode(BaseModel):
 class IntelligentCodeGraphTool:
     name = "intelligent_code_graph"
     description = """Intelligently fetches a code graph starting from a node ID, filtering out
-    irrelevant nodes that add noise to the context. The filtering is done using LLM to evaluate
-    each node's relevance for integration test generation.
+    irrelevant nodes that add noise to the context. The filtering is done using rule-based
+    evaluation to identify relevant nodes for integration test generation.
 
     :param project_id: string, the repository ID (UUID).
     :param node_id: string, the ID of the node to retrieve the graph for.
@@ -67,7 +67,6 @@ class IntelligentCodeGraphTool:
         self, sql_db: Session, provider_service: ProviderService, user_id: str
     ):
         self.sql_db = sql_db
-        self.provider_service = provider_service
         self.user_id = user_id
         self.code_graph_tool = GetCodeGraphFromNodeIdTool(sql_db)
         self.code_from_node_tool = GetCodeFromNodeIdTool(sql_db, user_id)
@@ -82,11 +81,9 @@ class IntelligentCodeGraphTool:
         **kwargs,
     ) -> Dict[str, Any]:
         """Synchronous version that runs the async implementation in an event loop"""
-        # If we're already in an event loop, run the async version directly
         try:
             loop = asyncio.get_running_loop()
             if loop.is_running():
-                # Create a new loop in a separate thread for the async operation
                 with ThreadPoolExecutor() as pool:
                     return pool.submit(
                         lambda: asyncio.run(
@@ -96,7 +93,6 @@ class IntelligentCodeGraphTool:
                         )
                     ).result()
         except RuntimeError:
-            # No event loop running, we can create one
             return asyncio.run(
                 self.arun(project_id, node_id, relevance_threshold, max_depth)
             )
@@ -123,15 +119,12 @@ class IntelligentCodeGraphTool:
             }
 
         try:
-            # Reset visited nodes for new run
             self.visited_nodes = set()
 
-            # Get the initial graph for the entry node
             result = self.code_graph_tool.run(project_id, node_id, max_depth=1)
             if "error" in result:
                 return result
 
-            # Validate graph structure
             if not result.get("graph") or not result["graph"].get("root_node"):
                 return {"error": f"Invalid graph structure returned for node {node_id}"}
 
@@ -143,13 +136,11 @@ class IntelligentCodeGraphTool:
             ):
                 return {"error": f"Invalid root node structure for node {node_id}"}
 
-            # Get code content for the root node asynchronously
             code_result = await asyncio.to_thread(
                 self.code_from_node_tool.run, project_id, node_id
             )
             root_code = code_result.get("code", "")
 
-            # Process the graph recursively with async filtering
             try:
                 filtered_graph = await self._process_node_recursively_async(
                     project_id=project_id,
@@ -167,7 +158,6 @@ class IntelligentCodeGraphTool:
                     root_node, 1.0, "Root node (simplified processing due to error)"
                 )
 
-                # Process immediate children with basic filtering in parallel
                 child_nodes = []
 
                 async def process_child(child):
@@ -214,7 +204,7 @@ class IntelligentCodeGraphTool:
         current_depth: int,
         max_depth: int,
     ) -> Dict[str, Any]:
-        """Async version of _process_node_recursively with parallel processing"""
+        """Process nodes recursively with parallel evaluation"""
         node_id = node["id"]
         self.visited_nodes.add(node_id)
 
@@ -226,24 +216,17 @@ class IntelligentCodeGraphTool:
                 node, 1.0, "Leaf node - no further evaluation needed"
             )
 
-        # Create evaluation prompt
-        prompt = self._create_evaluation_prompt(node, node_code, node["children"])
-
         # Evaluate children in parallel
-        evaluations = await self._evaluate_nodes_with_llm_async(
-            prompt, node["children"]
-        )
+        evaluations = await self._evaluate_nodes_async(node["children"])
 
         # Process relevant children in parallel
         async def process_child(child, evaluation):
             if evaluation.relevance_score >= relevance_threshold:
-                # Get code for the child node asynchronously
                 child_code_result = await asyncio.to_thread(
                     self.code_from_node_tool.run, project_id, child["id"]
                 )
                 child_code = child_code_result.get("code", "")
 
-                # Process child recursively
                 processed_child = await self._process_node_recursively_async(
                     project_id=project_id,
                     node=child,
@@ -258,7 +241,6 @@ class IntelligentCodeGraphTool:
                 return processed_child
             return None
 
-        # Process all children in parallel
         tasks = [
             process_child(child, eval_)
             for child, eval_ in zip(node["children"], evaluations)
@@ -266,7 +248,6 @@ class IntelligentCodeGraphTool:
         processed_children = await asyncio.gather(*tasks)
         relevant_children = [c for c in processed_children if c is not None]
 
-        # Create and return processed node
         processed_node = self._create_relevant_node(
             node, 1.0, "Entry point for analysis"
         )
@@ -274,12 +255,11 @@ class IntelligentCodeGraphTool:
 
         return processed_node
 
-    async def _evaluate_nodes_with_llm_async(
-        self, messages: List[Dict[str, str]], children: List[Dict[str, Any]]
+    async def _evaluate_nodes_async(
+        self, children: List[Dict[str, Any]]
     ) -> List[NodeRelevance]:
-        """Async version of node evaluation with batched processing"""
+        """Evaluate nodes based on rule-based relevance criteria"""
         try:
-            # Process nodes in batches for better performance
             batch_size = 10
             batches = [
                 children[i : i + batch_size]
@@ -314,6 +294,7 @@ class IntelligentCodeGraphTool:
                             "database",
                             "model",
                             "entity",
+                            "schema"
                         ]
                     ):
                         relevance_score = 0.9
@@ -321,7 +302,7 @@ class IntelligentCodeGraphTool:
                         reason = "Likely core business logic or integration point"
                     elif any(
                         term in node_name
-                        for term in ["util", "helper", "factory", "builder"]
+                        for term in ["util", "helper", "factory", "builder", "migration"]
                     ):
                         relevance_score = 0.6
                         is_relevant = True
@@ -338,11 +319,9 @@ class IntelligentCodeGraphTool:
                     )
                 return evaluations
 
-            # Process all batches in parallel
             tasks = [process_batch(batch) for batch in batches]
             batch_results = await asyncio.gather(*tasks)
 
-            # Flatten results
             return [eval_ for batch_result in batch_results for eval_ in batch_result]
 
         except Exception as e:
@@ -358,73 +337,6 @@ class IntelligentCodeGraphTool:
                 for child in children
             ]
 
-    def _create_evaluation_prompt(
-        self,
-        parent_node: Dict[str, Any],
-        parent_code: str,
-        children: List[Dict[str, Any]],
-    ) -> List[Dict[str, str]]:
-        """Create a prompt for the LLM to evaluate node relevance"""
-        messages = [
-            {
-                "role": "system",
-                "content": """You are an expert code analyzer that can determine which code dependencies are relevant for understanding
-                a system's integration points. Your task is to evaluate each node for its relevance in the context of
-                integration test generation. Highly relevant nodes include:
-
-                1. External API calls or third-party integrations
-                2. Database interactions and data transformations
-                3. Core business logic with branching paths
-                4. Interface definitions and data models used across boundaries
-                5. Authentication/authorization flows
-
-                Nodes that are typically NOT relevant and add noise include:
-                1. Logging statements and utilities
-                2. Print statements
-                3. Internal helper functions with no external dependencies
-                4. Debug or development-only code
-                5. Simple getters/setters with no business logic
-
-                For each node, provide a relevance score between 0-1 and explain your reasoning.
-                """,
-            },
-            {
-                "role": "user",
-                "content": f"""I'm analyzing code to generate integration tests and need to determine which components are relevant.
-
-                PARENT NODE:
-                Name: {parent_node['name']}
-                Type: {parent_node['type']}
-
-                PARENT NODE CODE:
-                ```
-                {parent_code}
-                ```
-
-                CHILD NODES TO EVALUATE:
-                {self._format_children_for_prompt(children)}
-
-                For each child node, evaluate its likely relevance for integration testing based on its name and type.
-                """,
-            },
-        ]
-        return messages
-
-    def _format_children_for_prompt(self, children: List[Dict[str, Any]]) -> str:
-        """Format child nodes information for the LLM prompt"""
-        formatted = ""
-        for i, child in enumerate(children):
-            formatted += f"Child {i+1}:\n"
-            formatted += f"ID: {child['id']}\n"
-            formatted += f"Name: {child['name']}\n"
-            formatted += f"Type: {child['type']}\n"
-            if child.get("file_path"):
-                formatted += f"File: {child['file_path']}\n"
-            if child.get("relationship"):
-                formatted += f"Relationship to Parent: {child['relationship']}\n"
-            formatted += "\n"
-        return formatted
-
     def _create_relevant_node(
         self, node: Dict[str, Any], relevance_score: float, reason: str
     ) -> Dict[str, Any]:
@@ -438,7 +350,6 @@ class IntelligentCodeGraphTool:
             "children": [],
         }
 
-        # Copy additional fields if present
         for field in ["file_path", "start_line", "end_line", "relationship"]:
             if field in node:
                 relevant_node[field] = node[field]
@@ -459,7 +370,6 @@ def get_intelligent_code_graph_tool(
     """Create and return the intelligent code graph tool"""
     tool = IntelligentCodeGraphTool(sql_db, provider_service, user_id)
 
-    # Define the schema more explicitly with proper typing
     class IntelligentCodeGraphSchema(BaseModel):
         project_id: str = Field(..., description="The repository ID (UUID).")
         node_id: str = Field(
