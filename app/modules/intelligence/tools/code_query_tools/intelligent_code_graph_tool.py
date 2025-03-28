@@ -270,19 +270,34 @@ class IntelligentCodeGraphTool:
                 evaluations = []
                 for child in batch:
                     node_name = child.get("name", "").lower()
-                    node_type = child.get("type", "").lower()
 
                     relevance_score = 0.7
                     is_relevant = True
                     reason = "Possibly relevant based on name/type"
 
+                    # Low relevance patterns (debug, test, etc.)
                     if any(
                         term in node_name
-                        for term in ["log", "debug", "print", "test", "mock"]
+                        for term in [
+                            "log",
+                            "debug",
+                            "print",
+                            "mock",
+                            "fixture",
+                            "stub",
+                            "fake",
+                            "console",
+                            ".test.",
+                            ".spec.",
+                            "test_",
+                            "spec_"
+                        ]
                     ):
                         relevance_score = 0.3
                         is_relevant = False
                         reason = "Likely utility, debug or test code"
+                    
+                    # High relevance backend patterns
                     elif any(
                         term in node_name
                         for term in [
@@ -294,15 +309,70 @@ class IntelligentCodeGraphTool:
                             "database",
                             "model",
                             "entity",
-                            "schema"
+                            "schema",
+                            "resolver",
+                            "middleware",
+                            "handler",
+                            "route",
+                            "endpoint",
+                            "graphql",
+                            "query",
+                            "mutation"
                         ]
                     ):
                         relevance_score = 0.9
                         is_relevant = True
-                        reason = "Likely core business logic or integration point"
+                        reason = "Core backend business logic or integration point"
+                    
+                    # High relevance frontend patterns
                     elif any(
                         term in node_name
-                        for term in ["util", "helper", "factory", "builder", "migration"]
+                        for term in [
+                            "component",
+                            "page",
+                            "view",
+                            "screen",
+                            "layout",
+                            "template",
+                            "form",
+                            "hook",
+                            "store",
+                            "reducer",
+                            "action",
+                            "context",
+                            "provider",
+                            "client",
+                            "app",
+                            "router"
+                        ]
+                    ):
+                        relevance_score = 0.9
+                        is_relevant = True
+                        reason = "Core frontend component or state management"
+
+                    # Medium relevance support code
+                    elif any(
+                        term in node_name
+                        for term in [
+                            "util",
+                            "helper",
+                            "factory",
+                            "builder",
+                            "migration",
+                            "config",
+                            "setup",
+                            "constant",
+                            "type",
+                            "interface",
+                            "style",
+                            "theme",
+                            "asset",
+                            "locale",
+                            "i18n",
+                            "validation",
+                            "formatter",
+                            "transform"
+                        ]
                     ):
                         relevance_score = 0.6
                         is_relevant = True
