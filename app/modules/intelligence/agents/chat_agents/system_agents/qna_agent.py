@@ -44,14 +44,14 @@ class QnAAgent(ChatAgent):
         )
         tools = self.tools_provider.get_tools(
             [
-                "get_code_graph_from_node_id",
-                # "get_node_neighbours_from_node_id",
-                # "get_code_from_probable_node_name",
-                # "ask_knowledge_graph_queries",
-                # "get_nodes_from_tags",
-                # "get_code_file_structure",
-                # "webpage_extractor",
-                # "github_tool",
+                "get_code_from_multiple_node_ids",
+                "get_node_neighbours_from_node_id",
+                "get_code_from_probable_node_name",
+                "ask_knowledge_graph_queries",
+                "get_nodes_from_tags",
+                "get_code_file_structure",
+                "webpage_extractor",
+                "github_tool",
             ]
         )
 
