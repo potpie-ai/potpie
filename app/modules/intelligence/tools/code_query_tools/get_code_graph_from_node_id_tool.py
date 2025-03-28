@@ -214,7 +214,7 @@ def get_code_graph_from_node_id_tool(sql_db: Session) -> StructuredTool:
         coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="Get Code Graph From Node ID",
-        description= """Retrieves a code graph showing relationships between nodes starting from a specific node ID.
+        description="""Retrieves a code graph showing relationships between nodes starting from a specific node ID.
         :param project_id: string, the repository ID (UUID).
         :param node_id: string, the ID of the node to retrieve the graph for (UUID).
 

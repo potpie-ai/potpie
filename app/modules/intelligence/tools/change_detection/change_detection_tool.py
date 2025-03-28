@@ -250,9 +250,9 @@ class ChangeDetectionTool:
                                 node_ids.append(node_id)
                         else:
                             node_ids.append(
-                                GetCodeFromNodeIdTool(
-                                    self.sql_db, self.user_id
-                                ).run(project_id, identifier)["node_id"]
+                                GetCodeFromNodeIdTool(self.sql_db, self.user_id).run(
+                                    project_id, identifier
+                                )["node_id"]
                             )
 
                     # Fetch code for node ids and store in a dict

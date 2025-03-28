@@ -385,7 +385,6 @@ class ProviderService:
             logging.error(f"LLM call with structured output failed: {e}")
             raise e
 
-
     def _initialize_llm(self, config: LLMProviderConfig, agent_type: AgentProvider):
         """Initialize LLM for the specified agent type."""
         params = self._build_llm_params(config)

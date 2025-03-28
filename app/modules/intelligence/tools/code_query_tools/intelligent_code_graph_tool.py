@@ -290,13 +290,13 @@ class IntelligentCodeGraphTool:
                             ".test.",
                             ".spec.",
                             "test_",
-                            "spec_"
+                            "spec_",
                         ]
                     ):
                         relevance_score = 0.3
                         is_relevant = False
                         reason = "Likely utility, debug or test code"
-                    
+
                     # High relevance backend patterns
                     elif any(
                         term in node_name
@@ -317,13 +317,13 @@ class IntelligentCodeGraphTool:
                             "endpoint",
                             "graphql",
                             "query",
-                            "mutation"
+                            "mutation",
                         ]
                     ):
                         relevance_score = 0.9
                         is_relevant = True
                         reason = "Core backend business logic or integration point"
-                    
+
                     # High relevance frontend patterns
                     elif any(
                         term in node_name
@@ -343,7 +343,7 @@ class IntelligentCodeGraphTool:
                             "provider",
                             "client",
                             "app",
-                            "router"
+                            "router",
                         ]
                     ):
                         relevance_score = 0.9
@@ -371,7 +371,7 @@ class IntelligentCodeGraphTool:
                             "i18n",
                             "validation",
                             "formatter",
-                            "transform"
+                            "transform",
                         ]
                     ):
                         relevance_score = 0.6
