@@ -23,7 +23,6 @@ from .provider_schema import (
     AvailableModelOption,
     SetProviderRequest,
     ModelInfo,
-    ThinkResponse,
 )
 from .llm_config import LLMProviderConfig, build_llm_provider_config
 
@@ -386,102 +385,6 @@ class ProviderService:
             logging.error(f"LLM call with structured output failed: {e}")
             raise e
 
-    async def think(self, query: str, max_iterations: int = 3) -> ThinkResponse:
-        """
-        Implements Claude's "Think" tool capability for extended reasoning.
-        This allows the model to break down complex problems and think through them step by step.
-
-        Args:
-            query: The question or problem to think about
-            max_iterations: Maximum number of thinking iterations (default: 3)
-
-        Returns:
-            ThinkResponse object containing thoughts, conclusion, confidence and reasoning path
-        """
-        messages = [
-            {
-                "role": "system",
-                "content": """You are an expert problem solver with the ability to think through complex problems step by step.
-                For each step:
-                1. State what you know
-                2. Identify what you need to figure out
-                3. Break down your reasoning
-                4. Draw intermediate conclusions
-                5. Determine if you need another iteration of thinking
-
-                Keep your thinking focused and relevant to the problem at hand.
-
-                Your final response should be a JSON object with:
-                - thoughts: list of all thinking steps
-                - conclusion: final conclusion
-                - confidence: float between 0 and 1 indicating confidence in conclusion
-                - reasoning_path: list of key reasoning steps that led to the conclusion""",
-            },
-            {
-                "role": "user",
-                "content": f"Think through this problem step by step: {query}",
-            },
-        ]
-
-        thoughts = []
-        reasoning_path = []
-
-        for i in range(max_iterations):
-            response = await self.call_llm(messages=messages, config_type="chat")
-            thoughts.append(response)
-
-            # Extract key reasoning from response
-            reasoning_messages = [
-                {
-                    "role": "system",
-                    "content": "Extract the key reasoning step from the previous thought.",
-                },
-                {"role": "user", "content": response},
-            ]
-            reasoning = await self.call_llm(
-                messages=reasoning_messages, config_type="chat"
-            )
-            reasoning_path.append(reasoning)
-
-            # Add the thought to the conversation
-            messages.append({"role": "assistant", "content": response})
-
-            # Ask if more thinking is needed
-            messages.append(
-                {
-                    "role": "user",
-                    "content": "Do you need to think about this further? If yes, what specific aspect needs more analysis? If no, provide your final conclusion.",
-                }
-            )
-
-            continue_response = await self.call_llm(
-                messages=messages, config_type="chat"
-            )
-            messages.append({"role": "assistant", "content": continue_response})
-
-            if (
-                "no" in continue_response.lower()
-                or "final conclusion" in continue_response.lower()
-            ):
-                break
-
-        # Generate final structured response
-        final_messages = [
-            {
-                "role": "system",
-                "content": "Based on the previous thinking steps, generate a final response in the required JSON format with thoughts, conclusion, confidence, and reasoning_path.",
-            },
-            {
-                "role": "user",
-                "content": f"Previous thoughts: {thoughts}\nReasoning path: {reasoning_path}",
-            },
-        ]
-
-        final_response = await self.call_llm_with_structured_output(
-            messages=final_messages, output_schema=ThinkResponse, config_type="chat"
-        )
-
-        return final_response
 
     def _initialize_llm(self, config: LLMProviderConfig, agent_type: AgentProvider):
         """Initialize LLM for the specified agent type."""

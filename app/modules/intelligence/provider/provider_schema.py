@@ -42,10 +42,3 @@ class DualProviderConfig(BaseModel):
     inference_config: GetProviderResponse
 
 
-class ThinkResponse(BaseModel):
-    """Schema for the Think tool response"""
-
-    thoughts: List[str]
-    conclusion: str
-    confidence: float
-    reasoning_path: List[str]
