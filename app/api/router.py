@@ -19,8 +19,13 @@ from app.modules.conversations.message.message_schema import (
     DirectMessageRequest,
     MessageRequest,
 )
+from app.modules.intelligence.agents.agents_controller import AgentsController
+from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.provider.provider_service import ProviderService
+from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.parsing.graph_construction.parsing_controller import ParsingController
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
+from app.modules.projects.projects_controller import ProjectController
 from app.modules.utils.APIRouter import APIRouter
 
 router = APIRouter()
@@ -144,3 +149,24 @@ async def create_conversation_and_message(
 
     async for chunk in message_stream:
         return chunk
+
+
+@router.get("/projects/list")
+async def list_projects(
+    db: Session = Depends(get_db),
+    user=Depends(get_api_key_user),
+):
+    return await ProjectController.get_project_list(user, db)
+
+
+@router.get("/list-available-agents")
+async def list_agents(
+    db: Session = Depends(get_db),
+    user=Depends(get_api_key_user),
+):
+    user_id: str = user["user_id"]
+    llm_provider = ProviderService(db, user_id)
+    tools_provider = ToolService(db, user_id)
+    prompt_provider = PromptService(db)
+    controller = AgentsController(db, llm_provider, prompt_provider, tools_provider)
+    return await controller.list_available_agents(user, True)
