@@ -128,7 +128,6 @@ class AgentsService:
                     llm_provider, tools_provider, prompt_provider
                 ),
             ),
-            # ... add more here
         }
 
     async def execute(self, ctx: ChatContext):
