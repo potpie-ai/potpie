@@ -112,7 +112,6 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
 
 ### Prerequisites
 - Docker installed and running
-- OpenAI API key
 - Git installed (for repository access)
 - Python 3.10.x
 
@@ -171,7 +170,6 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
       ```bash
       isDevelopmentMode=enabled
       ENV=development
-      OPENAI_API_KEY=<your-openai-key>
       POSTGRES_SERVER=postgresql://postgres:mysecretpassword@localhost:5432/momentum
       NEO4J_URI=bolt://127.0.0.1:7687
       NEO4J_USERNAME=neo4j
@@ -183,8 +181,8 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
       defaultUsername=defaultuser
       PROJECT_PATH=projects #repositories will be downloaded/cloned to this path on your system.
       {PROVIDER}_API_KEY=sk-proj-your-key #your provider key e.g. ANTHROPIC_API_KEY for Anthropic
-      INFERENCE_MODEL=openai/gpt-4o-mini #provider model name
-      CHAT_MODEL=openai/gpt-4o #provider model name
+      INFERENCE_MODEL=ollama_chat/qwen2.5-coder:7b #provider model name
+      CHAT_MODEL=ollama_chat/qwen2.5-coder:7b #provider model name
       ```
       **`INFERENCE_MODEL`** and **`CHAT_MODEL`** correspond to the models that will be used for generating knowledge graph and for agent reasoning respectively. These model names should be in the format of `provider/model_name` format or as expected by Litellm. For more information, refer to the [Litellm documentation](https://docs.litellm.ai/docs/providers).
       <br>
