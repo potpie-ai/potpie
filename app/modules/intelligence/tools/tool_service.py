@@ -96,8 +96,8 @@ class ToolService:
             "get_node_neighbours_from_node_id": get_node_neighbours_from_node_id_tool(
                 self.db
             ),
-            "get_linear_issue": get_linear_issue_tool(),
-            "update_linear_issue": update_linear_issue_tool(),
+            "get_linear_issue": get_linear_issue_tool(self.db, self.user_id),
+            "update_linear_issue": update_linear_issue_tool(self.db, self.user_id),
         }
 
         if self.webpage_extractor_tool:

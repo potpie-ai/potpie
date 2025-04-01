@@ -59,6 +59,7 @@ class CodeGenAgent(ChatAgent):
                 "get_code_file_structure",
                 "webpage_extractor",
                 "github_tool",
+                "get_linear_issue",
             ]
         )
         if self.llm_provider.is_current_model_supported_by_pydanticai(

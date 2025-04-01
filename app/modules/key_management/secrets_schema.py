@@ -1,5 +1,5 @@
 import re
-from typing import Optional
+from typing import Optional, Literal, List
 
 from pydantic import BaseModel, field_validator
 
@@ -110,4 +110,30 @@ class CreateSecretRequest(BaseSecretRequest):
 
 
 class APIKeyResponse(BaseModel):
+    api_key: str
+
+
+# New schema classes for integration keys
+class IntegrationKey(BaseModel):
+    api_key: str
+    service: Literal["linear", "notion"]
+
+
+class CreateIntegrationKeyRequest(BaseModel):
+    integration_keys: List[IntegrationKey]
+
+    @field_validator("integration_keys")
+    @classmethod
+    def validate_keys(cls, v):
+        if not v:
+            raise ValueError("At least one integration key must be provided")
+        return v
+
+
+class UpdateIntegrationKeyRequest(CreateIntegrationKeyRequest):
+    pass
+
+
+class IntegrationKeyResponse(BaseModel):
+    service: str
     api_key: str

@@ -5,6 +5,7 @@ import json
 import requests
 from typing import Dict, Any, Optional, List, Union
 import os
+from sqlalchemy.orm import Session
 
 
 class LinearClient:
@@ -21,7 +22,7 @@ class LinearClient:
         """
         self.api_key = api_key
         self.headers = {
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"{api_key}",
             "Content-Type": "application/json"
         }
     
@@ -181,8 +182,10 @@ class LinearClient:
 
 
 class LinearClientConfig:
+    """Configuration manager for Linear clients."""
+    
     _instance: Optional['LinearClientConfig'] = None
-    _client: Optional[LinearClient] = None
+    _default_client: Optional[LinearClient] = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -190,15 +193,97 @@ class LinearClientConfig:
         return cls._instance
 
     def __init__(self):
-        if self._client is None:
-            api_key = os.getenv('LINEAR_API_KEY')
-            if not api_key:
-                raise ValueError("LINEAR_API_KEY environment variable is not set")
-            self._client = LinearClient(api_key)
+        # Do not initialize client here - will be done on demand
+        self._default_client = None
+
+    def _get_api_key_from_env(self) -> Optional[str]:
+        """Get API key from environment variables."""
+        return os.getenv('LINEAR_API_KEY')
+
+    async def _get_api_key_from_secrets(self, user_id: str, db: Session) -> Optional[str]:
+        """Get API key from the secret manager for a specific user."""
+        from app.modules.key_management.secret_manager import SecretStorageHandler
+        
+        try:
+            # Attempt to retrieve the secret for the user
+            secret = SecretStorageHandler.get_secret(
+                service="linear", 
+                customer_id=user_id, 
+                service_type="integration",
+                db=db
+            )
+            return secret["api_key"]
+        except Exception:
+            # If any error occurs (like 404 Not Found), return None
+            return None
+
+    async def get_client(self, user_id: str, db: Session) -> LinearClient:
+        """
+        Get a Linear client for a specific user.
+        
+        Args:
+            user_id: The user ID to look up their Linear API key
+            db: The database session for secret retrieval
+            
+        Returns:
+            A configured LinearClient instance
+        
+        Raises:
+            ValueError: If no API key is available
+        """
+        # Try to get API key from user-specific secrets
+        api_key = await self._get_api_key_from_secrets(user_id, db)
+            
+        # Fall back to environment variable if needed
+        if not api_key:
+            api_key = self._get_api_key_from_env()
+            
+        if not api_key:
+            raise ValueError(
+                "No Linear API key available. Please set LINEAR_API_KEY environment variable "
+                "or configure it in user preferences via the secret manager."
+            )
+            
+        # Create a new client with the API key
+        return LinearClient(api_key)
 
     @property
-    def client(self) -> LinearClient:
-        return self._client
+    def default_client(self) -> LinearClient:
+        """Get the default client using environment variables."""
+        if self._default_client is None:
+            api_key = self._get_api_key_from_env()
+            if not api_key:
+                raise ValueError(
+                    "LINEAR_API_KEY environment variable is not set. "
+                    "Set this variable or use a user-specific client instead."
+                )
+            self._default_client = LinearClient(api_key)
+        return self._default_client
+
+async def get_linear_client_for_user(user_id: str, db: Session) -> LinearClient:
+    """
+    Get a Linear client for a specific user, using their stored API key if available.
+    
+    Args:
+        user_id: The user's ID to look up their Linear API key
+        db: Database session for secret retrieval
+        
+    Returns:
+        LinearClient: Configured client for the user
+    """
+    config = LinearClientConfig()
+    return await config.get_client(user_id, db)
 
 def get_linear_client() -> LinearClient:
-    return LinearClientConfig().client 
+    """
+    Get the default Linear client using environment variables.
+    
+    This is provided for backward compatibility or non-user-specific operations.
+    
+    Returns:
+        LinearClient: A client configured with the environment variable
+        
+    Raises:
+        ValueError: If LINEAR_API_KEY environment variable is not set
+    """
+    return LinearClientConfig().default_client 
