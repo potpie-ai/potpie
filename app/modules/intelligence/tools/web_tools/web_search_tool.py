@@ -104,20 +104,28 @@ def web_search_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
         coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="Web Search Tool",
-        description="""Searches the internet for current information and provides comprehensive results with reliable citations.
+        description="""Searches the internet for current and relevant information with citations. Designed for agent workflows that require external or recent data to supplement internal codebase knowledge.
 
-        Given detailed, specific queries rather than broad topics. Include key context,
-        specific aspects you're interested in, and any time-sensitive information needs.
+  📌 Use cases:
+  - When user queries reference APIs, frameworks, or libraries not found in the codebase.
+  - For understanding unfamiliar technologies, services, or vendors mentioned in the codebase.
+  - To research public company documentation, changelogs, or ecosystem developments.
+  - To supplement an agent's lack of training on new LLMs, SDKs, or APIs introduced after 2023.
 
-        Examples of effective queries:
-        {
-            "query": "Tell me what is Potpie.ai about? Which websites have covered its functionality and who are its partners?"
-        }
+  🧠 Tips for forming good queries:
+  - Be descriptive and specific: include context, technologies, dates, and desired insights.
+  - Frame queries as complete questions or short paragraphs.
+  - Include what you're trying to understand, not just keywords.
 
-        Returns a dictionary containing:
-        - 'content': A comprehensive answer based on current web information
-        - 'citations': List of specific sources used in the answer for verification
-        - 'success': Boolean indicating whether the search was successful
-        """,
+  ✅ Example of an effective query:
+  {
+      "query": "What is Potpie.ai? Which websites have reviewed it recently and what features are highlighted by partners or reviewers?"
+  }
+
+  📦 Returns:
+  - 'content': Rich, paragraph-style answer based on recent web results.
+  - 'citations': List of source URLs referenced.
+  - 'success': Whether the search and response were successful.
+  """,
         args_schema=WebSearchToolInput,
     )
