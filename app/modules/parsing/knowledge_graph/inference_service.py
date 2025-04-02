@@ -171,7 +171,7 @@ class InferenceService:
             result = session.run(
                 """
                 UNWIND $node_ids AS nodeId
-                MATCH (n:FUNCTION:FILE)
+                MATCH (n:FUNCTION)
                 WHERE n.node_id = nodeId and n.repoId = $repo_id
                 OPTIONAL MATCH path = (entryPoint)-[*]->(n)
                 WHERE NOT (entryPoint)<--()

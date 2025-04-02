@@ -1,5 +1,8 @@
 import json
+from app.modules.intelligence.agents.chat_agents.adaptive_agent import AdaptiveAgent
 from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
+from app.modules.intelligence.prompts.classification_prompts import AgentType
+from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
@@ -20,9 +23,11 @@ class IntegrationTestAgent(ChatAgent):
         self,
         llm_provider: ProviderService,
         tools_provider: ToolService,
+        prompt_provider: PromptService,
     ):
         self.llm_provider = llm_provider
         self.tools_provider = tools_provider
+        self.prompt_provider = prompt_provider
 
     def _build_agent(self) -> ChatAgent:
         agent_config = AgentConfig(
@@ -48,10 +53,17 @@ class IntegrationTestAgent(ChatAgent):
             ]
         )
 
-        if self.llm_provider.is_current_model_supported_by_pydanticai():
+        if self.llm_provider.is_current_model_supported_by_pydanticai(
+            config_type="chat"
+        ):
             return PydanticRagAgent(self.llm_provider, agent_config, tools)
         else:
-            return CrewAIAgent(self.llm_provider, agent_config, tools)
+            return AdaptiveAgent(
+                llm_provider=self.llm_provider,
+                prompt_provider=self.prompt_provider,
+                rag_agent=CrewAIAgent(self.llm_provider, agent_config, tools),
+                agent_type=AgentType.INTEGRATION_TEST,
+            )
 
     def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if not ctx.node_ids or len(ctx.node_ids) == 0:

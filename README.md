@@ -49,7 +49,7 @@ Prompt-To-Agent: Create custom engineering agents for your code
 Potpie is an open-source platform that creates AI agents specialized in your codebase, enabling automated code analysis, testing, and development tasks. By building a comprehensive knowledge graph of your code, Potpie's agents can understand complex relationships and assist with everything from debugging to feature development.
 
 <p align="center">
-<img width="1506" alt="Screenshot 2025-01-09 at 2 18 18 PM" src="https://github.com/user-attachments/assets/a400b48f-dc4c-47b1-a42b-26eaf062adb2" />
+<img width="1506" alt="Screenshot 2025-03-28 at 2 51 34 PM" src="https://github.com/user-attachments/assets/dc45286f-4aa6-46d1-950f-cc77ceccce3d" />
 
 </p>
 
@@ -112,7 +112,6 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
 
 ### Prerequisites
 - Docker installed and running
-- OpenAI API key
 - Git installed (for repository access)
 - Python 3.10.x
 
@@ -171,7 +170,6 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
       ```bash
       isDevelopmentMode=enabled
       ENV=development
-      OPENAI_API_KEY=<your-openai-key>
       POSTGRES_SERVER=postgresql://postgres:mysecretpassword@localhost:5432/momentum
       NEO4J_URI=bolt://127.0.0.1:7687
       NEO4J_USERNAME=neo4j
@@ -183,8 +181,8 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
       defaultUsername=defaultuser
       PROJECT_PATH=projects #repositories will be downloaded/cloned to this path on your system.
       {PROVIDER}_API_KEY=sk-proj-your-key #your provider key e.g. ANTHROPIC_API_KEY for Anthropic
-      INFERENCE_MODEL=openai/gpt-4o-mini #provider model name
-      CHAT_MODEL=openai/gpt-4o #provider model name
+      INFERENCE_MODEL=ollama_chat/qwen2.5-coder:7b #provider model name
+      CHAT_MODEL=ollama_chat/qwen2.5-coder:7b #provider model name
       ```
       **`INFERENCE_MODEL`** and **`CHAT_MODEL`** correspond to the models that will be used for generating knowledge graph and for agent reasoning respectively. These model names should be in the format of `provider/model_name` format or as expected by Litellm. For more information, refer to the [Litellm documentation](https://docs.litellm.ai/docs/providers).
       <br>
