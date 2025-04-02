@@ -53,7 +53,7 @@ class WebSearchTool:
             if not response:
                 response = {
                     "success": False,
-                    "response": "Tool Call Failed",
+                    "content": "Tool Call Failed",
                     "citations": [],
                 }
             return response
@@ -61,9 +61,10 @@ class WebSearchTool:
             logging.exception(f"Error {str(e)}")
             response = {
                 "success": False,
-                "response": "Tool Call Error",
+                "content": "Tool Call Error",
                 "citations": [],
             }
+            return response
 
     def _make_llm_call(self, query: str) -> Dict[str, Any]:
         try:
