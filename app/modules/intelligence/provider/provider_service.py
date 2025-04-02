@@ -72,7 +72,7 @@ AVAILABLE_MODELS = [
         is_inference_model=True,
     ),
     AvailableModelOption(
-        id="openrouter/deepseek/deepseek-chat",
+        id="openrouter/deepseek/deepseek-chat-v3-0324",
         name="DeepSeek V3",
         description="DeepSeek's latest chat model",
         provider="deepseek",

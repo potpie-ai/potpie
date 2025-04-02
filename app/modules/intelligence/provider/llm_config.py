@@ -26,7 +26,7 @@ MODEL_CONFIG_MAP = {
         "default_params": {"temperature": 0.2, "max_tokens": 8000},
     },
     # DeepSeek Models
-    "openrouter/deepseek/deepseek-chat": {
+    "openrouter/deepseek/deepseek-chat-v3-0324": {
         "provider": "deepseek",
         "default_params": {"temperature": 0.3, "max_tokens": 8000},
     },
