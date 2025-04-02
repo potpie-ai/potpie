@@ -103,7 +103,7 @@ class WebSearchTool:
 def web_search_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
     tool_instance = WebSearchTool(sql_db, user_id)
     if tool_instance.api_key == "None":
-        # DO NOT USE THIS TOOL IF THE API KEY IS NOT SET 
+        # DO NOT USE THIS TOOL IF THE API KEY IS NOT SET
         return None
     return StructuredTool.from_function(
         coroutine=tool_instance.arun,
