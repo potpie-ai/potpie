@@ -72,7 +72,7 @@ AVAILABLE_MODELS = [
         is_inference_model=True,
     ),
     AvailableModelOption(
-        id="openrouter/deepseek/deepseek-chat",
+        id="openrouter/deepseek/deepseek-chat-v3-0324",
         name="DeepSeek V3",
         description="DeepSeek's latest chat model",
         provider="deepseek",
@@ -301,7 +301,6 @@ class ProviderService:
     ) -> bool:
         """Check if the current model is supported by PydanticAI."""
         config = self.chat_config if config_type == "chat" else self.inference_config
-        logging.info(f"current provider for user: {config.provider}")
         return config.provider in ["openai", "anthropic"]
 
     async def call_llm(
