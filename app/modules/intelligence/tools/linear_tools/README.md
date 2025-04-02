@@ -46,7 +46,7 @@ async def configure_linear_api_key(
         CreateIntegrationKeyRequest,
         IntegrationKey,
     )
-    
+
     request = CreateIntegrationKeyRequest(
         integration_keys=[
             IntegrationKey(
@@ -55,14 +55,14 @@ async def configure_linear_api_key(
             )
         ]
     )
-    
+
     # Store the key in the secret manager
     SecretManager.create_integration_keys(
         request=request,
         user=user,
         db=db
     )
-    
+
     return {"message": "Linear API key configured successfully"}
 ```
 
@@ -117,4 +117,4 @@ python -m app.modules.intelligence.tools.linear_tools.test_client --user-id=user
 - If no user-specific key is found, it falls back to the environment variable
 - If neither is available, it will raise an error
 - Unlike traditional tools, both `db` and `user_id` are required parameters
-- User context is injected when the tool is initialized, not when it's called 
+- User context is injected when the tool is initialized, not when it's called

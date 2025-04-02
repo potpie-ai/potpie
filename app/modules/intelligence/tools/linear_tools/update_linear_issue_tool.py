@@ -4,17 +4,25 @@ from pydantic import BaseModel, Field
 from langchain_core.tools import StructuredTool
 from sqlalchemy.orm import Session
 
-from app.modules.intelligence.tools.linear_tools.linear_client import get_linear_client_for_user
+from app.modules.intelligence.tools.linear_tools.linear_client import (
+    get_linear_client_for_user,
+)
 from app.modules.key_management.secret_manager import SecretStorageHandler
+
 
 class UpdateLinearIssueInput(BaseModel):
     issue_id: str = Field(description="The ID of the Linear issue to update")
     title: Optional[str] = Field(None, description="New title for the issue")
-    description: Optional[str] = Field(None, description="New description for the issue")
+    description: Optional[str] = Field(
+        None, description="New description for the issue"
+    )
     status: Optional[str] = Field(None, description="New status for the issue")
-    assignee_id: Optional[str] = Field(None, description="ID of the user to assign the issue to")
+    assignee_id: Optional[str] = Field(
+        None, description="ID of the user to assign the issue to"
+    )
     priority: Optional[int] = Field(None, description="New priority for the issue")
     comment: Optional[str] = Field(None, description="Comment to add to the issue")
+
 
 class UpdateLinearIssueTool:
     name = "Update Linear Issue"
@@ -42,7 +50,7 @@ class UpdateLinearIssueTool:
         status: Optional[str] = None,
         assignee_id: Optional[str] = None,
         priority: Optional[int] = None,
-        comment: Optional[str] = None
+        comment: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Async version that handles the core logic"""
         try:
@@ -51,9 +59,9 @@ class UpdateLinearIssueTool:
                 service="linear",
                 customer_id=self.user_id,
                 service_type="integration",
-                db=self.db
+                db=self.db,
             )
-            
+
             if not has_key:
                 return {
                     "error": "Please head to the Key Management screen and add your Linear API Key in order to use Linear operations"
@@ -61,7 +69,7 @@ class UpdateLinearIssueTool:
 
             # Get the user-specific client
             client = await get_linear_client_for_user(self.user_id, self.db)
-            
+
             # Prepare update data
             update_data = {}
             if title is not None:
@@ -74,7 +82,7 @@ class UpdateLinearIssueTool:
                 update_data["assigneeId"] = assignee_id
             if priority is not None:
                 update_data["priority"] = priority
-                
+
             # Update the issue if there are changes
             if update_data:
                 result = client.update_issue(issue_id, update_data)
@@ -82,22 +90,28 @@ class UpdateLinearIssueTool:
             else:
                 # If no updates, fetch current issue state
                 issue = client.get_issue(issue_id)
-                
+
             # Add comment if provided
             comment_result = None
             if comment:
                 comment_result = client.comment_create(issue_id, comment)
-                
+
             # Return updated issue details
             return {
                 "id": issue["id"],
                 "title": issue["title"],
                 "description": issue["description"],
                 "status": issue["state"]["name"] if issue.get("state") else None,
-                "assignee": issue["assignee"]["name"] if issue.get("assignee") else None,
+                "assignee": (
+                    issue["assignee"]["name"] if issue.get("assignee") else None
+                ),
                 "priority": issue["priority"],
                 "updated_at": str(issue["updatedAt"]),
-                "comment_added": bool(comment_result and comment_result["success"] if comment_result else False)
+                "comment_added": bool(
+                    comment_result and comment_result["success"]
+                    if comment_result
+                    else False
+                ),
             }
         except Exception as e:
             raise ValueError(f"Error updating Linear issue: {str(e)}")
@@ -110,29 +124,24 @@ class UpdateLinearIssueTool:
         status: Optional[str] = None,
         assignee_id: Optional[str] = None,
         priority: Optional[int] = None,
-        comment: Optional[str] = None
+        comment: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Synchronous version that runs the async version"""
         return asyncio.run(
             self.arun(
-                issue_id,
-                title,
-                description,
-                status,
-                assignee_id,
-                priority,
-                comment
+                issue_id, title, description, status, assignee_id, priority, comment
             )
         )
+
 
 def update_linear_issue_tool(db: Session, user_id: str) -> StructuredTool:
     """
     Create a tool for updating Linear issues with user context.
-    
+
     Args:
         db: Database session for secret retrieval
         user_id: The user ID to fetch their specific Linear API key
-        
+
     Returns:
         A configured StructuredTool for updating Linear issues
     """
@@ -151,4 +160,4 @@ def update_linear_issue_tool(db: Session, user_id: str) -> StructuredTool:
                        - priority (int, optional): New priority for the issue
                        - comment (str, optional): Comment to add to the issue""",
         args_schema=UpdateLinearIssueInput,
-    ) 
+    )
