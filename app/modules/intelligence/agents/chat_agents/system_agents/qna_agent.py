@@ -52,6 +52,7 @@ class QnAAgent(ChatAgent):
                 "get_code_file_structure",
                 "webpage_extractor",
                 "github_tool",
+                "get_linear_issue",
             ]
         )
 

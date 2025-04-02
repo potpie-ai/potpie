@@ -47,6 +47,8 @@ class LowLevelDesignAgent(ChatAgent):
                 "get_nodes_from_tags",
                 "webpage_extractor",
                 "github_tool",
+                "think",
+                "get_linear_issue",
             ]
         )
 
