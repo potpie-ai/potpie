@@ -37,7 +37,9 @@ class WebSearchTool:
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db
         self.user_id = user_id
-        self.api_key = os.getenv("OPENROUTER_API_KEY")
+        self.api_key = os.getenv("OPENROUTER_API_KEY", "None")
+        if self.api_key == "None":
+            logging.warning("OPENROUTER_API_KEY environment variable is not set")
         self.temperature = 0.3
         self.max_tokens = 12000
         self.output_schema = WebSearchToolOutput
@@ -98,8 +100,10 @@ class WebSearchTool:
 
 
 def web_search_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
-
     tool_instance = WebSearchTool(sql_db, user_id)
+    if tool_instance.api_key == "None":
+        # DO NOT USE THIS TOOL IF THE API KEY IS NOT SET 
+        return None
     return StructuredTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
