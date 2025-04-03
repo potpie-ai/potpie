@@ -51,6 +51,7 @@ class QnAAgent(ChatAgent):
                 "get_nodes_from_tags",
                 "get_code_file_structure",
                 "webpage_extractor",
+                "web_search_tool",
                 "github_tool",
             ]
         )
