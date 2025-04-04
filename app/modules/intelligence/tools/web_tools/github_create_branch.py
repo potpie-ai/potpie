@@ -1,7 +1,6 @@
 import logging
 import os
 import random
-from langchain.tools import BaseTool
 from typing import Dict, Any, List, Optional, Type
 from pydantic import BaseModel, Field
 from github import Github
@@ -12,7 +11,6 @@ from sqlalchemy.orm import Session
 from langchain_core.tools import StructuredTool
 
 from app.core.config_provider import config_provider
-from app.modules.users.user_model import User
 
 
 class GitHubCreateBranchInput(BaseModel):

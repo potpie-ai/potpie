@@ -1,7 +1,6 @@
 import logging
 import os
 import random
-from langchain.tools import BaseTool
 from typing import Dict, Any, List, Optional, Type
 from pydantic import BaseModel, Field
 from github import Github

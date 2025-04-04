@@ -1,7 +1,7 @@
 import logging
 import os
 import random
-from typing import Dict, Any, Optional, Type, List, Union
+from typing import Dict, Any, Optional, Type, List
 from pydantic import BaseModel, Field
 from github import Github
 from github.GithubException import GithubException
