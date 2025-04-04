@@ -157,7 +157,10 @@ class ConversationService:
         return ConversationAccessType.NOT_FOUND
 
     async def create_conversation(
-        self, conversation: CreateConversationRequest, user_id: str, hidden: bool = False
+        self,
+        conversation: CreateConversationRequest,
+        user_id: str,
+        hidden: bool = False,
     ) -> tuple[str, str]:
         try:
             if not await self.agent_service.validate_agent_id(
@@ -204,7 +207,11 @@ class ConversationService:
             ) from e
 
     def _create_conversation_record(
-        self, conversation: CreateConversationRequest, title: str, user_id: str, hidden: bool = False
+        self,
+        conversation: CreateConversationRequest,
+        title: str,
+        user_id: str,
+        hidden: bool = False,
     ) -> str:
         conversation_id = str(uuid7())
         new_conversation = Conversation(

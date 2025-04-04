@@ -9,7 +9,10 @@ from sqlalchemy import desc
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.modules.conversations.conversation.conversation_model import Conversation, ConversationStatus
+from app.modules.conversations.conversation.conversation_model import (
+    Conversation,
+    ConversationStatus,
+)
 from app.modules.users.user_model import User
 from app.modules.users.user_schema import CreateUser, UserProfileResponse
 
@@ -119,7 +122,10 @@ class UserService:
         try:
             conversations = (
                 self.db.query(Conversation)
-                .filter(Conversation.user_id == user_id, Conversation.status == ConversationStatus.ACTIVE)
+                .filter(
+                    Conversation.user_id == user_id,
+                    Conversation.status == ConversationStatus.ACTIVE,
+                )
                 .order_by(desc(Conversation.updated_at))
                 .offset(start)
                 .limit(limit)

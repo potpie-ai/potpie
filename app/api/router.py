@@ -61,7 +61,9 @@ async def get_api_key_user(
 @router.post("/conversations/", response_model=CreateConversationResponse)
 async def create_conversation(
     conversation: SimpleConversationRequest,
-    hidden: bool = Query(True, description="Whether to hide this conversation from the web UI"),
+    hidden: bool = Query(
+        True, description="Whether to hide this conversation from the web UI"
+    ),
     db: Session = Depends(get_db),
     user=Depends(get_api_key_user),
 ):
@@ -119,7 +121,9 @@ async def post_message(
 async def create_conversation_and_message(
     project_id: str,
     message: DirectMessageRequest,
-    hidden: bool = Query(True, description="Whether to hide this conversation from the web UI"),
+    hidden: bool = Query(
+        True, description="Whether to hide this conversation from the web UI"
+    ),
     db: Session = Depends(get_db),
     user=Depends(get_api_key_user),
 ):
@@ -133,7 +137,7 @@ async def create_conversation_and_message(
         message.agent_id = "codebase_qna_agent"
 
     controller = ConversationController(db, user_id, None)
-    
+
     # Create conversation with hidden parameter
     res = await controller.create_conversation(
         CreateConversationRequest(
@@ -143,7 +147,7 @@ async def create_conversation_and_message(
             agent_ids=[message.agent_id],
             status=ConversationStatus.ACTIVE,  # Let hidden parameter control the final status
         ),
-        hidden
+        hidden,
     )
 
     message_stream = controller.post_message(
