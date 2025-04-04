@@ -211,7 +211,7 @@ class ProviderService:
         api_key = self._get_api_key(config.model.split("/")[0])
         return config.get_llm_params(api_key)
 
-    def _get_extra_params_and_headers(
+    def get_extra_params_and_headers(
         self, routing_provider: Optional[str]
     ) -> tuple[dict[str, Any], Any]:
         """Get extra parameters and headers for API calls."""
@@ -315,7 +315,7 @@ class ProviderService:
         routing_provider = config.model.split("/")[0]
 
         # Get extra parameters and headers for API calls
-        extra_params, _ = self._get_extra_params_and_headers(routing_provider)
+        extra_params, _ = self.get_extra_params_and_headers(routing_provider)
         params.update(extra_params)
 
         # Handle streaming response if requested
@@ -351,7 +351,7 @@ class ProviderService:
         routing_provider = config.model.split("/")[0]
 
         # Get extra parameters and headers
-        extra_params, _ = self._get_extra_params_and_headers(routing_provider)
+        extra_params, _ = self.get_extra_params_and_headers(routing_provider)
 
         try:
             if config.provider == "ollama":
@@ -391,7 +391,7 @@ class ProviderService:
         routing_provider = config.model.split("/")[0]
 
         # Get extra parameters and headers
-        extra_params, headers = self._get_extra_params_and_headers(routing_provider)
+        extra_params, headers = self.get_extra_params_and_headers(routing_provider)
 
         if agent_type == AgentProvider.CREWAI:
             crewai_params = {"model": params["model"], **params}

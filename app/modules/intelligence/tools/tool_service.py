@@ -45,6 +45,7 @@ from app.modules.intelligence.tools.linear_tools import (
     get_linear_issue_tool,
     update_linear_issue_tool,
 )
+from app.modules.intelligence.tools.web_tools.web_search_tool import web_search_tool
 from app.modules.intelligence.provider.provider_service import ProviderService
 from langchain_core.tools import StructuredTool
 from .think_tool import think_tool
@@ -55,6 +56,7 @@ class ToolService:
         self.db = db
         self.user_id = user_id
         self.webpage_extractor_tool = webpage_extractor_tool(db, user_id)
+        self.web_search_tool = web_search_tool(db, user_id)
         self.github_tool = github_tool(db, user_id)
         self.get_code_from_multiple_node_ids_tool = GetCodeFromMultipleNodeIdsTool(
             self.db, self.user_id
@@ -104,6 +106,9 @@ class ToolService:
 
         if self.github_tool:
             tools["github_tool"] = self.github_tool
+
+        if self.web_search_tool:
+            tools["web_search_tool"] = self.web_search_tool
 
         return tools
 
