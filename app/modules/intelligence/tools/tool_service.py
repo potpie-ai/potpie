@@ -38,6 +38,12 @@ from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool impo
 )
 from app.modules.intelligence.tools.tool_schema import ToolInfo, ToolInfoWithParameters
 from app.modules.intelligence.tools.web_tools.github_tool import github_tool
+from app.modules.intelligence.tools.web_tools import (
+    github_create_branch,
+    github_update_branch,
+    github_create_pr,
+    github_add_pr_comment,
+)
 from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import (
     webpage_extractor_tool,
 )
@@ -91,6 +97,18 @@ class ToolService:
                 self.db, self.provider_service, self.user_id
             ),
             "think": think_tool(self.db, self.user_id),
+            "github_create_branch": github_create_branch.github_create_branch_tool(
+                self.db, self.user_id
+            ),
+            "github_update_branch": github_update_branch.github_update_branch_tool(
+                self.db, self.user_id
+            ),
+            "github_create_pull_request": github_create_pr.github_create_pull_request_tool(
+                self.db, self.user_id
+            ),
+            "github_add_pr_comments": github_add_pr_comment.git_add_pr_comments_tool(
+                self.db, self.user_id
+            ),
         }
 
         if self.webpage_extractor_tool:
