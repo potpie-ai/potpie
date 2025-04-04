@@ -157,7 +157,7 @@ class ConversationService:
         return ConversationAccessType.NOT_FOUND
 
     async def create_conversation(
-        self, conversation: CreateConversationRequest, user_id: str
+        self, conversation: CreateConversationRequest, user_id: str, hidden: bool = False
     ) -> tuple[str, str]:
         try:
             if not await self.agent_service.validate_agent_id(
@@ -178,7 +178,7 @@ class ConversationService:
             )
 
             conversation_id = self._create_conversation_record(
-                conversation, title, user_id
+                conversation, title, user_id, hidden
             )
 
             asyncio.create_task(
@@ -204,14 +204,14 @@ class ConversationService:
             ) from e
 
     def _create_conversation_record(
-        self, conversation: CreateConversationRequest, title: str, user_id: str
+        self, conversation: CreateConversationRequest, title: str, user_id: str, hidden: bool = False
     ) -> str:
         conversation_id = str(uuid7())
         new_conversation = Conversation(
             id=conversation_id,
             user_id=user_id,
             title=title,
-            status=ConversationStatus.ACTIVE,
+            status=ConversationStatus.ARCHIVED if hidden else ConversationStatus.ACTIVE,
             project_ids=conversation.project_ids,
             agent_ids=conversation.agent_ids,
             created_at=datetime.now(timezone.utc),
@@ -220,7 +220,7 @@ class ConversationService:
         self.sql_db.add(new_conversation)
         self.sql_db.commit()
         logger.info(
-            f"Project id : {conversation.project_ids[0]} Created new conversation with ID: {conversation_id}, title: {title}, user_id: {user_id}, agent_id: {conversation.agent_ids[0]}"
+            f"Project id : {conversation.project_ids[0]} Created new conversation with ID: {conversation_id}, title: {title}, user_id: {user_id}, agent_id: {conversation.agent_ids[0]}, hidden: {hidden}"
         )
         return conversation_id
 

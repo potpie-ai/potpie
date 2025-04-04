@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -61,6 +61,7 @@ async def get_api_key_user(
 @router.post("/conversations/", response_model=CreateConversationResponse)
 async def create_conversation(
     conversation: SimpleConversationRequest,
+    hidden: bool = Query(True, description="Whether to hide this conversation from the web UI"),
     db: Session = Depends(get_db),
     user=Depends(get_api_key_user),
 ):
@@ -69,13 +70,13 @@ async def create_conversation(
     full_request = CreateConversationRequest(
         user_id=user_id,
         title=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        status=ConversationStatus.ARCHIVED,
+        status=ConversationStatus.ACTIVE,  # Let hidden parameter control the final status
         project_ids=conversation.project_ids,
         agent_ids=conversation.agent_ids,
     )
 
     controller = ConversationController(db, user_id, None)
-    return await controller.create_conversation(full_request)
+    return await controller.create_conversation(full_request, hidden)
 
 
 @router.post("/parse")
@@ -118,6 +119,7 @@ async def post_message(
 async def create_conversation_and_message(
     project_id: str,
     message: DirectMessageRequest,
+    hidden: bool = Query(True, description="Whether to hide this conversation from the web UI"),
     db: Session = Depends(get_db),
     user=Depends(get_api_key_user),
 ):
@@ -131,14 +133,17 @@ async def create_conversation_and_message(
         message.agent_id = "codebase_qna_agent"
 
     controller = ConversationController(db, user_id, None)
+    
+    # Create conversation with hidden parameter
     res = await controller.create_conversation(
         CreateConversationRequest(
             user_id=user_id,
             title=message.content,
             project_ids=[project_id],
             agent_ids=[message.agent_id],
-            status=ConversationStatus.ACTIVE,
-        )
+            status=ConversationStatus.ACTIVE,  # Let hidden parameter control the final status
+        ),
+        hidden
     )
 
     message_stream = controller.post_message(
