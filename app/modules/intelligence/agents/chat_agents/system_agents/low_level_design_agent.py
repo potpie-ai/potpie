@@ -48,6 +48,8 @@ class LowLevelDesignAgent(ChatAgent):
                 "webpage_extractor",
                 "web_search_tool",
                 "github_tool",
+                "think",
+                "get_linear_issue",
             ]
         )
 
