@@ -53,6 +53,7 @@ class DebugAgent(ChatAgent):
                 "webpage_extractor",
                 "web_search_tool",
                 "github_tool",
+                "get_linear_issue",
             ]
         )
 
