@@ -204,7 +204,7 @@ class LinearClientConfig:
             secret = SecretStorageHandler.get_secret(
                 service="linear", customer_id=user_id, service_type="integration", db=db
             )
-            return secret["api_key"]
+            return secret
         except Exception:
             # If any error occurs (like 404 Not Found), return None
             return None
