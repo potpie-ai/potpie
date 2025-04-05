@@ -43,7 +43,13 @@ class GeneralPurposeAgent(ChatAgent):
             ],
         )
         tools = self.tools_provider.get_tools(
-            ["webpage_extractor", "github_tool", "get_linear_issue", "web_search_tool"]
+            [
+                "webpage_extractor",
+                "github_tool",
+                "get_linear_issue",
+                "update_linear_issue",
+                "web_search_tool",
+            ]
         )
 
         if self.llm_provider.is_current_model_supported_by_pydanticai(
