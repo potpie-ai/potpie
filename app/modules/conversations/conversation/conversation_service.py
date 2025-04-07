@@ -667,7 +667,7 @@ class ConversationService:
             )
 
             agent_id = conversation.agent_ids[0] if conversation.agent_ids else None
-
+            agent_ids = conversation.agent_ids
             if agent_id:
                 system_agents = self.agent_service._system_agents(
                     self.provider_service, 
