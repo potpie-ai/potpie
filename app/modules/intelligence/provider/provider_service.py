@@ -211,6 +211,7 @@ class ProviderService:
         api_key = self._get_api_key(config.model.split("/")[0])
         return config.get_llm_params(api_key)
 
+
     def get_extra_params_and_headers(
         self, routing_provider: Optional[str]
     ) -> tuple[dict[str, Any], Any]:
