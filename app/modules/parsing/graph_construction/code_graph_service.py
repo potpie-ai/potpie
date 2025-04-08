@@ -49,10 +49,12 @@ class CodeGraphService:
             logging.info(f"Creating {node_count} nodes")
 
             # Create specialized index for relationship queries
-            session.run("""
-                CREATE INDEX node_id_repo_idx IF NOT EXISTS 
+            session.run(
+                """
+                CREATE INDEX node_id_repo_idx IF NOT EXISTS
                 FOR (n:NODE) ON (n.node_id, n.repoId)
-            """)
+            """
+            )
 
             # Batch insert nodes
             batch_size = 1000
@@ -112,28 +114,41 @@ class CodeGraphService:
             for source, target, data in nx_graph.edges(data=True):
                 rel_type = data.get("type", "REFERENCES")
                 rel_types.add(rel_type)
-            
+
             # Process relationships with huge batch size and type-specific queries
-            batch_size = 5000  # Increased batch size (50000 might be too large for memory)
-            
+            batch_size = (
+                5000  # Increased batch size (50000 might be too large for memory)
+            )
+
             for rel_type in rel_types:
                 # Filter edges by relationship type
-                type_edges = [(s, t, d) for s, t, d in nx_graph.edges(data=True) 
-                            if d.get("type", "REFERENCES") == rel_type]
-                
-                logging.info(f"Creating {len(type_edges)} relationships of type {rel_type}")
-                
+                type_edges = [
+                    (s, t, d)
+                    for s, t, d in nx_graph.edges(data=True)
+                    if d.get("type", "REFERENCES") == rel_type
+                ]
+
+                logging.info(
+                    f"Creating {len(type_edges)} relationships of type {rel_type}"
+                )
+
                 for i in range(0, len(type_edges), batch_size):
-                    batch_edges = type_edges[i:i+batch_size]
+                    batch_edges = type_edges[i : i + batch_size]
                     edges_to_create = []
-                    
+
                     for source, target, data in batch_edges:
-                        edges_to_create.append({
-                            "source_id": CodeGraphService.generate_node_id(source, user_id),
-                            "target_id": CodeGraphService.generate_node_id(target, user_id),
-                            "repoId": project_id
-                        })
-                    
+                        edges_to_create.append(
+                            {
+                                "source_id": CodeGraphService.generate_node_id(
+                                    source, user_id
+                                ),
+                                "target_id": CodeGraphService.generate_node_id(
+                                    target, user_id
+                                ),
+                                "repoId": project_id,
+                            }
+                        )
+
                     # Type-specific relationship creation in one transaction
                     query = f"""
                         UNWIND $edges AS edge
