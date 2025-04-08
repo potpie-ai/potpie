@@ -9,18 +9,16 @@ from app.modules.intelligence.tools.code_query_tools.get_code_file_structure imp
     get_code_file_structure_tool,
     GetCodeFileStructureTool,
 )
-from app.modules.intelligence.tools.code_query_tools.get_code_from_node_name_tool import (
-    get_code_from_node_name_tool,
-)
+
 from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id_tool import (
     get_code_graph_from_node_id_tool,
     GetCodeGraphFromNodeIdTool,
 )
-from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_name_tool import (
-    get_code_graph_from_node_name_tool,
-)
 from app.modules.intelligence.tools.code_query_tools.get_node_neighbours_from_node_id_tool import (
     get_node_neighbours_from_node_id_tool,
+)
+from app.modules.intelligence.tools.code_query_tools.intelligent_code_graph_tool import (
+    get_intelligent_code_graph_tool,
 )
 from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import (
     get_ask_knowledge_graph_queries_tool,
@@ -43,7 +41,14 @@ from app.modules.intelligence.tools.web_tools.github_tool import github_tool
 from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import (
     webpage_extractor_tool,
 )
+from app.modules.intelligence.tools.linear_tools import (
+    get_linear_issue_tool,
+    update_linear_issue_tool,
+)
+from app.modules.intelligence.tools.web_tools.web_search_tool import web_search_tool
+from app.modules.intelligence.provider.provider_service import ProviderService
 from langchain_core.tools import StructuredTool
+from .think_tool import think_tool
 
 
 class ToolService:
@@ -51,12 +56,14 @@ class ToolService:
         self.db = db
         self.user_id = user_id
         self.webpage_extractor_tool = webpage_extractor_tool(db, user_id)
+        self.web_search_tool = web_search_tool(db, user_id)
         self.github_tool = github_tool(db, user_id)
         self.get_code_from_multiple_node_ids_tool = GetCodeFromMultipleNodeIdsTool(
             self.db, self.user_id
         )
         self.get_code_graph_from_node_id_tool = GetCodeGraphFromNodeIdTool(db)
         self.file_structure_tool = GetCodeFileStructureTool(db)
+        self.provider_service = ProviderService.create(db, user_id)
         self.tools = self._initialize_tools()
 
     def get_tools(self, tool_names: List[str]) -> List[StructuredTool]:
@@ -80,18 +87,18 @@ class ToolService:
                 self.db, self.user_id
             ),
             "get_nodes_from_tags": get_nodes_from_tags_tool(self.db, self.user_id),
-            "get_code_from_node_name": get_code_from_node_name_tool(
-                self.db, self.user_id
-            ),
             "get_code_graph_from_node_id": get_code_graph_from_node_id_tool(self.db),
-            "get_code_graph_from_node_name": get_code_graph_from_node_name_tool(
-                self.db
-            ),
             "change_detection": get_change_detection_tool(self.user_id),
             "get_code_file_structure": get_code_file_structure_tool(self.db),
             "get_node_neighbours_from_node_id": get_node_neighbours_from_node_id_tool(
                 self.db
             ),
+            "get_linear_issue": get_linear_issue_tool(self.db, self.user_id),
+            "update_linear_issue": update_linear_issue_tool(self.db, self.user_id),
+            "intelligent_code_graph": get_intelligent_code_graph_tool(
+                self.db, self.provider_service, self.user_id
+            ),
+            "think": think_tool(self.db, self.user_id),
         }
 
         if self.webpage_extractor_tool:
@@ -99,6 +106,9 @@ class ToolService:
 
         if self.github_tool:
             tools["github_tool"] = self.github_tool
+
+        if self.web_search_tool:
+            tools["web_search_tool"] = self.web_search_tool
 
         return tools
 

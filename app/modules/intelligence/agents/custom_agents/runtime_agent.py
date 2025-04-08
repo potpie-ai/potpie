@@ -73,8 +73,8 @@ class RuntimeAgent:
         self.history_manager = ChatHistoryService(self.db)
         self.project_id = None
         self.agent = None
-        self.llm = ProviderService(self.db, self.user_id).get_large_llm(
-            AgentProvider.CREWAI
+        self.llm = ProviderService(self.db, self.user_id).get_llm(
+            AgentProvider.CREWAI, config_type="chat"
         )
         # Initialize tools
         self.tool_service = ToolService(db, self.user_id)
@@ -144,6 +144,7 @@ class RuntimeAgent:
         node_ids: Optional[List[str]] = None,
         context: str = "",
         task_index: int = 0,
+        previous_task: Optional[Task] = None,
     ) -> Task:
         """Create a task with proper context and description"""
         if task_index >= len(self.config.tasks):
@@ -164,7 +165,8 @@ class RuntimeAgent:
         task = Task(
             description=task_description,
             agent=self.agent,
-            expected_output="Markdown formatted response with code context and explanations",
+            expected_output=f"{task_config.expected_output}",
+            context=[previous_task] if previous_task else None,
         )
 
         logger.info(f"Created task {task_index + 1} with LLM configuration")
@@ -177,6 +179,7 @@ class RuntimeAgent:
         project_id: str,
         conversation_id: str,
         node_ids: Optional[List[str]] = None,
+        task_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Main execution flow"""
         try:
@@ -187,23 +190,27 @@ class RuntimeAgent:
                     "project_id must be provided either in config or as a parameter"
                 )
 
-            # # Update project_id in all tools
-            # for tool in self.tools.values():
-            #     tool.project_id = self.project_id
-
             logger.info(f"Running agent with project_id: {self.project_id}")
 
             # Create agent
             self.agent = await self.create_agent()
 
-            # Create all tasks
+            # Create all tasks with context chaining
             tasks = []
+            previous_task = None
             for i, task_config in enumerate(self.config.tasks):
-                task = await self.create_task(query, node_ids, task_index=i)
+                task = await self.create_task(
+                    query,
+                    node_ids,
+                    "",  # Empty context string since we're using task context
+                    task_index=i,
+                    previous_task=previous_task,
+                )
                 tasks.append(task)
+                previous_task = task
                 logger.info(f"Created task {i+1}/{len(self.config.tasks)}")
 
-            # Create single crew with all tasks
+            # Create crew with all tasks
             crew = Crew(
                 agents=[self.agent],
                 tasks=tasks,

@@ -43,6 +43,7 @@ class ChatAgentResponse(BaseModel):
 
 class ChatContext(BaseModel):
     project_id: str
+    project_name: str
     curr_agent_id: str
     history: List[str]
     node_ids: Optional[List[str]] = None

@@ -171,7 +171,7 @@ class InferenceService:
             result = session.run(
                 """
                 UNWIND $node_ids AS nodeId
-                MATCH (n:FUNCTION:FILE)
+                MATCH (n:FUNCTION)
                 WHERE n.node_id = nodeId and n.repoId = $repo_id
                 OPTIONAL MATCH path = (entryPoint)-[*]->(n)
                 WHERE NOT (entryPoint)<--()
@@ -393,7 +393,9 @@ class InferenceService:
 
         try:
             result = await self.provider_service.call_llm_with_structured_output(
-                messages=messages, output_schema=DocstringResponse, size="small"
+                messages=messages,
+                output_schema=DocstringResponse,
+                config_type="inference",
             )
             return result
         except Exception as e:
@@ -571,7 +573,9 @@ class InferenceService:
 
         try:
             result = await self.provider_service.call_llm_with_structured_output(
-                messages=messages, output_schema=DocstringResponse, size="small"
+                messages=messages,
+                output_schema=DocstringResponse,
+                config_type="inference",
             )
         except Exception as e:
             logger.error(

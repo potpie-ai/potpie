@@ -364,7 +364,7 @@ class ConversationService:
             {"role": "user", "content": prompt},
         ]
         generated_title: str = await self.provider_service.call_llm(
-            messages=messages, size="small"
+            messages=messages, config_type="chat"
         )  # type: ignore
 
         if len(generated_title) > 50:
@@ -519,6 +519,10 @@ class ConversationService:
             if type is None:
                 raise ConversationServiceError(f"Invalid agent_id {agent_id}")
 
+            project_name = await self.project_service.get_project_name(
+                project_ids=[project_id]
+            )
+
             logger.info(
                 f"conversation_id: {conversation_id} Running agent {agent_id} with query: {query}"
             )
@@ -537,8 +541,9 @@ class ConversationService:
                 res = self.agent_service.execute_stream(
                     ChatContext(
                         project_id=str(project_id),
+                        project_name=project_name,
                         curr_agent_id=str(agent_id),
-                        history=validated_history[-5:],
+                        history=validated_history[-8:],
                         node_ids=[node.node_id for node in node_ids],
                         query=query,
                     )

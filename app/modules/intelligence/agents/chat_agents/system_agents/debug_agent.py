@@ -1,4 +1,7 @@
+from app.modules.intelligence.agents.chat_agents.adaptive_agent import AdaptiveAgent
 from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
+from app.modules.intelligence.prompts.classification_prompts import AgentType
+from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
@@ -13,9 +16,11 @@ class DebugAgent(ChatAgent):
         self,
         llm_provider: ProviderService,
         tools_provider: ToolService,
+        prompt_provider: PromptService,
     ):
         self.tools_provider = tools_provider
         self.llm_provider = llm_provider
+        self.prompt_provider = prompt_provider
 
     def _build_agent(self) -> ChatAgent:
         agent_config = AgentConfig(
@@ -46,14 +51,23 @@ class DebugAgent(ChatAgent):
                 "get_nodes_from_tags",
                 "get_code_file_structure",
                 "webpage_extractor",
+                "web_search_tool",
                 "github_tool",
+                "get_linear_issue",
             ]
         )
 
-        if self.llm_provider.is_current_model_supported_by_pydanticai():
+        if self.llm_provider.is_current_model_supported_by_pydanticai(
+            config_type="chat"
+        ):
             return PydanticRagAgent(self.llm_provider, agent_config, tools)
         else:
-            return CrewAIAgent(self.llm_provider, agent_config, tools)
+            return AdaptiveAgent(
+                llm_provider=self.llm_provider,
+                prompt_provider=self.prompt_provider,
+                rag_agent=CrewAIAgent(self.llm_provider, agent_config, tools),
+                agent_type=AgentType.DEBUGGING,
+            )
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if ctx.node_ids and len(ctx.node_ids) > 0:
