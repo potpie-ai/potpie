@@ -48,8 +48,16 @@ class CodeGraphService:
             node_count = nx_graph.number_of_nodes()
             logging.info(f"Creating {node_count} nodes")
 
+            # Create specialized index for relationship queries
+            session.run(
+                """
+                CREATE INDEX node_id_repo_idx IF NOT EXISTS
+                FOR (n:NODE) ON (n.node_id, n.repoId)
+            """
+            )
+
             # Batch insert nodes
-            batch_size = 300
+            batch_size = 1000
             for i in range(0, node_count, batch_size):
                 batch_nodes = list(nx_graph.nodes(data=True))[i : i + batch_size]
                 nodes_to_create = []
@@ -101,31 +109,54 @@ class CodeGraphService:
             relationship_count = nx_graph.number_of_edges()
             logging.info(f"Creating {relationship_count} relationships")
 
-            # Create relationships in batches
-            for i in range(0, relationship_count, batch_size):
-                batch_edges = list(nx_graph.edges(data=True))[i : i + batch_size]
-                edges_to_create = []
-                for source, target, data in batch_edges:
-                    edge_data = {
-                        "source_id": CodeGraphService.generate_node_id(source, user_id),
-                        "target_id": CodeGraphService.generate_node_id(target, user_id),
-                        "type": data.get("type", "REFERENCES"),
-                        "repoId": project_id,
-                    }
-                    # Remove any null values from edge_data
-                    edge_data = {k: v for k, v in edge_data.items() if v is not None}
-                    edges_to_create.append(edge_data)
+            # Pre-calculate common relationship types to avoid dynamic relationship creation
+            rel_types = set()
+            for source, target, data in nx_graph.edges(data=True):
+                rel_type = data.get("type", "REFERENCES")
+                rel_types.add(rel_type)
 
-                session.run(
-                    """
-                    UNWIND $edges AS edge
-                    MATCH (source:NODE {node_id: edge.source_id, repoId: edge.repoId})
-                    MATCH (target:NODE {node_id: edge.target_id, repoId: edge.repoId})
-                    CALL apoc.create.relationship(source, edge.type, {repoId: edge.repoId}, target) YIELD rel
-                    RETURN count(rel) AS created_count
-                    """,
-                    edges=edges_to_create,
+            # Process relationships with huge batch size and type-specific queries
+            batch_size = (
+                5000  # Increased batch size (50000 might be too large for memory)
+            )
+
+            for rel_type in rel_types:
+                # Filter edges by relationship type
+                type_edges = [
+                    (s, t, d)
+                    for s, t, d in nx_graph.edges(data=True)
+                    if d.get("type", "REFERENCES") == rel_type
+                ]
+
+                logging.info(
+                    f"Creating {len(type_edges)} relationships of type {rel_type}"
                 )
+
+                for i in range(0, len(type_edges), batch_size):
+                    batch_edges = type_edges[i : i + batch_size]
+                    edges_to_create = []
+
+                    for source, target, data in batch_edges:
+                        edges_to_create.append(
+                            {
+                                "source_id": CodeGraphService.generate_node_id(
+                                    source, user_id
+                                ),
+                                "target_id": CodeGraphService.generate_node_id(
+                                    target, user_id
+                                ),
+                                "repoId": project_id,
+                            }
+                        )
+
+                    # Type-specific relationship creation in one transaction
+                    query = f"""
+                        UNWIND $edges AS edge
+                        MATCH (source:NODE {{node_id: edge.source_id, repoId: edge.repoId}})
+                        MATCH (target:NODE {{node_id: edge.target_id, repoId: edge.repoId}})
+                        CREATE (source)-[r:{rel_type} {{repoId: edge.repoId}}]->(target)
+                    """
+                    session.run(query, edges=edges_to_create)
 
             end_time = time.time()
             logging.info(
