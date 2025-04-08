@@ -281,7 +281,6 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
 >We fed an open issue from the [**Portkey-AI/Gateway**](https://github.com/Portkey-AI/Gateway) project to this agent to generate a low level design for it: Video [here](https://www.linkedin.com/posts/dhirenmathur_potpie-ai-agents-vs-llms-i-am-extremely-activity-7255607456448286720-roOC).
 
 - **Reviewing Code Changes**: Understand the functional impact of changes and compute the blast radius of modifications.
->Here we analyse a PR from the [**mem0ai/mem0**](https://github.com/mem0ai/mem0) codebase and understand its blast radius : Video [here](https://www.linkedin.com/posts/dhirenmathur_prod-is-down-three-words-every-activity-7257007131613122560-o4A7).
 
 - **Debugging**: Get step-by-step debugging guidance based on stacktraces and codebase context.
 

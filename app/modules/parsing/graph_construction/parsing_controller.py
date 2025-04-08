@@ -82,10 +82,8 @@ class ParsingController:
         demo_repos = [
             "Portkey-AI/gateway",
             "crewAIInc/crewAI",
-            "mem0ai/mem0",
             "AgentOps-AI/agentops",
             "calcom/cal.com",
-            "SigNoz/signoz",
             "langchain-ai/langchain",
             "AgentOps-AI/AgentStack",
             "formbricks/formbricks",
