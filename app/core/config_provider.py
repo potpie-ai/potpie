@@ -32,14 +32,6 @@ class ConfigProvider:
                 "owner": "langchain-ai",
             },
             {
-                "id": "demo7",
-                "name": "signoz",
-                "full_name": "SigNoz/signoz",
-                "private": False,
-                "url": "https://github.com/SigNoz/signoz",
-                "owner": "SigNoz",
-            },
-            {
                 "id": "demo6",
                 "name": "cal.com",
                 "full_name": "calcom/cal.com",
@@ -54,14 +46,6 @@ class ConfigProvider:
                 "private": False,
                 "url": "https://github.com/formbricks/formbricks",
                 "owner": "formbricks",
-            },
-            {
-                "id": "demo4",
-                "name": "mem0",
-                "full_name": "mem0ai/mem0",
-                "private": False,
-                "url": "https://github.com/mem0ai/mem0",
-                "owner": "mem0ai",
             },
             {
                 "id": "demo3",
