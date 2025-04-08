@@ -25,8 +25,17 @@ class UserController:
             user_id, start, limit
         )
         response = []
-        agent_ids = [conversation.agent_ids[0] for conversation in conversations if conversation.agent_ids]
-        custom_agents = {agent.id: agent.role for agent in self.sql_db.query(CustomAgent).filter(CustomAgent.id.in_(agent_ids)).all()}
+        agent_ids = [
+            conversation.agent_ids[0]
+            for conversation in conversations
+            if conversation.agent_ids
+        ]
+        custom_agents = {
+            agent.id: agent.role
+            for agent in self.sql_db.query(CustomAgent)
+            .filter(CustomAgent.id.in_(agent_ids))
+            .all()
+        }
 
         for conversation in conversations:
             projects = conversation.projects

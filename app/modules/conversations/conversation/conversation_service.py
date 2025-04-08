@@ -675,11 +675,9 @@ class ConversationService:
             agent_ids = conversation.agent_ids
             if agent_id:
                 system_agents = self.agent_service._system_agents(
-                    self.provider_service, 
-                    self.prompt_service,
-                    self.tool_service
+                    self.provider_service, self.prompt_service, self.tool_service
                 )
-                
+
                 if agent_id in system_agents.keys():
                     agent_ids = conversation.agent_ids
                 else:
