@@ -79,11 +79,15 @@ class RuntimeAgent:
         # Initialize tools
         self.tool_service = ToolService(db, self.user_id)
         self.tools = {}
+        self.agent_tools = set()
+        for task_config in self.config.tasks:
+            self.agent_tools.update(task_config.tools)
         for tool_id, tool in self.get_available_tools().items():
-            tool = self.tool_service.tools[tool_id]
+            if tool_id in self.agent_tools:
+                tool = self.tool_service.tools[tool_id]
 
-            if tool:
-                self.tools[tool_id] = tool
+                if tool:
+                    self.tools[tool_id] = tool
 
     def get_available_tools(self) -> List[str]:
         """Get list of available tools from tool service"""
