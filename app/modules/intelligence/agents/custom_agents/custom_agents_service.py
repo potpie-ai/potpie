@@ -271,7 +271,7 @@ class CustomAgentService:
             query = self.db.query(CustomAgentModel)
 
             # Base query for user's own agents
-            filters = [(CustomAgentModel.user_id == user_id)]
+            filters = [CustomAgentModel.user_id == user_id]
 
             # Add public agents
             if include_public:
@@ -572,6 +572,7 @@ class CustomAgentService:
         query: str,
         node_ids: Optional[List[str]] = None,
         project_id: Optional[str] = None,
+        project_name: Optional[str] = None,
         conversation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Execute an agent at runtime without deployment"""
@@ -647,7 +648,7 @@ class CustomAgentService:
         runtime_agent = RuntimeAgent(self.db, agent_config)
         try:
             result = await runtime_agent.run(
-                agent_id, query, project_id, conversation_id, node_ids
+                agent_id, query, project_id, project_name, conversation_id, node_ids
             )
             return {"message": result["response"]}
 
