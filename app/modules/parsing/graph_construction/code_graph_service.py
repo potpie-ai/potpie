@@ -116,9 +116,7 @@ class CodeGraphService:
                 rel_types.add(rel_type)
 
             # Process relationships with huge batch size and type-specific queries
-            batch_size = (
-                1000
-            )
+            batch_size = 1000
 
             for rel_type in rel_types:
                 # Filter edges by relationship type
