@@ -117,7 +117,7 @@ class CodeGraphService:
 
             # Process relationships with huge batch size and type-specific queries
             batch_size = (
-                5000  # Increased batch size (50000 might be too large for memory)
+                1000
             )
 
             for rel_type in rel_types:
