@@ -1,4 +1,5 @@
 from datetime import datetime
+import os
 from typing import List, Optional
 
 from fastapi import Depends, Header, HTTPException
@@ -26,6 +27,7 @@ from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.parsing.graph_construction.parsing_controller import ParsingController
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.projects.projects_controller import ProjectController
+from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
 
 router = APIRouter()
@@ -37,7 +39,9 @@ class SimpleConversationRequest(BaseModel):
 
 
 async def get_api_key_user(
-    x_api_key: Optional[str] = Header(None), db: Session = Depends(get_db)
+    x_api_key: Optional[str] = Header(None),
+    x_user_id: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
 ) -> dict:
     """Dependency to validate API key and get user info."""
     if not x_api_key:
@@ -46,6 +50,16 @@ async def get_api_key_user(
             detail="API key is required",
             headers={"WWW-Authenticate": "ApiKey"},
         )
+
+    if x_api_key == os.environ.get("INTERNAL_ADMIN_SECRET"):
+        user = UserService(db).get_user_by_uid(x_user_id or "")
+        if not user:
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid user_id",
+                headers={"WWW-Authenticate": "ApiKey"},
+            )
+        return {"user_id": user.uid, "email": user.email, "auth_type": "api_key"}
 
     user = await APIKeyService.validate_api_key(x_api_key, db)
     if not user:
