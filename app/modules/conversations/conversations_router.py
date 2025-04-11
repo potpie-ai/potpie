@@ -52,16 +52,20 @@ class ConversationAPI:
         user_id = user["user_id"]
         subscription_url = os.getenv("SUBSCRIPTION_BASE_URL")
         if subscription_url:
-            subscription_url = f"{os.getenv('SUBSCRIPTION_BASE_URL')}/subscriptions/info"
+            subscription_url = (
+                f"{os.getenv('SUBSCRIPTION_BASE_URL')}/subscriptions/info"
+            )
             async with httpx.AsyncClient() as client:
-                response = await client.get(subscription_url, params={"user_id": user_id})
+                response = await client.get(
+                    subscription_url, params={"user_id": user_id}
+                )
                 subscription_data = response.json()
 
             end_date_str = subscription_data.get("end_date")
             if end_date_str:
                 end_date = datetime.fromisoformat(end_date_str)
             else:
-                end_date = datetime.utcnow() 
+                end_date = datetime.utcnow()
 
             start_date = end_date - timedelta(days=30)
 
@@ -76,7 +80,7 @@ class ConversationAPI:
             if total_human_messages >= message_limit:
                 raise HTTPException(
                     status_code=402,
-                    detail=f"Message limit of {message_limit} reached for {plan_type} plan."
+                    detail=f"Message limit of {message_limit} reached for {plan_type} plan.",
                 )
 
         user_email = user["email"]
@@ -137,16 +141,20 @@ class ConversationAPI:
         user_email = user["email"]
         subscription_url = os.getenv("SUBSCRIPTION_BASE_URL")
         if subscription_url:
-            subscription_url = f"{os.getenv('SUBSCRIPTION_BASE_URL')}/subscriptions/info"
+            subscription_url = (
+                f"{os.getenv('SUBSCRIPTION_BASE_URL')}/subscriptions/info"
+            )
             async with httpx.AsyncClient() as client:
-                response = await client.get(subscription_url, params={"user_id": user_id})
+                response = await client.get(
+                    subscription_url, params={"user_id": user_id}
+                )
                 subscription_data = response.json()
 
             end_date_str = subscription_data.get("end_date")
             if end_date_str:
                 end_date = datetime.fromisoformat(end_date_str)
             else:
-                end_date = datetime.utcnow() 
+                end_date = datetime.utcnow()
 
             start_date = end_date - timedelta(days=30)
 
@@ -161,7 +169,7 @@ class ConversationAPI:
             if total_human_messages >= message_limit:
                 raise HTTPException(
                     status_code=402,
-                    detail=f"Message limit of {message_limit} reached for {plan_type} plan."
+                    detail=f"Message limit of {message_limit} reached for {plan_type} plan.",
                 )
 
         controller = ConversationController(db, user_id, user_email)
@@ -189,21 +197,25 @@ class ConversationAPI:
         user_id = user["user_id"]
         subscription_url = os.getenv("SUBSCRIPTION_BASE_URL")
         if subscription_url:
-            subscription_url = f"{os.getenv('SUBSCRIPTION_BASE_URL')}/subscriptions/info"
+            subscription_url = (
+                f"{os.getenv('SUBSCRIPTION_BASE_URL')}/subscriptions/info"
+            )
             async with httpx.AsyncClient() as client:
-                response = await client.get(subscription_url, params={"user_id": user_id})
+                response = await client.get(
+                    subscription_url, params={"user_id": user_id}
+                )
                 subscription_data = response.json()
             subscription_data = {
                 "plan_type": "free",
                 "end_date": None,
                 "is_active": False,
-                "is_cancelled": False
+                "is_cancelled": False,
             }
             end_date_str = subscription_data.get("end_date")
-            if end_date_str :
+            if end_date_str:
                 end_date = datetime.fromisoformat(end_date_str)
             else:
-                end_date = datetime.utcnow() 
+                end_date = datetime.utcnow()
 
             start_date = end_date - timedelta(days=30)
 
@@ -218,7 +230,7 @@ class ConversationAPI:
             if total_human_messages >= message_limit:
                 raise HTTPException(
                     status_code=402,
-                    detail=f"Message limit of {message_limit} reached for {plan_type} plan."
+                    detail=f"Message limit of {message_limit} reached for {plan_type} plan.",
                 )
 
         user_email = user["email"]

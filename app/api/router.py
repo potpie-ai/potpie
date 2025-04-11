@@ -80,7 +80,7 @@ async def create_conversation(
         if end_date_str:
             end_date = datetime.fromisoformat(end_date_str)
         else:
-            end_date = datetime.utcnow() 
+            end_date = datetime.utcnow()
 
         start_date = end_date - timedelta(days=30)
 
@@ -95,7 +95,7 @@ async def create_conversation(
         if total_human_messages >= message_limit:
             raise HTTPException(
                 status_code=402,
-                detail=f"Message limit of {message_limit} reached for {plan_type} plan."
+                detail=f"Message limit of {message_limit} reached for {plan_type} plan.",
             )
 
     # Create full conversation request with defaults
@@ -151,7 +151,7 @@ async def post_message(
         if end_date_str:
             end_date = datetime.fromisoformat(end_date_str)
         else:
-            end_date = datetime.utcnow() 
+            end_date = datetime.utcnow()
 
         start_date = end_date - timedelta(days=30)
 
@@ -166,7 +166,7 @@ async def post_message(
         if total_human_messages >= message_limit:
             raise HTTPException(
                 status_code=402,
-                detail=f"Message limit of {message_limit} reached for {plan_type} plan."
+                detail=f"Message limit of {message_limit} reached for {plan_type} plan.",
             )
 
     # Note: email is no longer available with API key auth
