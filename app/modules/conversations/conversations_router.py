@@ -50,35 +50,12 @@ class ConversationAPI:
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
-        subscription_url = os.getenv("SUBSCRIPTION_BASE_URL")
-        if subscription_url:
-            subscription_url = f"{os.getenv('SUBSCRIPTION_BASE_URL')}/subscriptions/info"
-            async with httpx.AsyncClient() as client:
-                response = await client.get(subscription_url, params={"user_id": user_id})
-                subscription_data = response.json()
-
-            end_date_str = subscription_data.get("end_date")
-            if end_date_str:
-                end_date = datetime.fromisoformat(end_date_str)
-            else:
-                end_date = datetime.utcnow() 
-
-            start_date = end_date - timedelta(days=30)
-
-            usage_data = await UsageService.get_usage_data(
-                start_date=start_date, end_date=end_date, user_id=user_id
+        checked = await UsageService.check_usage_limit(user_id)
+        if not checked:
+            raise HTTPException(
+                status_code=402,
+                detail="Subscription required to create a conversation.",
             )
-            total_human_messages = usage_data["total_human_messages"]
-
-            plan_type = subscription_data.get("plan_type", "free")
-            message_limit = 500 if plan_type == "pro" else 50
-
-            if total_human_messages >= message_limit:
-                raise HTTPException(
-                    status_code=402,
-                    detail=f"Message limit of {message_limit} reached for {plan_type} plan."
-                )
-
         user_email = user["email"]
         controller = ConversationController(db, user_id, user_email)
         return await controller.create_conversation(conversation)
@@ -135,35 +112,12 @@ class ConversationAPI:
 
         user_id = user["user_id"]
         user_email = user["email"]
-        subscription_url = os.getenv("SUBSCRIPTION_BASE_URL")
-        if subscription_url:
-            subscription_url = f"{os.getenv('SUBSCRIPTION_BASE_URL')}/subscriptions/info"
-            async with httpx.AsyncClient() as client:
-                response = await client.get(subscription_url, params={"user_id": user_id})
-                subscription_data = response.json()
-
-            end_date_str = subscription_data.get("end_date")
-            if end_date_str:
-                end_date = datetime.fromisoformat(end_date_str)
-            else:
-                end_date = datetime.utcnow() 
-
-            start_date = end_date - timedelta(days=30)
-
-            usage_data = await UsageService.get_usage_data(
-                start_date=start_date, end_date=end_date, user_id=user_id
+        checked = await UsageService.check_usage_limit(user_id)
+        if not checked:
+            raise HTTPException(
+                status_code=402,
+                detail="Subscription required to create a conversation.",
             )
-            total_human_messages = usage_data["total_human_messages"]
-
-            plan_type = subscription_data.get("plan_type", "free")
-            message_limit = 500 if plan_type == "pro" else 50
-
-            if total_human_messages >= message_limit:
-                raise HTTPException(
-                    status_code=402,
-                    detail=f"Message limit of {message_limit} reached for {plan_type} plan."
-                )
-
         controller = ConversationController(db, user_id, user_email)
         message_stream = controller.post_message(conversation_id, message, stream)
         if stream:
@@ -187,40 +141,12 @@ class ConversationAPI:
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
-        subscription_url = os.getenv("SUBSCRIPTION_BASE_URL")
-        if subscription_url:
-            subscription_url = f"{os.getenv('SUBSCRIPTION_BASE_URL')}/subscriptions/info"
-            async with httpx.AsyncClient() as client:
-                response = await client.get(subscription_url, params={"user_id": user_id})
-                subscription_data = response.json()
-            subscription_data = {
-                "plan_type": "free",
-                "end_date": None,
-                "is_active": False,
-                "is_cancelled": False
-            }
-            end_date_str = subscription_data.get("end_date")
-            if end_date_str :
-                end_date = datetime.fromisoformat(end_date_str)
-            else:
-                end_date = datetime.utcnow() 
-
-            start_date = end_date - timedelta(days=30)
-
-            usage_data = await UsageService.get_usage_data(
-                start_date=start_date, end_date=end_date, user_id=user_id
+        checked = await UsageService.check_usage_limit(user_id)
+        if not checked:
+            raise HTTPException(
+                status_code=402,
+                detail="Subscription required to create a conversation.",
             )
-            total_human_messages = usage_data["total_human_messages"]
-
-            plan_type = subscription_data.get("plan_type", "free")
-            message_limit = 500 if plan_type == "pro" else 50
-
-            if total_human_messages >= message_limit:
-                raise HTTPException(
-                    status_code=402,
-                    detail=f"Message limit of {message_limit} reached for {plan_type} plan."
-                )
-
         user_email = user["email"]
         controller = ConversationController(db, user_id, user_email)
         message_stream = controller.regenerate_last_message(

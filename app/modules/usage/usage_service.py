@@ -1,6 +1,8 @@
-from datetime import datetime
+from datetime import datetime, timedelta
+import os
+import httpx
 
-from fastapi import logger
+from fastapi import logger, HTTPException
 from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -43,3 +45,38 @@ class UsageService:
         except SQLAlchemyError as e:
             logger.error(f"Failed to fetch usage data: {e}")
             raise Exception("Failed to fetch usage data") from e
+
+    @staticmethod
+    async def check_usage_limit(user_id):
+        if not os.getenv("SUBSCRIPTION_BASE_URL"):
+            return True
+
+        subscription_url = f"{os.getenv('SUBSCRIPTION_BASE_URL')}/subscriptions/info"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(subscription_url, params={"user_id": user_id})
+            subscription_data = response.json()
+
+        end_date_str = subscription_data.get("end_date")
+        if end_date_str :
+            end_date = datetime.fromisoformat(end_date_str)
+        else:
+            end_date = datetime.utcnow() 
+
+        start_date = end_date - timedelta(days=30)
+
+        usage_data = await UsageService.get_usage_data(
+            start_date=start_date, end_date=end_date, user_id=user_id
+        )
+        total_human_messages = usage_data["total_human_messages"]
+
+        plan_type = subscription_data.get("plan_type", "free")
+        message_limit = 500 if plan_type == "pro" else 50
+
+        if total_human_messages >= message_limit:
+            raise HTTPException(
+                status_code=402,
+                detail=f"Message limit of {message_limit} reached for {plan_type} plan."
+            )
+        else:
+            return True
+        
