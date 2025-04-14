@@ -181,6 +181,7 @@ class RuntimeAgent:
         agent_id: str,
         query: str,
         project_id: str,
+        project_name: str,
         conversation_id: str,
         node_ids: Optional[List[str]] = None,
         task_context: Optional[Dict[str, Any]] = None,
@@ -206,7 +207,7 @@ class RuntimeAgent:
                 task = await self.create_task(
                     query,
                     node_ids,
-                    "",  # Empty context string since we're using task context
+                    f"Project Name (github: owner/repo): {project_name}",  # Empty context string since we're using task context
                     task_index=i,
                     previous_task=previous_task,
                 )

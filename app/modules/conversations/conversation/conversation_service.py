@@ -531,7 +531,13 @@ class ConversationService:
                 # Custom agent doesn't support streaming, so we'll yield the entire response at once
                 response = (
                     await self.agent_service.custom_agent_service.execute_agent_runtime(
-                        agent_id, user_id, query, node_ids, project_id, conversation.id
+                        agent_id,
+                        user_id,
+                        query,
+                        node_ids,
+                        project_id,
+                        project_name,
+                        conversation.id,
                     )
                 )
                 yield ChatMessageResponse(
