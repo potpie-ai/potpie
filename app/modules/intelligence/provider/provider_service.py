@@ -197,7 +197,7 @@ class ProviderService:
 
         try:
             secret = SecretManager.get_secret(provider, self.user_id, self.db)
-            return secret.get("api_key")
+            return secret
         except Exception as e:
             if "404" in str(e):
                 env_key = os.getenv(f"{provider.upper()}_API_KEY")

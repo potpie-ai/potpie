@@ -63,7 +63,7 @@ class GetLinearIssueTool:
                 "updated_at": str(issue["updatedAt"]),
             }
         except Exception as e:
-            raise ValueError(f"Error fetching Linear issue: {str(e)}")
+            return {"error": f"Error fetching Linear issue: {str(e)}"}
 
     def run(self, issue_id: str) -> Dict[str, Any]:
         """Synchronous version that runs the async version"""
