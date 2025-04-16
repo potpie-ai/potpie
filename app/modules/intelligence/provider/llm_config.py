@@ -3,11 +3,15 @@ import os
 
 # Default models
 DEFAULT_CHAT_MODEL = "openai/gpt-4o"
-DEFAULT_INFERENCE_MODEL = "openai/gpt-4o-mini"
+DEFAULT_INFERENCE_MODEL = "openai/gpt-4.1-mini"
 
 # Model configuration mappings - now keyed by full model name
 MODEL_CONFIG_MAP = {
     # OpenAI Models
+    "openai/gpt-4.1-mini": {
+        "provider": "openai",
+        "default_params": {"temperature": 0.3},
+    },
     "openai/gpt-4o": {
         "provider": "openai",
         "default_params": {"temperature": 0.3},
