@@ -29,6 +29,8 @@ from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.projects.projects_controller import ProjectController
 from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
+from app.modules.search.search_service import SearchService
+from app.modules.search.search_schema import SearchRequest, SearchResponse
 
 router = APIRouter()
 
@@ -184,3 +186,16 @@ async def list_agents(
     prompt_provider = PromptService(db)
     controller = AgentsController(db, llm_provider, prompt_provider, tools_provider)
     return await controller.list_available_agents(user, True)
+
+@router.post("/search", response_model=SearchResponse)
+async def search_codebase(
+    search_request: SearchRequest,
+    db: Session = Depends(get_db),
+    user=Depends(get_api_key_user),
+):
+    """Search codebase using API key authentication"""
+    search_service = SearchService(db)
+    results = await search_service.search_codebase(
+        search_request.project_id, search_request.query
+    )
+    return SearchResponse(results=results)
