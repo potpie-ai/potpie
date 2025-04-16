@@ -20,8 +20,8 @@ class CodeGraphService:
         # Concatenate path and signature
         combined_string = f"{user_id}:{path}"
 
-        # Create a SHA-1 hash of the combined string
-        hash_object = hashlib.md5()
+        # Create a SHA-256 hash of the combined string
+        hash_object = hashlib.sha256()
         hash_object.update(combined_string.encode("utf-8"))
 
         # Get the hexadecimal representation of the hash
