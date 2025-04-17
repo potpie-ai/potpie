@@ -30,7 +30,7 @@ class GitHubUpdateFileInput(BaseModel):
 class GitHubUpdateFileTool:
     """Tool for updating files in a GitHub repository branch."""
 
-    name: str = "github_update_file"
+    name: str = "Update a file in a branch in GitHub"
     description: str = """
     Update a file in a GitHub repository branch.
     Useful for making changes to configuration files, code, documentation, or any other file in a repository.
@@ -233,7 +233,7 @@ def github_update_branch_tool(
     return StructuredTool.from_function(
         coroutine=tool_instance._arun,
         func=tool_instance._run,
-        name="github_update_file",
+        name="Update a file in a branch in GitHub",
         description="""
         Update a file in a GitHub repository branch.
         Useful for making changes to configuration files, code, documentation, or any other file in a repository.
