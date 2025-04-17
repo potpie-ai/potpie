@@ -29,8 +29,12 @@ from app.modules.projects.projects_router import router as projects_router
 from app.modules.search.search_router import router as search_router
 from app.modules.usage.usage_router import router as usage_router
 from app.modules.users.user_router import router as user_router
+from app.modules.permissions.extensions.extension_permissions_router import (
+    router as extension_permissions_router,
+)
 from app.modules.users.user_service import UserService
 from app.modules.utils.firebase_setup import FirebaseSetup
+
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -109,6 +113,11 @@ class MainApp:
         )
         self.app.include_router(
             secret_manager_router, prefix="/api/v1", tags=["Secret Manager"]
+        )
+        self.app.include_router(
+            extension_permissions_router,
+            prefix="/api/v1/extensions/permissions",
+            tags=["Extension Permissions"],
         )
 
     def add_health_check(self):
