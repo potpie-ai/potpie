@@ -7,10 +7,10 @@ class SearchRequest(BaseModel):
     project_id: str
     query: str = Field(..., min_length=1, strip_whitespace=True)
 
-    @validator('query')
+    @validator("query")
     def validate_query(cls, v):
         if not v.strip():
-            raise ValueError('Search query cannot be empty or contain only whitespace')
+            raise ValueError("Search query cannot be empty or contain only whitespace")
         return v
 
 
