@@ -29,6 +29,9 @@ from .llm_config import LLMProviderConfig, build_llm_provider_config
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.openai import OpenAIProvider
+import litellm
+
+litellm.num_retries = 5  # Number of retries for rate limited requests
 
 
 class AgentProvider(Enum):
