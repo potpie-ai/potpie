@@ -20,10 +20,6 @@ MODEL_CONFIG_MAP = {
         "provider": "openai",
         "default_params": {"temperature": 0.3},
     },
-    "openai/gpt-4o-mini": {
-        "provider": "openai",
-        "default_params": {"temperature": 0.2},
-    },
     # Anthropic Models
     "anthropic/claude-3-7-sonnet-20250219": {
         "provider": "anthropic",
