@@ -938,7 +938,7 @@ class SecretManager:
             logger.info(f"API key retrieved successfully for user: {user['user_id']}")
             if api_key is None:
                 logger.info(f"No API key found for user: {user['user_id']}")
-                raise 
+                raise
             return APIKeyResponse(api_key=api_key)
         except Exception as e:
             logger.error(f"Error getting API key for user {user['user_id']}: {str(e)}")
