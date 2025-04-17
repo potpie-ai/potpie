@@ -39,7 +39,7 @@ class GitHubCreatePullRequestInput(BaseModel):
 class GitHubCreatePullRequestTool:
     """Tool for creating a pull request in a GitHub repository."""
 
-    name: str = "github_create_pull_request"
+    name: str = "Create a new pull request in GitHub"
     description: str = """
     Create a new pull request in a GitHub repository.
     Useful for proposing and collaborating on changes made in a branch.
@@ -237,7 +237,7 @@ def github_create_pull_request_tool(
     return StructuredTool.from_function(
         coroutine=tool_instance._arun,
         func=tool_instance._run,
-        name="github_create_pull_request",
+        name="Create a new pull request in GitHub",
         description="""
         Create a new pull request in a GitHub repository.
         Useful for proposing and collaborating on changes made in a branch.
