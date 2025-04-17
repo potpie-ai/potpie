@@ -31,6 +31,7 @@ from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.search.search_service import SearchService
 from app.modules.search.search_schema import SearchRequest, SearchResponse
+from app.modules.usage.usage_controller import UsageController
 
 router = APIRouter()
 
@@ -200,3 +201,13 @@ async def search_codebase(
         search_request.project_id, search_request.query
     )
     return SearchResponse(results=results)
+
+@router.get("/usage")
+async def get_usage(
+    start_date: datetime,
+    end_date: datetime,
+    db: Session = Depends(get_db),
+    user=Depends(get_api_key_user),
+):
+    user_id = user["user_id"]
+    return await UsageController.get_user_usage(start_date, end_date, user_id)
