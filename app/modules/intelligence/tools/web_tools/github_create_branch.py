@@ -30,7 +30,7 @@ class GitHubCreateBranchInput(BaseModel):
 class GitHubCreateBranchTool:
     """Tool for creating a new branch in a GitHub repository."""
 
-    name: str = "github_create_branch"
+    name: str = "Create a new branch in GitHub"
     description: str = """
     Create a new branch in a GitHub repository.
     Useful for starting a new feature, bugfix, or any work that requires a separate branch.
@@ -193,7 +193,7 @@ def github_create_branch_tool(
     return StructuredTool.from_function(
         coroutine=tool_instance._arun,
         func=tool_instance._run,
-        name="github_create_branch",
+        name="Create a new branch in GitHub",
         description="""
         Create a new branch in a GitHub repository.
         Useful for starting a new feature, bugfix, or any work that requires a separate branch.

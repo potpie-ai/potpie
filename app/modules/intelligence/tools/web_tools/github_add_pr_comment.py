@@ -59,7 +59,7 @@ class GitAddPRCommentsInput(BaseModel):
 class GitAddPRCommentsTool:
     """Tool for adding multiple comments to GitHub pull requests with code snippet references."""
 
-    name: str = "git_add_pr_comments"
+    name: str = "Add comments to a GitHub pull request"
     description: str = """
     Add multiple comments to a GitHub pull request.
     Can add general comments, specific file comments, reference code snippets, and suggest code changes.
@@ -312,7 +312,7 @@ def git_add_pr_comments_tool(sql_db: Session, user_id: str) -> Optional[Structur
     return StructuredTool.from_function(
         coroutine=tool_instance._arun,
         func=tool_instance._run,
-        name="git_add_pr_comments",
+        name="Add comments to a GitHub pull request",
         description="""
         Add multiple comments to a GitHub pull request.
         Can add general comments, specific file comments, reference code snippets, and suggest code changes.
