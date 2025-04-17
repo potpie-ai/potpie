@@ -40,6 +40,14 @@ class AgentProvider(Enum):
 # Available models with their metadata
 AVAILABLE_MODELS = [
     AvailableModelOption(
+        id="openai/gpt-4.1",
+        name="GPT-4.1",
+        description="OpenAI's latest model for complex tasks with large context",
+        provider="openai",
+        is_chat_model=True,
+        is_inference_model=False,
+    ),
+    AvailableModelOption(
         id="openai/gpt-4o",
         name="GPT-4o",
         description="High-intelligence model for complex tasks",
