@@ -508,7 +508,8 @@ class ConversationService:
         try:
             history = self.history_manager.get_session_history(user_id, conversation_id)
             validated_history = [
-                (str(msg.content) if msg.content else msg) for msg in history
+                (f"{msg.type}: {msg.content}" if msg.content else msg)
+                for msg in history
             ]
 
         except Exception:
