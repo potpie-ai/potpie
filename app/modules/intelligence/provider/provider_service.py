@@ -42,7 +42,7 @@ AVAILABLE_MODELS = [
     AvailableModelOption(
         id="openai/gpt-4.1",
         name="GPT-4.1",
-        description="Advance model for complex tasks with large context",
+        description="OpenAI's latest model for complex tasks with large context",
         provider="openai",
         is_chat_model=True,
         is_inference_model=False,

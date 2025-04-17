@@ -12,6 +12,10 @@ MODEL_CONFIG_MAP = {
         "provider": "openai",
         "default_params": {"temperature": 0.3},
     },
+    "openai/gpt-4.1": {
+        "provider": "openai",
+        "default_params": {"temperature": 0.3},
+    },
     "openai/gpt-4o": {
         "provider": "openai",
         "default_params": {"temperature": 0.3},
