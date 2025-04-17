@@ -641,10 +641,8 @@ class SecretManager:
                 .first()
             )
             if not user_pref:
-                logger.warning(f"No preferences found for user: {customer_id}")
-                raise HTTPException(
-                    status_code=404, detail="No secrets found for this user"
-                )
+                logger.info(f"No preferences found for user: {customer_id}")
+                raise
 
             if provider == "all":
                 # Get both chat and inference configurations
@@ -939,10 +937,8 @@ class SecretManager:
             api_key = await APIKeyService.get_api_key(user["user_id"], db)
             logger.info(f"API key retrieved successfully for user: {user['user_id']}")
             if api_key is None:
-                logger.warning(f"No API key found for user: {user['user_id']}")
-                raise HTTPException(
-                    status_code=404, detail="No API key found for this user"
-                )
+                logger.info(f"No API key found for user: {user['user_id']}")
+                raise 
             return APIKeyResponse(api_key=api_key)
         except Exception as e:
             logger.error(f"Error getting API key for user {user['user_id']}: {str(e)}")
