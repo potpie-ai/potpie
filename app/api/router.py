@@ -187,6 +187,7 @@ async def list_agents(
     controller = AgentsController(db, llm_provider, prompt_provider, tools_provider)
     return await controller.list_available_agents(user, True)
 
+
 @router.post("/search", response_model=SearchResponse)
 async def search_codebase(
     search_request: SearchRequest,
