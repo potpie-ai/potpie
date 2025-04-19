@@ -31,11 +31,11 @@ class ConversationController:
         self.user_id = user_id
 
     async def create_conversation(
-        self, conversation: CreateConversationRequest
+        self, conversation: CreateConversationRequest, hidden: bool = False
     ) -> CreateConversationResponse:
         try:
             conversation_id, message = await self.service.create_conversation(
-                conversation, self.user_id
+                conversation, self.user_id, hidden
             )
             return CreateConversationResponse(
                 message=message, conversation_id=conversation_id

@@ -9,7 +9,10 @@ from sqlalchemy import desc
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.modules.conversations.conversation.conversation_model import Conversation
+from app.modules.conversations.conversation.conversation_model import (
+    Conversation,
+    ConversationStatus,
+)
 from app.modules.users.user_model import User
 from app.modules.users.user_schema import CreateUser, UserProfileResponse
 
@@ -138,6 +141,7 @@ class UserService:
 
             # Apply pagination
             conversations = query.offset(start).limit(limit).all()
+
 
             logger.info(
                 f"Retrieved {len(conversations)} conversations with projects for user {user_id}"
