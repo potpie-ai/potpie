@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import List
 
 from firebase_admin import auth
-from sqlalchemy import desc
+from sqlalchemy import asc, desc
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -117,52 +117,57 @@ class UserService:
             return None
 
     def get_conversations_with_projects_for_user(
-        self, user_id: str, start: int, limit: int, sort: str = "updated_at", order: str = "desc"
-    ) -> List[Conversation]:
-        try:
-            # Build the query
-            query = self.db.query(Conversation).filter(Conversation.user_id == user_id)
+            self, user_id: str, start: int, limit: int, sort: str = "updated_at", order: str = "desc"
+        ) -> List[Conversation]:
+            try:
+                # Build the query
+                query = self.db.query(Conversation).filter(Conversation.user_id == user_id)
 
-            # Validate sort field
-            if sort not in ["updated_at", "created_at"]:
-                sort = "updated_at"  # Default to updated_at if invalid
+                # Validate sort field
+                if sort not in ["updated_at", "created_at"]:
+                    sort = "updated_at"  # Default to updated_at if invalid
 
-            # Apply sorting
-            sort_column = getattr(Conversation, sort)
+                # Apply sorting
+                sort_column = getattr(Conversation, sort)
 
-            # Validate order
-            if order.lower() not in ["asc", "desc"]:
-                order = "desc"  # Default to desc if invalid
+                # Validate order
+                if order.lower() not in ["asc", "desc"]:
+                    order = "desc"  # Default to desc if invalid
 
-            if order.lower() == "asc":
-                query = query.order_by(sort_column)
-            else:  # Default to desc
-                query = query.order_by(desc(sort_column))
+                if order.lower() == "asc":
+                    query = query.order_by(sort_column)
+                else:  # Default to desc
+                    query = query.order_by(desc(sort_column))
 
-            # Apply pagination
-            conversations = query.offset(start).limit(limit).all()
+                # Apply pagination
+                conversations = query.offset(start).limit(limit).all()
 
-
-            logger.info(
-                f"Retrieved {len(conversations)} conversations with projects for user {user_id}"
-            )
-            return conversations
-        except SQLAlchemyError as e:
-            logger.error(
-                f"Database error in get_conversations_with_projects_for_user for user {user_id}: {e}",
-                exc_info=True,
-            )
-            raise UserServiceError(
-                f"Failed to retrieve conversations with projects for user {user_id}"
-            ) from e
-        except Exception as e:
-            logger.error(
-                f"Unexpected error in get_conversations_with_projects_for_user for user {user_id}: {e}",
-                exc_info=True,
-            )
-            raise UserServiceError(
-                f"An unexpected error occurred while retrieving conversations with projects for user {user_id}"
-            ) from e
+                log_msg = (
+                    f"Retrieved {len(conversations)} conversations "
+                    f"for user {user_id} sorted by {sort} in {order} order"
+                )
+                logger.info(log_msg)
+                return conversations
+            except SQLAlchemyError as e:
+                log_msg = (
+                    f"Database error in get_conversations_with_projects_for_user "
+                    f"for user {user_id}: {e}"
+                )
+                logger.error(log_msg, exc_info=True)
+                raise UserServiceError(
+                    f"Failed to retrieve conversations with projects for user {user_id}"
+                ) from e
+            except Exception as e:
+                log_msg = (
+                    f"Unexpected error in get_conversations_with_projects_for_user "
+                    f"for user {user_id}: {e}"
+                )
+                logger.error(log_msg, exc_info=True)
+                err_msg = (
+                    f"An unexpected error occurred while retrieving conversations "
+                    f"with projects for user {user_id}"
+                )
+                raise UserServiceError(err_msg) from e
 
     def get_user_id_by_email(self, email: str) -> str:
         try:
