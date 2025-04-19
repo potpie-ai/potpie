@@ -25,11 +25,17 @@ class UserAPI:
         user=Depends(AuthService.check_auth),
         start: int = Query(0, ge=0),
         limit: int = Query(10, ge=1),
+        sort: str = Query(
+            "created_at", description="Field to sort by: 'created_at' or 'updated_at'"
+        ),
+        order: str = Query("desc", description="Sort order: 'asc' or 'desc'"),
         db: Session = Depends(get_db),
     ):
         user_id = user["user_id"]
         controller = UserController(db)
-        return await controller.get_conversations_for_user(user_id, start, limit)
+        return await controller.get_conversations_for_user(
+            user_id, start, limit, sort, order
+        )
 
     @router.get("/user/{user_id}/public-profile", response_model=UserProfileResponse)
     async def fetch_user_profile_pic(
