@@ -19,10 +19,10 @@ class UserController:
         return await self.service.get_user_profile_pic(uid)
 
     async def get_conversations_for_user(
-        self, user_id: str, start: int, limit: int
+        self, user_id: str, start: int, limit: int, sort: str = "updated_at", order: str = "desc"
     ) -> List[UserConversationListResponse]:
         conversations = self.service.get_conversations_with_projects_for_user(
-            user_id, start, limit
+            user_id, start, limit, sort, order
         )
         response = []
         agent_ids = [

@@ -117,20 +117,31 @@ class UserService:
             return None
 
     def get_conversations_with_projects_for_user(
-        self, user_id: str, start: int, limit: int
+        self, user_id: str, start: int, limit: int, sort: str = "updated_at", order: str = "desc"
     ) -> List[Conversation]:
         try:
-            conversations = (
-                self.db.query(Conversation)
-                .filter(
-                    Conversation.user_id == user_id,
-                    Conversation.status == ConversationStatus.ACTIVE,
-                )
-                .order_by(desc(Conversation.updated_at))
-                .offset(start)
-                .limit(limit)
-                .all()
-            )
+            # Build the query
+            query = self.db.query(Conversation).filter(Conversation.user_id == user_id)
+
+            # Validate sort field
+            if sort not in ["updated_at", "created_at"]:
+                sort = "updated_at"  # Default to updated_at if invalid
+
+            # Apply sorting
+            sort_column = getattr(Conversation, sort)
+
+            # Validate order
+            if order.lower() not in ["asc", "desc"]:
+                order = "desc"  # Default to desc if invalid
+
+            if order.lower() == "asc":
+                query = query.order_by(sort_column)
+            else:  # Default to desc
+                query = query.order_by(desc(sort_column))
+
+            # Apply pagination
+            conversations = query.offset(start).limit(limit).all()
+
 
             logger.info(
                 f"Retrieved {len(conversations)} conversations with projects for user {user_id}"
