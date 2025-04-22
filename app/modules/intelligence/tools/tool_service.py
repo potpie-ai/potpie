@@ -119,7 +119,7 @@ class ToolService:
             "github_add_pr_comments": github_add_pr_comment.git_add_pr_comments_tool(
                 self.db, self.user_id
             ),
-            "notion_doc_tool": notion_doc_tool(self.db,self.user_id)
+            "notion_doc_tool": notion_doc_tool(self.db, self.user_id),
         }
 
         if self.webpage_extractor_tool:
