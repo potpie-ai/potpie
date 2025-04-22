@@ -42,6 +42,7 @@ class UnitTestAgent(ChatAgent):
                 "get_code_from_node_id",
                 "get_code_from_probable_node_name",
                 "webpage_extractor",
+                "notion_doc_tool",
                 "web_search_tool",
                 "github_tool",
             ]

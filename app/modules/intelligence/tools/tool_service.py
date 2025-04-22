@@ -47,6 +47,7 @@ from app.modules.intelligence.tools.web_tools import (
 from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import (
     webpage_extractor_tool,
 )
+from app.modules.intelligence.tools.web_tools.notion_doc_tool import notion_doc_tool
 from app.modules.intelligence.tools.linear_tools import (
     get_linear_issue_tool,
     update_linear_issue_tool,
@@ -67,6 +68,7 @@ class ToolService:
         self.get_code_from_multiple_node_ids_tool = GetCodeFromMultipleNodeIdsTool(
             self.db, self.user_id
         )
+        self.notion_doc_tool = notion_doc_tool(db, user_id)
         self.get_code_graph_from_node_id_tool = GetCodeGraphFromNodeIdTool(db)
         self.file_structure_tool = GetCodeFileStructureTool(db)
         self.provider_service = ProviderService.create(db, user_id)
@@ -117,6 +119,7 @@ class ToolService:
             "github_add_pr_comments": github_add_pr_comment.git_add_pr_comments_tool(
                 self.db, self.user_id
             ),
+            "notion_doc_tool": notion_doc_tool(self.db,self.user_id)
         }
 
         if self.webpage_extractor_tool:
