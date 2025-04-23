@@ -6,6 +6,8 @@ import requests
 from dotenv import load_dotenv
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse, Response
+from fastapi.exceptions import HTTPException
+
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -37,6 +39,10 @@ class AuthAPI:
             res = auth_handler.login(email=email, password=password)
             id_token = res.get("idToken")
             return JSONResponse(content={"token": id_token}, status_code=200)
+        except ValueError as e:
+            return JSONResponse(content={"error": "Invalid email or password"}, status_code=401)
+        except HTTPException as he:
+            return JSONResponse(content={"error": f"HTTP Error: {str(he)}"}, status_code=he.status_code)
         except Exception as e:
             return JSONResponse(content={"error": f"ERROR: {str(e)}"}, status_code=400)
 
