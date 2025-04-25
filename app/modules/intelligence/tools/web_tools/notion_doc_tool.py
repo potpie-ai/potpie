@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 from app.modules.key_management.secret_manager import SecretStorageHandler
 
 
-
 class NotionDocToolInput(BaseModel):
     url: str = Field(
         description="The URL of the notion document to extract content from"
