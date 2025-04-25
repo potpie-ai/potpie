@@ -522,16 +522,16 @@ class GithubService:
                             raise HTTPException(
                                 status_code=403,
                                 detail=f"Access denied to repository {repo_name}. You don't have sufficient permissions to access this repository."
-                            )
+                            ) from e
                         elif e.status == 404:
                             raise HTTPException(
                                 status_code=404,
                                 detail=f"Repository {repo_name} not found on GitHub."
-                            )
+                            ) from e
                         else:
                             raise HTTPException(
                                 status_code=e.status, detail=f"GitHub API error: {str(e)}"
-                            )
+                            ) from e
                     # Fallback for non-status errors
                     elif (
                         "permission" in error_message
@@ -540,8 +540,8 @@ class GithubService:
                     ):
                             raise HTTPException(
                                   status_code=403,
-                                  detail=f"Access denied to repository {repo_name}. You don't have sufficient permissions."
-                            )
+                                  detail=f"Access denied to repository {repo_name}. You don't have sufficient permissions to access this repository"
+                            ) from e
                     else:
                         logger.error(
                             f"Error fetching branches for repo {repo_name}: {str(e)}", 
@@ -561,7 +561,7 @@ class GithubService:
             raise HTTPException(
                 status_code=500,
                 detail=f"Unexpected error: {str(e)}"
-            )
+            ) from e
 
     @classmethod
     def get_public_github_instance(cls):
