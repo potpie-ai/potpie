@@ -42,6 +42,7 @@ class BlastRadiusAgent(ChatAgent):
                 "change_detection",
                 "webpage_extractor",
                 "web_search_tool",
+                "notion_doc_tool",
                 "github_tool",
             ]
         )

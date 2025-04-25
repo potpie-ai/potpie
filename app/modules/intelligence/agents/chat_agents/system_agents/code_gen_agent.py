@@ -59,6 +59,7 @@ class CodeGenAgent(ChatAgent):
                 "get_code_file_structure",
                 "webpage_extractor",
                 "web_search_tool",
+                "notion_doc_tool",
                 "github_tool",
                 "get_linear_issue",
             ]
