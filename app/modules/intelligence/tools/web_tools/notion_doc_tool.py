@@ -40,15 +40,22 @@ class NotionDocTool:
             page_id = self._extract_page_id(url)
             notion_key = None
 
-            notion_key = await SecretStorageHandler.get_secret(
+            has_key = await SecretStorageHandler.check_secret_exists(
                 service="notion",
                 customer_id=self.user_id,
                 service_type="integration",
                 db=self.sql_db,
             )
-
-            if not notion_key:
+            
+            if not has_key:
                 notion_key = os.getenv("NOTION_API_KEY")
+            else:
+                notion_key = await SecretStorageHandler.get_secret(
+                    service="notion",
+                    customer_id=self.user_id,
+                    service_type="integration",
+                    db=self.sql_db,
+                )
 
             if not notion_key:
                 return NotionDocToolOutput(
