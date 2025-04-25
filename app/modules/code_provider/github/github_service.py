@@ -516,6 +516,7 @@ class GithubService:
                     return {"branches": [default_branch] + branch_list}
                 except Exception as e:
                     # Check if the error is a GitHub API exception or not
+                    error_message = str(e).lower()
                     if hasattr(e, "status"):
                         if e.status == 403:
                             raise HTTPException(
@@ -529,8 +530,17 @@ class GithubService:
                             )
                         else:
                             raise HTTPException(
-                                status_code=e.status,
-                                detail=f"GitHub API error: {str(e)}"
+                                status_code=e.status, detail=f"GitHub API error: {str(e)}"
+                            )
+                    # Fallback for non-status errors
+                    elif (
+                        "permission" in error_message
+                        or "access denied" in error_message
+                        or "unauthorized" in error_message
+                    ):
+                            raise HTTPException(
+                                  status_code=403,
+                                  detail=f"Access denied to repository {repo_name}. You don't have sufficient permissions."
                             )
                     else:
                         logger.error(
