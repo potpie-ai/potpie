@@ -38,7 +38,7 @@ class CustomAgentService:
         self.secret_manager = SecretManager()
 
     async def _get_agent_by_id_and_user(
-            self, agent_id: str, user_id: str
+        self, agent_id: str, user_id: str
     ) -> Optional[CustomAgentModel]:
         """Fetch a custom agent by ID and user ID"""
         try:
@@ -80,11 +80,10 @@ class CustomAgentService:
             raise
 
     async def create_share(
-            self, agent_id: str, shared_with_user_id: str
+        self, agent_id: str, shared_with_user_id: str
     ) -> CustomAgentShareModel:
         """Create a share for an agent with another user"""
         try:
-
 
             # Get the agent to log its current state
             agent = await self.get_agent_model(agent_id)
@@ -99,7 +98,7 @@ class CustomAgentService:
                 .filter(
                     CustomAgentShareModel.agent_id == agent_id,
                     CustomAgentShareModel.shared_with_user_id == shared_with_user_id,
-                    )
+                )
                 .first()
             )
             if existing_share:
@@ -148,7 +147,7 @@ class CustomAgentService:
                 .filter(
                     CustomAgentShareModel.agent_id == agent_id,
                     CustomAgentShareModel.shared_with_user_id == shared_with_user_id,
-                    )
+                )
                 .first()
             )
 
@@ -157,7 +156,6 @@ class CustomAgentService:
                     f"No share found for agent {agent_id} with user {shared_with_user_id}"
                 )
                 return False
-
 
             self.db.delete(share)
             self.db.commit()
@@ -225,7 +223,6 @@ class CustomAgentService:
                 logger.warning(f"Agent {agent_id} not found for user {user_id}")
                 return None
 
-
             # Delete all shares
             self.db.query(CustomAgentShareModel).filter(
                 CustomAgentShareModel.agent_id == agent_id
@@ -245,7 +242,7 @@ class CustomAgentService:
             raise
 
     async def list_agents(
-            self, user_id: str, include_public: bool = False, include_shared: bool = True
+        self, user_id: str, include_public: bool = False, include_shared: bool = True
     ) -> List[Agent]:
         """List all agents accessible to the user"""
         try:
@@ -389,7 +386,7 @@ class CustomAgentService:
         return self._convert_to_agent_schema(agent_model)
 
     async def update_agent(
-            self, agent_id: str, user_id: str, agent_data: AgentUpdate
+        self, agent_id: str, user_id: str, agent_data: AgentUpdate
     ) -> Optional[Agent]:
         """Update an existing custom agent"""
         try:
@@ -502,7 +499,7 @@ class CustomAgentService:
                             .filter(
                                 CustomAgentShareModel.agent_id == agent_id,
                                 CustomAgentShareModel.shared_with_user_id == user_id,
-                                )
+                            )
                             .first()
                         )
                         if not share:
@@ -541,14 +538,14 @@ class CustomAgentService:
             return None
 
     async def execute_agent_runtime(
-            self,
-            agent_id: str,
-            user_id: str,
-            query: str,
-            node_ids: Optional[List[str]] = None,
-            project_id: Optional[str] = None,
-            project_name: Optional[str] = None,
-            conversation_id: Optional[str] = None,
+        self,
+        agent_id: str,
+        user_id: str,
+        query: str,
+        node_ids: Optional[List[str]] = None,
+        project_id: Optional[str] = None,
+        project_name: Optional[str] = None,
+        conversation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Execute an agent at runtime without deployment"""
         logger.info(
@@ -593,7 +590,7 @@ class CustomAgentService:
                         .filter(
                             CustomAgentShareModel.agent_id == agent_id,
                             CustomAgentShareModel.shared_with_user_id == user_id,
-                            )
+                        )
                         .first()
                     )
                     if not share:
@@ -632,7 +629,7 @@ class CustomAgentService:
             raise HTTPException(status_code=500, detail=str(e))
 
     async def create_agent_plan(
-            self, user_id: str, prompt: str, tools: List[str]
+        self, user_id: str, prompt: str, tools: List[str]
     ) -> Dict[str, Any]:
         """Create a plan for the agent using LLM"""
         template = self.CREATE_AGENT_FROM_PROMPT
@@ -644,7 +641,7 @@ class CustomAgentService:
         return response
 
     async def enhance_task_description(
-            self, user_id: str, description: str, goal: str, tools: List[str]
+        self, user_id: str, description: str, goal: str, tools: List[str]
     ) -> str:
         """Enhance a single task description using LLM"""
         template = self.TASK_ENHANCEMENT_PROMPT
@@ -657,9 +654,9 @@ class CustomAgentService:
         return response
 
     async def create_agent_from_prompt(
-            self,
-            prompt: str,
-            user_id: str,
+        self,
+        prompt: str,
+        user_id: str,
     ) -> Agent:
         """Create a custom agent from a natural language prompt"""
         # Get available tools
@@ -737,11 +734,11 @@ class CustomAgentService:
             raise ValueError("Failed to create agent from prompt")
 
     async def enhance_task_descriptions(
-            self,
-            tasks: List[Dict[str, Any]],
-            goal: str,
-            available_tools: List[str],
-            user_id: str,
+        self,
+        tasks: List[Dict[str, Any]],
+        goal: str,
+        available_tools: List[str],
+        user_id: str,
     ) -> List[Dict[str, Any]]:
         enhanced_tasks = []
 
@@ -816,7 +813,7 @@ class CustomAgentService:
                     .filter(
                         CustomAgentShareModel.agent_id == agent_id,
                         CustomAgentShareModel.shared_with_user_id == user_id,
-                        )
+                    )
                     .first()
                 )
                 if not share:
