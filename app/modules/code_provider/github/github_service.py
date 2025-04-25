@@ -506,22 +506,51 @@ class GithubService:
                     )
             else:
                 # Handle GitHub repository (existing functionality)
-                github, repo = self.get_repo(repo_name)
-                default_branch = repo.default_branch
-                branches = repo.get_branches()
-                branch_list = [
-                    branch.name for branch in branches if branch.name != default_branch
-                ]
-                return {"branches": [default_branch] + branch_list}
+                try:
+                    github, repo = self.get_repo(repo_name)
+                    default_branch = repo.default_branch
+                    branches = repo.get_branches()
+                    branch_list = [
+                        branch.name for branch in branches if branch.name != default_branch
+                    ]
+                    return {"branches": [default_branch] + branch_list}
+                except Exception as e:
+                    # Check if the error is a GitHub API exception or not
+                    if hasattr(e, "status"):
+                        if e.status == 403:
+                            raise HTTPException(
+                                status_code=403,
+                                detail=f"Access denied to repository {repo_name}. You don't have sufficient permissions to access this repository."
+                            )
+                        elif e.status == 404:
+                            raise HTTPException(
+                                status_code=404,
+                                detail=f"Repository {repo_name} not found on GitHub."
+                            )
+                        else:
+                            raise HTTPException(
+                                status_code=e.status,
+                                detail=f"GitHub API error: {str(e)}"
+                            )
+                    else:
+                        logger.error(
+                            f"Error fetching branches for repo {repo_name}: {str(e)}", 
+                            exc_info=True,
+                        )
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Error fetching branches: {str(e)}"
+                        )
         except HTTPException as he:
             raise he
         except Exception as e:
             logger.error(
-                f"Error fetching branches for repo {repo_name}: {str(e)}", exc_info=True
+                f"Unexpected error fetching branches for repo {repo_name}: {str(e)}", 
+                exc_info=True
             )
             raise HTTPException(
-                status_code=404,
-                detail=f"Repository not found or error fetching branches: {str(e)}",
+                status_code=500,
+                detail=f"Unexpected error: {str(e)}"
             )
 
     @classmethod
