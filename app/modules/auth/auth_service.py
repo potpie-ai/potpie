@@ -35,18 +35,14 @@ class AuthService:
 
     def signup(self, email: str, password: str, name: str) -> tuple:
         try:
-            user = auth.create_user(
-                email=email, 
-                password=password, 
-                display_name=name
-            )
-            return { "user": user, "message": "New user created successfully" }, None
+            user = auth.create_user(email=email, password=password, display_name=name)
+            return {"user": user, "message": "New user created successfully"}, None
         except FirebaseError as fe:
-            return None,  { "error": f"Firebase error: {fe.message}"}
+            return None, {"error": f"Firebase error: {fe.message}"}
         except ValueError as _ve:
-            return None, { "error":  "Invalid input data provided." }       
+            return None, {"error": "Invalid input data provided."}
         except Exception as e:
-            return None, { "error": f"An unexpected error occurred: {str(e)}" }
+            return None, {"error": f"An unexpected error occurred: {str(e)}"}
 
     @classmethod
     @staticmethod
