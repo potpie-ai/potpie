@@ -55,6 +55,8 @@ Potpie is an open-source platform that creates AI agents specialized in your cod
 
 ## 📚 Table of Contents
 - [🥧 Why Potpie?](#why-potpie)
+- [🔌 VSCode Extension](#vscode-extension)
+- [🧩 Slack Integration](#slack-integration)
 - [🤖 Our Prebuilt Agents](#prebuilt-agents)
 - [🛠️ Tooling](#potpies-tooling-system)
 - [🚀 Getting Started](#getting-started)
@@ -82,6 +84,13 @@ Bring the power of Potpie's AI agents directly into your development environment
 - **Quick Setup**: Install directly from the [VSCode Marketplace](https://marketplace.visualstudio.com/items?itemName=PotpieAI.potpie-vscode-extension)
 - **Seamless Workflow**: Ask questions, get explanations, and implement suggestions right where you code
 
+## 🧩 Slack Integration
+
+Bring your custom AI agents directly into your team's communication hub with our Slack integration:
+
+- **Team Collaboration**: Access all Potpie agents where your team already communicates
+- **Effortless Setup**: Install and configure in under 2 minutes. Checkout [Potpie docs](https://docs.potpie.ai/extensions/slack)
+- **Contextual Assistance**: Get answers, code solutions, and project insights directly in your Slack threads
 
 ## 🤖 Potpie's Prebuilt Agents
 
