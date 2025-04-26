@@ -85,13 +85,8 @@ async def create_conversation(
     user=Depends(get_api_key_user),
 ):
     user_id = user["user_id"]
-    checked = await UsageService.check_usage_limit(user_id)
-    if not checked:
-        raise HTTPException(
-            status_code=402,
-            detail="Subscription required to create a conversation.",
-        )
-
+    # This will either return True or raise an HTTPException
+    await UsageService.check_usage_limit(user_id)
     # Create full conversation request with defaults
     full_request = CreateConversationRequest(
         user_id=user_id,
