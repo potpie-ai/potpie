@@ -1,8 +1,6 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 import os
 from typing import List, Optional
-import os
-import httpx
 
 from fastapi import Depends, Header, HTTPException, Query
 from pydantic import BaseModel
@@ -93,7 +91,7 @@ async def create_conversation(
             status_code=402,
             detail="Subscription required to create a conversation.",
         )
-    
+
     # Create full conversation request with defaults
     full_request = CreateConversationRequest(
         user_id=user_id,
@@ -142,7 +140,7 @@ async def post_message(
             status_code=402,
             detail="Subscription required to create a conversation.",
         )
-    
+
     # Note: email is no longer available with API key auth
     controller = ConversationController(db, user_id, None)
     message_stream = controller.post_message(conversation_id, message, stream=False)

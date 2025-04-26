@@ -57,10 +57,10 @@ class UsageService:
             subscription_data = response.json()
 
         end_date_str = subscription_data.get("end_date")
-        if end_date_str :
+        if end_date_str:
             end_date = datetime.fromisoformat(end_date_str)
         else:
-            end_date = datetime.utcnow() 
+            end_date = datetime.utcnow()
 
         start_date = end_date - timedelta(days=30)
 
@@ -75,8 +75,7 @@ class UsageService:
         if total_human_messages >= message_limit:
             raise HTTPException(
                 status_code=402,
-                detail=f"Message limit of {message_limit} reached for {plan_type} plan."
+                detail=f"Message limit of {message_limit} reached for {plan_type} plan.",
             )
         else:
             return True
-        
