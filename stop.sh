@@ -12,4 +12,4 @@ pkill -f "celery" || true
 echo "Stopping Docker Compose services..."
 docker compose down
 
-echo "All Potpie services have been stopped successfully!" 
+echo "All Potpie services have been stopped successfully!"

@@ -397,7 +397,9 @@ class ConversationService:
                 conversation_id, self.user_email
             )
             if access_level != ConversationAccessType.WRITE:
-                raise AccessTypeReadError("Access denied. Only conversation creators can regenerate messages.")
+                raise AccessTypeReadError(
+                    "Access denied. Only conversation creators can regenerate messages."
+                )
             last_human_message = await self._get_last_human_message(conversation_id)
             if not last_human_message:
                 raise MessageNotFoundError("No human message found to regenerate from")
