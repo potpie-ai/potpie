@@ -90,6 +90,8 @@ Bring your custom AI agents directly into your team's communication hub with our
 - **Effortless Setup**: Install and configure in under 2 minutes. Checkout [Potpie docs](https://docs.potpie.ai/extensions/slack)
 - **Contextual Assistance**: Get answers, code solutions, and project insights directly in your Slack threads
 
+👉 Install the Potpie Slack App: [https://slack.potpie.ai/slack/install](https://slack.potpie.ai/slack/install)
+
 ## 🤖 Potpie's Prebuilt Agents
 
 Potpie offers a suite of specialized codebase agents for automating and optimizing key aspects of software development:
