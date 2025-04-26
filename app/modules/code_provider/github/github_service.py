@@ -16,13 +16,17 @@ from github.Auth import AppAuth
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from redis import Redis
+from cachetools import TTLCache
+from cachetools.keys import hashkey
 
 from app.core.config_provider import config_provider
 from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_service import ProjectService
 from app.modules.users.user_model import User
 
+
 logger = logging.getLogger(__name__)
+check_repo_cache = TTLCache(maxsize=1000, ttl=600)
 
 
 class GithubService:
@@ -743,9 +747,20 @@ class GithubService:
         return "\n".join(_format_node(structure))
 
     async def check_public_repo(self, repo_name: str) -> bool:
+        cache_key = hashkey(repo_name)
+
+        # Check the cache first
+        if cache_key in check_repo_cache:
+            return check_repo_cache[cache_key]
+
+        # If not cached, call GitHub API
         try:
             github = self.get_public_github_instance()
             github.get_repo(repo_name)
-            return True
+            result = True
         except Exception:
-            return False
+            result = False
+
+        # Store result in cache
+        check_repo_cache[cache_key] = result
+        return result
