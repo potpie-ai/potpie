@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.modules.users.user_model import User
 from app.modules.users.user_preferences_model import UserPreferences
-
+import logging
+logger = logging.getLogger(__name__)
 
 class APIKeyService:
     SECRET_PREFIX = "sk-"
@@ -100,25 +101,32 @@ class APIKeyService:
     @staticmethod
     async def validate_api_key(api_key: str, db: Session) -> Optional[dict]:
         """Validate an API key and return user info if valid."""
-        if not api_key.startswith(APIKeyService.SECRET_PREFIX):
+        try:
+            # Check if API key follows the correct syntax and prefix
+            if not api_key.startswith(APIKeyService.SECRET_PREFIX):
+                logger.error(f"Invalid API key format: missing required prefix '{APIKeyService.SECRET_PREFIX}'")
+                return None
+
+            hashed_key = APIKeyService.hash_api_key(api_key)
+            # Find user with matching hashed key
+            result = (
+                db.query(UserPreferences, User.email)
+                .join(User, UserPreferences.user_id == User.uid)
+                .filter(text("preferences->>'api_key_hash' = :hashed_key"))
+                .params(hashed_key=hashed_key)
+                .first()
+            )
+
+            # No match found for Hashed API key
+            if not result:
+                logger.error(f"No user found with the provided API key hash")
+                return None
+
+            user_pref, email = result
+            return {"user_id": user_pref.user_id, "email": email, "auth_type": "api_key"}
+        except Exception as e:
+            logger.error(f"Error validating API key: {str(e)}")
             return None
-
-        hashed_key = APIKeyService.hash_api_key(api_key)
-
-        # Find user with matching hashed key using PostgreSQL JSONB operator and join with User table
-        result = (
-            db.query(UserPreferences, User.email)
-            .join(User, UserPreferences.user_id == User.uid)
-            .filter(text("preferences->>'api_key_hash' = :hashed_key"))
-            .params(hashed_key=hashed_key)
-            .first()
-        )
-
-        if not result:
-            return None
-
-        user_pref, email = result
-        return {"user_id": user_pref.user_id, "email": email, "auth_type": "api_key"}
 
     @staticmethod
     async def revoke_api_key(user_id: str, db: Session) -> bool:

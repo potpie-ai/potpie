@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://potpie.ai?utm_source=github">
-    <img src="https://github.com/user-attachments/assets/1a0b9824-833b-4c0a-b56d-ede5623295ca" width="318px" alt="Momentum logo" />
+    <img src="https://github.com/user-attachments/assets/1a0b9824-833b-4c0a-b56d-ede5623295ca" width="318px" alt="Potpie AI logo" />
   </a>
 </p>
 
@@ -49,9 +49,10 @@ Prompt-To-Agent: Create custom engineering agents for your code
 Potpie is an open-source platform that creates AI agents specialized in your codebase, enabling automated code analysis, testing, and development tasks. By building a comprehensive knowledge graph of your code, Potpie's agents can understand complex relationships and assist with everything from debugging to feature development.
 
 <p align="center">
-<img width="1506" alt="Screenshot 2025-03-28 at 2 51 34 PM" src="https://github.com/user-attachments/assets/dc45286f-4aa6-46d1-950f-cc77ceccce3d" />
+<img width="1506" alt="Screenshot 2025-03-28 at 2 51 34 PM" src="https://github.com/user-attachments/assets/efa6b8ba-447b-474c-a62e-2c65940085ee" />
 
-</p>
+
+
 
 ## 📚 Table of Contents
 - [🥧 Why Potpie?](#why-potpie)
@@ -82,6 +83,15 @@ Bring the power of Potpie's AI agents directly into your development environment
 - **Quick Setup**: Install directly from the [VSCode Marketplace](https://marketplace.visualstudio.com/items?itemName=PotpieAI.potpie-vscode-extension)
 - **Seamless Workflow**: Ask questions, get explanations, and implement suggestions right where you code
 
+## 🧩 Slack Integration
+
+Bring your custom AI agents directly into your team's communication hub with our Slack integration:
+
+- **Team Collaboration**: Access all Potpie agents where your team already communicates
+- **Effortless Setup**: Install and configure in under 2 minutes. Checkout [Potpie docs](https://docs.potpie.ai/extensions/slack)
+- **Contextual Assistance**: Get answers, code solutions, and project insights directly in your Slack threads
+
+👉 Install the Potpie Slack App: [Here](https://slack.potpie.ai/slack/install)
 
 ## 🤖 Potpie's Prebuilt Agents
 
@@ -197,11 +207,39 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
 
 2. **Start Potpie**
 
+   To start all Potpie services:
    ```bash
    chmod +x start.sh
    ./start.sh
+   ```
+   **Windows**
+    ```powershell
+    ./start.ps1
+    ```
 
-3. **Authentication Setup** (Skip this step in development mode)
+   This will:
+   - Start required Docker services
+   - Wait for PostgreSQL to be ready
+   - Apply database migrations
+   - Start the FastAPI application
+   - Start the Celery worker
+
+3. **Stop Potpie**
+
+   To stop all Potpie services:
+   ```bash
+   ./stop.sh
+   ```
+   **Windows**
+   ```powershell
+   ./stop.ps1
+   ```
+   This will gracefully stop:
+   - The FastAPI application
+   - The Celery worker
+   - All Docker Compose services
+
+4. **Authentication Setup** (Skip this step in development mode)
    ```bash
    curl -X POST 'http://localhost:8001/api/v1/login' \
      -H 'Content-Type: application/json' \
@@ -211,7 +249,7 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
      }'
    # Save the bearer token from the response for subsequent requests
 
-4. **Initialize Repository Parsing**
+5. **Initialize Repository Parsing**
    ```bash
    # For development mode:
    curl -X POST 'http://localhost:8001/api/v1/parse' \
@@ -230,18 +268,18 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
      }'
    # Save the project_id from the response
 
-5. **Monitor Parsing Status**
+6. **Monitor Parsing Status**
    ```bash
    curl -X GET 'http://localhost:8001/api/v1/parsing-status/your-project-id'
    # Wait until parsing is complete
 
-6. **View Available Agents**
+7. **View Available Agents**
    ```bash
    curl -X GET 'http://localhost:8001/api/v1/list-available-agents/?list_system_agents=true'
    # Note down the agent_id you want to use
    ```
 
-7. **Create a Conversation**
+8. **Create a Conversation**
    ```bash
    curl -X POST 'http://localhost:8001/api/v1/conversations/' \
      -H 'Content-Type: application/json' \
@@ -254,7 +292,7 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
      }'
    # Save the conversation_id from the response
 
-8. **Start Interacting with Your Agent**
+9. **Start Interacting with Your Agent**
    ```bash
    curl -X POST 'http://localhost:8001/api/v1/conversations/your-conversation-id/message/' \
      -H 'Content-Type: application/json' \
@@ -264,7 +302,7 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
      }'
    ```
 
-9. **View Conversation History** (Optional)
+10. **View Conversation History** (Optional)
    ```bash
    curl -X GET 'http://localhost:8001/api/v1/conversations/your-conversation-id/messages/?start=0&limit=10'
    ```

@@ -140,11 +140,12 @@ class ConversationService:
         if not conversation.visibility:
             conversation.visibility = Visibility.PRIVATE
 
-        if conversation.visibility == Visibility.PUBLIC:
-            return ConversationAccessType.READ
-
         if user_id == conversation.user_id:  # Check if the user is the creator
-            return ConversationAccessType.WRITE  # Creator can write
+            return ConversationAccessType.WRITE  # Creator always has write access
+
+        if conversation.visibility == Visibility.PUBLIC:
+            return ConversationAccessType.READ  # Public users get read access
+
         # Check if the conversation is shared
         if conversation.shared_with_emails:
             shared_user_ids = user_service.get_user_ids_by_emails(
@@ -154,11 +155,14 @@ class ConversationService:
                 return ConversationAccessType.NOT_FOUND
             # Check if the current user ID is in the shared user IDs
             if user_id in shared_user_ids:
-                return ConversationAccessType.READ  # Shared user can only read
+                return ConversationAccessType.READ  # Shared users can only read
         return ConversationAccessType.NOT_FOUND
 
     async def create_conversation(
-        self, conversation: CreateConversationRequest, user_id: str
+        self,
+        conversation: CreateConversationRequest,
+        user_id: str,
+        hidden: bool = False,
     ) -> tuple[str, str]:
         try:
             if not await self.agent_service.validate_agent_id(
@@ -179,7 +183,7 @@ class ConversationService:
             )
 
             conversation_id = self._create_conversation_record(
-                conversation, title, user_id
+                conversation, title, user_id, hidden
             )
 
             asyncio.create_task(
@@ -205,14 +209,18 @@ class ConversationService:
             ) from e
 
     def _create_conversation_record(
-        self, conversation: CreateConversationRequest, title: str, user_id: str
+        self,
+        conversation: CreateConversationRequest,
+        title: str,
+        user_id: str,
+        hidden: bool = False,
     ) -> str:
         conversation_id = str(uuid7())
         new_conversation = Conversation(
             id=conversation_id,
             user_id=user_id,
             title=title,
-            status=ConversationStatus.ACTIVE,
+            status=ConversationStatus.ARCHIVED if hidden else ConversationStatus.ACTIVE,
             project_ids=conversation.project_ids,
             agent_ids=conversation.agent_ids,
             created_at=datetime.now(timezone.utc),
@@ -221,7 +229,7 @@ class ConversationService:
         self.sql_db.add(new_conversation)
         self.sql_db.commit()
         logger.info(
-            f"Project id : {conversation.project_ids[0]} Created new conversation with ID: {conversation_id}, title: {title}, user_id: {user_id}, agent_id: {conversation.agent_ids[0]}"
+            f"Project id : {conversation.project_ids[0]} Created new conversation with ID: {conversation_id}, title: {title}, user_id: {user_id}, agent_id: {conversation.agent_ids[0]}, hidden: {hidden}"
         )
         return conversation_id
 
@@ -388,8 +396,10 @@ class ConversationService:
             access_level = await self.check_conversation_access(
                 conversation_id, self.user_email
             )
-            if access_level == ConversationAccessType.READ:
-                raise AccessTypeReadError("Access denied.")
+            if access_level != ConversationAccessType.WRITE:
+                raise AccessTypeReadError(
+                    "Access denied. Only conversation creators can regenerate messages."
+                )
             last_human_message = await self._get_last_human_message(conversation_id)
             if not last_human_message:
                 raise MessageNotFoundError("No human message found to regenerate from")
@@ -508,7 +518,8 @@ class ConversationService:
         try:
             history = self.history_manager.get_session_history(user_id, conversation_id)
             validated_history = [
-                (str(msg.content) if msg.content else msg) for msg in history
+                (f"{msg.type}: {msg.content}" if msg.content else msg)
+                for msg in history
             ]
 
         except Exception:
@@ -531,7 +542,13 @@ class ConversationService:
                 # Custom agent doesn't support streaming, so we'll yield the entire response at once
                 response = (
                     await self.agent_service.custom_agent_service.execute_agent_runtime(
-                        agent_id, user_id, query, node_ids, project_id, conversation.id
+                        agent_id,
+                        user_id,
+                        query,
+                        node_ids,
+                        project_id,
+                        project_name,
+                        conversation.id,
                     )
                 )
                 yield ChatMessageResponse(

@@ -42,7 +42,6 @@ class CustomAgentService:
     ) -> Optional[CustomAgentModel]:
         """Fetch a custom agent by ID and user ID"""
         try:
-            logger.info(f"Fetching agent {agent_id} for user {user_id}")
             agent = (
                 self.db.query(CustomAgentModel)
                 .filter(
@@ -64,7 +63,6 @@ class CustomAgentService:
     async def get_agent_model(self, agent_id: str) -> Optional[CustomAgentModel]:
         """Fetch a custom agent model by ID without permission checks"""
         try:
-            logger.info(f"Fetching agent model {agent_id} from database")
             agent = (
                 self.db.query(CustomAgentModel)
                 .filter(CustomAgentModel.id == agent_id)
@@ -86,9 +84,6 @@ class CustomAgentService:
     ) -> CustomAgentShareModel:
         """Create a share for an agent with another user"""
         try:
-            logger.info(
-                f"Creating share for agent {agent_id} with user {shared_with_user_id}"
-            )
 
             # Get the agent to log its current state
             agent = await self.get_agent_model(agent_id)
@@ -118,12 +113,8 @@ class CustomAgentService:
                 agent_id=agent_id,
                 shared_with_user_id=shared_with_user_id,
             )
-            logger.info(
-                f"Adding new share for agent {agent_id} with user {shared_with_user_id}"
-            )
             self.db.add(share)
             self.db.commit()
-            logger.info(f"Share created successfully for agent {agent_id}")
 
             # Get the agent again to verify its state after sharing
             agent = await self.get_agent_model(agent_id)
@@ -141,9 +132,6 @@ class CustomAgentService:
     async def revoke_share(self, agent_id: str, shared_with_user_id: str) -> bool:
         """Revoke access to an agent for a specific user"""
         try:
-            logger.info(
-                f"Revoking access to agent {agent_id} for user {shared_with_user_id}"
-            )
 
             # Get the agent to log its current state
             agent = await self.get_agent_model(agent_id)
@@ -169,10 +157,6 @@ class CustomAgentService:
                 )
                 return False
 
-            # Delete the share
-            logger.info(
-                f"Deleting share for agent {agent_id} with user {shared_with_user_id}"
-            )
             self.db.delete(share)
             self.db.commit()
             logger.info(f"Share deleted successfully for agent {agent_id}")
@@ -201,7 +185,6 @@ class CustomAgentService:
     async def list_agent_shares(self, agent_id: str) -> list[str]:
         """List all emails this agent has been shared with"""
         try:
-            logger.info(f"Listing all shares for agent {agent_id}")
 
             # Get all user IDs this agent is shared with
             shares = (
@@ -233,7 +216,6 @@ class CustomAgentService:
     async def make_agent_private(self, agent_id: str, user_id: str) -> Optional[Agent]:
         """Make an agent private, removing all shares and changing visibility"""
         try:
-            logger.info(f"Making agent {agent_id} private for user {user_id}")
 
             # Get the agent and verify ownership
             agent = await self._get_agent_by_id_and_user(agent_id, user_id)
@@ -241,16 +223,12 @@ class CustomAgentService:
                 logger.warning(f"Agent {agent_id} not found for user {user_id}")
                 return None
 
-            logger.info(f"Agent {agent_id} current visibility: {agent.visibility}")
-
             # Delete all shares
-            logger.info(f"Deleting all shares for agent {agent_id}")
             self.db.query(CustomAgentShareModel).filter(
                 CustomAgentShareModel.agent_id == agent_id
             ).delete()
 
             # Update visibility to PRIVATE
-            logger.info(f"Updating agent {agent_id} visibility to PRIVATE")
             agent.visibility = AgentVisibility.PRIVATE.value
             self.db.commit()
 
@@ -271,7 +249,7 @@ class CustomAgentService:
             query = self.db.query(CustomAgentModel)
 
             # Base query for user's own agents
-            filters = [(CustomAgentModel.user_id == user_id)]
+            filters = [CustomAgentModel.user_id == user_id]
 
             # Add public agents
             if include_public:
@@ -296,9 +274,6 @@ class CustomAgentService:
             raise
 
     def _convert_to_agent_schema(self, custom_agent: CustomAgentModel) -> Agent:
-        logger.info(
-            f"Converting agent {custom_agent.id} to schema, visibility: {custom_agent.visibility}"
-        )
 
         task_schemas = []
         for i, task in enumerate(custom_agent.tasks, start=1):
@@ -323,13 +298,11 @@ class CustomAgentService:
         visibility = custom_agent.visibility
         try:
             # Try to convert string to enum
-            logger.info(f"Converting visibility string '{visibility}' to enum")
             visibility_enum = (
                 AgentVisibility(visibility.lower())
                 if visibility
                 else AgentVisibility.PRIVATE
             )
-            logger.info(f"Converted visibility to enum: {visibility_enum}")
         except ValueError:
             # If conversion fails, default to PRIVATE
             logger.warning(
@@ -356,7 +329,6 @@ class CustomAgentService:
             visibility=visibility_enum,
         )
 
-        logger.info(f"Converted agent schema result visibility: {result.visibility}")
         return result
 
     async def create_agent(self, user_id: str, agent_data: AgentCreate) -> Agent:
@@ -572,6 +544,7 @@ class CustomAgentService:
         query: str,
         node_ids: Optional[List[str]] = None,
         project_id: Optional[str] = None,
+        project_name: Optional[str] = None,
         conversation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Execute an agent at runtime without deployment"""
@@ -647,7 +620,7 @@ class CustomAgentService:
         runtime_agent = RuntimeAgent(self.db, agent_config)
         try:
             result = await runtime_agent.run(
-                agent_id, query, project_id, conversation_id, node_ids
+                agent_id, query, project_id, project_name, conversation_id, node_ids
             )
             return {"message": result["response"]}
 

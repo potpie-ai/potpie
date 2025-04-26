@@ -46,6 +46,9 @@ class ConversationAPI:
     @router.post("/conversations/", response_model=CreateConversationResponse)
     async def create_conversation(
         conversation: CreateConversationRequest,
+        hidden: bool = Query(
+            False, description="Whether to hide this conversation from the web UI"
+        ),
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
@@ -58,7 +61,7 @@ class ConversationAPI:
             )
         user_email = user["email"]
         controller = ConversationController(db, user_id, user_email)
-        return await controller.create_conversation(conversation)
+        return await controller.create_conversation(conversation, hidden)
 
     @staticmethod
     @router.get(
