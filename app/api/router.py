@@ -29,6 +29,7 @@ from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.projects.projects_controller import ProjectController
 from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
+from app.modules.usage.usage_service import UsageService
 from app.modules.search.search_service import SearchService
 from app.modules.search.search_schema import SearchRequest, SearchResponse
 
@@ -84,6 +85,8 @@ async def create_conversation(
     user=Depends(get_api_key_user),
 ):
     user_id = user["user_id"]
+    # This will either return True or raise an HTTPException
+    await UsageService.check_usage_limit(user_id)
     # Create full conversation request with defaults
     full_request = CreateConversationRequest(
         user_id=user_id,
@@ -126,6 +129,13 @@ async def post_message(
         raise HTTPException(status_code=400, detail="Message content cannot be empty")
 
     user_id = user["user_id"]
+    checked = await UsageService.check_usage_limit(user_id)
+    if not checked:
+        raise HTTPException(
+            status_code=402,
+            detail="Subscription required to create a conversation.",
+        )
+
     # Note: email is no longer available with API key auth
     controller = ConversationController(db, user_id, None)
     message_stream = controller.post_message(conversation_id, message, stream=False)

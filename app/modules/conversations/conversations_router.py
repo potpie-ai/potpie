@@ -19,6 +19,8 @@ from app.modules.conversations.access.access_service import (
 from app.modules.conversations.conversation.conversation_controller import (
     ConversationController,
 )
+from app.modules.usage.usage_service import UsageService
+
 
 from .conversation.conversation_schema import (
     ConversationInfoResponse,
@@ -48,6 +50,12 @@ class ConversationAPI:
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
+        checked = await UsageService.check_usage_limit(user_id)
+        if not checked:
+            raise HTTPException(
+                status_code=402,
+                detail="Subscription required to create a conversation.",
+            )
         user_email = user["email"]
         controller = ConversationController(db, user_id, user_email)
         return await controller.create_conversation(conversation, hidden)
@@ -104,6 +112,12 @@ class ConversationAPI:
 
         user_id = user["user_id"]
         user_email = user["email"]
+        checked = await UsageService.check_usage_limit(user_id)
+        if not checked:
+            raise HTTPException(
+                status_code=402,
+                detail="Subscription required to create a conversation.",
+            )
         controller = ConversationController(db, user_id, user_email)
         message_stream = controller.post_message(conversation_id, message, stream)
         if stream:
@@ -127,6 +141,12 @@ class ConversationAPI:
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
+        checked = await UsageService.check_usage_limit(user_id)
+        if not checked:
+            raise HTTPException(
+                status_code=402,
+                detail="Subscription required to create a conversation.",
+            )
         user_email = user["email"]
         controller = ConversationController(db, user_id, user_email)
         message_stream = controller.regenerate_last_message(
