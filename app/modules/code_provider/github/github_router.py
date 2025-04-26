@@ -21,10 +21,9 @@ async def get_user_repos(
     # Remove duplicates while preserving order
     seen = set()
     deduped_repos = []
-    for repo in reversed(user_repo_list["repositories"]):
-        # Create tuple of values to use as hash key
+    for repo in user_repo_list["repositories"]:
         repo_key = repo["full_name"]
-
+        
         if repo_key not in seen:
             seen.add(repo_key)
             deduped_repos.append(repo)
