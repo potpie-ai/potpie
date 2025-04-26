@@ -108,10 +108,6 @@ class APIKeyService:
                 return None
 
             hashed_key = APIKeyService.hash_api_key(api_key)
-            if not hashed_key:
-                logger.error("Failed to hash API key")
-                return None
-
             # Find user with matching hashed key
             result = (
                 db.query(UserPreferences, User.email)
