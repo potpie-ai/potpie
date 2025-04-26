@@ -55,8 +55,6 @@ Potpie is an open-source platform that creates AI agents specialized in your cod
 
 ## 📚 Table of Contents
 - [🥧 Why Potpie?](#why-potpie)
-- [🔌 VSCode Extension](#vscode-extension)
-- [🧩 Slack Integration](#slack-integration)
 - [🤖 Our Prebuilt Agents](#prebuilt-agents)
 - [🛠️ Tooling](#potpies-tooling-system)
 - [🚀 Getting Started](#getting-started)
