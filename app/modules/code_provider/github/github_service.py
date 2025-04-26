@@ -51,6 +51,37 @@ class GithubService:
         self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
         self.is_development_mode = config_provider.get_is_development_mode()
 
+    def _validate_repo_name(self, repo_name: str) -> None:
+        if not repo_name or not isinstance(repo_name, str):
+            raise ValueError("Repository name must be a non-empty string")
+            
+        # To Check if it's a local path
+        if os.path.exists(repo_name) and os.path.isdir(repo_name):
+            return
+            
+        # GitHub repo name Regex
+        parts = repo_name.split('/')
+        if len(parts) != 2:
+            raise ValueError("Repository name must be in the format 'owner/repo'")
+            
+        owner, repo = parts
+        
+        # Log error if regex not followed
+        def validate_segment(segment: str, max_length: int, segment_type: str) -> None:
+            if not segment:
+                raise ValueError(f"{segment_type} cannot be empty")
+            if len(segment) > max_length:
+                raise ValueError(f"{segment_type} cannot be longer than {max_length} characters")
+            if segment[0] == '-' or segment[-1] == '-':
+                raise ValueError(f"{segment_type} cannot start or end with a dash")
+            if '--' in segment:
+                raise ValueError(f"{segment_type} cannot contain consecutive dashes")
+            if not all(c.isalnum() or c in '-_' for c in segment):
+                raise ValueError(f"{segment_type} can only contain alphanumeric characters, dashes, and underscores")
+        
+        validate_segment(owner, 39, "Owner")
+        validate_segment(repo, 100, "Repository")
+
     def get_github_repo_details(self, repo_name: str) -> Tuple[Github, Dict, str]:
         private_key = (
             "-----BEGIN RSA PRIVATE KEY-----\n"
@@ -467,6 +498,9 @@ class GithubService:
 
     async def get_branch_list(self, repo_name: str):
         try:
+            # Validate repository name format
+            self._validate_repo_name(repo_name)
+            
             # Check if repo_name is a path to a local repository
             if os.path.exists(repo_name) and os.path.isdir(repo_name):
                 try:
@@ -744,8 +778,14 @@ class GithubService:
 
     async def check_public_repo(self, repo_name: str) -> bool:
         try:
+            # Validate repository name format
+            self._validate_repo_name(repo_name)
+            
             github = self.get_public_github_instance()
             github.get_repo(repo_name)
             return True
+        except ValueError as ve:
+            logger.error(f"Invalid repository name format: {str(ve)}")
+            raise HTTPException(status_code=400, detail=str(ve))
         except Exception:
             return False
