@@ -52,10 +52,23 @@ class UsageService:
             return True
 
         subscription_url = f"{os.getenv('SUBSCRIPTION_BASE_URL')}/subscriptions/info"
-        async with httpx.AsyncClient() as client:
-            response = await client.get(subscription_url, params={"user_id": user_id})
-            subscription_data = response.json()
-
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    subscription_url, 
+                    params={"user_id": user_id},
+                    timeout=10.0  # Set a reasonable timeout
+                )
+                response.raise_for_status()  # Raise an exception for 4XX/5XX responses
+                subscription_data = response.json()
+        except (httpx.RequestError, httpx.HTTPStatusError, ValueError) as e:
+            # Log the error
+            logger.error(f"Failed to fetch subscription data for user {user_id}: {str(e)}")
+            # Default to a free plan if the subscription service is unavailable
+            subscription_data = {
+                "plan_type": "free",
+                "end_date": None
+            }
         end_date_str = subscription_data.get("end_date")
         if end_date_str:
             end_date = datetime.fromisoformat(end_date_str)
