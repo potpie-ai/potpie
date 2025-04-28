@@ -48,6 +48,8 @@ class IntelligentCodeGraphTool:
     description = """Intelligently fetches a code graph starting from a node ID, filtering out
     irrelevant nodes that add noise to the context. The filtering is done using rule-based
     evaluation to identify relevant nodes for integration test generation.
+    Example use case: 
+    Use this tool to get the call graph of entry points for integration test generation, or to understand the code flow for debugging / root cause analysis.
 
     :param project_id: string, the repository ID (UUID).
     :param node_id: string, the ID of the node to retrieve the graph for.

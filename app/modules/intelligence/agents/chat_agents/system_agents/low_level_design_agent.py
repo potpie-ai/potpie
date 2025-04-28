@@ -42,7 +42,7 @@ class LowLevelDesignAgent(ChatAgent):
             [
                 "get_code_from_multiple_node_ids",
                 "get_node_neighbours_from_node_id",
-                "get_code_from_probable_node_name",
+                "get_code_from_probable_node_names",
                 "ask_knowledge_graph_queries",
                 "get_nodes_from_tags",
                 "webpage_extractor",

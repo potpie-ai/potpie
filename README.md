@@ -109,7 +109,7 @@ Potpie offers a suite of specialized codebase agents for automating and optimizi
 
 Potpie provides a set of tools that agents can use to interact with the knowledge graph and the underlying infrastructure:
 
-- **get_code_from_probable_node_name**: Retrieves code snippets based on a probable node name.
+- **get_code_from_probable_node_names**: Retrieves code snippets based on a probable node name.
 - **get_code_from_node_id**: Fetches code associated with a specific node ID.
 - **get_code_from_multiple_node_ids**: Retrieves code snippets for multiple node IDs simultaneously.
 - **ask_knowledge_graph_queries**: Executes vector similarity searches to obtain relevant information.

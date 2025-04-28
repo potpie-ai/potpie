@@ -40,7 +40,7 @@ class UnitTestAgent(ChatAgent):
         tools = self.tools_provider.get_tools(
             [
                 "get_code_from_node_id",
-                "get_code_from_probable_node_name",
+                "get_code_from_probable_node_names",
                 "webpage_extractor",
                 "web_search_tool",
                 "github_tool",

@@ -109,37 +109,63 @@ class RuntimeAgent:
             if tool_name in self.tools:
                 tool = self.tools[tool_name]
                 tools_help += f"{tool.name}: {tool.description}\n"
-                if hasattr(tool, "args_schema"):
-                    schema = tool.args_schema.schema()
-                    tools_help += (
-                        f"Input: {json.dumps(schema.get('example', {}), indent=2)}\n\n"
-                    )
+
 
         return f"""
-                CONTEXT:
-                Query: {query}
-                Project ID: {self.project_id}
-                Node IDs: {node_ids}
-                Additional Context: {context}
+        You are an advanced AI coding agent specializing in comprehensive task completion. Your role is to analyze the given context, plan efficiently, and execute tasks using the available tools and information.
 
-                TASK:
-                {task_config.description}
+        First, review the project's file structure:
 
-                Expected Output Format:
-                {json.dumps(task_config.expected_output, indent=2)}
+        <additional_context>
+        {context}
+        </additional_context>
 
-                INSTRUCTIONS:
-                1. Use the available tools to gather information
-                2. Process and synthesize the gathered information
-                3. Format your response in markdown
-                4. Include relevant code snippets and file references
-                5. Provide clear explanations
+        You have access to the following tools:
 
-                IMPORTANT:
-                - You have a maximum of {self.max_iter} iterations
-                - Use tools efficiently and avoid unnecessary API calls
-                - Only use the tools listed below
-                {tools_help}
+        <tools_help>
+        {tools_help}
+        </tools_help>
+
+        Now, consider the user's prompt:
+
+        <user_prompt>
+        {query}
+        </user_prompt>
+
+        Here is the relevant project information:
+
+        <project_id>{self.project_id}</project_id>
+
+        <node_ids>{node_ids}</node_ids>
+
+        Your task is as follows:
+
+        <task_description>
+        {task_config.description}
+        </task_description>
+
+        You have a maximum of <max_iterations>{self.max_iter}</max_iterations> iterations to complete this task.
+
+        Before proceeding with the task, conduct a thorough project analysis inside <project_analysis> tags. Consider the following:
+        1. Analyze the project structure and identify key components.
+        2. Break down the user's prompt and extract main objectives.
+        3. List out the available tools and their potential applications for this task.
+        4. Prioritize subtasks based on their importance and dependencies.
+        5. Identify the most efficient way to use the provided tools.
+        6. Plan how to avoid redundant tool calls and maximize efficiency.
+        7. Determine the best order of operations to complete the task.
+        8. Consider potential challenges, edge cases, and how to overcome them.
+
+        After your analysis phase, follow these instructions:
+
+        1. Execute your plan, using the tools as necessary.
+        2. Process and synthesize all gathered information.
+        3. Format your response in markdown, including relevant code snippets and file references.
+        4. Provide clear explanations for each step of your process.
+        5. Ensure your response is comprehensive yet concise.
+
+        Remember to think critically throughout the process and justify your decisions. Efficient use of resources and clear communication are key to successfully completing this task.
+
             """
 
     async def create_task(
@@ -196,10 +222,14 @@ class RuntimeAgent:
                 )
 
             logger.info(f"Running agent with project_id: {self.project_id}")
-
-            # Create agent
-            self.agent = await self.create_agent()
-
+            # file_structure = (
+            #     await self.tool_service.file_structure_tool.fetch_repo_structure(
+            #         self.project_id
+            #     )
+            # )
+            # context = f"File Structure of the project:\n {file_structure}"
+            context = await self.tool_service.process_large_pr_tool.arun({"project_id": self.project_id, "base_branch": "prev-2"})
+            # context = ""
             # Create all tasks with context chaining
             tasks = []
             previous_task = None
@@ -207,7 +237,7 @@ class RuntimeAgent:
                 task = await self.create_task(
                     query,
                     node_ids,
-                    f"Project Name (github: owner/repo): {project_name}",  # Empty context string since we're using task context
+                    f"Project Name (github: owner/repo): {project_name}\n{context}",  # Empty context string since we're using task context
                     task_index=i,
                     previous_task=previous_task,
                 )
@@ -215,7 +245,7 @@ class RuntimeAgent:
                 previous_task = task
                 logger.info(f"Created task {i+1}/{len(self.config.tasks)}")
 
-            # Create crew with all tasks
+
             crew = Crew(
                 agents=[self.agent],
                 tasks=tasks,
@@ -225,7 +255,6 @@ class RuntimeAgent:
 
             logger.info(f"Starting Crew AI kickoff with {len(tasks)} tasks")
             result = await crew.kickoff_async()
-
             content = result.raw
             self.history_manager.add_message_chunk(
                 conversation_id,

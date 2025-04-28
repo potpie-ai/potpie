@@ -25,12 +25,20 @@ MODEL_CONFIG_MAP = {
         "provider": "anthropic",
         "default_params": {"temperature": 0.3, "max_tokens": 8000},
     },
+    "anthropic/claude-3-5-sonnet-20241022": {
+        "provider": "anthropic",
+        "default_params": {"temperature": 0.3, "max_tokens": 8000},
+    },
     "anthropic/claude-3-5-haiku-20241022": {
         "provider": "anthropic",
         "default_params": {"temperature": 0.2, "max_tokens": 8000},
     },
     # DeepSeek Models
     "openrouter/deepseek/deepseek-chat-v3-0324": {
+        "provider": "deepseek",
+        "default_params": {"temperature": 0.3, "max_tokens": 8000},
+    },
+        "openrouter/deepseek/deepseek-r1": {
         "provider": "deepseek",
         "default_params": {"temperature": 0.3, "max_tokens": 8000},
     },

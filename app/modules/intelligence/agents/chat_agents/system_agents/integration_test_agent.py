@@ -46,7 +46,7 @@ class IntegrationTestAgent(ChatAgent):
         tools = self.tools_provider.get_tools(
             [
                 "get_code_from_multiple_node_ids",
-                "get_code_from_probable_node_name",
+                "get_code_from_probable_node_names",
                 "webpage_extractor",
                 "web_search_tool",
                 "github_tool",
@@ -158,7 +158,7 @@ integration_test_task_prompt = """
         - Understand how each component interacts with others within the system.
     - **Import Resolution:**
         - Determine the necessary imports for each component by analyzing the graph structure.
-        - Use the `get_code_from_probable_node_name` tool to fetch code snippets for accurate import statements.
+        - Use the `get_code_from_probable_node_names` tool to fetch code snippets for accurate import statements.
         - Validate that the fetched code matches the expected component names and discard any mismatches.
 
     3. **Test Plan Generation:**

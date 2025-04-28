@@ -23,7 +23,7 @@ class GetCodeFromMultipleNodeIdsTool:
     name = "Get Code and docstring From Multiple Node IDs"
     description = """Retrieves code and docstring for multiple nodes in a repository.
         :param project_id: string, the repository ID (UUID).
-        :param node_ids: array, list of node IDs to retrieve code for.
+        :param node_ids: array, list of node IDs (UUID) to retrieve code for.
 
             example:
             {
@@ -162,8 +162,9 @@ def get_code_from_multiple_node_ids_tool(
         func=tool_instance.run,
         name="Get Code and docstring From Multiple Node IDs",
         description="""Retrieves code and docstring for multiple node ids in a repository given their node IDs
+                Try to club lookups for multiple nodes in a single call instead of calling this tool multiple times.
                 Inputs for the run_multiple method:
                 - project_id (str): The repository ID to retrieve code and docstring for, this is a UUID.
-                - node_ids (List[str]): A list of node IDs to retrieve code and docstring for, this is a UUID.""",
+                - node_ids (List[str]): A list of node IDs (UUID) to retrieve code and docstring for.""",
         args_schema=GetCodeFromMultipleNodeIdsInput,
     )

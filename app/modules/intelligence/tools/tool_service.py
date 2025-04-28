@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 from app.modules.intelligence.tools.change_detection.change_detection_tool import (
     get_change_detection_tool,
 )
+from app.modules.intelligence.tools.change_detection.patch_extraction_tool import get_patch_extraction_tool
+from app.modules.intelligence.tools.change_detection.process_large_pr_tool import get_process_large_pr_tool
 from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
     get_code_file_structure_tool,
     GetCodeFileStructureTool,
@@ -71,6 +73,7 @@ class ToolService:
         self.file_structure_tool = GetCodeFileStructureTool(db)
         self.provider_service = ProviderService.create(db, user_id)
         self.tools = self._initialize_tools()
+        self.process_large_pr_tool = get_process_large_pr_tool(user_id, db)
 
     def get_tools(self, tool_names: List[str]) -> List[StructuredTool]:
         """get tools if exists"""
@@ -82,7 +85,7 @@ class ToolService:
 
     def _initialize_tools(self) -> Dict[str, StructuredTool]:
         tools = {
-            "get_code_from_probable_node_name": get_code_from_probable_node_name_tool(
+            "get_code_from_probable_node_names": get_code_from_probable_node_name_tool(
                 self.db, self.user_id
             ),
             "get_code_from_node_id": get_code_from_node_id_tool(self.db, self.user_id),
@@ -94,7 +97,7 @@ class ToolService:
             ),
             "get_nodes_from_tags": get_nodes_from_tags_tool(self.db, self.user_id),
             "get_code_graph_from_node_id": get_code_graph_from_node_id_tool(self.db),
-            "change_detection": get_change_detection_tool(self.user_id),
+            "change_detection": get_change_detection_tool(self.user_id, self.db),
             "get_code_file_structure": get_code_file_structure_tool(self.db),
             "get_node_neighbours_from_node_id": get_node_neighbours_from_node_id_tool(
                 self.db
@@ -117,6 +120,8 @@ class ToolService:
             "github_add_pr_comments": github_add_pr_comment.git_add_pr_comments_tool(
                 self.db, self.user_id
             ),
+            "get_patch_tool": get_patch_extraction_tool(self.user_id),
+            "process_large_pr_tool": get_process_large_pr_tool(self.user_id, self.db),
         }
 
         if self.webpage_extractor_tool:
