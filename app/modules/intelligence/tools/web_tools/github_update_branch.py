@@ -108,7 +108,6 @@ class GitHubUpdateFileTool:
         branch_name: str,
         content: str,
         commit_message: str,
-        token: str,
         author_name: Optional[str] = None,
         author_email: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -121,7 +120,6 @@ class GitHubUpdateFileTool:
             branch_name: The name of the branch where the file is located
             content: The new content for the file
             commit_message: The commit message
-            token: GitHub personal access token with repo permissions
             author_name: Optional author name for the commit
             author_email: Optional author email for the commit
 
@@ -201,20 +199,16 @@ class GitHubUpdateFileTool:
         branch_name: str,
         content: str,
         commit_message: str,
-        token: str,
         author_name: Optional[str] = None,
         author_email: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Async implementation of the tool."""
-        # For simplicity, we're using the sync version in async context
-        # In a production environment, you'd want to use aiohttp or similar
         return self._run(
             repo_name=repo_name,
             file_path=file_path,
             branch_name=branch_name,
             content=content,
             commit_message=commit_message,
-            token=token,
             author_name=author_name,
             author_email=author_email,
         )
