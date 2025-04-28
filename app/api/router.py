@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.modules.auth.api_key_service import APIKeyService
+from app.modules.auth.api_key_service import APIKeyService, InvalidAPIKeyFormatError
 from app.modules.conversations.conversation.conversation_controller import (
     ConversationController,
 )
@@ -63,7 +63,15 @@ async def get_api_key_user(
             )
         return {"user_id": user.uid, "email": user.email, "auth_type": "api_key"}
 
-    user = await APIKeyService.validate_api_key(x_api_key, db)
+    try:
+        user = await APIKeyService.validate_api_key(x_api_key, db)
+    except InvalidAPIKeyFormatError:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid API key format",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+
     if not user:
         raise HTTPException(
             status_code=401,
