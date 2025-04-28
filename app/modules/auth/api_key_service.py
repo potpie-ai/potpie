@@ -10,10 +10,23 @@ from sqlalchemy.orm import Session
 
 from app.modules.users.user_model import User
 from app.modules.users.user_preferences_model import UserPreferences
+from google.api_core.exceptions import NotFound
+
+
+class APIKeyServiceError(Exception):
+    """Base exception class for APIKeyService errors."""
+
+
+class InvalidAPIKeyFormatError(APIKeyServiceError):
+    """Raised when the API key format is invalid."""
+
+
+class APIKeyNotFoundError(APIKeyServiceError):
+    """Raised when the API key is not found in the database."""
 
 
 class APIKeyService:
-    SECRET_PREFIX = "sk-"
+    SECRET_PREFIX = os.getenv("API_KEY_SECRET_PREFIX", "sk-")
     KEY_LENGTH = 32
 
     @staticmethod
@@ -98,10 +111,12 @@ class APIKeyService:
         return api_key
 
     @staticmethod
-    async def validate_api_key(api_key: str, db: Session) -> Optional[dict]:
+    async def validate_api_key(api_key: str, db: Session) -> dict:
         """Validate an API key and return user info if valid."""
         if not api_key.startswith(APIKeyService.SECRET_PREFIX):
-            return None
+            raise InvalidAPIKeyFormatError(
+                "API key format is invalid. Expected prefix missing."
+            )
 
         hashed_key = APIKeyService.hash_api_key(api_key)
 
@@ -115,7 +130,7 @@ class APIKeyService:
         )
 
         if not result:
-            return None
+            raise APIKeyNotFoundError("API key not found in the database.")
 
         user_pref, email = result
         return {"user_id": user_pref.user_id, "email": email, "auth_type": "api_key"}
@@ -144,7 +159,7 @@ class APIKeyService:
 
             try:
                 client.delete_secret(request={"name": name})
-            except Exception:
+            except NotFound:
                 pass  # Ignore if secret doesn't exist
 
         return True
