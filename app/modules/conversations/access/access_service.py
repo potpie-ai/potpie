@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.modules.utils.email_helper import is_valid_email
 from app.modules.conversations.conversation.conversation_model import (
     Conversation,
     Visibility,
@@ -48,6 +49,11 @@ class ShareChatService:
 
             # Handle PRIVATE visibility case
             if recipient_emails:
+                # Validate all emails first
+                for email in recipient_emails:
+                    if not is_valid_email(email):
+                        raise HTTPException(status_code=400, detail=f"Invalid email address: {email}")
+
                 existing_emails = chat.shared_with_emails or []
                 existing_emails_set = set(existing_emails)
                 unique_new_emails_set = set(recipient_emails)
@@ -56,7 +62,6 @@ class ShareChatService:
                 if to_share:
                     updated_emails = existing_emails + list(to_share)
                     chat.shared_with_emails = updated_emails
-
             # Always commit changes
             self.db.commit()
             return conversation_id

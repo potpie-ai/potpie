@@ -2,6 +2,8 @@ import os
 
 import resend
 
+import re
+
 
 class EmailHelper:
     def __init__(self):
@@ -47,3 +49,9 @@ Co-Founder, Potpie 🥧</p>
 
         email = resend.Emails.send(params)
         return email
+
+
+def is_valid_email(email: str) -> bool:
+    """Simple regex-based email validation."""
+    pattern = r"^[\w\.-]+@[\w\.-]+\.\w+$"
+    return re.match(pattern, email) is not None
