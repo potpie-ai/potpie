@@ -21,6 +21,8 @@ def get_tool_run_message(tool_name: str):
             return "Expanding code context"
         case "WebpageContentExtractor":
             return "Querying information from the web"
+        case "NotionDocTool":
+            return "Querying Notion Document"
         case "GitHubContentFetcher":
             return "Fetching content from github"
         case _:
@@ -45,6 +47,8 @@ def get_tool_response_message(tool_name: str):
             return "Fetched referenced code"
         case "WebpageContentExtractor":
             return "Information retrieved from web"
+        case "NotionDocTool":
+            return "Notion Document content retrieved"
         case "GitHubContentFetcher":
             return "File contents fetched from github"
         case _:
@@ -75,6 +79,11 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
                 return f"-> fetching directory structure for {path}\n"
             return "-> fetching directory structure from root of the repo\n"
         case "GetNodeNeighboursFromNodeID":
+            return ""
+        case "NotionDocTool":
+            url = args.get("url")
+            if url != None and isinstance(url, str):
+                return f"-> fetching Notion doc from {url}\n"
             return ""
         case "WebpageContentExtractor":
             return f"fetching -> {args.get('url')}\n"
@@ -160,6 +169,12 @@ def get_tool_result_info_content(tool_name: str, content: List[Any] | str | Any)
 description:
 {body}
 """
+                    return res[: min(len(res), 600)] + " ..."
+            return ""
+        case "NotionDocTool":
+            if isinstance(content, Dict):
+                res = content.get("content")
+                if isinstance(res, str):
                     return res[: min(len(res), 600)] + " ..."
             return ""
         case "GetCodeanddocstringFromNodeID":

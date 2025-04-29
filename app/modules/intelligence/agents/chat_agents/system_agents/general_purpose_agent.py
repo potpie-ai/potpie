@@ -49,6 +49,7 @@ class GeneralPurposeAgent(ChatAgent):
                 "get_linear_issue",
                 "update_linear_issue",
                 "web_search_tool",
+                "notion_doc_tool",
             ]
         )
 

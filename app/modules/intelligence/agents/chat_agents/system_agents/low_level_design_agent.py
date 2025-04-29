@@ -47,6 +47,7 @@ class LowLevelDesignAgent(ChatAgent):
                 "get_nodes_from_tags",
                 "webpage_extractor",
                 "web_search_tool",
+                "notion_doc_tool",
                 "github_tool",
                 "think",
                 "get_linear_issue",

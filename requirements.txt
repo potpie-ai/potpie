@@ -66,3 +66,4 @@ firecrawl-py==1.11.1
 pydantic_ai==0.0.39
 pytest
 pytest-asyncio
+notion-to-md-py==0.1.2
