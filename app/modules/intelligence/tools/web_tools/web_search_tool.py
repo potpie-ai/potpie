@@ -29,7 +29,7 @@ class WebSearchToolOutput(BaseModel):
 
 
 class WebSearchTool:
-    name = """Web Seach Tool"""
+    name = """Web Search Tool"""
     description = (
         """ Searches the web for any information and then gives you the answer"""
     )

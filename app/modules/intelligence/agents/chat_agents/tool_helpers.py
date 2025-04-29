@@ -23,6 +23,8 @@ def get_tool_run_message(tool_name: str):
             return "Querying information from the web"
         case "GitHubContentFetcher":
             return "Fetching content from github"
+        case "WebSearchTool":
+            return "Searching the web"
         case _:
             return "Querying data"
 
@@ -47,6 +49,8 @@ def get_tool_response_message(tool_name: str):
             return "Information retrieved from web"
         case "GitHubContentFetcher":
             return "File contents fetched from github"
+        case "WebSearchTool":
+            return "Web search successful"
         case _:
             return "Data queried successfully"
 
@@ -85,6 +89,8 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             if repo_name and issue_number:
                 return f"-> fetching {'PR' if is_pr else 'Issue'} #{issue_number} from github/{repo_name}\n"
             return ""
+        case "WebSearchTool":
+            return f"-> searching the web for {args.get('query')}\n"
         case _:
             return ""
 
@@ -171,6 +177,12 @@ description:
 ```{code}```
 """
                 return res[: min(len(res), 600)] + " ..."
+            return ""
+        case "WebSearchTool":
+            if isinstance(content, Dict):
+                res = content.get("content")
+                if isinstance(res, str):
+                    return res[: min(len(res), 600)] + " ..."
             return ""
         case _:
             return ""
