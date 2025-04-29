@@ -80,7 +80,7 @@ def file_fetch_tool(sql_db: Session, user_id: str):
     return StructuredTool.from_function(
         coroutine=tool_instance._arun,
         func=tool_instance._run,
-        name="fetch_file_content",
+        name="file_fetch_tool",
         description=FileFetchTool.description,
         args_schema=FileFetchToolInput,
     )
