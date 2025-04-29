@@ -19,7 +19,7 @@ class FileFetchToolInput(BaseModel):
 
 
 class FileFetchTool:
-    name: str = "fetch_file_content"
+    name: str = "file_fetch_tool"
     description: str = (
         "Fetch file content from a repository using the project_id and file path. "
         "Returns the content between optional start_line and end_line."
