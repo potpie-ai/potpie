@@ -33,13 +33,14 @@ class FileFetchTool:
         self.cp_service = CodeProviderService(self.sql_db)
         self.project_service = ProjectService(self.sql_db)
 
-    async def _get_project_details(self, project_id: str) -> Dict[str, str]:
-        # Adjust this if your CodeProviderService uses a different method or output
-        details = await self.project_service.get_project_repo_details_from_db(
-            project_id, self.user_id
-        )
-        if not details or "repo_name" not in details:
+    def _get_project_details(self, project_id: str) -> Dict[str, str]:
+        details = self.project_service.get_project_from_db_by_id_sync(project_id)
+        if not details or "project_name" not in details:
             raise ValueError(f"Cannot find repo details for project_id: {project_id}")
+        if details["user_id"] != self.user_id:
+            raise ValueError(
+                f"Cannot find repo details for project_id: {project_id} for current user"
+            )
         return details
 
     def _run(
@@ -50,7 +51,7 @@ class FileFetchTool:
         end_line: Optional[int] = None,
     ) -> Dict[str, Any]:
         try:
-            details = asyncio.run(self._get_project_details(project_id))
+            details = self._get_project_details(project_id)
             content = self.cp_service.get_file_content(
                 repo_name=details["project_name"],
                 file_path=file_path,
@@ -58,7 +59,6 @@ class FileFetchTool:
                 start_line=start_line,
                 end_line=end_line,
                 project_id=project_id,
-                commit_id=details["commit_id"],
             )
             return {"success": True, "content": content}
         except Exception as e:
