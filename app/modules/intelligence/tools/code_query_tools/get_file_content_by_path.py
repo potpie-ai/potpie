@@ -7,7 +7,7 @@ from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_service import ProjectService
 
 
-class FileFetchToolInput(BaseModel):
+class FetchFileToolInput(BaseModel):
     project_id: str = Field(
         ..., description="Project ID that references the repository"
     )
@@ -18,13 +18,13 @@ class FileFetchToolInput(BaseModel):
     end_line: Optional[int] = Field(None, description="Last line to fetch (inclusive)")
 
 
-class FileFetchTool:
-    name: str = "file_fetch_tool"
+class FetchFileTool:
+    name: str = "fetch_file"
     description: str = (
         "Fetch file content from a repository using the project_id and file path. "
         "Returns the content between optional start_line and end_line."
     )
-    args_schema: Type[BaseModel] = FileFetchToolInput
+    args_schema: Type[BaseModel] = FetchFileToolInput
 
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db
@@ -75,12 +75,12 @@ class FileFetchTool:
         return self._run(project_id, file_path, start_line, end_line)
 
 
-def file_fetch_tool(sql_db: Session, user_id: str):
-    tool_instance = FileFetchTool(sql_db, user_id)
+def fetch_file_tool(sql_db: Session, user_id: str):
+    tool_instance = FetchFileTool(sql_db, user_id)
     return StructuredTool.from_function(
         coroutine=tool_instance._arun,
         func=tool_instance._run,
-        name="file_fetch_tool",
-        description=FileFetchTool.description,
-        args_schema=FileFetchToolInput,
+        name="fetch_file",
+        description=tool_instance.description,
+        args_schema=FetchFileToolInput,
     )
