@@ -52,7 +52,9 @@ class ShareChatService:
                 # Validate all emails first
                 for email in recipient_emails:
                     if not is_valid_email(email):
-                        raise HTTPException(status_code=400, detail=f"Invalid email address: {email}")
+                        raise HTTPException(
+                            status_code=400, detail=f"Invalid email address: {email}"
+                        )
 
                 existing_emails = chat.shared_with_emails or []
                 existing_emails_set = set(existing_emails)

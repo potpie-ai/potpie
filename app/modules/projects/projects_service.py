@@ -180,6 +180,7 @@ class ProjectService:
                 "status": project.status,
                 "branch_name": project.branch_name,
                 "repo_path": project.repo_path,
+                "user_id": project.user_id,
             }
         else:
             return None
