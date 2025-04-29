@@ -180,7 +180,7 @@ description:
             return ""
         case "file_fetch_tool":
             if isinstance(content, Dict):
-                if content.get("success") == False:
+                if not content.get("success"):
                     return "Failed to fetch content"
                 else:
                     return f"""
