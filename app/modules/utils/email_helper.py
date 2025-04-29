@@ -53,5 +53,5 @@ Co-Founder, Potpie 🥧</p>
 
 def is_valid_email(email: str) -> bool:
     """Simple regex-based email validation."""
-    pattern = r"^[\w\.-]+@[\w\.-]+\.\w+$"
+    pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
     return re.match(pattern, email) is not None
