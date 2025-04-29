@@ -36,6 +36,9 @@ from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_n
 from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool import (
     get_nodes_from_tags_tool,
 )
+from app.modules.intelligence.tools.code_query_tools.get_file_content_by_path import (
+    fetch_file_tool,
+)
 from app.modules.intelligence.tools.tool_schema import ToolInfo, ToolInfoWithParameters
 from app.modules.intelligence.tools.web_tools.github_tool import github_tool
 from app.modules.intelligence.tools.web_tools import (
@@ -117,6 +120,7 @@ class ToolService:
             "github_add_pr_comments": github_add_pr_comment.git_add_pr_comments_tool(
                 self.db, self.user_id
             ),
+            "fetch_file": fetch_file_tool(self.db, self.user_id),
         }
 
         if self.webpage_extractor_tool:
