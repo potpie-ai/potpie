@@ -45,7 +45,7 @@ class NotionDocTool:
                 service_type="integration",
                 db=self.sql_db,
             )
-            
+
             if not has_key:
                 notion_key = os.getenv("NOTION_API_KEY")
             else:

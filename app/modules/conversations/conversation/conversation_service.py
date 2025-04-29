@@ -140,11 +140,12 @@ class ConversationService:
         if not conversation.visibility:
             conversation.visibility = Visibility.PRIVATE
 
-        if conversation.visibility == Visibility.PUBLIC:
-            return ConversationAccessType.READ
-
         if user_id == conversation.user_id:  # Check if the user is the creator
-            return ConversationAccessType.WRITE  # Creator can write
+            return ConversationAccessType.WRITE  # Creator always has write access
+
+        if conversation.visibility == Visibility.PUBLIC:
+            return ConversationAccessType.READ  # Public users get read access
+
         # Check if the conversation is shared
         if conversation.shared_with_emails:
             shared_user_ids = user_service.get_user_ids_by_emails(
@@ -154,7 +155,7 @@ class ConversationService:
                 return ConversationAccessType.NOT_FOUND
             # Check if the current user ID is in the shared user IDs
             if user_id in shared_user_ids:
-                return ConversationAccessType.READ  # Shared user can only read
+                return ConversationAccessType.READ  # Shared users can only read
         return ConversationAccessType.NOT_FOUND
 
     async def create_conversation(
@@ -395,8 +396,10 @@ class ConversationService:
             access_level = await self.check_conversation_access(
                 conversation_id, self.user_email
             )
-            if access_level == ConversationAccessType.READ:
-                raise AccessTypeReadError("Access denied.")
+            if access_level != ConversationAccessType.WRITE:
+                raise AccessTypeReadError(
+                    "Access denied. Only conversation creators can regenerate messages."
+                )
             last_human_message = await self._get_last_human_message(conversation_id)
             if not last_human_message:
                 raise MessageNotFoundError("No human message found to regenerate from")
