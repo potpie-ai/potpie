@@ -25,6 +25,8 @@ def get_tool_run_message(tool_name: str):
             return "Fetching content from github"
         case "file_fetch_tool":
             return "Fetching file content"
+        case "WebSearchTool":
+            return "Searching the web"
         case _:
             return "Querying data"
 
@@ -51,6 +53,8 @@ def get_tool_response_message(tool_name: str):
             return "File contents fetched from github"
         case "file_fetch_tool":
             return "File content fetched successfully"
+        case "WebSearchTool":
+            return "Web search successful"
         case _:
             return "Data queried successfully"
 
@@ -91,6 +95,8 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             return ""
         case "file_fetch_tool":
             return f"fetching contents for file {args.get('file_path')}"
+        case "WebSearchTool":
+            return f"-> searching the web for {args.get('query')}\n"
         case _:
             return ""
 
@@ -186,6 +192,11 @@ description:
                     return f"""
 ```{content.get("content")}```
                 """
+        case "WebSearchTool":
+            if isinstance(content, Dict):
+                res = content.get("content")
+                if isinstance(res, str):
+                    return res[: min(len(res), 600)] + " ..."
             return ""
         case _:
             return ""
