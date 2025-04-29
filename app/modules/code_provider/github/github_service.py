@@ -152,7 +152,15 @@ class GithubService:
         try:
             content_bytes = file_contents.decoded_content
             encoding = self._detect_encoding(content_bytes)
-            decoded_content = content_bytes.decode(encoding)
+            try:
+                decoded_content = content_bytes.decode(encoding)
+            except UnicodeDecodeError:
+                # Fallback to utf-8 with replacement for errors
+                try:
+                    decoded_content = content_bytes.decode("utf-8")
+                except UnicodeDecodeError:
+                    # Fallback to latin1 as last resort
+                    decoded_content = content_bytes.decode("latin1", errors="replace")
             lines = decoded_content.splitlines()
 
             if (start_line == end_line == 0) or (start_line == end_line == None):
