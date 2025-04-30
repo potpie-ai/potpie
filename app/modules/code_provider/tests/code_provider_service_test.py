@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch, MagicMock
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.code_provider.github.github_service import GithubService
 from app.modules.code_provider.local_repo.local_repo_service import LocalRepoService
+from fastapi import HTTPException
 
 @pytest.fixture
 def mock_sql_db():
@@ -55,6 +56,90 @@ class TestCodeProviderService:
                 mock_github.return_value = Mock(spec=GithubService)
                 service = CodeProviderService(mock_sql_db)
                 assert isinstance(service.service_instance, GithubService)
+
+    def test_init_missing_environment_variables(self, mock_sql_db):
+        # Test with no environment variables
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("app.modules.code_provider.code_provider_service.GithubService") as mock_github:
+                mock_github.side_effect = ValueError("GitHub token list is empty or not set in environment variables")
+                with pytest.raises(ValueError) as exc_info:
+                    CodeProviderService(mock_sql_db)
+                assert "GitHub token list is empty" in str(exc_info.value)
+
+        # Test with invalid isDevelopmentMode value
+        with patch.dict(os.environ, {"isDevelopmentMode": "invalid"}):
+            with patch("app.modules.code_provider.code_provider_service.GithubService") as mock_github:
+                mock_github.side_effect = ValueError("GitHub token list is empty or not set in environment variables")
+                with pytest.raises(ValueError) as exc_info:
+                    CodeProviderService(mock_sql_db)
+                assert "GitHub token list is empty" in str(exc_info.value)
+
+        # Test production mode without GitHub token
+        with patch.dict(os.environ, {"isDevelopmentMode": "disabled"}):
+            with patch("app.modules.code_provider.code_provider_service.GithubService") as mock_github:
+                mock_github.side_effect = ValueError("GitHub token list is empty or not set in environment variables")
+                with pytest.raises(ValueError) as exc_info:
+                    CodeProviderService(mock_sql_db)
+                assert "GitHub token list is empty" in str(exc_info.value)
+
+    def test_service_method_arguments(self, mock_sql_db):
+        """Test that arguments are correctly passed to the service instance methods"""
+        with patch.dict(os.environ, {"isDevelopmentMode": "disabled", "GH_TOKEN_LIST": "demo-token"}):
+            mock_service = Mock(spec=GithubService)
+            
+            service = CodeProviderService(mock_sql_db)
+            service.service_instance = mock_service
+
+            service.get_repo("test-repo-name")
+            mock_service.get_repo.assert_called_once_with("test-repo-name")
+            
+            service.get_file_content(
+                repo_name="repo",
+                file_path="path",
+                start_line=1,
+                end_line=10,
+                branch_name="branch",
+                project_id="project"
+            )
+            mock_service.get_file_content.assert_called_once_with(
+                "repo", "path", 1, 10, "branch", "project"
+            )
+
+    @pytest.mark.asyncio
+    async def test_get_project_structure_async_arguments(self, mock_sql_db):
+        """Test that arguments are correctly passed to get_project_structure_async"""
+        with patch.dict(os.environ, {"isDevelopmentMode": "disabled", "GH_TOKEN_LIST": "demo-token"}):
+            mock_service = Mock(spec=GithubService)
+            
+            service = CodeProviderService(mock_sql_db)
+            service.service_instance = mock_service
+            
+            await service.get_project_structure_async("project-id", "test/path")
+            mock_service.get_project_structure_async.assert_called_once_with("project-id", "test/path")
+
+    def test_exception_handling(self, mock_sql_db):
+        """Test handling of different exception types"""
+        with patch.dict(os.environ, {"isDevelopmentMode": "disabled", "GH_TOKEN_LIST": "demo-token"}):
+            mock_service = Mock(spec=GithubService)
+            service = CodeProviderService(mock_sql_db)
+            service.service_instance = mock_service
+
+            # Test HTTPException
+            mock_service.get_repo.side_effect = HTTPException(status_code=404, detail="Not found")
+            with pytest.raises(HTTPException) as exc_info:
+                service.get_repo("test-repo")
+            assert exc_info.value.status_code == 404
+            assert "Not found" in str(exc_info.value.detail)
+
+            mock_service.get_repo.side_effect = ValueError("Invalid repository")
+            with pytest.raises(ValueError) as exc_info:
+                service.get_repo("test-repo")
+            assert "Invalid repository" in str(exc_info.value)
+
+            mock_service.get_repo.side_effect = Exception("Unexpected error")
+            with pytest.raises(Exception) as exc_info:
+                service.get_repo("test-repo")
+            assert "Unexpected error" in str(exc_info.value)
 
     @pytest.mark.parametrize("is_dev_mode,service_class,mock_service", [
         ("enabled", LocalRepoService, "app.modules.code_provider.code_provider_service.LocalRepoService"),
