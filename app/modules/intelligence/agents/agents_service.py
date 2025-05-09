@@ -1,6 +1,9 @@
 import os
 from typing import List, Optional
 
+from app.modules.intelligence.agents.chat_agents.system_agents.benchmark_agent import (
+    GithubIssueFixerAgent,
+)
 from app.modules.intelligence.agents.chat_agents.system_agents.general_purpose_agent import (
     GeneralPurposeAgent,
 )
@@ -128,13 +131,31 @@ class AgentsService:
                     llm_provider, tools_provider, prompt_provider
                 ),
             ),
+            "benchmark_agent": AgentWithInfo(
+                id="benchmark_agent",
+                name="Code Generation Agent for fixing github issues",
+                description="Agent to generate diffs to fix github issues",
+                agent=GithubIssueFixerAgent(
+                    llm_provider, tools_provider, prompt_provider
+                ),
+            ),
         }
 
-    async def execute(self, ctx: ChatContext):
-        return await self.supervisor_agent.run(ctx)
+    async def execute(self, ctx: ChatContext, selected_agent: str | None = None):
+        agent = self.supervisor_agent
+        if selected_agent and self.system_agents[selected_agent] != None:
+            logger.info(f"Using selected agent: {selected_agent}")
+            agent = self.system_agents[selected_agent].agent
 
-    async def execute_stream(self, ctx: ChatContext):
-        async for chunk in self.supervisor_agent.run_stream(ctx):
+        return await agent.run(ctx)
+
+    async def execute_stream(self, ctx: ChatContext, selected_agent: str | None = None):
+        agent = self.supervisor_agent
+        if selected_agent and self.system_agents[selected_agent] != None:
+            logger.info(f"Using selected agent: {selected_agent}")
+            agent = self.system_agents[selected_agent].agent
+
+        async for chunk in agent.run_stream(ctx):
             yield chunk
 
     async def list_available_agents(

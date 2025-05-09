@@ -1,10 +1,12 @@
 import logging
 from typing import Optional, Type, Dict, Any
 from pydantic import BaseModel, Field
+from redis import Redis
 from sqlalchemy.orm import Session
 from langchain_core.tools import StructuredTool
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_service import ProjectService
+from app.core.config_provider import config_provider
 
 
 class FetchFileToolInput(BaseModel):
@@ -21,8 +23,41 @@ class FetchFileToolInput(BaseModel):
 class FetchFileTool:
     name: str = "fetch_file"
     description: str = (
-        "Fetch file content from a repository using the project_id and file path. "
-        "Returns the content between optional start_line and end_line."
+        """Fetch file content from a repository using the project_id and file path. 
+        Returns the content between optional start_line and end_line.
+        Make sure the file exists before querying for it, confirm it by checking the file structure.
+        File content is hashed for caching purposes. Cache won't be used if start_line or end_line are different.
+        Use with_line_numbers to include line numbers in the response to better understand the context and location of the code.
+        
+        param project_id: string, the repository ID (UUID) to get the file content for.
+        param file_path: string, the path to the file in the repository.
+        param with_line_numbers: bool, whether to include line numbers in the response.
+        param start_line: int, the first line to fetch (1-based, inclusive).
+        param end_line: int, the last line to fetch (inclusive).
+        
+        example:
+        {
+            "project_id": "550e8400-e29b-41d4-a716-446655440000",
+            "file_path": "src/main.py",
+            "start_line": 1,
+            "end_line": 10
+        }
+        Returns string containing the content of the file.
+        
+        If with_line_numbers is true, the content will be formatted with line numbers, starting from 1.
+        
+        format:
+        line_number:line
+        
+        no extra spaces or tabs in between.
+        
+        Example:
+        1:def hello_world():
+        2:    print("Hello, world!")
+        3:
+        4:hello_world()
+        
+        """
     )
     args_schema: Type[BaseModel] = FetchFileToolInput
 
@@ -31,6 +66,7 @@ class FetchFileTool:
         self.user_id = user_id
         self.cp_service = CodeProviderService(self.sql_db)
         self.project_service = ProjectService(self.sql_db)
+        self.redis = Redis.from_url(config_provider.get_redis_url())
 
     def _get_project_details(self, project_id: str) -> Dict[str, str]:
         details = self.project_service.get_project_from_db_by_id_sync(project_id)
@@ -42,15 +78,40 @@ class FetchFileTool:
             )
         return details
 
+    def with_line_numbers(
+        self, content: str, include_line_number: bool, starting_line: int
+    ) -> str:
+        if include_line_number:
+            lines = content.splitlines()
+            numbered_lines = [
+                f"{starting_line+ i}:{line}" for i, line in enumerate(lines)
+            ]
+            return "\n".join(numbered_lines)
+        return content
+
     def _run(
         self,
         project_id: str,
         file_path: str,
+        with_line_numbers: bool = False,
         start_line: Optional[int] = None,
         end_line: Optional[int] = None,
     ) -> Dict[str, Any]:
         try:
             details = self._get_project_details(project_id)
+            # Modify cache key to reflect that we're only caching the specific path
+            cache_key = f"file_content:{project_id}:exact_path_{file_path}:start_line_{start_line}:end_line_{end_line}"
+            result = self.redis.get(cache_key)
+            if result:
+                content = self.with_line_numbers(
+                    result.decode("utf-8"),
+                    with_line_numbers,
+                    starting_line=start_line or 1,
+                )
+                return {
+                    "success": True,
+                    "content": content,
+                }
             content = self.cp_service.get_file_content(
                 repo_name=details["project_name"],
                 file_path=file_path,
@@ -58,10 +119,18 @@ class FetchFileTool:
                 start_line=start_line,
                 end_line=end_line,
                 project_id=project_id,
+                commit_id=details["commit_id"],
             )
-            return {"success": True, "content": content}
+            self.redis.setex(cache_key, 600, content)  # Cache for 10 minutes
+            content = self.with_line_numbers(
+                content, with_line_numbers, starting_line=start_line or 1
+            )
+            return {
+                "success": True,
+                "content": content,
+            }
         except Exception as e:
-            logging.exception(f"Failed to fetch file content: {str(e)}")
+            logging.exception(f"Failed to fetch file content for {file_path}: {str(e)}")
             return {"success": False, "error": str(e), "content": None}
 
     async def _arun(

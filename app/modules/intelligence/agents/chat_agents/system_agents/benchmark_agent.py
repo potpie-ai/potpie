@@ -1,7 +1,13 @@
 from app.modules.intelligence.agents.chat_agents.adaptive_agent import AdaptiveAgent
+from app.modules.intelligence.agents.chat_agents.pydantic_4 import (
+    PydanticToolGraphAgent,
+)
 from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
 from app.modules.intelligence.agents.chat_agents.pydantic_complex_task import (
     PydanticGraphAgent,
+)
+from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent4 import (
+    PydanticMultiAgent,
 )
 from app.modules.intelligence.prompts.classification_prompts import AgentType
 from app.modules.intelligence.prompts.prompt_service import PromptService
@@ -14,7 +20,7 @@ from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator
 
 
-class CodeGenAgent(ChatAgent):
+class GithubIssueFixerAgent(ChatAgent):
     def __init__(
         self,
         llm_provider: ProviderService,
@@ -27,28 +33,22 @@ class CodeGenAgent(ChatAgent):
 
     def _build_agent(self) -> ChatAgent:
         agent_config = AgentConfig(
-            role="Code Generation Agent",
-            goal="Generate precise, copy-paste ready code modifications that maintain project consistency and handle all dependencies",
+            role="Issue Fixer Code Diff Generation agent",
+            goal="Generate patch diffs to fix the issue described by the user",
             backstory="""
                     You are an expert code generation agent specialized in creating production-ready,
                     immediately usable code modifications. Your primary responsibilities include:
                     1. Analyzing existing codebase context and understanding dependencies
                     2. Planning code changes that maintain exact project patterns and style
-                    3. Implementing changes with copy-paste ready output
+                    3. Implementing changes as patch diffs
                     4. Following existing code conventions exactly as shown in the input files
                     5. Never modifying string literals, escape characters, or formatting unless specifically requested
 
-                    Key principles:
-                    - Provide required new imports in a separate code block
-                    - Output only the specific functions/classes being modified
-                    - Never change existing string formats or escape characters
-                    - Maintain exact indentation and spacing patterns from original code
-                    - Include clear section markers for where code should be inserted/modified
                 """,
             tasks=[
                 TaskConfig(
                     description=code_gen_task_prompt,
-                    expected_output="User-friendly, clearly structured code changes with comprehensive dependency analysis, implementation details for ALL impacted files, and complete verification steps",
+                    expected_output="Patch Diffs of the changes to fix the given issue",
                 )
             ],
         )
@@ -60,17 +60,17 @@ class CodeGenAgent(ChatAgent):
                 "ask_knowledge_graph_queries",
                 "get_nodes_from_tags",
                 "get_code_file_structure",
+                "fetch_file",
                 "webpage_extractor",
                 "web_search_tool",
-                "github_tool",
-                "get_linear_issue",
-                "fetch_file",
+                "verify_patch_diff",
+                "generate_patch_diff",
             ]
         )
         if self.llm_provider.is_current_model_supported_by_pydanticai(
             config_type="chat"
         ):
-            return PydanticRagAgent(self.llm_provider, agent_config, tools)
+            return PydanticMultiAgent(self.llm_provider, agent_config, tools)
         else:
             return AdaptiveAgent(
                 llm_provider=self.llm_provider,
@@ -101,8 +101,6 @@ class CodeGenAgent(ChatAgent):
 
 
 code_gen_task_prompt = """
-    Work to generate copy-paste ready code:
-
     Follow this structured approach:
 
     1. Query Analysis:
@@ -150,100 +148,5 @@ code_gen_task_prompt = """
     - Map all required database schema updates
     - Detail API changes and version impacts
 
-    CRITICAL: If any file that is REQUIRED to propose changes is missing, stop and request the user to provide the file using "@filename" or "@functionname". NEVER create hypothetical files.
 
-
-    5. Code Generation Format:
-    Structure your response in this user-friendly format:
-
-    📝 Overview
-    -----------
-    A 2-3 line summary of the changes to be made.
-
-    🔍 Dependency Analysis
-    --------------------
-    • Primary Changes:
-        - file1.py: [brief reason]
-        - file2.py: [brief reason]
-
-    • Required Dependency Updates:
-        - dependent1.py: [specific changes needed]
-        - dependent2.py: [specific changes needed]
-
-    • Database Changes:
-        - Schema updates
-        - Migration requirements
-        - Data validation changes
-
-    📦 Changes by File
-    ----------------
-    [REPEAT THIS SECTION FOR EVERY IMPACTED FILE, INCLUDING DEPENDENCIES]
-
-    ### 📄 [filename.py]
-
-    **Purpose of Changes:**
-    Brief explanation of what's being changed and why
-
-    **Required Imports:**
-    ```python
-    from new.module import NewClass
-    ```
-
-    **Code Changes:**
-    ```python
-    def modified_function():
-        # Your code here
-        pass
-    ```
-
-    [IMPORTANT: Include ALL dependent files with their complete changes]
-
-    ⚠️ Important Notes
-    ----------------
-    • Breaking Changes: [if any]
-    • Required Manual Steps: [if any]
-    • Testing Recommendations: [if any]
-    • Database Migration Steps: [if any]
-
-    🔄 Verification Steps
-    ------------------
-    1. [Step-by-step verification process]
-    2. [Expected outcomes]
-    3. [How to verify the changes work]
-    4. [Database verification steps]
-    5. [API testing steps]
-
-    Important Response Rules:
-    1. Use clear section emojis and headers for visual separation
-    2. Keep each section concise but informative
-    3. Use bullet points and numbering for better readability
-    4. Include only relevant information in each section
-    5. Use code blocks with language specification
-    6. Highlight important warnings or notes
-    7. Provide clear, actionable verification steps
-    8. Keep formatting consistent across all files
-    9. Use emojis sparingly and only for section headers
-    10. Maintain a clean, organized structure throughout
-    11. NEVER skip dependent file changes
-    12. Always include database migration steps when relevant
-    13. Detail API version impacts and migration paths
-
-    Remember to:
-    - Format code blocks for direct copy-paste
-    - Highlight breaking changes prominently
-    - Make location instructions crystal clear
-    - Include all necessary context for each change
-    - Keep the overall structure scannable and navigable
-    - MUST provide concrete changes for ALL impacted files
-    - Include specific database migration steps when needed
-    - Detail API versioning requirements
-
-    The output should be easy to:
-    - Read in a chat interface
-    - Copy-paste into an IDE
-    - Understand at a glance
-    - Navigate through multiple files
-    - Use as a checklist for implementation
-    - Execute database migrations
-    - Manage API versioning
 """

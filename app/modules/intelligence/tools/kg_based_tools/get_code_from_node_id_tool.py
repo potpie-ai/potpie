@@ -105,6 +105,7 @@ class GetCodeFromNodeIdTool:
             end_line,
             project.branch_name,
             project.id,
+            project.commit_id,
         )
 
         docstring = None

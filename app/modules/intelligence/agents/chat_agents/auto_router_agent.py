@@ -49,6 +49,9 @@ class AutoRouterAgent(ChatAgent):
             {"role": "user", "content": prompt},
         ]
 
+        if ctx.curr_agent_id == "benchmark_agent":
+            return self.agents[ctx.curr_agent_id].agent
+
         try:
             classification: ClassificationResponse = (
                 await self.llm_provider.call_llm_with_structured_output(

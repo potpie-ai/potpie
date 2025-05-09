@@ -1,6 +1,9 @@
 import json
 from app.modules.intelligence.agents.chat_agents.adaptive_agent import AdaptiveAgent
 from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
+from app.modules.intelligence.agents.chat_agents.pydantic_complex_task import (
+    PydanticGraphAgent,
+)
 from app.modules.intelligence.prompts.classification_prompts import AgentType
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.provider_service import (
@@ -48,6 +51,7 @@ class IntegrationTestAgent(ChatAgent):
                 "get_code_from_multiple_node_ids",
                 "get_code_from_probable_node_name",
                 "webpage_extractor",
+                "fetch_file",
                 "web_search_tool",
                 "github_tool",
             ]

@@ -119,7 +119,9 @@ class ConversationAPI:
                 detail="Subscription required to create a conversation.",
             )
         controller = ConversationController(db, user_id, user_email)
-        message_stream = controller.post_message(conversation_id, message, stream)
+        message_stream = controller.post_message(
+            conversation_id, message, stream, agent_id=message.agent_id
+        )
         if stream:
             return StreamingResponse(
                 get_stream(message_stream), media_type="text/event-stream"
@@ -150,7 +152,7 @@ class ConversationAPI:
         user_email = user["email"]
         controller = ConversationController(db, user_id, user_email)
         message_stream = controller.regenerate_last_message(
-            conversation_id, request.node_ids, stream
+            conversation_id, request.node_ids, stream, agent_id=request.agent_id
         )
         if stream:
             return StreamingResponse(

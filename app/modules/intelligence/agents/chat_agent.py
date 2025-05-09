@@ -34,6 +34,9 @@ class ChatAgentResponse(BaseModel):
         ...,
         description="Full response to the query",
     )
+    thought: Optional[str] = Field(
+        default="", description="Think block for the agent thought"
+    )
     tool_calls: List[ToolCallResponse] = Field([], description="List of tool calls")
     citations: List[str] = Field(
         ...,

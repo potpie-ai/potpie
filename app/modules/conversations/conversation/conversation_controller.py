@@ -82,11 +82,20 @@ class ConversationController:
             raise HTTPException(status_code=500, detail=str(e))
 
     async def post_message(
-        self, conversation_id: str, message: MessageRequest, stream: bool = True
+        self,
+        conversation_id: str,
+        message: MessageRequest,
+        stream: bool = True,
+        agent_id: str | None = None,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         try:
             async for chunk in self.service.store_message(
-                conversation_id, message, MessageType.HUMAN, self.user_id, stream
+                conversation_id,
+                message,
+                MessageType.HUMAN,
+                self.user_id,
+                stream,
+                agent_id,
             ):
                 yield chunk
         except ConversationNotFoundError as e:
@@ -101,10 +110,11 @@ class ConversationController:
         conversation_id: str,
         node_ids: List[NodeContext] = [],
         stream: bool = True,
+        agent_id: str | None = None,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         try:
             async for chunk in self.service.regenerate_last_message(
-                conversation_id, self.user_id, node_ids, stream
+                conversation_id, self.user_id, node_ids, stream, agent_id
             ):
                 yield chunk
         except ConversationNotFoundError as e:

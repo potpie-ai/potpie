@@ -38,6 +38,7 @@ class LocalRepoService:
         end_line: int,
         branch_name: str,
         project_id: str,
+        commit_id: str,
     ) -> str:
         logger.info(
             f"Attempting to access file: {file_path} for project ID: {project_id}"
@@ -53,7 +54,10 @@ class LocalRepoService:
                 )
 
             repo = self.get_repo(repo_path)
-            repo.git.checkout(branch_name)
+            if commit_id:
+                repo.git.checkout(commit_id)
+            else:
+                repo.git.checkout(branch_name)
             file_full_path = os.path.join(repo_path, file_path)
             with open(file_full_path, "r", encoding="utf-8") as file:
                 lines = file.readlines()

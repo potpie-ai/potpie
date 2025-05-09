@@ -263,6 +263,7 @@ class ConversationService:
         message_type: MessageType,
         user_id: str,
         stream: bool = True,
+        agent_id: str | None = None,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         try:
             access_level = await self.check_conversation_access(
@@ -304,14 +305,22 @@ class ConversationService:
 
                 if stream:
                     async for chunk in self._generate_and_stream_ai_response(
-                        message.content, conversation_id, user_id, message.node_ids
+                        message.content,
+                        conversation_id,
+                        user_id,
+                        message.node_ids,
+                        agent_id,
                     ):
                         yield chunk
                 else:
                     full_message = ""
                     all_citations = []
                     async for chunk in self._generate_and_stream_ai_response(
-                        message.content, conversation_id, user_id, message.node_ids
+                        message.content,
+                        conversation_id,
+                        user_id,
+                        message.node_ids,
+                        agent_id,
                     ):
                         full_message += chunk.message
                         all_citations = all_citations + chunk.citations
@@ -391,6 +400,7 @@ class ConversationService:
         user_id: str,
         node_ids: List[NodeContext] = [],
         stream: bool = True,
+        agent_id: str | None = None,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         try:
             access_level = await self.check_conversation_access(
@@ -415,7 +425,11 @@ class ConversationService:
 
             if stream:
                 async for chunk in self._generate_and_stream_ai_response(
-                    last_human_message.content, conversation_id, user_id, node_ids
+                    last_human_message.content,
+                    conversation_id,
+                    user_id,
+                    node_ids,
+                    agent_id,
                 ):
                     yield chunk
             else:
@@ -423,7 +437,11 @@ class ConversationService:
                 all_citations = []
 
                 async for chunk in self._generate_and_stream_ai_response(
-                    last_human_message.content, conversation_id, user_id, node_ids
+                    last_human_message.content,
+                    conversation_id,
+                    user_id,
+                    node_ids,
+                    agent_id,
                 ):
                     full_message += chunk.message
                     all_citations = all_citations + chunk.citations
@@ -503,6 +521,7 @@ class ConversationService:
         conversation_id: str,
         user_id: str,
         node_ids: List[NodeContext],
+        selected_agent: str | None = None,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         conversation = (
             self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
@@ -518,7 +537,7 @@ class ConversationService:
         try:
             history = self.history_manager.get_session_history(user_id, conversation_id)
             validated_history = [
-                (f"{msg.type}: {msg.content}" if msg.content else msg)
+                (f"{msg.type}: {msg.content}" if msg.content else str(msg))
                 for msg in history
             ]
 
@@ -563,7 +582,8 @@ class ConversationService:
                         history=validated_history[-8:],
                         node_ids=[node.node_id for node in node_ids],
                         query=query,
-                    )
+                    ),
+                    selected_agent=selected_agent,
                 )
 
                 async for chunk in res:

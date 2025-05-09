@@ -28,7 +28,7 @@ class AgentConfig(BaseModel):
     goal: str
     backstory: str
     tasks: List[TaskConfig]
-    max_iter: int = 15
+    max_iter: int = 10
 
 
 class CrewAIResponse(BaseModel):
