@@ -289,6 +289,14 @@ AVAILABLE_MODELS = [
         is_inference_model=True,
     ),
     AvailableModelOption(
+        id="anthropic/claude-3-5-sonnet-20241022",
+        name="Claude 3.5 Sonnet",
+        description="Faster, more efficient Claude model for code generation",
+        provider="anthropic",
+        is_chat_model=True,
+        is_inference_model=False,
+    ),
+    AvailableModelOption(
         id="openrouter/deepseek/deepseek-chat-v3-0324",
         name="DeepSeek V3",
         description="DeepSeek's latest chat model",

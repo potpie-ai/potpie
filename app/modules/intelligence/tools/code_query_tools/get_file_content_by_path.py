@@ -35,6 +35,9 @@ class FetchFileTool:
         param start_line: int, the first line to fetch (1-based, inclusive).
         param end_line: int, the last line to fetch (inclusive).
         
+        IMPORTANT: Use line numbers as much as possible, some files are large. Use other tools to access small parts of the file.
+        You can use knowledge graph tools and node_ids to fetch code snippets
+        
         example:
         {
             "project_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -116,8 +119,8 @@ class FetchFileTool:
                 repo_name=details["project_name"],
                 file_path=file_path,
                 branch_name=details["branch_name"],
-                start_line=start_line,
-                end_line=end_line,
+                start_line=start_line if start_line is not None else None,
+                end_line=end_line if end_line is not None else None,
                 project_id=project_id,
                 commit_id=details["commit_id"],
             )

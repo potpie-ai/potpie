@@ -43,7 +43,9 @@ class GithubIssueFixerAgent(ChatAgent):
                     3. Implementing changes as patch diffs
                     4. Following existing code conventions exactly as shown in the input files
                     5. Never modifying string literals, escape characters, or formatting unless specifically requested
-
+                    6. Don't rewrite patch files or create them yourselves. Always use the file changes tools (which updates or uses FileChangeManager), Use file changes tools to update the repo. Load a file, replace lines, verify the file with context and generate diffs from there
+                    7. FileChangeManager needs to updated with all the changes and then patch needs to generated from the FileChangeManager
+                    8. Try not to read entire files directly, use line numbers to get parts of the code. Try to limit input token usage
                 """,
             tasks=[
                 TaskConfig(
@@ -58,13 +60,16 @@ class GithubIssueFixerAgent(ChatAgent):
                 "get_node_neighbours_from_node_id",
                 "get_code_from_probable_node_name",
                 "ask_knowledge_graph_queries",
-                "get_nodes_from_tags",
                 "get_code_file_structure",
                 "fetch_file",
-                "webpage_extractor",
                 "web_search_tool",
                 "verify_patch_diff",
                 "generate_patch_diff",
+                "load_file_for_editing",
+                "replace_lines_in_file",
+                "insert_lines_in_file",
+                "read_lines_in_changed_file",
+                "remove_lines_in_file",
             ]
         )
         if self.llm_provider.is_current_model_supported_by_pydanticai(
@@ -147,6 +152,16 @@ code_gen_task_prompt = """
     - CRITICAL: Create concrete changes for EVERY impacted file
     - Map all required database schema updates
     - Detail API changes and version impacts
-
+    
+    5. Output generation:
+    - Use file changes tools to update the repo. Load a file, replace lines, verify the file with context and generate diffs from there
+    - Load the files that need to changed
+    - Update the file using replace lines tool
+    - Use read file in FileContentManager tool to confirm changes
+    - You can reset the file using load file incase FileContentManager file state has messed up and hard to repair
+    - Use search file to get proper line number in a larger file to get exact lines
+    
+    
+    IMPORTANT: Reuse existing helpers in the project, explore the project and helper files and reuse the helpers and already existing functions/classes etc 
 
 """

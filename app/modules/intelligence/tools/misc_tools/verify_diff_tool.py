@@ -186,17 +186,9 @@ class VerifyPatchDiff:
                         # Get content from the hunk line (remove the prefix character but keep exact whitespace)
                         hunk_line_content = ""
                         if line.is_context:
-                            hunk_line_content = (
-                                line.value[1:]
-                                if line.value.startswith(" ")
-                                else line.value
-                            )
+                            hunk_line_content = line.value
                         elif line.is_removed:
-                            hunk_line_content = (
-                                line.value[1:]
-                                if line.value.startswith("-")
-                                else line.value
-                            )
+                            hunk_line_content = line.value
 
                         # Remove line ending from hunk line for comparison
                         if hunk_line_content.endswith("\n"):
@@ -464,6 +456,7 @@ class VerifyPatchDiff:
         )
 
         if not verify_applicable:
+            print(f"Patch verification failed: {verify_msg}")
             return {
                 "valid": False,
                 "error": {

@@ -121,13 +121,21 @@ class MultiAgentState(BaseModel):
 
 
 def create_system_prompt_for_role(
-    role: AgentRole, config: AgentConfig, task_desc: str
+    role: AgentRole, config: AgentConfig, task_desc: str, ctx: ChatContext
 ) -> str:
+    if ctx.node_ids is None:
+        ctx.node_ids = []
+    if isinstance(ctx.node_ids, str):
+        ctx.node_ids = [ctx.node_ids]
     """Create a role-specific system prompt"""
     base_prompt = f"""
         Role: {config.role}
         Goal: {config.goal}
-        Backstory: {config.backstory}
+        Backstory: {config.backstory}     
+        
+        Project ID: {ctx.project_id}
+        Node IDs: {" ,".join(ctx.node_ids)}
+        Project Name (this is name from github. i.e. owner/repo): {ctx.project_name}
         
         
         TIPS TO HANDLE THE OVERALL CODEBASE TASKS: FOLLOW THE INSTRUCTIONS WHEREVER APPLICABLE
@@ -148,27 +156,13 @@ def create_system_prompt_for_role(
     return f"{base_prompt}\n\n{role_specific[role]}"
 
 
-def create_prompt_for_role(
-    role: AgentRole, state: MultiAgentState, task_description: str, ctx: ChatContext
-) -> str:
+def create_prompt_for_role(role: AgentRole, state: MultiAgentState, query: str) -> str:
     """Create a role-specific prompt based on the current state"""
-    if ctx.node_ids is None:
-        ctx.node_ids = []
-    if isinstance(ctx.node_ids, str):
-        ctx.node_ids = [ctx.node_ids]
+
     base_prompt = f"""
     
-    CONTEXT:
-    User Task:  
-    {ctx.query}
-    
-    
-    Project ID: {ctx.project_id}
-    Node IDs: {" ,".join(ctx.node_ids)}
-    Project Name (this is name from github. i.e. owner/repo): {ctx.project_name}
-
-    Additional Context:
-    {ctx.additional_context if ctx.additional_context != "" else "no additional context"}
+    Full Problem statement:
+    {query}
     
     Current State:
     - Iterations: {state.iterations}
@@ -186,12 +180,20 @@ def create_prompt_for_role(
             Make sure you include verification steps and output requirements from the user query in the user
             If the user has explicitly mentioned steps include them in the list.
             Explore the problem and user provided task for few lines before starting with the plan
+            Plan shouldn't be very strict, this is a overview multi step plan so that we can implement the solution in stages
+            Keep room for exploration of codebase, understanding the context better, searching alternatives and verifying and comparing solutions
+            
+            For file changes and tracking it we use FileChangeManager, we have few tools that can edit files, maintain the states throughout the execution session
+            and also generate the diffs. Make sure to use this knowledge accordingly in the plan. Maintain you changes in FileChangeManager throughout and you can generate your diff towards the end at once
 
             IMPORTANT: Create a separate list of key requirements mentioned in the task. Each requirement should be
             clearly stated and must be verifiable. Number these requirements. These will be used to verify
             the output against requirements one by one. List of requirements should be EXHAUSTIVE and cover all aspects of the task.
             Include all the output formatting and do and don'ts in the user task as part of the requirements to verify later.
-            Each requirement can span a few lines, but should be clear and concise with examples (include user provided examples if any)
+            Each requirement can span a few sentence but should be a single line (single point in the list)
+            
+            IMPORTANT: All you requirements should be summarized within 4 points. 4 is max no. of requirements. Group similar requirements
+            in the same line in same point (don't create sub-lists / sub points)
 
             NOTE ON VERIFICATION: For each requirement you list, a separate verification step will be performed.
             The verifier agent's response for EACH requirement will start STRICTLY with 'VERIFIED: YES' or 'VERIFIED: NO',
@@ -201,12 +203,10 @@ def create_prompt_for_role(
             IMPORTANT: DO NOT have sub requirements or sub-steps in the requirements list.
             It can be few sentences long, but should not contain sub list. Make each point as clear and explicit as possible.
             
-            IMPORTANT: YOUR PLAN MUST BE IN A CLEAR NUMBERED LIST FORMAT. Each step will be executed one at a time, so ensure
-            each step is atomic and makes sense to be executed independently. Each step will be prefixed with a number, like:
-            1. First step
-            2. Second step
+            IMPORTANT: YOUR PLAN MUST BE IN A CLEAR NUMBERED LIST FORMAT. Each step will be executed one at a time. Each step will be prefixed with a number, Nudge the plan to use knowledge graphs and nodes effectively to explore the codebase and maintain node_ids for reference
             
             Example output:
+--------------
             # Task Analysis
 Before diving into a plan for creating a user registration API endpoint, let's understand what this involves. We need a secure, robust RESTful API that handles user registration with proper validation, error handling, and follows best practices. This requires careful consideration of data validation, security measures, response formatting, and documentation.
 
@@ -221,22 +221,21 @@ Before diving into a plan for creating a user registration API endpoint, let's u
 
 # Key Requirements
 
-1. The API endpoint must follow RESTful conventions with a POST request to "/api/v1/users" or "/api/v1/register" that accepts application/json content type.
+1. Fixes the string, make sure the class implements toString(), print Methods, 
 
 2. The API must validate user input including: email in proper format (e.g., user@domain.com), password minimum 8 characters with at least one uppercase letter, one lowercase letter, one number, and one special character.
 
-3. The implementation must hash passwords before storing them, using a modern algorithm like bcrypt or Argon2 with appropriate work factors.
-
-4. The API must return appropriate HTTP status codes: 201 Created on success, 400 Bad Request for validation errors, 409 Conflict for existing users, and 500 for server errors.
+3. Make sure the output requirement is met, it should use the exact format as Result:'''{...}''' and only have utf-8 encoded characters
 
 ... so on
 
-Hello! I've prepared a detailed plan with clearly defined steps and an exhaustive list of specific, verifiable requirements as requested.
-
+----------------------
+    Note above plan is example for the format - Content of each step and key requirement must follow guidelines mentioned above the example
     Output a comprehensive plan with numbered steps followed by Key Requirements section with numbered steps. Make sure to include all the task requirements in the Key Requirements section.
     Especially focus on the requirements that are critical for the task and need to be verified later like output formatting, do's and don'ts etc.
     IMPORTANT: ONLY OUTPUT THE PLAN AND KEY REQUIREMENTS. DO NOT SOLVE THE PROBLEM. CLUB SIMILAR REQUIREMENTS TOGETHER, DON"T CREATE TOO MANY UNNECCESSARY REQUIREMENTS. DO NOT HAVE SUB-POINTS IN THE REQUIREMENTS (IT WON"T BE PARSED PROPERLY).
     IMPORTANT: DO NOT FIX THE ISSUE OR TRY TO SOLVE THE PROBLEM. YOUR ROLE IS TO CREATE A PLAN AND LIST OF KEY REQUIREMENTS
+    Do not update test files for the given changes. Only fix the issue
             """
         )
 
@@ -271,14 +270,28 @@ Hello! I've prepared a detailed plan with clearly defined steps and an exhaustiv
         3. You are supposed to have full understanding of the codebase and the task
         4. Fetch any code and related context from the codebase that you need for this specific step
         5. Show all your work in detail for this step
-        
+        6. Use Knowledge graph tools to explore codebase and all the code relations in the project. Maintain node_ids and summary in the CURRENT CONTEXT DATA
+        7. Use CURRENT CONTEXT DATA from previous step to access relevant data in the project, build CURRENT CONTEXT DATA and update it in current iteration
+        8. Reuse existing helpers in the project, explore the project and helper files and reuse the helpers and already existing functions/classes etc 
+                       
         Previous execution results that might be helpful context:
-        {state.execution_results[-3:] if len(state.execution_results) > 2 else state.execution_results}
+        {[f'''
+        
+        {result}
+        
+        ''' for result in (state.execution_results[-2:] if len(state.execution_results) > 1 else state.execution_results)]}
         
         Format your response:
         1. Start with a brief explanation of what you will do for this step
         2. Then provide the detailed implementation/solution for this step only
         3. End with a brief summary of what was accomplished in this step
+        4. Provider a section (CURRENT CONTEXT DATA:), Update it from previous execution if any. Provide references and important results like code snippets, line numbers, node_ids, file references and how to access them for next steps to use. This is IMPORTANT.
+            Just add whatever data was used in current iteration of execution step to the CURRENT CONTEXT DATA, don't go and fetch data unnecessarily, reuse data from previous CURRENT CONTEXT DATA
+        5. Include key necessary CURRENT CONTEXT DATA from previous execution section aswell when generating it. Make sure you mention info in the repo and info in file changes (FileChangesManager) seperately
+        
+        IF you need to generate a patch diff, use the GeneratePatchDiff Tool to create it, don't send too many lines when changes are small. Keep adequate amount of context lines in the patch diff.
+        
+        IMPORTANT: Include CURRENT CONTEXT DATA in your response. CURRENT CONTEXT DATA should also carry all the relevant information from previous execution, Include the execution result also at the end of the current context data (basically attach the current progress of the update)
         """
         )
 
@@ -294,7 +307,11 @@ Hello! I've prepared a detailed plan with clearly defined steps and an exhaustiv
         {_format_requirements_status(state)}
         
         The last few execution results are (older to latest):
-        {state.execution_results[-3:] if len(state.execution_results) > 3 else state.execution_results}
+        {[f'''
+        
+        {result}
+        
+        ''' for result in (state.execution_results[-2:] if len(state.execution_results) > 1 else state.execution_results)]}
         This above result is the current state of the code and the output of the last execution
         
         Your role is to FIX a SPECIFIC ISSUE that was identified during verification.
@@ -308,35 +325,37 @@ Hello! I've prepared a detailed plan with clearly defined steps and an exhaustiv
         IMPORTANT INSTRUCTIONS:
         1. Focus ONLY on fixing the SPECIFIC issue mentioned in the verification feedback
         2. Use any tool calls necessary to fix the issue or asked in the verification feedback
-        3. Verify you fix
+        3. Reuse existing helpers in the project, explore the project and helper files and reuse the helpers and already existing functions/classes etc 
         
         Format your response:
         1. Start with a brief explanation of what needs to be fixed
         2. Then provide the fixed implementation/solution or All the tool calls and responses/results
         3. End with a brief explanation of how your fix addresses the verification issue
         4. Verify your fix
+        4. Provider a section (CURRENT CONTEXT DATA:), Update it from previous execution if any. Provide references and important results like code snippets, line numbers, node_ids, file references and how to access them for next steps to use. This is IMPORTANT.
+            Just add whatever data was used in current iteration of execution step to the CURRENT CONTEXT DATA, don't go and fetch data unnecessarily, reuse data from previous CURRENT CONTEXT DATA
+        5. Include key necessary CURRENT CONTEXT DATA from previous execution section aswell when generating it. Make sure you mention info in the repo and info in file changes (FileChangesManager) seperately
         
-        
-        IMPORTANT: MAKE ANY TOOL CALLS NEEDED BY THE VERIFICATION FEEDBACK, If response contains unified patch diff, Call VerifyDiffTool to check if the result passes through for all the files in the hunk. 
-        Tool HAS to be used don't assume it will pass through, The result HAS to pass the VerifyDiffTool test. Fix any issues that arise from the test. Query original files in the patch, compare them with patch and fix the patch based on error message from VerifyDiffTool.
-        You can use fetch_file with the with_line_numbers flag to get the original file content and line numbers for the patch, this will help you be accurate with the line numbers in the patch.
-        Make sure the line offset in the patch is correct and matches the original file. To verify diffs after fixing it use VerifyDiffTool to check if the result passes through for all the files in the hunk.
         
         IMPORTANT:
         Use the tools at your disposal to assist with the execution.
         You are supposed to have full understanding of the codebase and the task. Exhaustively explore the codebase and the task to get the best results.
         This step is critical for the overall success of the task so make sure to do it thoroughly and take your time.
         Fetch the code and all the related context from the codebase.
+        
+        IF you need to generate a patch diff, use the GeneratePatchDiff Tool to create it, don't send too many lines when changes are small. Keep adequate context in the patch diff.
+        
+        IMPORTANT: Make sure the fix doesn't violate one of the previous requirements
+        IMPORTANT: Include CURRENT CONTEXT DATA in your response. CURRENT CONTEXT DATA should also carry all the relevant information from previous execution, Include the execution result also at the end of the current context data (basically attach the current progress of the update)
         """
         )
 
     elif role == AgentRole.VERIFIER:
-        # If this is not the first verification, focus on the current requirement
-        if state.requirements:
-            current_req = state.requirements[state.current_requirement_index]
-            return (
-                base_prompt
-                + f"""    
+
+        current_req = state.requirements[state.current_requirement_index]
+        return (
+            base_prompt
+            + f"""    
             
             {"The fixer results for the current requirement are:" if state.fixer_results else ""}
             {state.fixer_results if state.fixer_results else ""}
@@ -345,7 +364,7 @@ Hello! I've prepared a detailed plan with clearly defined steps and an exhaustiv
             {_format_requirements_status(state)}
             
             The last few execution results are (older to latest):
-            {state.execution_results[-3:] if len(state.execution_results) > 3 else state.execution_results}
+            {state.execution_results[-2:] if len(state.execution_results) > 1 else state.execution_results}
             This above result is the current state of the code and the output of the last execution
             
             Your role is to verify if the {"execution" if not state.fixer_results else "fixer"} successfully completed the CURRENT requirement:
@@ -356,63 +375,27 @@ Hello! I've prepared a detailed plan with clearly defined steps and an exhaustiv
             Check user task/query for examples and further instructions regarding this requirement.
             
             IMPORTANT: Your response format is critical. You MUST strictly follow this format:
-            1. Start your response with either "VERIFIED: YES" or "VERIFIED: NO"
-            2. Then provide specific reasoning for your verification decision
-            3. Focus ONLY on the current requirement - do not try to verify other requirements
+            1. Verify if the current requirement is met
+            2. Provide specific reasoning for your verification decision
+            3. Respond with "VERIFIED: YES" or "VERIFIED: NO", this has to a part of your response (make sure it's the exact string)
+            4. Focus ONLY on the current requirement - do not try to verify other requirements
             
             Examples of proper verification responses:
             
+            Checking endpoints, finding api documentation...
             VERIFIED: YES
             The requirement was successfully implemented because the code contains a proper RESTful API endpoint for user registration at '/api/users' which accepts POST requests with username, email, and password fields.
             
             OR
             
+            Checking endpoints, finding api documentation...
             VERIFIED: NO
             This requirement is not met because the email validation is missing. The current implementation only checks if an email is present but doesn't validate its format. The code needs to include email format validation using a regex pattern or validation library.
             
-            IMPORTANT: Respond with "VERIFIED: YES" or "VERIFIED: NO". DO NOT TRY TO FIX THE PROBLEM, ONLY DO YOUR ROLE. FIXING PART WILL BE TAKEN CARE OF BY FIXER AGENT
-            IMPORTANT: Use tool calls at your disposal to verify the requirement. For example, use VerifyDiffTool to check if the result passes through for each file in the hunk and Respond with "VERIFIED: YES" or "VERIFIED: NO"
+            IMPORTANT: Respond with "VERIFIED: YES" or "VERIFIED: NO", this perticular string has to part of your response. DO NOT TRY TO FIX THE PROBLEM, ONLY DO YOUR ROLE. FIXING PART WILL BE TAKEN CARE OF BY FIXER AGENT
+            IMPORTANT: If fixer has changed anything make sure it still satisfies all the previously verified requirements. We Don't want fixer to cause changes that impact previous requirements
             """
-            )
-        else:
-            # First verification pass, identify all requirements
-            return (
-                base_prompt
-                + f"""
-            The plan was:
-            {state.plan}
-            
-            The last few execution results are:
-            {state.execution_results[-3:] if len(state.execution_results) > 3 else state.execution_results}
-            
-            Requirements Status:
-            {_format_requirements_status(state)}
-            
-            Your role is to verify if the execution successfully addressed the current requirement:
-            
-            CURRENT REQUIREMENT: {state.requirements[0].description if state.requirements else "No requirements defined yet"}
-            
-            Check thoroughly if this specific requirement was met in the execution results.
-            
-            IMPORTANT: Your response format is critical. You MUST strictly follow this format:
-            1. Start your response with either "VERIFIED: YES" or "VERIFIED: NO"
-            2. Then provide specific reasoning for your verification decision
-            3. Focus ONLY on the current requirement - do not try to verify other requirements
-            
-            Examples of proper verification responses:
-            
-            VERIFIED: YES
-            The requirement was successfully implemented because the code contains a proper RESTful API endpoint for user registration at '/api/users' which accepts POST requests with username, email, and password fields.
-            
-            OR
-            
-            VERIFIED: NO
-            This requirement is not met because the email validation is missing. The current implementation only checks if an email is present but doesn't validate its format. The code needs to include email format validation using a regex pattern or validation library.
-            
-            
-            IMPORTANT: Respond with "VERIFIED: YES" or "VERIFIED: NO". DO NOT TRY TO FIX THE PROBLEM, ONLY DO YOUR ROLE. FIXING PART WILL BE TAKEN CARE OF BY FIXER AGENT
-            """
-            )
+        )
 
     elif role == AgentRole.FINALIZER:
         return (
@@ -424,8 +407,8 @@ Hello! I've prepared a detailed plan with clearly defined steps and an exhaustiv
         Steps Status:
         {_format_steps_status(state)}
         
-        The execution results for all steps are:
-        {state.execution_results}
+        The execution result from the last step is:
+        {state.execution_results[-1]}
         
         Requirements Status:
         {_format_requirements_status(state)}
@@ -434,9 +417,9 @@ Hello! I've prepared a detailed plan with clearly defined steps and an exhaustiv
         Synthesize the information into a coherent, well-structured response.
         Format your response appropriately (markdown for text, proper code blocks for code, etc.)
         
-        Use the verification tools to ensure the final output meets all requirements.
-        If final output contains unified patch diffs, Call VerifyDiffTool to check if the result passes through for each file in the hunk.
-        IMPORTANT: Ensure that the final output is polished and ready for presentation.
+        IMPORTANT: If the final output is a patch diff, make sure you don't change any information in the patch.
+        Copy the patch as it is.
+        
         """
         )
 
@@ -533,7 +516,12 @@ def extract_requirements(plan_text: str) -> List[Requirement]:
 
     clean_reqs.append(
         Requirement(
-            description="Use VerifyDiffTool to make the result pass through for all the files in the hunk. Tool HAS to be used don't assume it will pass through, The result HAS to pass the VerifyDiffTool test with valid = True. Fix any issues that arise from the test.",
+            description="""Use VerifyDiffTool to make the result pass through for all the files in the hunk, 
+            Run this tool again even if it has been previously run in the history. 
+            Tool HAS to be used don't assume it will pass through, The result HAS to pass the VerifyDiffTool test with valid = True. 
+            Fix any issues that arise from the test using FileChangesManager tools and generate diffs. 
+            Make sure the final diff is exactly the one that was verified. Verify diff at the end everytime before responding as verified
+            Respond with the exact final result that was verified at the end. Stop here (you can't edit the result anymore)""",
         )
     )
     return clean_reqs
@@ -639,17 +627,12 @@ class PydanticMultiAgent(ChatAgent):
             model=self.model,
             tools=self.pydantic_tools,
             instructions=create_system_prompt_for_role(
-                role, self.config, self.tasks[0].description
-            ),
-            system_prompt=create_system_prompt_for_role(
-                role, self.config, self.tasks[0].description
+                role, self.config, self.tasks[0].description, ctx
             ),
             output_type=str,
             retries=3,
             defer_model_check=True,
-            model_settings={
-                "parallel_tool_calls": True,
-            },
+            model_settings={"parallel_tool_calls": True, "max_tokens": 8000},
         )
 
     def _get_next_role(self, state: MultiAgentState) -> AgentRole:
@@ -724,9 +707,6 @@ class PydanticMultiAgent(ChatAgent):
 
                 Additional Context:
                 {ctx.additional_context if ctx.additional_context != "" else "no additional context"}
-
-                With above information execute the following task: 
-                {ctx.query}
             """
 
     async def _execute_current_role(
@@ -734,7 +714,7 @@ class PydanticMultiAgent(ChatAgent):
     ) -> str:
         """Execute the agent for the current role and return its result"""
         agent = self.agents[role]
-        prompt = create_prompt_for_role(role, self.state, task, ctx)
+        prompt = create_prompt_for_role(role, self.state, ctx.query)
         resp = await agent.run(
             user_prompt=prompt,
             message_history=[
@@ -792,7 +772,7 @@ class PydanticMultiAgent(ChatAgent):
             self.state.verification_results = result
 
             # Strict detection for "VERIFIED: YES" at the start of response
-            match = re.match(r".*?\s*VERIFIED:\s*YES", result.strip(), re.IGNORECASE)
+            match = re.search(r"VERIFIED:\s*YES", result, re.IGNORECASE)
             current_req_verified = bool(match)
 
             # Update the current requirement's verification status
@@ -873,7 +853,7 @@ class PydanticMultiAgent(ChatAgent):
                 current_role = self.state.current_role
                 current_agent = self.agents[current_role]
                 current_prompt = create_prompt_for_role(
-                    current_role, self.state, task, ctx
+                    current_role, self.state, ctx.query
                 )
 
                 # Yield transition message based on role and state
@@ -942,9 +922,9 @@ class PydanticMultiAgent(ChatAgent):
                 result = ""
                 async with current_agent.iter(
                     user_prompt=current_prompt,
-                    message_history=[
-                        ModelResponse([TextPart(content=msg)]) for msg in ctx.history
-                    ],
+                    # message_history=[
+                    #     ModelResponse([TextPart(content=msg)]) for msg in ctx.history
+                    # ],
                 ) as agent_run:
                     async for node in agent_run:
                         if Agent.is_model_request_node(node):

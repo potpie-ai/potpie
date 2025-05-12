@@ -64,6 +64,16 @@ from app.modules.intelligence.tools.web_tools.web_search_tool import web_search_
 from app.modules.intelligence.provider.provider_service import ProviderService
 from langchain_core.tools import StructuredTool
 from .think_tool import think_tool
+from app.modules.intelligence.tools.file_changes_tools import (
+    file_change_manager,
+    generate_diffs_tool,
+    load_file_for_editing_tool,
+    read_lines_in_changed_file_tool,
+    replace_lines_in_file_tool,
+    insert_lines_in_file_tool,
+    remove_lines_in_file_tool,
+    search_pattern_in_file,
+)
 
 
 class ToolService:
@@ -130,9 +140,9 @@ class ToolService:
             "verify_patch_diff": verify_patch_diff_tool(
                 fetch_file_tool(self.db, self.user_id)
             ),
-            "generate_patch_diff": generate_patch_diff_tool(
-                fetch_file_tool(self.db, self.user_id)
-            ),
+            # "generate_patch_diff": generate_patch_diff_tool(
+            #     fetch_file_tool(self.db, self.user_id)
+            # ),
         }
 
         if self.webpage_extractor_tool:
@@ -143,6 +153,31 @@ class ToolService:
 
         if self.web_search_tool:
             tools["web_search_tool"] = self.web_search_tool
+
+        file_manager = file_change_manager.FileChangeManager()
+        tools["generate_patch_diff"] = generate_diffs_tool.generate_file_diff_tool(
+            file_manager
+        )
+        tools["load_file_for_editing"] = (
+            load_file_for_editing_tool.load_file_for_editing_tool(
+                fetch_file_tool(self.db, self.user_id), file_manager
+            )
+        )
+        tools["replace_lines_in_file"] = replace_lines_in_file_tool.replace_lines_tool(
+            file_manager
+        )
+        tools["insert_lines_in_file"] = insert_lines_in_file_tool.insert_lines_tool(
+            file_manager
+        )
+        tools["remove_lines_in_file"] = remove_lines_in_file_tool.delete_lines_tool(
+            file_manager
+        )
+        tools["read_lines_in_changed_file"] = (
+            read_lines_in_changed_file_tool.get_lines_from_file_tool(file_manager)
+        )
+        tools["search_in_file"] = search_pattern_in_file.search_in_file_tool(
+            file_manager
+        )
 
         return tools
 
