@@ -6,6 +6,8 @@ from pydantic import BaseModel
 class DocstringRequest(BaseModel):
     node_id: str
     text: str
+    content_hash: Optional[str] = None
+    name: Optional[str] = None
 
 
 class DocstringNode(BaseModel):
