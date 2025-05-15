@@ -3,7 +3,7 @@ import logging
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Union
 
 import git
 import pathspec
@@ -88,7 +88,7 @@ class LocalRepoService:
 
         try:
             repo = self.get_repo(repo_path)
-            structure =await self._fetch_repo_structure_async(
+            structure = await self._fetch_repo_structure_async(
                 repo, repo_path or "", current_depth=0, base_path=repo_path
             )
             formatted_structure = self._format_tree_structure(structure)
@@ -112,18 +112,17 @@ class LocalRepoService:
         Returns:
             PathSpec object or None if .gitignore doesn't exist
         """
-        gitignore_path = os.path.join(repo_path, '.gitignore')
+        gitignore_path = os.path.join(repo_path, ".gitignore")
         if not os.path.exists(gitignore_path):
             return None
 
         try:
-            with open(gitignore_path, 'r', encoding='utf-8') as f:
+            with open(gitignore_path, "r", encoding="utf-8") as f:
                 gitignore_content = f.read()
 
             # Create a PathSpec object from the .gitignore content
             return pathspec.PathSpec.from_lines(
-                pathspec.patterns.GitWildMatchPattern,
-                gitignore_content.splitlines()
+                pathspec.patterns.GitWildMatchPattern, gitignore_content.splitlines()
             )
         except Exception as e:
             logger.warning(f"Error reading .gitignore file: {str(e)}")
@@ -179,7 +178,7 @@ class LocalRepoService:
         }
 
         # Get the repository root path
-        repo_root = repo.working_tree_dir if hasattr(repo, 'working_tree_dir') else None
+        repo_root = repo.working_tree_dir if hasattr(repo, "working_tree_dir") else None
 
         # Load gitignore spec if we have a repo root
         gitignore_spec = None
@@ -198,11 +197,13 @@ class LocalRepoService:
             filtered_contents = []
             for item in contents:
                 # Skip hidden files and directories (starting with .)
-                if item["name"].startswith('.') and item["name"] != '.gitignore':
+                if item["name"].startswith(".") and item["name"] != ".gitignore":
                     continue
 
                 # Skip files with excluded extensions
-                if item["type"] == "file" and any(item["name"].endswith(ext) for ext in exclude_extensions):
+                if item["type"] == "file" and any(
+                    item["name"].endswith(ext) for ext in exclude_extensions
+                ):
                     continue
 
                 # Check if the file/directory is ignored by gitignore
@@ -210,7 +211,7 @@ class LocalRepoService:
                     # Get the path relative to the repo root for gitignore matching
                     rel_path = os.path.relpath(item["path"], repo_root)
                     # Normalize path separators for cross-platform compatibility
-                    rel_path = rel_path.replace('\\', '/')
+                    rel_path = rel_path.replace("\\", "/")
 
                     # Skip if the path matches a gitignore pattern
                     if gitignore_spec.match_file(rel_path):
