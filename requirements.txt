@@ -64,5 +64,6 @@ agentops==0.3.26
 pydantic[email]==2.10.3
 firecrawl-py==1.11.1
 pydantic_ai==0.0.39
+pathspec==0.12.1
 pytest
 pytest-asyncio
