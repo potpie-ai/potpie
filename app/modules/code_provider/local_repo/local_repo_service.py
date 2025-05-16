@@ -91,7 +91,11 @@ class LocalRepoService:
             # Compute gitignore_spec once before starting recursion
             gitignore_spec = self._get_gitignore_spec(repo_path) if repo_path else None
             structure = await self._fetch_repo_structure_async(
-                repo, repo_path or "", current_depth=0, base_path=repo_path, gitignore_spec=gitignore_spec
+                repo,
+                repo_path or "",
+                current_depth=0,
+                base_path=repo_path,
+                gitignore_spec=gitignore_spec,
             )
             formatted_structure = self._format_tree_structure(structure)
             return formatted_structure
