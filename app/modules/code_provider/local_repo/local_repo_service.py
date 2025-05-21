@@ -88,8 +88,14 @@ class LocalRepoService:
 
         try:
             repo = self.get_repo(repo_path)
+            # Compute gitignore_spec once before starting recursion
+            gitignore_spec = self._get_gitignore_spec(repo_path) if repo_path else None
             structure = await self._fetch_repo_structure_async(
-                repo, repo_path or "", current_depth=0, base_path=repo_path
+                repo,
+                repo_path or "",
+                current_depth=0,
+                base_path=repo_path,
+                gitignore_spec=gitignore_spec,
             )
             formatted_structure = self._format_tree_structure(structure)
             return formatted_structure
@@ -134,6 +140,7 @@ class LocalRepoService:
         path: str = "",
         current_depth: int = 0,
         base_path: Optional[str] = None,
+        gitignore_spec: Optional[pathspec.PathSpec] = None,
     ) -> Dict[str, Any]:
         exclude_extensions = [
             "png",
@@ -180,9 +187,8 @@ class LocalRepoService:
         # Get the repository root path
         repo_root = repo.working_tree_dir if hasattr(repo, "working_tree_dir") else None
 
-        # Load gitignore spec if we have a repo root
-        gitignore_spec = None
-        if repo_root:
+        # Load gitignore spec if we have a repo root and it wasn't passed in
+        if repo_root and gitignore_spec is None:
             gitignore_spec = self._get_gitignore_spec(repo_root)
 
         try:
@@ -233,6 +239,7 @@ class LocalRepoService:
                         item["path"],
                         current_depth=current_depth,
                         base_path=base_path,
+                        gitignore_spec=gitignore_spec,
                     )
                     tasks.append(task)
                 else:
