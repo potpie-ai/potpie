@@ -3,6 +3,8 @@ import os
 from enum import Enum
 from typing import List, Dict, Any, Union, AsyncGenerator, Optional
 import uuid
+from app.core.telemetry import get_tracer
+from opentelemetry.trace import Span # For type hinting if needed
 from anthropic import AsyncAnthropic
 from crewai import LLM
 from pydantic import BaseModel
@@ -115,9 +117,10 @@ PLATFORM_PROVIDERS = list({model.provider for model in AVAILABLE_MODELS})
 class ProviderService:
     def __init__(self, db, user_id: str):
         litellm.modify_params = True
-        self.db = db
+        self.db = db # Renamed from self.sql_db to self.db to match actual code
         self.llm = None
         self.user_id = user_id
+        self.tracer = get_tracer(__name__) # Initialize tracer
         self.portkey_api_key = os.environ.get("PORTKEY_API_KEY", None)
 
         # Load user preferences
@@ -315,40 +318,74 @@ class ProviderService:
         return config.provider in ["openai", "anthropic"]
 
     async def call_llm(
-        self, messages: list, stream: bool = False, config_type: str = "chat"
+        self, messages: list, stream: bool = False, config_type: str = "chat", **kwargs # Added **kwargs to match original instructions more closely, though not used in current impl.
     ) -> Union[str, AsyncGenerator[str, None]]:
         """Call LLM with the specified messages."""
+        span_name = "llm.call"
+        
         # Select the appropriate config based on config_type
         config = self.chat_config if config_type == "chat" else self.inference_config
+        
+        model_name_attr = config.model if config and hasattr(config, 'model') else "unknown_model"
+        provider_name_attr = config.provider if config and hasattr(config, 'provider') else "unknown_provider"
 
-        # Build parameters using the config object
-        params = self._build_llm_params(config)
-        routing_provider = config.model.split("/")[0]
+        with self.tracer.start_as_current_span(span_name) as span:
+            span.set_attribute("user.id", self.user_id)
+            span.set_attribute("llm.config_type", config_type)
+            span.set_attribute("llm.model_name", model_name_attr)
+            span.set_attribute("llm.provider", str(provider_name_attr)) # provider might be an enum or similar
+            span.set_attribute("llm.stream", stream)
 
-        # Get extra parameters and headers for API calls
-        extra_params, _ = self.get_extra_params_and_headers(routing_provider)
-        params.update(extra_params)
+            # Add any additional kwargs to the span if they are relevant (not currently used by underlying acompletion call structure)
+            # for key, value in kwargs.items():
+            #    span.set_attribute(f"llm.kwargs.{key}", str(value))
 
-        # Handle streaming response if requested
-        try:
-            if stream:
+            # Build parameters using the config object
+            params = self._build_llm_params(config) # This was inside the try block before, moved up for clarity
+            routing_provider = config.model.split("/")[0]
 
-                async def generator() -> AsyncGenerator[str, None]:
-                    response = await acompletion(
-                        messages=messages, stream=True, **params
-                    )
-                    async for chunk in response:
-                        yield chunk.choices[0].delta.content or ""
+            # Get extra parameters and headers for API calls
+            extra_params, _ = self.get_extra_params_and_headers(routing_provider)
+            params.update(extra_params)
+            
+            # Ensure model is part of params for litellm
+            if 'model' not in params and hasattr(config, 'model'):
+                params['model'] = config.model
 
-                return generator()
-            else:
-                response = await acompletion(messages=messages, **params)
-                return response.choices[0].message.content
-        except Exception as e:
-            logging.error(
-                f"Error calling LLM: {e}, params: {params}, messages: {messages}"
-            )
-            raise e
+
+            try:
+                if stream:
+                    span.set_attribute("llm.status", "streaming_started")
+                    async def wrapped_stream() -> AsyncGenerator[str, None]:
+                        try:
+                            response_stream = await acompletion(
+                                messages=messages, stream=True, **params
+                            )
+                            async for chunk in response_stream:
+                                content = chunk.choices[0].delta.content or ""
+                                yield content
+                            # If stream completes without error
+                            span.set_attribute("llm.status", "success") 
+                        except Exception as e_stream:
+                            logging.error(f"Error during LLM stream: {e_stream}, params: {params}, messages: {messages}")
+                            span.set_attribute("llm.status", "failure_during_stream")
+                            span.record_exception(e_stream)
+                            raise # Re-raise the exception after recording
+                    return wrapped_stream()
+                else:
+                    response = await acompletion(messages=messages, **params)
+                    if response.usage:
+                        span.set_attribute("token.usage.input", response.usage.prompt_tokens)
+                        span.set_attribute("token.usage.output", response.usage.completion_tokens)
+                    span.set_attribute("llm.status", "success")
+                    return response.choices[0].message.content
+            except Exception as e:
+                logging.error(
+                    f"Error calling LLM: {e}, params: {params}, messages: {messages}"
+                )
+                span.set_attribute("llm.status", "failure")
+                span.record_exception(e)
+                raise e
 
     async def call_llm_with_structured_output(
         self, messages: list, output_schema: BaseModel, config_type: str = "chat"

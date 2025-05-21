@@ -1,6 +1,7 @@
 import json
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
+from app.core.telemetry import get_tracer
 
 from fastapi import HTTPException
 from sqlalchemy import or_, select
@@ -36,6 +37,7 @@ class CustomAgentService:
     def __init__(self, db: Session):
         self.db = db
         self.secret_manager = SecretManager()
+        self.tracer = get_tracer(__name__)
 
     async def _get_agent_by_id_and_user(
         self, agent_id: str, user_id: str
@@ -333,9 +335,17 @@ class CustomAgentService:
 
     async def create_agent(self, user_id: str, agent_data: AgentCreate) -> Agent:
         """Create a new custom agent with enhanced task descriptions"""
-        try:
-            # Extract tool IDs from tasks
-            tool_ids = []
+        span_name = "custom_agent.create"
+        with self.tracer.start_as_current_span(span_name) as span:
+            span.set_attribute("user.id", user_id)
+            # agent_data.name is not available, using role as a proxy for name/type
+            if agent_data.role:
+                span.set_attribute("agent.name", agent_data.role) 
+                span.set_attribute("agent.role", agent_data.role)
+
+            try:
+                # Extract tool IDs from tasks
+                tool_ids = []
             for task in agent_data.tasks:
                 tool_ids.extend(task.tools)
 
@@ -356,13 +366,34 @@ class CustomAgentService:
                 tasks_dict, agent_data.goal, available_tools, user_id
             )
 
-            return self.persist_agent(user_id, agent_data, enhanced_tasks)
+            # The original method calls persist_agent, we'll capture its result
+            # and set attributes from the created agent.
+            created_agent_schema = self.persist_agent(user_id, agent_data, enhanced_tasks)
+            
+            if created_agent_schema and created_agent_schema.id:
+                span.set_attribute("agent.id", str(created_agent_schema.id))
+            # Re-set role from the actual created agent schema if needed, though it should match agent_data.role
+            if created_agent_schema and created_agent_schema.role:
+                 span.set_attribute("agent.role", created_agent_schema.role)
+                 # If we used role as proxy for name, update it too
+                 span.set_attribute("agent.name", created_agent_schema.role)
+
+
+            span.set_attribute("creation.status", "success")
+            return created_agent_schema
         except SQLAlchemyError as e:
             self.db.rollback()
             logger.error(f"Database error while creating agent: {str(e)}")
+            span.set_attribute("creation.status", "failure")
+            span.record_exception(e)
             raise HTTPException(status_code=500, detail="Failed to create agent")
         except Exception as e:
             logger.error(f"Error creating agent: {str(e)}")
+            # Assuming other exceptions also mean failure.
+            # If self.db.rollback() is appropriate here, it should be added.
+            # For now, just recording the failure.
+            span.set_attribute("creation.status", "failure")
+            span.record_exception(e)
             raise HTTPException(status_code=500, detail=str(e))
 
     def persist_agent(self, user_id, agent_data, tasks):

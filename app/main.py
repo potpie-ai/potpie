@@ -6,6 +6,7 @@ import sentry_sdk
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.core.telemetry import setup_telemetry
 
 from app.api.router import router as potpie_api_router
 from app.core.base_model import Base
@@ -40,6 +41,7 @@ logging.basicConfig(
 class MainApp:
     def __init__(self):
         load_dotenv(override=True)
+        setup_telemetry() # Initialize OpenTelemetry
         if (
             os.getenv("isDevelopmentMode") == "enabled"
             and os.getenv("ENV") != "development"

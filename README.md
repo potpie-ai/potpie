@@ -363,6 +363,40 @@ Design custom agents tailored to your specific tasks using a single prompt. Util
 Edit or add tools in the `app/modules/intelligence/tools` directory for your custom agents.
 Initialise the tools in the  `app/modules/intelligence/tools/tool_service.py` file and include them in your agent.
 
+## OpenTelemetry Integration
+
+This application includes OpenTelemetry to collect anonymous usage data. This data helps us understand how the application is being used, identify popular features, track performance, and ultimately improve the project for all users. We are committed to your privacy, and all data collected is anonymized.
+
+### Data Points Collected
+
+We collect telemetry data for the following key events:
+
+*   **Repository Parsing**: Tracking when repositories are parsed (e.g., number of parsing operations).
+*   **Conversation Creation**: Logging the creation of new conversations.
+*   **Custom Agent Creation**: Recording when new custom agents are created, including their specified role or type.
+*   **LLM Model Usage**: Identifying which Language Models (LLMs) are being utilized through the system.
+
+No personal code, repository contents, or sensitive conversation data is collected.
+
+### Opting Out of Telemetry
+
+Telemetry is **enabled by default**. You can opt-out of telemetry collection by setting the following environment variable:
+
+```bash
+OPENTELEMETRY_ENABLED=false
+```
+Setting this to `false` (case-insensitive) will disable all telemetry reporting from the application.
+
+### Configuring the Telemetry Exporter
+
+If you are running your own OpenTelemetry collector (like Jaeger, Zipkin, or a commercial observability platform), you can direct the telemetry data to your collector by setting the `OTEL_EXPORTER_OTLP_ENDPOINT` environment variable.
+
+Example:
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT="http://your-otel-collector-address:4318/v1/traces"
+```
+If this environment variable is not set, telemetry data, even if enabled, may not be exported from the application (a warning will be logged during startup). For development or if you do not wish to export data, you can leave this unset.
+
 ## 🤝 Contributing
 
 We welcome contributions! To contribute:

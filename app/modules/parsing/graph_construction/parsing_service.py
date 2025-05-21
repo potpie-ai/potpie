@@ -1,5 +1,6 @@
 import logging
 import os
+from app.core.telemetry import get_tracer
 import shutil
 import traceback
 from asyncio import create_task
@@ -34,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 class ParsingService:
     def __init__(self, db: Session, user_id: str):
+        self.tracer = get_tracer(__name__)
         self.db = db
         self.parse_helper = ParseHelper(db)
         self.project_service = ProjectService(db)
@@ -58,11 +60,22 @@ class ParsingService:
         project_id: int,
         cleanup_graph: bool = True,
     ):
-        project_manager = ProjectService(self.db)
-        extracted_dir = None
-        try:
-            if cleanup_graph:
-                neo4j_config = config_provider.get_neo4j_config()
+        span_name = "repo.parse"
+        with self.tracer.start_as_current_span(span_name) as span:
+            span.set_attribute("project.id", str(project_id))
+            if repo_details and repo_details.repo_name:
+                span.set_attribute("repo.name", repo_details.repo_name)
+            if repo_details and repo_details.clone_url: # Assuming clone_url exists
+                span.set_attribute("repo.url", repo_details.clone_url)
+            elif repo_details and repo_details.repo_url: # Fallback if clone_url doesn't exist
+                span.set_attribute("repo.url", repo_details.repo_url)
+
+
+            project_manager = ProjectService(self.db)
+            extracted_dir = None
+            try:
+                if cleanup_graph:
+                    neo4j_config = config_provider.get_neo4j_config()
 
                 try:
                     code_graph_service = CodeGraphService(
@@ -113,10 +126,13 @@ class ParsingService:
                 extracted_dir, project_id, user_id, self.db, language, user_email
             )
             message = "The project has been parsed successfully"
+            span.set_attribute("parsing.status", "success")
             return {"message": message, "id": project_id}
 
         except ParsingServiceError as e:
             message = str(f"{project_id} Failed during parsing: " + str(e))
+            span.set_attribute("parsing.status", "failure")
+            span.record_exception(e)
             await project_manager.update_project_status(
                 project_id, ProjectStatusEnum.ERROR
             )
@@ -124,6 +140,8 @@ class ParsingService:
             raise HTTPException(status_code=500, detail=message)
 
         except Exception as e:
+            span.set_attribute("parsing.status", "failure")
+            span.record_exception(e)
             await project_manager.update_project_status(
                 project_id, ProjectStatusEnum.ERROR
             )

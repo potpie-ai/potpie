@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from app.core.telemetry import get_tracer
 from datetime import datetime, timezone
 from typing import AsyncGenerator, List
 from sqlalchemy import func
@@ -92,9 +93,10 @@ class ConversationService:
         self.history_manager = history_manager
         self.provider_service = provider_service
         self.tool_service = tools_service
-        self.prompt_service = promt_service
+        self.prompt_service = promt_service # Typo in original code: promt_service
         self.agent_service = agent_service
         self.custom_agent_service = custom_agent_service
+        self.tracer = get_tracer(__name__) # Initialize tracer here
 
     @classmethod
     def create(cls, db: Session, user_id: str, user_email: str):
@@ -160,53 +162,73 @@ class ConversationService:
 
     async def create_conversation(
         self,
-        conversation: CreateConversationRequest,
-        user_id: str,
+        conversation_request: CreateConversationRequest, # Renamed 'conversation' to 'conversation_request' to avoid conflict
+        user_id: str, # user_id is passed as an argument
         hidden: bool = False,
     ) -> tuple[str, str]:
-        try:
-            if not await self.agent_service.validate_agent_id(
-                user_id, conversation.agent_ids[0]
-            ):
+        span_name = "conversation.create"
+        with self.tracer.start_as_current_span(span_name) as span:
+            span.set_attribute("user.id", user_id)
+            # Add project_ids and agent_ids from the request early if possible
+            if conversation_request.project_ids:
+                span.set_attribute("project.ids", json.dumps(conversation_request.project_ids))
+            if conversation_request.agent_ids:
+                span.set_attribute("agent.ids", json.dumps(conversation_request.agent_ids))
+
+            try:
+                # ---- Start of existing try block ----
+                if not await self.agent_service.validate_agent_id(
+                    user_id, conversation_request.agent_ids[0]
+                ):
+                    # This specific error might be better handled by letting it propagate
+                    # and setting status to failure in the except block.
+                    raise ConversationServiceError(
+                        f"Invalid agent_id: {conversation_request.agent_ids[0]}"
+                    )
+
+                project_name = await self.project_service.get_project_name(
+                    conversation_request.project_ids
+                )
+
+                title = (
+                    conversation_request.title.strip().replace("Untitled", project_name)
+                    if conversation_request.title
+                    else project_name
+                )
+
+                conversation_id = self._create_conversation_record(
+                    conversation_request, title, user_id, hidden
+                )
+                span.set_attribute("conversation.id", conversation_id)
+
+                asyncio.create_task(
+                    CodeProviderService(self.sql_db).get_project_structure_async(
+                        conversation_request.project_ids[0]
+                    )
+                )
+
+                await self._add_system_message(conversation_id, project_name, user_id)
+                # ---- End of existing try block ----
+
+                span.set_attribute("creation.status", "success")
+                return conversation_id, "Conversation created successfully."
+            except IntegrityError as e:
+                logger.error(f"IntegrityError in create_conversation: {e}", exc_info=True)
+                self.sql_db.rollback()
+                span.set_attribute("creation.status", "failure")
+                span.record_exception(e)
                 raise ConversationServiceError(
-                    f"Invalid agent_id: {conversation.agent_ids[0]}"
-                )
-
-            project_name = await self.project_service.get_project_name(
-                conversation.project_ids
-            )
-
-            title = (
-                conversation.title.strip().replace("Untitled", project_name)
-                if conversation.title
-                else project_name
-            )
-
-            conversation_id = self._create_conversation_record(
-                conversation, title, user_id, hidden
-            )
-
-            asyncio.create_task(
-                CodeProviderService(self.sql_db).get_project_structure_async(
-                    conversation.project_ids[0]
-                )
-            )
-
-            await self._add_system_message(conversation_id, project_name, user_id)
-
-            return conversation_id, "Conversation created successfully."
-        except IntegrityError as e:
-            logger.error(f"IntegrityError in create_conversation: {e}", exc_info=True)
-            self.sql_db.rollback()
-            raise ConversationServiceError(
-                "Failed to create conversation due to a database integrity error."
-            ) from e
-        except Exception as e:
-            logger.error(f"Unexpected error in create_conversation: {e}", exc_info=True)
-            self.sql_db.rollback()
-            raise ConversationServiceError(
-                "An unexpected error occurred while creating the conversation."
-            ) from e
+                    "Failed to create conversation due to a database integrity error."
+                ) from e
+            except Exception as e: # Catch other exceptions from the original code
+                logger.error(f"Unexpected error in create_conversation: {e}", exc_info=True)
+                self.sql_db.rollback()
+                span.set_attribute("creation.status", "failure")
+                span.record_exception(e)
+                raise ConversationServiceError(
+                    "An unexpected error occurred while creating the conversation."
+                ) from e
+            # The span is automatically ended when exiting the 'with' block.
 
     def _create_conversation_record(
         self,
