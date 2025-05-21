@@ -24,8 +24,8 @@ class LoadFileForEditing:
         
         This tool is part of a workflow for making incremental changes to a repository:
         1. Load files you need to edit with this tool (LoadFileForEditing)
-        2. Make changes using EditFile, ReplaceLines, InsertLines, DeleteLines tools
-        3. Search file content with SearchInFile or FindFunctionDefinition when needed
+        2. Make changes using ReplaceLines tool
+        3. Search file content with SearchInFile
         4. Generate unified diffs with GenerateFileDiff when changes are complete
         
         The FileChangeManager maintains the state of all loaded files during your session,

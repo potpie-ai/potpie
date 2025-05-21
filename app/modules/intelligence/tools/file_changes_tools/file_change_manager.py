@@ -3,7 +3,107 @@ import re
 import difflib
 import os
 import string
+import time
 from typing import List, Dict, Optional, Tuple, Any
+import subprocess
+import tempfile
+import os
+
+
+def generate_git_diff(
+    original_content: str, modified_content: str, file_path: str
+) -> str:
+    """
+    Generate a unified diff using git diff instead of difflib.
+
+    Args:
+        original_content: Original file content as string
+        modified_content: Modified file content as string (or list of lines)
+        file_path: Path to the file (used for diff headers)
+
+    Returns:
+        Unified diff as a string in git format
+    """
+    # Create temporary directory
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # Ensure paths exist
+        os.makedirs(
+            os.path.join(temp_dir, "a", os.path.dirname(file_path)), exist_ok=True
+        )
+        os.makedirs(
+            os.path.join(temp_dir, "b", os.path.dirname(file_path)), exist_ok=True
+        )
+
+        # Create file paths
+        original_file_path = os.path.join(temp_dir, "a", file_path)
+        modified_file_path = os.path.join(temp_dir, "b", file_path)
+
+        # Write original content
+        with open(original_file_path, "w", encoding="utf-8") as f:
+            if isinstance(original_content, list):
+                f.write("\n".join(original_content))
+            else:
+                f.write(original_content)
+
+        # Write modified content
+        with open(modified_file_path, "w", encoding="utf-8") as f:
+            if isinstance(modified_content, list):
+                f.write("\n".join(modified_content))
+            else:
+                f.write(modified_content)
+
+        # Run git diff
+        try:
+            # The --no-index tells git to diff files that aren't in a repo
+            result = subprocess.run(
+                [
+                    "git",
+                    "diff",
+                    "--no-index",
+                    "--unified",
+                    original_file_path,
+                    modified_file_path,
+                ],
+                cwd=temp_dir,
+                capture_output=True,
+                text=True,
+                check=False,  # Don't raise on non-zero exit (git diff returns 1 if files differ)
+            )
+
+            # git diff returns exit code 1 if files differ (which is what we want)
+            if result.returncode not in (0, 1):
+                raise RuntimeError(f"git diff failed: {result.stderr}")
+
+            # Process the diff output to make it prettier
+            diff_output = result.stdout
+
+            # Create a cleaned diff output
+            cleaned_diff = []
+            for line in diff_output.splitlines():
+                # Skip the original diff --git line that contains temp paths
+                if line.startswith("diff --git"):
+                    cleaned_diff.append(f"diff --git a/{file_path} b/{file_path}")
+                    continue
+
+                # Replace the temp paths in --- and +++ lines
+                if line.startswith("--- "):
+                    cleaned_diff.append(f"--- a/{file_path}")
+                    continue
+                if line.startswith("+++ "):
+                    cleaned_diff.append(f"+++ b/{file_path}")
+                    continue
+
+                # Keep all other lines as they are
+                cleaned_diff.append(line)
+
+            return "\n".join(cleaned_diff)
+
+        except FileNotFoundError:
+            raise RuntimeError(
+                "Git executable not found. Make sure git is installed and in your PATH."
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to generate git diff: {str(e)}")
 
 
 class FileChangeManager:
@@ -35,8 +135,8 @@ class FileChangeManager:
 
         for i, file_path in enumerate(changed_files, 1):
             # Use numbers as filenames (1, 2, 3, 4...)
-            output_filename = f"{changes_dir}/file_{i}"
-            patch_filename = f"{changes_dir}/patch_{i}"
+            output_filename = f"{changes_dir}/file_{i}.py"
+            patch_filename = f"{changes_dir}/patch_{i}.txt"
 
             # Join modified lines into a single string
             content = "\n".join(self.modified_files[file_path])
@@ -409,7 +509,7 @@ class FileChangeManager:
 
         return changed_files
 
-    def generate_unified_diff(self, file_path: str) -> str:
+    def generate_unified_diff_old(self, file_path: str) -> str:
         """
         Generate a unified diff for a file in Git-style format.
 
@@ -447,6 +547,29 @@ class FileChangeManager:
         # Combine header with diff content
         return git_header + "\n" + "\n".join(diff_lines)
 
+    def generate_unified_diff(self, file_path: str) -> str:
+        """
+        Generate a unified diff for a file using git diff.
+
+        Args:
+            file_path: Path to the file
+        Returns:
+            Unified diff as a string
+        Raises:
+            FileNotFoundError: If file hasn't been loaded
+            ValueError: If file hasn't been changed
+        """
+        if file_path not in self.modified_files:
+            raise FileNotFoundError(f"File '{file_path}' hasn't been loaded")
+
+        original = self.original_files[file_path]
+        modified = "\n".join(self.modified_files[file_path])
+
+        if original.splitlines() == self.modified_files[file_path]:
+            raise ValueError(f"File '{file_path}' hasn't been changed")
+
+        return generate_git_diff(original, modified, file_path)
+
     def generate_all_diffs(self) -> Dict[str, str]:
         """
         Generate unified diffs for all changed files.
@@ -478,3 +601,271 @@ class FileChangeManager:
     def write_modified_files(self):
         """Write all modified files to disk."""
         self._write_changes()
+
+
+def inspect_line_differences(line1, line2):
+    """
+    Inspects the detailed differences between two strings that appear visually identical.
+    Checks for whitespace differences, line endings, and shows hex representation.
+
+    Args:
+        line1 (str): First string to compare
+        line2 (str): Second string to compare
+
+    Returns:
+        dict: Information about the differences
+    """
+    result = {
+        "are_identical": line1 == line2,
+        "length_line1": len(line1),
+        "length_line2": len(line2),
+        "hex_line1": " ".join(f"{ord(c):02x}" for c in line1),
+        "hex_line2": " ".join(f"{ord(c):02x}" for c in line2),
+        "differences": [],
+    }
+
+    # Find position-by-position differences
+    for i in range(max(len(line1), len(line2))):
+        if i < len(line1) and i < len(line2):
+            if line1[i] != line2[i]:
+                result["differences"].append(
+                    {
+                        "position": i,
+                        "char1": repr(line1[i]),
+                        "char2": repr(line2[i]),
+                        "hex1": f"{ord(line1[i]):02x}",
+                        "hex2": f"{ord(line2[i]):02x}",
+                    }
+                )
+        elif i < len(line1):
+            result["differences"].append(
+                {
+                    "position": i,
+                    "char1": repr(line1[i]),
+                    "char2": "missing",
+                    "hex1": f"{ord(line1[i]):02x}",
+                    "hex2": "n/a",
+                }
+            )
+        else:
+            result["differences"].append(
+                {
+                    "position": i,
+                    "char1": "missing",
+                    "char2": repr(line2[i]),
+                    "hex1": "n/a",
+                    "hex2": f"{ord(line2[i]):02x}",
+                }
+            )
+
+    # Check common whitespace and line ending issues
+    result["trailing_whitespace_line1"] = line1.rstrip() != line1
+    result["trailing_whitespace_line2"] = line2.rstrip() != line2
+    result["has_CR_line1"] = "\r" in line1
+    result["has_CR_line2"] = "\r" in line2
+    result["has_LF_line1"] = "\n" in line1
+    result["has_LF_line2"] = "\n" in line2
+
+    return result
+
+
+def modify_file_change_manager(FileChangeManager):
+    """
+    Modifies the FileChangeManager class to add protection against invisible whitespace issues.
+
+    Args:
+        FileChangeManager: The original FileChangeManager class
+
+    Returns:
+        A subclass with improved line comparison capabilities
+    """
+
+    class EnhancedFileChangeManager(FileChangeManager):
+        def generate_unified_diff(self, file_path: str) -> str:
+            """
+            Override to add protection against invisible differences.
+            """
+            if file_path not in self.modified_files:
+                raise FileNotFoundError(f"File '{file_path}' hasn't been loaded")
+
+            original = self.original_files[file_path]
+            modified = "\n".join(self.modified_files[file_path])
+
+            # Check for invisible differences
+            original_lines = original.splitlines()
+            modified_lines = self.modified_files[file_path]
+
+            if len(original_lines) == len(modified_lines):
+                has_real_changes = False
+                suspicious_lines = []
+
+                for i, (orig, mod) in enumerate(zip(original_lines, modified_lines)):
+                    # Skip lines that are obviously different
+                    if orig.strip() != mod.strip():
+                        has_real_changes = True
+                        continue
+
+                    # Look for invisible differences
+                    if orig != mod:
+                        details = inspect_line_differences(orig, mod)
+                        suspicious_lines.append(
+                            {"line_number": i + 1, "details": details}
+                        )
+
+                # If we only have suspicious whitespace differences, print warnings
+                if not has_real_changes and suspicious_lines:
+                    print(
+                        "WARNING: Detected only whitespace/invisible character differences:"
+                    )
+                    for sus in suspicious_lines:
+                        print(
+                            f"  Line {sus['line_number']}: Characters appear identical but differ in whitespace/line-endings"
+                        )
+                        diffs = sus["details"]["differences"]
+                        for diff in diffs:
+                            print(
+                                f"    Position {diff['position']}: {diff['char1']} vs {diff['char2']}"
+                            )
+
+            # Continue with original implementation
+            if original.splitlines() == self.modified_files[file_path]:
+                raise ValueError(f"File '{file_path}' hasn't been changed")
+
+            return generate_git_diff(original, modified, file_path)
+
+        def normalize_line_endings(self, file_path: str, line_ending="\n"):
+            """
+            Normalize line endings for a file in memory.
+
+            Args:
+                file_path: Path to the file
+                line_ending: Target line ending (default: LF)
+            """
+            if file_path not in self.modified_files:
+                raise FileNotFoundError(f"File '{file_path}' hasn't been loaded")
+
+            # Join with current line endings, then split and join with target line ending
+            content = "\n".join(self.modified_files[file_path])
+            # Replace all line endings with the target
+            content = content.replace("\r\n", "\n").replace("\r", "\n")
+            if line_ending != "\n":
+                content = content.replace("\n", line_ending)
+
+            # Update the modified files
+            self.modified_files[file_path] = content.splitlines()
+            self._write_changes()
+
+        def strip_trailing_whitespace(self, file_path: str):
+            """
+            Strip trailing whitespace from all lines in a file.
+
+            Args:
+                file_path: Path to the file
+            """
+            if file_path not in self.modified_files:
+                raise FileNotFoundError(f"File '{file_path}' hasn't been loaded")
+
+            # Strip trailing whitespace from each line
+            self.modified_files[file_path] = [
+                line.rstrip() for line in self.modified_files[file_path]
+            ]
+            self._write_changes()
+
+    return EnhancedFileChangeManager
+
+
+def verify_diff_integrity(original_line, modified_line):
+    """
+    Utility function to check if two lines that appear identical have invisible differences.
+
+    Args:
+        original_line (str): The original line
+        modified_line (str): The modified line
+
+    Returns:
+        tuple: (are_visually_same, are_actually_same, difference_details)
+    """
+    visually_same = original_line.strip() == modified_line.strip()
+    actually_same = original_line == modified_line
+
+    if visually_same and not actually_same:
+        details = inspect_line_differences(original_line, modified_line)
+        return True, False, details
+
+    return visually_same, actually_same, None
+
+
+# Function to inspect a git-style diff for whitespace/invisible character issues
+def inspect_git_diff(diff_text):
+    """
+    Analyzes a git-style diff to detect potential whitespace-only changes or invisible character issues.
+
+    Args:
+        diff_text (str): The git-style diff text
+
+    Returns:
+        dict: Analysis results with any suspicious hunks identified
+    """
+    results = {
+        "suspicious_hunks": [],
+        "has_whitespace_only_changes": False,
+        "line_ending_differences": False,
+        "recommendations": [],
+    }
+
+    lines = diff_text.splitlines()
+    current_hunk = {"line_number": 0, "suspicious_lines": []}
+    hunk_header = None
+
+    for i, line in enumerate(lines):
+        # Track hunk headers (starting with @@)
+        if line.startswith("@@"):
+            if current_hunk["suspicious_lines"]:
+                results["suspicious_hunks"].append(current_hunk)
+            current_hunk = {
+                "line_number": i + 1,
+                "hunk_header": line,
+                "suspicious_lines": [],
+            }
+            hunk_header = line
+            continue
+
+        # Look for removal/addition pairs that look visually identical
+        if i + 1 < len(lines) and line.startswith("-") and lines[i + 1].startswith("+"):
+            removed = line[1:]  # Remove the - prefix
+            added = lines[i + 1][1:]  # Remove the + prefix
+
+            # Check if they're visually the same but actually different
+            visually_same, actually_same, details = verify_diff_integrity(
+                removed, added
+            )
+
+            if visually_same and not actually_same:
+                current_hunk["suspicious_lines"].append(
+                    {"removed_line": i + 1, "added_line": i + 2, "details": details}
+                )
+
+                # Track specific types of differences
+                if any(
+                    d.get("char1") == "'\r'" or d.get("char2") == "'\r'"
+                    for d in details["differences"]
+                ):
+                    results["line_ending_differences"] = True
+
+                results["has_whitespace_only_changes"] = True
+
+    # Add the last hunk if it has suspicious lines
+    if current_hunk["suspicious_lines"]:
+        results["suspicious_hunks"].append(current_hunk)
+
+    # Generate recommendations
+    if results["line_ending_differences"]:
+        results["recommendations"].append(
+            "Normalize line endings using the normalize_line_endings() method"
+        )
+    if results["has_whitespace_only_changes"]:
+        results["recommendations"].append(
+            "Use strip_trailing_whitespace() method to remove trailing whitespace"
+        )
+
+    return results

@@ -43,7 +43,10 @@ from app.modules.intelligence.tools.misc_tools.generate_diff_tool import (
     generate_patch_diff_tool,
 )
 from app.modules.intelligence.tools.misc_tools.verify_diff_tool import (
-    verify_patch_diff_tool,
+    verify_patch_diff_tool as v1,
+)
+from app.modules.intelligence.tools.misc_tools.verify_diff2_tool import (
+    verify_patch_diff_tool as v2,
 )
 from app.modules.intelligence.tools.tool_schema import ToolInfo, ToolInfoWithParameters
 from app.modules.intelligence.tools.web_tools.github_tool import github_tool
@@ -137,9 +140,7 @@ class ToolService:
                 self.db, self.user_id
             ),
             "fetch_file": fetch_file_tool(self.db, self.user_id),
-            "verify_patch_diff": verify_patch_diff_tool(
-                fetch_file_tool(self.db, self.user_id)
-            ),
+            "verify_patch_diff": v1(fetch_file_tool(self.db, self.user_id)),
             # "generate_patch_diff": generate_patch_diff_tool(
             #     fetch_file_tool(self.db, self.user_id)
             # ),
@@ -153,6 +154,14 @@ class ToolService:
 
         if self.web_search_tool:
             tools["web_search_tool"] = self.web_search_tool
+
+        # Enhance your existing FileChangeManager
+        # EnhancedFileChangeManager = file_change_manager.modify_file_change_manager(
+        #     file_change_manager.FileChangeManager
+        # )
+
+        # # Create an instance and use it
+        # file_manager = EnhancedFileChangeManager()
 
         file_manager = file_change_manager.FileChangeManager()
         tools["generate_patch_diff"] = generate_diffs_tool.generate_file_diff_tool(

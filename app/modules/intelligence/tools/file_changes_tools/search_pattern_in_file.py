@@ -46,6 +46,7 @@ class SearchInFile:
         - All matching lines with their line numbers
         - Context lines surrounding each match
         - Total number of matches found
+        - File Diffs for the current state of FileChangeManager (Use this to confirm your changes)
 
         IMPORTANT:
         - This tool searches the in-memory content from FileChangeManager, 
@@ -159,6 +160,7 @@ class SearchInFile:
                     "is_regex": is_regex,
                     "match_count": len(matches),
                     "matches": results,
+                    "current_diff_state_in_file_changes_manager": self.file_manager.generate_all_diffs(),
                 }
 
             except Exception as e:

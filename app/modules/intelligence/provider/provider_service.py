@@ -31,6 +31,7 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.anthropic import AnthropicProvider
 import litellm
+from agno.models.openai import OpenAIChat
 
 import random
 import time
@@ -273,6 +274,14 @@ AVAILABLE_MODELS = [
         is_inference_model=True,
     ),
     AvailableModelOption(
+        id="openai/o4-mini",
+        name="O4 mini",
+        description="reasoning model",
+        provider="openai",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
         id="anthropic/claude-3-7-sonnet-20250219",
         name="Claude 3.7 Sonnet",
         description="Highest level of intelligence and capability with toggleable extended thinking",
@@ -321,9 +330,9 @@ AVAILABLE_MODELS = [
         is_inference_model=True,
     ),
     AvailableModelOption(
-        id="openrouter/google/gemini-2.5-flash-preview",
-        name="Gemini 2.5 Flash",
-        description="Google's Latest Gemini model optimized for speed",
+        id="openrouter/google/gemini-2.5-pro-preview",
+        name="Gemini 2.5 Pro",
+        description="Google's Latest pro Gemini model",
         provider="gemini",
         is_chat_model=True,
         is_inference_model=True,
@@ -538,7 +547,7 @@ class ProviderService:
     ) -> bool:
         """Check if the current model is supported by PydanticAI."""
         config = self.chat_config if config_type == "chat" else self.inference_config
-        return config.provider in ["openai", "anthropic", "gemini"]
+        return config.provider in ["openai", "anthropic", "openrouter"]
 
     @robust_llm_call()  # Apply the robust_llm_call decorator
     async def call_llm(
@@ -689,7 +698,80 @@ class ProviderService:
                             ),
                         ),
                     )
-                case "gemini":
+                case "openrouter":
+                    # PORTKEY has a issue when use with openrouter here
+                    return OpenAIModel(
+                        model_name="google/" + model_name,
+                        provider=OpenAIProvider(
+                            api_key=api_key,
+                            base_url="https://openrouter.ai/api/v1",
+                        ),
+                    )
+
+        match config.model.split("/")[0]:
+            case "openai":
+                return OpenAIModel(
+                    model_name=model_name,
+                    provider=OpenAIProvider(
+                        api_key=api_key,
+                    ),
+                )
+            case "anthropic":
+                return AnthropicModel(
+                    model_name=model_name,
+                    provider=AnthropicProvider(
+                        api_key=api_key,
+                    ),
+                )
+            case "gemini":
+                # OpenRouter uses OpenAI-compatible API
+                return OpenAIModel(
+                    model_name="google/" + model_name,
+                    provider=OpenAIProvider(
+                        api_key=api_key,
+                        base_url="https://openrouter.ai/api/v1",
+                    ),
+                )
+
+    def get_agno_model(self):
+        """Get the appropriate PydanticAI model based on the current provider."""
+        config = self.chat_config
+        model_name = config.model.split("/")[-1]
+        api_key = self._get_api_key(config.provider)
+
+        if not api_key:
+            return None
+
+        # if portkey is enabled, use portkey gateway
+        if self.portkey_api_key:
+            match config.provider:
+                case "openai":
+                    return OpenAIChat(
+                        id=model_name,
+                        api_key=api_key,
+                        base_url=PORTKEY_GATEWAY_URL,
+                        default_headers=createHeaders(
+                            api_key=self.portkey_api_key,
+                            provider=config.provider,
+                            trace_id=str(uuid.uuid4())[:8],
+                        ),
+                    )
+                case "anthropic":
+                    return AnthropicModel(
+                        model_name=model_name,
+                        provider=AnthropicProvider(
+                            anthropic_client=AsyncAnthropic(
+                                base_url=PORTKEY_GATEWAY_URL,
+                                api_key=api_key,
+                                default_headers=createHeaders(
+                                    api_key=self.portkey_api_key,
+                                    provider=config.provider,
+                                    trace_id=str(uuid.uuid4())[:8],
+                                ),
+                            ),
+                        ),
+                    )
+                case "openrouter":
                     # PORTKEY has a issue when use with openrouter here
                     return OpenAIModel(
                         model_name="google/" + model_name,

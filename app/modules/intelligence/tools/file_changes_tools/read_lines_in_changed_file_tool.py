@@ -41,6 +41,7 @@ class GetLinesFromFile:
 
         The output will be a list of strings, where each string is a line of content,
         reflecting all changes applied up to the point this tool is called.
+        File Diffs for the current state of FileChangeManager (Use this to confirm your changes)
 
         IMPORTANT:
         - This tool returns content from the in-memory FileChangeManager,
@@ -104,6 +105,7 @@ class GetLinesFromFile:
                 "retrieved_lines": formatted_lines,
                 "line_count": len(lines),
                 "content": "\n".join(lines),  # Provide raw content as well if needed
+                "current_diff_state_in_file_changes_manager": self.file_manager.generate_all_diffs(),
             }
 
         except FileNotFoundError as e:
