@@ -339,7 +339,7 @@ You can access Potpie Agents through an API key, enabling integration into CI/CD
 - **Generate an API Key**: Easily create an API key for secure access.
 - **Parse Repositories**: Use the Parse API to analyze code repositories and obtain a project ID.
 - **Monitor Parsing Status**: Check the status of your parsing requests.
-- **Create Conversations**: Initiate conversations with specific agents using project and agent IDs adn get a conversation id.
+- **Create Conversations**: Initiate conversations with specific agents using project and agent IDs and get a conversation id.
 - **Send Messages**: Communicate with agents by sending messages within a conversation.
 
 ## 🎨 Make Potpie Your Own

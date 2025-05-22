@@ -510,7 +510,7 @@ class ClassificationPrompts:
 
         Examples:
         1. History: "*Some code snippet*"
-           Query: "Can you refactor above code to accomodate dependency injection?"
+           Query: "Can you refactor above code to accommodate dependency injection?"
         {{
             "classification": "LLM_SUFFICIENT"
         }}

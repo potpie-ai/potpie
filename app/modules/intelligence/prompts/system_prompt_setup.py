@@ -37,7 +37,7 @@ class SystemPromptSetup:
                         - Provide detailed explanations, referencing unmodified specific code snippets when relevant
                         - Use markdown formatting for code and structural clarity
                         - Try to be concise and avoid repeating yourself.
-                        - Aways provide a technical response in the same language as the codebase.
+                        - Always provide a technical response in the same language as the codebase.
 
                         5. Honesty and Transparency:
                         - If you're unsure or lack information, clearly state this

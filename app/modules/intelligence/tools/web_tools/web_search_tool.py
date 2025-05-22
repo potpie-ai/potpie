@@ -20,7 +20,7 @@ class WebSearchToolInput(BaseModel):
 
 class WebSearchToolOutput(BaseModel):
     success: bool = Field(
-        description="Boolean True | False on whether answer generation was sucessful"
+        description="Boolean True | False on whether answer generation was successful"
     )
     content: str = Field(description="Answer by the LLM Model")
     citations: list[str] = Field(
