@@ -120,7 +120,7 @@ def get_tool_result_info_content(tool_name: str, content: List[Any] | str | Any)
                 return res
             return ""
         case "Getcodechanges":
-            return "successfull"
+            return "successful"
         case "GetNodesfromTags":
             return ""
         case "AskKnowledgeGraphQueries":

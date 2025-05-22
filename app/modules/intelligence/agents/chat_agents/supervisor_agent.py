@@ -20,5 +20,5 @@ class SupervisorAgent(ChatAgent):
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        async for chunck in self.agent.run_stream(ctx):
-            yield chunck
+        async for chunk in self.agent.run_stream(ctx):
+            yield chunk

@@ -61,7 +61,7 @@ class GetNodeNeighboursFromNodeIdTool:
 
         Args:
             project_id (str): Project ID.
-            node_ids (List[str]): List of node IDs to retrieve neighbors for. Should contain atleast one node ID.
+            node_ids (List[str]): List of node IDs to retrieve neighbors for. Should contain at least one node ID.
 
         Returns:
             Dict[str, Any]: Neighbor data or error message.

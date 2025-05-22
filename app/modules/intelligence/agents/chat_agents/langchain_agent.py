@@ -89,7 +89,7 @@ class LangchainRagAgent(ChatAgent):
 
                 **Output Requirements:**
 
-                - All citations should be mentioned in comma seperated format at the end after "###Citations###" block
+                - All citations should be mentioned in comma separated format at the end after "###Citations###" block
                     ex: If we have 3 citations, this should be at the end of the response:
                         `
                             ###Citations###

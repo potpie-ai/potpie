@@ -21,7 +21,7 @@ pipeline {
                     def branch = env.GIT_BRANCH
 
                     if (branch == "origin/main"){
-                        env.ENVIORNMENT = 'main'
+                        env.ENVIRONMENT = 'main'
                     } else if (branch == "origin/custom-agents-production-release") {
                         env.ENVIRONMENT = 'custom-agents-production-release'
                     } else {

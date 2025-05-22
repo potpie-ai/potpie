@@ -83,7 +83,7 @@ qna_task_prompt = """
     Process:
     1. **Code Retrieval:**
     - If not already present in the history, Fetch the docstrings and code for the provided node IDs using the get_code_from_node_id tool.
-    - Fetch the code for the file path of the function/class mentioned in the user's query using the get code from probable node name tool. This is needed for correct inport of class name in the unit test file.
+    - Fetch the code for the file path of the function/class mentioned in the user's query using the get code from probable node name tool. This is needed for correct import of class name in the unit test file.
 
     2. **Analysis:**
     - Analyze the fetched code and docstrings to understand the functionality.
