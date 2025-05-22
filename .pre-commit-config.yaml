@@ -25,3 +25,9 @@ repos:
     rev: 1.7.9
     hooks:
       - id: bandit
+  
+  - repo: https://github.com/codespell-project/codespell
+    # Configuration for codespell is in .pre-commit-config.yaml
+    rev: v2.4.1
+    hooks:
+      - id: codespell
