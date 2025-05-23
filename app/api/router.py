@@ -65,12 +65,12 @@ async def get_api_key_user(
 
     try:
         user = await APIKeyService.validate_api_key(x_api_key, db)
-    except InvalidAPIKeyFormatError:
+    except InvalidAPIKeyFormatError as exc:
         raise HTTPException(
             status_code=401,
             detail="Invalid API key format",
             headers={"WWW-Authenticate": "ApiKey"},
-        )
+        ) from exc
 
     if not user:
         raise HTTPException(
