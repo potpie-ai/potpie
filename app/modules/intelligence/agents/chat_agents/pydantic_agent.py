@@ -142,10 +142,6 @@ class PydanticRagAgent(ChatAgent):
         """Main execution flow"""
         logger.info("running pydantic-ai agent")
         try:
-            # agentops.init(
-            #     os.getenv("AGENTOPS_API_KEY"), default_tags=["openai-gpt-notebook"]
-            # )
-            # session = agentops.start_session()
             # Create all tasks
 
             resp = await self._create_agent(ctx).run(user_prompt=ctx.query)

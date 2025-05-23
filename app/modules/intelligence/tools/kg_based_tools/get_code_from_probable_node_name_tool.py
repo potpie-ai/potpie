@@ -24,7 +24,7 @@ class GetCodeFromProbableNodeNameInput(BaseModel):
 
 
 class GetCodeFromProbableNodeNameTool:
-    name = "Get Code and docstring From Probable Node Name"
+    name = "Get Code and docstring From Probable Node Names"
     description = """Retrieves code for nodes matching probable names in a repository.
         :param project_id: string, the project ID (UUID).
         :param probable_node_names: array, list of probable node names in format 'file_path:function_name' or 'file_path:class_name'.
@@ -83,6 +83,8 @@ class GetCodeFromProbableNodeNameTool:
     async def find_node_from_probable_name(
         self, project_id: str, probable_node_names: List[str]
     ) -> List[Dict[str, Any]]:
+        # Remove duplicates from probable_node_names
+        probable_node_names = list(set(probable_node_names))
         tasks = [
             self.process_probable_node_name(project_id, name)
             for name in probable_node_names
@@ -212,8 +214,9 @@ def get_code_from_probable_node_name_tool(
     return StructuredTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
-        name="Get Code and docstring From Probable Node Name",
+        name="Get Code and docstring From Probable Node Names",
         description="""Retrieves code for nodes matching probable names in a repository.
+        Try to club lookups for multiple nodes in a single call instead of calling this tool multiple times.
         :param project_id: string, the project ID (UUID).
         :param probable_node_names: array, list of probable node names in format 'file_path:function_name' or 'file_path:class_name'.
 

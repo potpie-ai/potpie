@@ -230,13 +230,15 @@ class LocalRepoService:
 
         return "\n".join(_format_node(structure))
 
-    def get_local_repo_diff(self, repo_path: str, branch_name: str) -> Dict[str, str]:
+    def get_local_repo_diff(
+        self, repo_path: str, branch_name: str, base_branch: Optional[str] = None
+    ) -> Dict[str, str]:
         try:
             repo = self.get_repo(repo_path)
             repo.git.checkout(branch_name)
 
             # Determine the default branch name
-            default_branch_name = repo.git.symbolic_ref(
+            default_branch_name = base_branch if base_branch else repo.git.symbolic_ref(
                 "refs/remotes/origin/HEAD"
             ).split("/")[-1]
 

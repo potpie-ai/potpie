@@ -56,7 +56,7 @@ class CodeGenAgent(ChatAgent):
             [
                 "get_code_from_multiple_node_ids",
                 "get_node_neighbours_from_node_id",
-                "get_code_from_probable_node_name",
+                "get_code_from_probable_node_names",
                 "ask_knowledge_graph_queries",
                 "get_nodes_from_tags",
                 "get_code_file_structure",
@@ -107,7 +107,7 @@ code_gen_task_prompt = """
 
     1. Query Analysis:
     - Identify ALL file names or function names mentioned in the query
-    - For files without node_ids, use get_code_from_probable_node_name tool
+    - For files without node_ids, use get_code_from_probable_node_names tool
     - Example: "Update file1.py and config.py" -> fetch config.py and file1.py using tool if you dont already have their code
     - Look for words that could be file names or function names based on the query (e.g., requirements, utils, update document etc.)
     - Identify any data storage or schema changes that might affect multiple files

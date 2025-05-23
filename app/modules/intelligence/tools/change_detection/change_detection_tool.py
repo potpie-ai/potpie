@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from fastapi import HTTPException
 from langchain_core.tools import StructuredTool
@@ -24,6 +24,9 @@ class ChangeDetectionInput(BaseModel):
     project_id: str = Field(
         ..., description="The ID of the project being evaluated, this is a UUID."
     )
+    base_branch: Optional[str] = Field(
+        None, description="The base branch to compare against, this is a branch name. If none is provided, the default branch will be used."
+    )
 
 
 class ChangeDetail(BaseModel):
@@ -45,6 +48,7 @@ class ChangeDetectionTool:
     name = "Get code changes"
     description = """Analyzes differences between branches in a Git repository and retrieves updated function details.
         :param project_id: string, the ID of the project being evaluated (UUID).
+        :param base_branch: string, (optional) the base branch to compare against, this is a branch name. If none is provided, the default branch will be used.
 
             example:
             {
@@ -81,8 +85,7 @@ class ChangeDetectionTool:
         return changed_files
 
     async def _find_changed_functions(self, changed_files, project_id):
-        result = []
-        for relative_file_path, lines in changed_files.items():
+        async def process_file(relative_file_path, lines):
             try:
                 project = await ProjectService(self.sql_db).get_project_from_db_by_id(
                     project_id
@@ -112,7 +115,6 @@ class ChangeDetectionTool:
                             node_type = "CLASS"
                         elif tag.type in ["method", "function"]:
                             node_type = "FUNCTION"
-
                         else:
                             node_type = "other"
 
@@ -125,14 +127,26 @@ class ChangeDetectionTool:
                         if node:
                             nodes[node_name] = node
 
+                file_results = []
                 for node_name, node in nodes.items():
                     start_line = node.start_point[0]
                     end_line = node.end_point[0]
                     if any(start_line < line < end_line for line in lines):
-                        result.append(node_name)
+                        file_results.append(node_name)
+                return file_results
             except Exception as e:
                 logging.error(f"Exception {e}")
-        return result
+                return []
+
+        # Create tasks for all files and process them in parallel
+        tasks = [
+            process_file(relative_file_path, lines)
+            for relative_file_path, lines in changed_files.items()
+        ]
+        results = await asyncio.gather(*tasks)
+        
+        # Flatten the list of lists into a single list
+        return [item for sublist in results for item in sublist]
 
     async def get_updated_function_list(self, patch_details, project_id):
         changed_files = self._parse_diff_detail(patch_details)
@@ -193,7 +207,7 @@ class ChangeDetectionTool:
 
         return entry_points
 
-    async def get_code_changes(self, project_id):
+    async def get_code_changes(self, project_id, base_branch = None):
         global patches_dict, repo
         patches_dict = {}
         project_details = await ProjectService(self.sql_db).get_project_from_db_by_id(
@@ -219,14 +233,14 @@ class ChangeDetectionTool:
                     repo_name
                 )
                 repo = github.get_repo(repo_name)
-                default_branch = repo.default_branch
-                git_diff = repo.compare(default_branch, branch_name)
+                base_branch = base_branch if base_branch else repo.default_branch
+                git_diff = repo.compare(base_branch, branch_name)
                 patches_dict = {
                     file.filename: file.patch for file in git_diff.files if file.patch
                 }
             elif isinstance(code_service.service_instance, LocalRepoService):
                 patches_dict = code_service.service_instance.get_local_repo_diff(
-                    repo_path, branch_name
+                    repo_path, branch_name, base_branch
                 )
         except Exception as e:
             raise HTTPException(
@@ -263,7 +277,7 @@ class ChangeDetectionTool:
                             self.sql_db, self.user_id
                         ).run(project_id, node_id)
                         node_code_dict[node_id] = {
-                            "code_content": node_code["code_content"],
+                            "code_content":"",# node_code["code_content"],
                             "file_path": node_code["file_path"],
                         }
 
@@ -296,18 +310,18 @@ class ChangeDetectionTool:
                 if len(identifiers) == 0:
                     return []
 
-    async def arun(self, project_id: str) -> str:
-        return await self.get_code_changes(project_id)
+    async def arun(self, project_id: str, base_branch: Optional[str] = None) -> str:
+        return await self.get_code_changes(project_id, base_branch)
 
-    def run(self, project_id: str) -> str:
-        return asyncio.run(self.get_code_changes(project_id))
+    def run(self, project_id: str, base_branch: Optional[str] = None) -> str:
+        return asyncio.run(self.get_code_changes(project_id, base_branch))
 
 
-def get_change_detection_tool(user_id: str) -> StructuredTool:
+def get_change_detection_tool(user_id: str, sql_db) -> StructuredTool:
     """
     Get a list of LangChain Tool objects for use in agents.
     """
-    change_detection_tool = ChangeDetectionTool(next(get_db()), user_id)
+    change_detection_tool = ChangeDetectionTool(sql_db, user_id)
     return StructuredTool.from_function(
         coroutine=change_detection_tool.arun,
         func=change_detection_tool.run,
@@ -317,6 +331,7 @@ def get_change_detection_tool(user_id: str) -> StructuredTool:
             This tool analyzes the differences between branches in a Git repository and retrieves updated function details, including their entry points and citations.
             Inputs for the get_code_changes method:
             - project_id (str): The ID of the project being evaluated, this is a UUID.
+            - base_branch (str): (optional) The base branch to compare against, this is a branch name. If none is provided, the default branch will be used.
             The output includes a dictionary of file patches and a list of changes with updated code and entry point code.
             """,
         args_schema=ChangeDetectionInput,

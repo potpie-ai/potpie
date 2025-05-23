@@ -923,7 +923,7 @@ Let's think through this step by step:
    - Never skip structure retrieval steps
    - Verification: How to confirm the structure is complete
 
-   **get_code_from_probable_node_name:**
+   **get_code_from_probable_node_names:**
    - Use only with complete, validated file paths
    - Never use with directory paths
    - Verify the retrieved content is complete and relevant
@@ -1049,7 +1049,7 @@ Your enhanced task description should follow this structure:
    - Never skip structure retrieval steps
    - Verification: How to confirm the structure is complete
 
-   **get_code_from_probable_node_name:**
+   **get_code_from_probable_node_names:**
    - Use only with complete, validated file paths
    - Never use with directory paths
    - Verify the retrieved content is complete and relevant
