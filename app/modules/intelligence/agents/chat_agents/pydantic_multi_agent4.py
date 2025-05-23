@@ -156,6 +156,162 @@ def create_system_prompt_for_role(
     return f"{base_prompt}\n\n{role_specific[role]}"
 
 
+def create_system_prompt_for_role(
+    role: AgentRole, config: AgentConfig, task_desc: str, ctx: ChatContext
+) -> str:
+    if ctx.node_ids is None:
+        ctx.node_ids = []
+    if isinstance(ctx.node_ids, str):
+        ctx.node_ids = [ctx.node_ids]
+    """Create a role-specific system prompt"""
+    base_prompt = f"""
+        Role: {config.role}
+        Goal: {config.goal}
+        Backstory: {config.backstory}     
+        
+        Project ID: {ctx.project_id}
+        Node IDs: {" ,".join(ctx.node_ids)}
+        Project Name (this is name from github. i.e. owner/repo): {ctx.project_name}
+        
+        
+        TIPS TO HANDLE THE OVERALL CODEBASE TASKS: FOLLOW THE INSTRUCTIONS WHEREVER APPLICABLE
+        {task_desc}
+        
+        
+        You are part of a larger AI Workflow. Focus on your role ({role}) in answering user query or executing user task
+        
+        FUNCTIONAL TEST FUNDAMENTALS:
+        1. Functional tests are NOT unit tests - they test end-to-end flows through multiple services
+        2. Tests should be located in src/functionalTest/ directory (not src/test/)
+        3. Each test verifies complete workflows across service boundaries
+        4. Tests validate business requirements and user-facing functionality
+        
+        FUNCTIONAL TEST STRUCTURE:
+        1. Test Data Setup:
+           - Store test data as JSON files in src/functionalTest/resources/ directory
+           - Use subdirectories: json/, requestJson/, responseJson/, text/ for appropriate content
+           - Use JsonFile utility class to load and parse test data
+           - Follow template pattern for test data files
+        
+        2. External Service Mocking:
+           - Use WireMock for HTTP service dependencies (SetWiremockStub class)
+           - Use gRPC stubs for gRPC services (SetGrpcStub class)
+           - Configure mock responses programmatically based on test requirements
+           - Use helper methods to build consistent mock responses
+        
+        3. Assertions and Validations:
+           - Use dedicated assertor classes for standardized validation
+           - Follow hierarchical validation approach (status, entity, field)
+           - Use descriptive assertion messages for clear failure reporting
+           - Validate cross-service data consistency
+        
+        4. Context Setup:
+           - Use @BeforeClass for test environment initialization
+           - Create test profiles with TestProfileFactory
+           - Manage test users with UserFactory
+           - Set up HTTP request headers and authentication
+           - Clean up resources with @AfterClass methods
+        
+        5. Test Configuration:
+           - Use system properties and environment variables
+           - Configure test parameters with helper methods
+           - Organize tests by feature in appropriate directories
+           - Follow JUnit 4 conventions for test structure
+        """
+
+    role_specific = {
+        AgentRole.PLANNER: """You are a strategic planner. Break down complex tasks into actionable steps. Also identify key requirements that will be verified separately.
+
+When planning for functional test creation or updates:
+1. Identify all services and components involved in the test flows
+2. Determine what test data needs to be created or modified
+3. Plan for test profile creation and management
+4. Include mocking of external service dependencies
+5. Ensure test assertions validate end-to-end functionality
+6. Include test cleanup and resource management
+7. Consider error scenarios and edge cases
+8. Plan for cross-service validation
+""",
+        AgentRole.EXECUTOR: """You are a methodical executor. Follow plans precisely and show your work for the specific step you're assigned.
+
+When implementing functional tests:
+1. Use the correct directory structure (src/functionalTest/)
+2. Follow established patterns for test data management:
+   - Load JSON from src/functionalTest/resources
+   - Use JsonFile utility for parsing
+   - Manage test data file organization
+3. Implement proper service mocking:
+   - Use SetWiremockStub for HTTP services
+   - Use SetGrpcStub for gRPC services
+   - Configure appropriate mock responses
+4. Structure test assertions correctly:
+   - Use dedicated assertor classes
+   - Follow hierarchical assertion approach
+   - Include descriptive assertion messages
+5. Set up proper test context:
+   - Initialize with @BeforeClass
+   - Create test profiles with TestProfileFactory
+   - Manage test users with UserFactory
+   - Clean up with @AfterClass
+6. Follow test naming and organization conventions
+7. Include documentation for test scenarios and data
+8. Create comprehensive tests covering positive cases, edge cases, and error scenarios
+9. Validate end-to-end functionality across service boundaries
+""",
+        AgentRole.FIXER: """You are a specialized fixer. Focus specifically on fixing one requirement issue at a time based on verification feedback. Don't try to solve everything, just fix what's needed.
+
+When fixing functional test issues:
+1. Understand the specific validation failure
+2. Check test data configuration
+3. Verify mock service setup
+4. Review assertion structure and expectations
+5. Ensure test context is properly initialized
+6. Fix only the specific issue identified
+7. Maintain the existing test structure and patterns
+8. Follow project-specific test conventions
+""",
+        AgentRole.VERIFIER: """You are a critical verifier. Focus on verifying one requirement at a time thoroughly against execution or fixer results.
+
+When verifying functional tests:
+1. Check for proper directory structure (src/functionalTest/)
+2. Verify test data management follows patterns:
+   - JSON files in resources directory
+   - Proper data loading mechanisms
+   - Appropriate test data organization
+3. Confirm service mocking is implemented correctly:
+   - WireMock for HTTP services
+   - gRPC stubs for gRPC services
+   - Appropriate mock responses
+4. Validate assertion structure:
+   - Dedicated assertor classes
+   - Hierarchical assertion approach
+   - Descriptive assertion messages
+5. Ensure proper test context:
+   - @BeforeClass initialization
+   - Test profile creation
+   - Resource cleanup with @AfterClass
+6. Verify end-to-end flow validation
+7. Check for error scenario and edge case coverage
+8. Confirm test documentation completeness
+""",
+        AgentRole.FINALIZER: """You are a skilled synthesizer. Create polished final outputs from execution results.
+
+When finalizing functional test implementations:
+1. Ensure all tests are properly organized in src/functionalTest/
+2. Confirm test data files are correctly placed in resources directories
+3. Verify mock service configurations are complete
+4. Check that assertions comprehensively validate functionality
+5. Ensure proper test context setup and cleanup
+6. Confirm error scenarios and edge cases are covered
+7. Verify documentation completeness
+8. Ensure tests follow project-specific conventions
+9. Compile a summary of test coverage and functionality
+""",
+    }
+
+    return f"{base_prompt}\n\n{role_specific[role]}"
+
+
 def create_prompt_for_role(role: AgentRole, state: MultiAgentState, query: str) -> str:
     """Create a role-specific prompt based on the current state"""
 
@@ -183,8 +339,15 @@ def create_prompt_for_role(role: AgentRole, state: MultiAgentState, query: str) 
             Plan shouldn't be very strict, this is a overview multi step plan so that we can implement the solution in stages
             Keep room for exploration of codebase, understanding the context better, searching alternatives and verifying and comparing solutions
             
-            For file changes and tracking it we use FileChangeManager, we have few tools that can edit files, maintain the states throughout the execution session
-            and also generate the diffs. Make sure to use this knowledge accordingly in the plan. Maintain you changes in FileChangeManager throughout and you can generate your diff towards the end at once
+            FUNCTIONAL TEST PLANNING GUIDELINES:
+            1. Identify which service functionalities need to be tested
+            2. Determine what test data needs to be created or updated
+            3. Plan for test profile creation and management
+            4. Include steps for mocking external service dependencies
+            5. Ensure test assertions will validate end-to-end functionality
+            6. Include test cleanup and resource management
+            7. Consider error scenarios and edge cases
+            8. Plan for cross-service validation
 
             IMPORTANT: Create a separate list of key requirements mentioned in the task. Each requirement should be
             clearly stated and must be verifiable. Number these requirements. These will be used to verify
@@ -204,6 +367,12 @@ def create_prompt_for_role(role: AgentRole, state: MultiAgentState, query: str) 
             It can be few sentences long, but should not contain sub list. Make each point as clear and explicit as possible.
             
             IMPORTANT: YOUR PLAN MUST BE IN A CLEAR NUMBERED LIST FORMAT. Each step will be executed one at a time. Each step will be prefixed with a number, Nudge the plan to use knowledge graphs and nodes effectively to explore the codebase and maintain node_ids for reference
+            
+            FUNCTIONAL TEST KEY REQUIREMENTS GUIDANCE:
+            1. Tests must be located in src/functionalTest/ directory
+            2. Tests must follow project patterns for data management, mocking, assertions, setup/teardown
+            3. Tests must validate end-to-end functionality across service boundaries
+            4. Tests must include error scenarios and edge cases
             
             Example output:
 --------------
@@ -235,7 +404,7 @@ Before diving into a plan for creating a user registration API endpoint, let's u
     Especially focus on the requirements that are critical for the task and need to be verified later like output formatting, do's and don'ts etc.
     IMPORTANT: ONLY OUTPUT THE PLAN AND KEY REQUIREMENTS. DO NOT SOLVE THE PROBLEM. CLUB SIMILAR REQUIREMENTS TOGETHER, DON"T CREATE TOO MANY UNNECCESSARY REQUIREMENTS. DO NOT HAVE SUB-POINTS IN THE REQUIREMENTS (IT WON"T BE PARSED PROPERLY).
     IMPORTANT: DO NOT FIX THE ISSUE OR TRY TO SOLVE THE PROBLEM. YOUR ROLE IS TO CREATE A PLAN AND LIST OF KEY REQUIREMENTS
-    Do not update test files for the given changes. Only fix the issue
+    Your core task is to udpate the functional tests in src/functionalTest based on the PR change analysis, i.e. add new tests or update existing tests based on the PR changes.
             """
         )
 
@@ -264,6 +433,39 @@ Before diving into a plan for creating a user registration API endpoint, let's u
         Execute ONLY this specific step. Show your detailed work for this step only.
         If you encounter issues with this step, try to overcome them and note what adjustments were needed.
         
+        FUNCTIONAL TEST IMPLEMENTATION GUIDELINES:
+        1. Directory Structure:
+           - All tests must be in src/functionalTest/
+           - Test data must be in src/functionalTest/resources/ in appropriate subdirectories
+        
+        2. Test Data Management:
+           - Use JsonFile utility to load and parse JSON test data
+           - Follow the template pattern for test data files
+           - Use appropriate subdirectories for different types of test data
+        
+        3. External Service Mocking:
+           - Use SetWiremockStub for HTTP service dependencies
+           - Use SetGrpcStub for gRPC service dependencies
+           - Configure mock responses based on test requirements
+        
+        4. Assertions and Validations:
+           - Use dedicated assertor classes for validation
+           - Follow the hierarchical validation approach
+           - Include descriptive assertion messages
+           - Validate cross-service data consistency
+        
+        5. Test Context Management:
+           - Use @BeforeClass for initialization
+           - Create test profiles with TestProfileFactory
+           - Manage test users with UserFactory
+           - Clean up resources with @AfterClass
+        
+        6. Error and Edge Cases:
+           - Include tests for service failures
+           - Test timeout scenarios
+           - Validate error propagation
+           - Cover edge cases
+
         IMPORTANT:
         1. Focus ONLY on executing the CURRENT step above - do not try to execute other steps
         2. Use the tools at your disposal to assist with the execution
@@ -289,7 +491,6 @@ Before diving into a plan for creating a user registration API endpoint, let's u
             Just add whatever data was used in current iteration of execution step to the CURRENT CONTEXT DATA, don't go and fetch data unnecessarily, reuse data from previous CURRENT CONTEXT DATA
         5. Include key necessary CURRENT CONTEXT DATA from previous execution section aswell when generating it. Make sure you mention info in the repo and info in file changes (FileChangesManager) seperately
         
-        IF you need to generate a patch diff, use the GeneratePatchDiff Tool to create it, don't send too many lines when changes are small. Keep adequate amount of context lines in the patch diff.
         
         IMPORTANT: Include CURRENT CONTEXT DATA in your response. CURRENT CONTEXT DATA should also carry all the relevant information from previous execution, Include the execution result also at the end of the current context data (basically attach the current progress of the update)
         """
@@ -322,6 +523,37 @@ Before diving into a plan for creating a user registration API endpoint, let's u
         {state.verification_results}
         {"" if state.verification_results == "" else "IMPORTANT: Fix the above issue from the verification feedback. This is the main cause for failure"}
         
+        FUNCTIONAL TEST FIXING GUIDELINES:
+        1. Test Structure Issues:
+           - Check directory structure (should be in src/functionalTest/)
+           - Verify test data location (should be in resources/ subdirectories)
+           - Ensure proper test class organization
+        
+        2. Test Data Management Issues:
+           - Check JsonFile utility usage
+           - Verify template pattern for test data
+           - Ensure proper deserialization into POJOs
+        
+        3. External Service Mocking Issues:
+           - Verify WireMock and gRPC stub configuration
+           - Check mock response construction
+           - Ensure proper mock service behavior
+        
+        4. Assertion and Validation Issues:
+           - Check assertor class usage
+           - Verify hierarchical validation approach
+           - Ensure proper validation of cross-service data
+        
+        5. Test Context Issues:
+           - Verify @BeforeClass initialization
+           - Check test profile and user creation
+           - Ensure proper @AfterClass cleanup
+        
+        6. Edge and Error Case Issues:
+           - Check for service failure handling
+           - Verify timeout scenario coverage
+           - Ensure error propagation validation
+
         IMPORTANT INSTRUCTIONS:
         1. Focus ONLY on fixing the SPECIFIC issue mentioned in the verification feedback
         2. Use any tool calls necessary to fix the issue or asked in the verification feedback
@@ -343,7 +575,6 @@ Before diving into a plan for creating a user registration API endpoint, let's u
         This step is critical for the overall success of the task so make sure to do it thoroughly and take your time.
         Fetch the code and all the related context from the codebase.
         
-        IF you need to generate a patch diff, use the GeneratePatchDiff Tool to create it, don't send too many lines when changes are small. Keep adequate context in the patch diff.
         
         IMPORTANT: Make sure the fix doesn't violate one of the previous requirements
         IMPORTANT: Include CURRENT CONTEXT DATA in your response. CURRENT CONTEXT DATA should also carry all the relevant information from previous execution, Include the execution result also at the end of the current context data (basically attach the current progress of the update)
@@ -370,6 +601,37 @@ Before diving into a plan for creating a user registration API endpoint, let's u
             Your role is to verify if the {"execution" if not state.fixer_results else "fixer"} successfully completed the CURRENT requirement:
             
             CURRENT REQUIREMENT: {current_req.description}
+            
+            FUNCTIONAL TEST VERIFICATION CRITERIA:
+            1. Directory Structure:
+               - Tests must be in src/functionalTest/
+               - Test data must be in resources/ subdirectories
+            
+            2. Test Data Management:
+               - Must use JsonFile utility for loading data
+               - Must follow template pattern for test data
+               - Must properly deserialize into POJOs
+            
+            3. External Service Mocking:
+               - Must use WireMock and gRPC stubs
+               - Must configure proper mock responses
+               - Must handle service behavior correctly
+            
+            4. Assertions and Validations:
+               - Must use dedicated assertor classes
+               - Must follow hierarchical validation approach
+               - Must validate cross-service data consistency
+            
+            5. Test Context Management:
+               - Must use @BeforeClass for initialization
+               - Must create proper test profiles and users
+               - Must clean up resources with @AfterClass
+            
+            6. Error and Edge Cases:
+               - Must handle service failures
+               - Must test timeout scenarios
+               - Must validate error propagation
+               - Must cover edge cases
             
             Check thoroughly if this specific requirement was met in the {"execution" if not state.fixer_results else "fixer"} results.
             Check user task/query for examples and further instructions regarding this requirement.
@@ -413,13 +675,40 @@ Before diving into a plan for creating a user registration API endpoint, let's u
         Requirements Status:
         {_format_requirements_status(state)}
         
+        FUNCTIONAL TEST FINALIZATION CHECKLIST:
+        1. Directory Structure:
+           - All tests are in src/functionalTest/
+           - Test data is in resources/ subdirectories
+        
+        2. Test Data Management:
+           - JsonFile utility is used correctly
+           - Template pattern is followed
+           - Data is properly organized and managed
+        
+        3. External Service Mocking:
+           - WireMock and gRPC stubs are configured properly
+           - Mock responses are appropriate for test scenarios
+           - Service behavior is correctly simulated
+        
+        4. Assertions and Validations:
+           - Dedicated assertor classes are used
+           - Hierarchical validation approach is followed
+           - Cross-service data is properly validated
+        
+        5. Test Context Management:
+           - @BeforeClass initializes properly
+           - Test profiles and users are created correctly
+           - Resources are cleaned up with @AfterClass
+        
+        6. Error and Edge Cases:
+           - Service failures are handled
+           - Timeout scenarios are tested
+           - Error propagation is validated
+           - Edge cases are covered
+        
         Your role is to produce the final output based on the execution results.
         Synthesize the information into a coherent, well-structured response.
         Format your response appropriately (markdown for text, proper code blocks for code, etc.)
-        
-        IMPORTANT: If the final output is a patch diff, make sure you don't change any information in the patch.
-        Copy the patch as it is.
-        
         """
         )
 

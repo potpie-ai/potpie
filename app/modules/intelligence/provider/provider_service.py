@@ -344,6 +344,14 @@ AVAILABLE_MODELS = [
         is_chat_model=True,
         is_inference_model=True,
     ),
+    AvailableModelOption(
+        id="openrouter/qwen/qwen3-235b-a22b",
+        name="Qwen 3 235B",
+        description="Alibaba's latest Qwen model with 235B parameters",
+        provider="qwen",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
 ]
 
 # Extract unique platform providers from the available models
@@ -709,6 +717,22 @@ class ProviderService:
                     # PORTKEY has a issue when use with openrouter here
                     return OpenAIModel(
                         model_name="google/" + model_name,
+                        provider=OpenAIProvider(
+                            api_key=api_key,
+                            base_url="https://openrouter.ai/api/v1",
+                        ),
+                    )
+                case "deepseek":
+                    return OpenAIModel(
+                        model_name="deepseek/" + model_name,
+                        provider=OpenAIProvider(
+                            api_key=api_key,
+                            base_url="https://openrouter.ai/api/v1",
+                        ),
+                    )
+                case "qwen":
+                    return OpenAIModel(
+                        model_name="qwen/" + model_name,
                         provider=OpenAIProvider(
                             api_key=api_key,
                             base_url="https://openrouter.ai/api/v1",
