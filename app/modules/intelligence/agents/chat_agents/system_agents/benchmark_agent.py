@@ -63,13 +63,6 @@ class GithubIssueFixerAgent(ChatAgent):
                 "get_code_file_structure",
                 "fetch_file",
                 "web_search_tool",
-                "verify_patch_diff",
-                "generate_patch_diff",
-                "load_file_for_editing",
-                "replace_lines_in_file",
-                "insert_lines_in_file",
-                "read_lines_in_changed_file",
-                "remove_lines_in_file",
             ]
         )
         if self.llm_provider.is_current_model_supported_by_pydanticai(

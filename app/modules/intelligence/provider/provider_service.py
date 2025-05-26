@@ -560,6 +560,7 @@ class ProviderService:
     def is_current_model_supported_by_pydanticai(
         self, config_type: str = "chat"
     ) -> bool:
+        return True
         """Check if the current model is supported by PydanticAI."""
         config = self.chat_config if config_type == "chat" else self.inference_config
         return config.provider in ["openai", "anthropic", "gemini"]

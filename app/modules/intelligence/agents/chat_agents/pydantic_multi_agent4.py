@@ -803,16 +803,6 @@ def extract_requirements(plan_text: str) -> List[Requirement]:
         seen.add(sig)
         clean_reqs.append(Requirement(description=l))
 
-    clean_reqs.append(
-        Requirement(
-            description="""Use VerifyDiffTool to make the result pass through for all the files in the hunk, 
-            Run this tool again even if it has been previously run in the history. 
-            Tool HAS to be used don't assume it will pass through, The result HAS to pass the VerifyDiffTool test with valid = True. 
-            Fix any issues that arise from the test using FileChangesManager tools and generate diffs. 
-            Make sure the final diff is exactly the one that was verified. Verify diff at the end everytime before responding as verified
-            Respond with the exact final result that was verified at the end. Stop here (you can't edit the result anymore)""",
-        )
-    )
     return clean_reqs
 
 
