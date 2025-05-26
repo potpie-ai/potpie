@@ -35,8 +35,8 @@ class LocalRepoService:
         self,
         repo_name: str,
         file_path: str,
-        start_line: int,
-        end_line: int,
+        start_line: Optional[int],
+        end_line: Optional[int],
         branch_name: str,
         project_id: str,
     ) -> str:
@@ -58,10 +58,14 @@ class LocalRepoService:
             file_full_path = os.path.join(repo_path, file_path)
             with open(file_full_path, "r", encoding="utf-8") as file:
                 lines = file.readlines()
-                if (start_line == end_line == 0) or (start_line == end_line == None):
+                if (
+                    (start_line == 0 and end_line == 0)
+                    or (start_line is None and end_line is None)
+                ):
                     return "".join(lines)
-                start = start_line - 2 if start_line - 2 > 0 else 0
-                selected_lines = lines[start:end_line]
+                start = start_line - 2 if start_line is not None and start_line - 2 > 0 else 0
+                end = end_line if end_line is not None else None
+                selected_lines = lines[start:end]
                 return "".join(selected_lines)
         except Exception as e:
             logger.error(
