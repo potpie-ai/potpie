@@ -170,14 +170,18 @@ class ParsingController:
                 # Always reparse if commit is not the latest
                 if not is_latest:
                     should_reparse = True
-                    logger.info(f"Project {project_id} commit is not the latest, triggering reparse")
+                    logger.info(
+                        f"Project {project_id} commit is not the latest, triggering reparse"
+                    )
 
                 # Check status-based conditions
                 elif project.status != ProjectStatusEnum.READY.value:
                     # If project is in ERROR state, always retry
                     if project.status == ProjectStatusEnum.ERROR.value:
                         should_reparse = True
-                        logger.info(f"Project {project_id} is in ERROR state, triggering reparse")
+                        logger.info(
+                            f"Project {project_id} is in ERROR state, triggering reparse"
+                        )
                     # For other non-READY states, check if it's been more than 1 hour since last update
                     else:
                         # Get current time and project's updated_at time
@@ -185,7 +189,9 @@ class ParsingController:
                         project_updated_at = project.updated_at
 
                         # Calculate time difference in hours
-                        time_diff = (current_time - project_updated_at).total_seconds() / 3600
+                        time_diff = (
+                            current_time - project_updated_at
+                        ).total_seconds() / 3600
 
                         # If it's been more than 1 hour, trigger reparse
                         if time_diff > 1:
@@ -213,8 +219,14 @@ class ParsingController:
                     )
 
                     # Get the updated project to return the current status
-                    updated_project = await project_manager.get_project_from_db_by_id(project_id)
-                    current_status = updated_project["status"] if updated_project else ProjectStatusEnum.SUBMITTED.value
+                    updated_project = await project_manager.get_project_from_db_by_id(
+                        project_id
+                    )
+                    current_status = (
+                        updated_project["status"]
+                        if updated_project
+                        else ProjectStatusEnum.SUBMITTED.value
+                    )
 
                     PostHogClient().send_event(
                         user_id,
@@ -280,8 +292,14 @@ class ParsingController:
         )
 
         # Get the updated project to return the current status
-        updated_project = await project_manager.get_project_from_db_by_id(new_project_id)
-        current_status = updated_project["status"] if updated_project else ProjectStatusEnum.SUBMITTED.value
+        updated_project = await project_manager.get_project_from_db_by_id(
+            new_project_id
+        )
+        current_status = (
+            updated_project["status"]
+            if updated_project
+            else ProjectStatusEnum.SUBMITTED.value
+        )
 
         PostHogClient().send_event(
             user_id,
