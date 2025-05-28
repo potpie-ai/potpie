@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from asyncio import create_task
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from dotenv import load_dotenv
@@ -158,7 +159,42 @@ class ParsingController:
                 project_id = project.id
                 is_latest = await parse_helper.check_commit_status(project_id)
 
-                if not is_latest or project.status != ProjectStatusEnum.READY.value:
+                # Check if we need to reparse based on the following conditions:
+                # 1. If the commit is not the latest
+                # 2. If the project is not in READY state:
+                #    a. If in ERROR state - always retry
+                #    b. If in any other non-READY state - retry if it's been more than 1 hour since last update
+
+                should_reparse = False
+
+                # Always reparse if commit is not the latest
+                if not is_latest:
+                    should_reparse = True
+                    logger.info(f"Project {project_id} commit is not the latest, triggering reparse")
+
+                # Check status-based conditions
+                elif project.status != ProjectStatusEnum.READY.value:
+                    # If project is in ERROR state, always retry
+                    if project.status == ProjectStatusEnum.ERROR.value:
+                        should_reparse = True
+                        logger.info(f"Project {project_id} is in ERROR state, triggering reparse")
+                    # For other non-READY states, check if it's been more than 1 hour since last update
+                    else:
+                        # Get current time and project's updated_at time
+                        current_time = datetime.now(timezone.utc)
+                        project_updated_at = project.updated_at
+
+                        # Calculate time difference in hours
+                        time_diff = (current_time - project_updated_at).total_seconds() / 3600
+
+                        # If it's been more than 1 hour, trigger reparse
+                        if time_diff > 1:
+                            should_reparse = True
+                            logger.info(
+                                f"Project {project_id} has been in {project.status} state for {time_diff:.2f} hours, triggering reparse"
+                            )
+
+                if should_reparse:
                     cleanup_graph = True
                     logger.info(
                         f"Submitting parsing task for existing project {project_id}"
@@ -171,9 +207,15 @@ class ParsingController:
                         cleanup_graph,
                     )
 
+                    # Update the project status to SUBMITTED
                     await project_manager.update_project_status(
                         project_id, ProjectStatusEnum.SUBMITTED
                     )
+
+                    # Get the updated project to return the current status
+                    updated_project = await project_manager.get_project_from_db_by_id(project_id)
+                    current_status = updated_project["status"] if updated_project else ProjectStatusEnum.SUBMITTED.value
+
                     PostHogClient().send_event(
                         user_id,
                         "parsed_repo_event",
@@ -185,7 +227,7 @@ class ParsingController:
                     )
                     return {
                         "project_id": project_id,
-                        "status": ProjectStatusEnum.SUBMITTED.value,
+                        "status": current_status,
                     }
 
                 return {"project_id": project_id, "status": project.status}
@@ -214,11 +256,6 @@ class ParsingController:
         project_manager: ProjectService,
         db: AsyncSession,
     ):
-        response = {
-            "project_id": new_project_id,
-            "status": ProjectStatusEnum.SUBMITTED.value,
-        }
-
         logger.info(f"Submitting parsing task for new project {new_project_id}")
         repo_name = repo_details.repo_name or repo_details.repo_path.split("/")[-1]
         await project_manager.register_project(
@@ -241,6 +278,11 @@ class ParsingController:
             new_project_id,
             False,
         )
+
+        # Get the updated project to return the current status
+        updated_project = await project_manager.get_project_from_db_by_id(new_project_id)
+        current_status = updated_project["status"] if updated_project else ProjectStatusEnum.SUBMITTED.value
+
         PostHogClient().send_event(
             user_id,
             "repo_parsed_event",
@@ -250,7 +292,11 @@ class ParsingController:
                 "project_id": new_project_id,
             },
         )
-        return response
+
+        return {
+            "project_id": new_project_id,
+            "status": current_status,
+        }
 
     @staticmethod
     async def fetch_parsing_status(
