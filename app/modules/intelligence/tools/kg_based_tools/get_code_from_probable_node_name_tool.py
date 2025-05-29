@@ -142,7 +142,7 @@ class GetCodeFromProbableNodeNameTool:
 
             return self._process_result(node_data, project, node_id)
         except Exception as e:
-            logger.warn(
+            logger.warning(
                 f"Unexpected error in GetCodeFromProbableNodeNameTool: {str(e)}"
             )
             return {"error": f"An unexpected error occurred: {str(e)}"}
