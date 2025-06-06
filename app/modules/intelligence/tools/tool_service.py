@@ -5,6 +5,9 @@ from sqlalchemy.orm import Session
 from app.modules.intelligence.tools.change_detection.change_detection_tool import (
     get_change_detection_tool,
 )
+from app.modules.intelligence.tools.code_query_tools.analyze_file_tool import (
+    analyze_code_tool,
+)
 from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
     get_code_file_structure_tool,
     GetCodeFileStructureTool,
@@ -67,6 +70,7 @@ from app.modules.intelligence.tools.web_tools.web_search_tool import web_search_
 from app.modules.intelligence.provider.provider_service import ProviderService
 from langchain_core.tools import StructuredTool
 from .think_tool import think_tool
+from .think_tool2 import think_tool as think_tool_v2
 from app.modules.intelligence.tools.file_changes_tools import (
     file_change_manager,
     generate_diffs_tool,
@@ -140,7 +144,10 @@ class ToolService:
                 self.db, self.user_id
             ),
             "fetch_file": fetch_file_tool(self.db, self.user_id),
-            "verify_patch_diff": v1(fetch_file_tool(self.db, self.user_id)),
+            "verify_patch_diff": v1(
+                fetch_file_tool(self.db, self.user_id, internal_call=True)
+            ),
+            "code_analysis": analyze_code_tool(self.db, self.user_id),
             # "generate_patch_diff": generate_patch_diff_tool(
             #     fetch_file_tool(self.db, self.user_id)
             # ),
@@ -156,20 +163,20 @@ class ToolService:
             tools["web_search_tool"] = self.web_search_tool
 
         # Enhance your existing FileChangeManager
-        # EnhancedFileChangeManager = file_change_manager.modify_file_change_manager(
-        #     file_change_manager.FileChangeManager
-        # )
+        EnhancedFileChangeManager = file_change_manager.modify_file_change_manager(
+            file_change_manager.FileChangeManager
+        )
 
-        # # Create an instance and use it
-        # file_manager = EnhancedFileChangeManager()
+        # Create an instance and use it
+        file_manager = EnhancedFileChangeManager()
 
-        file_manager = file_change_manager.FileChangeManager()
+        # file_manager = file_change_manager.FileChangeManager()
         tools["generate_patch_diff"] = generate_diffs_tool.generate_file_diff_tool(
             file_manager
         )
         tools["load_file_for_editing"] = (
             load_file_for_editing_tool.load_file_for_editing_tool(
-                fetch_file_tool(self.db, self.user_id), file_manager
+                fetch_file_tool(self.db, self.user_id, internal_call=True), file_manager
             )
         )
         tools["replace_lines_in_file"] = replace_lines_in_file_tool.replace_lines_tool(

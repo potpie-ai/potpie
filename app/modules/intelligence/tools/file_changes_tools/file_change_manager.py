@@ -38,19 +38,23 @@ def generate_git_diff(
         original_file_path = os.path.join(temp_dir, "a", file_path)
         modified_file_path = os.path.join(temp_dir, "b", file_path)
 
+        # Normalize content to handle newline endings consistently
+        def normalize_content(content):
+            if isinstance(content, list):
+                content = "\n".join(content)
+            # Ensure consistent line ending handling
+            return content
+
+        original_normalized = normalize_content(original_content)
+        modified_normalized = normalize_content(modified_content)
+
         # Write original content
-        with open(original_file_path, "w", encoding="utf-8") as f:
-            if isinstance(original_content, list):
-                f.write("\n".join(original_content))
-            else:
-                f.write(original_content)
+        with open(original_file_path, "w", encoding="utf-8", newline="") as f:
+            f.write(original_normalized)
 
         # Write modified content
-        with open(modified_file_path, "w", encoding="utf-8") as f:
-            if isinstance(modified_content, list):
-                f.write("\n".join(modified_content))
-            else:
-                f.write(modified_content)
+        with open(modified_file_path, "w", encoding="utf-8", newline="") as f:
+            f.write(modified_normalized)
 
         # Run git diff
         try:
@@ -109,14 +113,21 @@ def generate_git_diff(
 class FileChangeManager:
     """Inmemory changes tracker for files. Store current files agent will be working on and maintains states of changes"""
 
-    def __init__(self):
+    def __init__(self, preserve_final_newline=True):
         """
         Initialize an empty file manager with no cached files.
+
+        Args:
+            preserve_final_newline: Whether to preserve the original file's final newline behavior
         """
         # Store original file contents: path -> content (string)
         self.original_files = {}
         # Store modified file contents: path -> content (list of lines)
         self.modified_files = {}
+        # Track whether original files ended with newlines
+        self.original_ends_with_newline = {}
+        self.preserve_final_newline = preserve_final_newline
+
         characters = string.ascii_letters + string.digits
 
         # Use random.choices to pick characters with replacement
@@ -124,6 +135,52 @@ class FileChangeManager:
         self.curr_hash = "".join(random.choices(characters, k=10))
         # Ensure the changes directory exists
         os.makedirs("changes", exist_ok=True)
+
+    def _detect_final_newline(self, content: str) -> bool:
+        """
+        Detect if the original content ends with a newline.
+
+        Args:
+            content: File content as string
+
+        Returns:
+            True if content ends with newline, False otherwise
+        """
+        return (
+            content.endswith("\n") or content.endswith("\r\n") or content.endswith("\r")
+        )
+
+    def _reconstruct_content(self, file_path: str) -> str:
+        """
+        Reconstruct content from lines, preserving original newline behavior.
+
+        Args:
+            file_path: Path to the file
+
+        Returns:
+            Content as string with proper newline handling
+        """
+        lines = self.modified_files[file_path]
+        if not lines:
+            return ""
+
+        content = "\n".join(lines)
+
+        # Preserve original newline behavior if requested
+        if self.preserve_final_newline:
+            original_had_final_newline = self.original_ends_with_newline.get(
+                file_path, True
+            )
+            if original_had_final_newline and not content.endswith("\n"):
+                content += "\n"
+            elif not original_had_final_newline and content.endswith("\n"):
+                content = content.rstrip("\n")
+        else:
+            # Default behavior: ensure files end with newline
+            if not content.endswith("\n"):
+                content += "\n"
+
+        return content
 
     def _write_changes(self):
         """Write all modified files to disk whenever a change occurs."""
@@ -138,24 +195,26 @@ class FileChangeManager:
             output_filename = f"{changes_dir}/file_{i}.py"
             patch_filename = f"{changes_dir}/patch_{i}.txt"
 
-            # Join modified lines into a single string
-            content = "\n".join(self.modified_files[file_path])
+            # Reconstruct content with proper newline handling
+            content = self._reconstruct_content(file_path)
 
             # Prepend the original file path to the content
             output_content = f"{file_path}\n{content}"
 
             # Write to file (create if it doesn't exist)
-            with open(output_filename, "w+") as f:
+            with open(output_filename, "w+", encoding="utf-8") as f:
                 f.write(output_content)
 
             # Generate and write the patch information
             try:
                 patch = self.generate_unified_diff(file_path)
-                with open(patch_filename, "w+") as f:
+                with open(patch_filename, "w+", encoding="utf-8") as f:
                     f.write(patch)
             except Exception as e:
                 # If there's an error generating the diff, create an error file
-                with open(f"{changes_dir}/patch_{i}_error", "w+") as f:
+                with open(
+                    f"{changes_dir}/patch_{i}_error", "w+", encoding="utf-8"
+                ) as f:
                     f.write(f"Error generating patch for {file_path}: {str(e)}")
 
     def load_file(self, file_path: str, content: str) -> List[str]:
@@ -164,15 +223,18 @@ class FileChangeManager:
 
         Args:
             file_path: Path to the file relative to repo root
-            content: Optional file content if already loaded externally
+            content: File content as string
 
         Returns:
             List of lines in the file
         """
 
-        # Store original content
+        # Store original content and detect newline behavior
         self.original_files[file_path] = content
+        self.original_ends_with_newline[file_path] = self._detect_final_newline(content)
+
         # Initialize modified content as list of lines
+        # Use splitlines() to handle different line ending types
         self.modified_files[file_path] = content.splitlines()
 
         # Write changes immediately
@@ -199,6 +261,18 @@ class FileChangeManager:
             )
 
         return self.modified_files[file_path]
+
+    def get_current_content_as_string(self, file_path: str) -> str:
+        """
+        Get the current content as a string with proper newline handling.
+
+        Args:
+            file_path: Path to the file
+
+        Returns:
+            Content as string with proper newlines
+        """
+        return self._reconstruct_content(file_path)
 
     def get_lines(
         self,
@@ -317,7 +391,7 @@ class FileChangeManager:
                 f"Context:\n{self._format_context(context)}"
             )
 
-        # Split the new content into lines
+        # Split the new content into lines using splitlines() to handle different line endings
         new_lines = new_content.splitlines()
 
         # Replace the lines
@@ -351,7 +425,7 @@ class FileChangeManager:
                 f"{self._format_context(context)}"
             )
 
-        # Split the new content into lines
+        # Split the new content into lines using splitlines()
         new_lines = new_content.splitlines()
 
         # Insert the lines
@@ -501,8 +575,9 @@ class FileChangeManager:
         changed_files = []
 
         for file_path in self.modified_files:
-            original = self.original_files[file_path].splitlines()
-            modified = self.modified_files[file_path]
+            # Compare using proper content reconstruction
+            original = self.original_files[file_path]
+            modified = self._reconstruct_content(file_path)
 
             if original != modified:
                 changed_files.append(file_path)
@@ -563,9 +638,9 @@ class FileChangeManager:
             raise FileNotFoundError(f"File '{file_path}' hasn't been loaded")
 
         original = self.original_files[file_path]
-        modified = "\n".join(self.modified_files[file_path])
+        modified = self._reconstruct_content(file_path)
 
-        if original.splitlines() == self.modified_files[file_path]:
+        if original == modified:
             raise ValueError(f"File '{file_path}' hasn't been changed")
 
         return generate_git_diff(original, modified, file_path)
@@ -586,6 +661,32 @@ class FileChangeManager:
                 pass
 
         return diffs
+
+    def ensure_final_newline(self, file_path: str) -> None:
+        """
+        Ensure the file ends with a newline character.
+
+        Args:
+            file_path: Path to the file
+        """
+        if file_path not in self.modified_files:
+            raise FileNotFoundError(f"File '{file_path}' hasn't been loaded")
+
+        self.original_ends_with_newline[file_path] = True
+        self._write_changes()
+
+    def remove_final_newline(self, file_path: str) -> None:
+        """
+        Ensure the file does NOT end with a newline character.
+
+        Args:
+            file_path: Path to the file
+        """
+        if file_path not in self.modified_files:
+            raise FileNotFoundError(f"File '{file_path}' hasn't been loaded")
+
+        self.original_ends_with_newline[file_path] = False
+        self._write_changes()
 
     def _format_preview(self, lines: List[str], start_line: int = 1) -> str:
         """Format a preview of lines with line numbers."""
@@ -689,7 +790,7 @@ def modify_file_change_manager(FileChangeManager):
                 raise FileNotFoundError(f"File '{file_path}' hasn't been loaded")
 
             original = self.original_files[file_path]
-            modified = "\n".join(self.modified_files[file_path])
+            modified = self._reconstruct_content(file_path)
 
             # Check for invisible differences
             original_lines = original.splitlines()
@@ -728,7 +829,7 @@ def modify_file_change_manager(FileChangeManager):
                             )
 
             # Continue with original implementation
-            if original.splitlines() == self.modified_files[file_path]:
+            if original == modified:
                 raise ValueError(f"File '{file_path}' hasn't been changed")
 
             return generate_git_diff(original, modified, file_path)
@@ -744,15 +845,17 @@ def modify_file_change_manager(FileChangeManager):
             if file_path not in self.modified_files:
                 raise FileNotFoundError(f"File '{file_path}' hasn't been loaded")
 
-            # Join with current line endings, then split and join with target line ending
-            content = "\n".join(self.modified_files[file_path])
+            # Get current content as string
+            content = self._reconstruct_content(file_path)
+
             # Replace all line endings with the target
             content = content.replace("\r\n", "\n").replace("\r", "\n")
             if line_ending != "\n":
                 content = content.replace("\n", line_ending)
 
-            # Update the modified files
+            # Update the modified files and track newline behavior
             self.modified_files[file_path] = content.splitlines()
+            self.original_ends_with_newline[file_path] = content.endswith(line_ending)
             self._write_changes()
 
         def strip_trailing_whitespace(self, file_path: str):
@@ -810,6 +913,7 @@ def inspect_git_diff(diff_text):
         "suspicious_hunks": [],
         "has_whitespace_only_changes": False,
         "line_ending_differences": False,
+        "has_newline_at_eof_changes": False,
         "recommendations": [],
     }
 
@@ -828,6 +932,11 @@ def inspect_git_diff(diff_text):
                 "suspicious_lines": [],
             }
             hunk_header = line
+            continue
+
+        # Check for "No newline at end of file" messages
+        if line.strip() == "\\ No newline at end of file":
+            results["has_newline_at_eof_changes"] = True
             continue
 
         # Look for removal/addition pairs that look visually identical
@@ -866,6 +975,10 @@ def inspect_git_diff(diff_text):
     if results["has_whitespace_only_changes"]:
         results["recommendations"].append(
             "Use strip_trailing_whitespace() method to remove trailing whitespace"
+        )
+    if results["has_newline_at_eof_changes"]:
+        results["recommendations"].append(
+            "Use ensure_final_newline() or remove_final_newline() to control end-of-file newlines"
         )
 
     return results

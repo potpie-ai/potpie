@@ -1,6 +1,10 @@
 import re
 from typing import List, AsyncGenerator
 
+from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent5 import (
+    handle_exception,
+)
+
 from .tool_helpers import (
     get_tool_call_info_content,
     get_tool_response_message,
@@ -62,7 +66,7 @@ class PydanticRagAgent(ChatAgent):
                 Tool(
                     name=tool.name,
                     description=tool.description,
-                    function=tool.func,  # type: ignore
+                    function=handle_exception(tool.func),
                 )
                 for tool in tools
             ],
@@ -82,7 +86,7 @@ class PydanticRagAgent(ChatAgent):
                 Tool(
                     name=tool.name,
                     description=tool.description,
-                    function=tool.func,  # type: ignore
+                    function=handle_exception(tool.func),  # type: ignore
                 )
                 for tool in self.tools
             ],

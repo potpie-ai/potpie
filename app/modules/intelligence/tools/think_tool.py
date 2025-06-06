@@ -89,17 +89,32 @@ class ThinkTool:
     def run(self, thought: str) -> Dict[str, Any]:
         """Synchronous wrapper for arun."""
         try:
-            loop = asyncio.get_event_loop()
+            # Check if we're already in an event loop
+            loop = asyncio.get_running_loop()
+            # If we're in a running loop, we need to use a different approach
+            import concurrent.futures
+            import threading
+
+            def run_in_thread():
+                # Create a new event loop in a separate thread
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                try:
+                    return new_loop.run_until_complete(self.arun(thought))
+                finally:
+                    new_loop.close()
+
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(run_in_thread)
+                return future.result()
+
         except RuntimeError:
-            # If there is no event loop in current thread, create a new one
+            # No event loop running, we can create one
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-
-        try:
-            return loop.run_until_complete(self.arun(thought))
-        finally:
-            # Clean up if we created a new loop
-            if not loop.is_running():
+            try:
+                return loop.run_until_complete(self.arun(thought))
+            finally:
                 loop.close()
 
 

@@ -56,39 +56,64 @@ class KnowledgeGraphQueryTool:
 
     async def ask_multiple_knowledge_graph_queries(
         self, queries: List[QueryRequest]
-    ) -> Dict[str, str]:
+    ) -> List[List[QueryResponse]]:  # Fixed return type
         inference_service = InferenceService(self.sql_db, "dummy")
 
         async def process_query(query_request: QueryRequest) -> List[QueryResponse]:
-            # Call the query_vector_index method directly from InferenceService
-            results = inference_service.query_vector_index(
-                query_request.project_id, query_request.query, query_request.node_ids
-            )
-            return [
-                QueryResponse(
-                    node_id=result.get("node_id"),
-                    docstring=result.get("docstring"),
-                    file_path=result.get("file_path"),
-                    start_line=result.get("start_line") or 0,
-                    end_line=result.get("end_line") or 0,
-                    similarity=result.get("similarity"),
+            try:
+                # Call the query_vector_index method directly from InferenceService
+                results = inference_service.query_vector_index(
+                    query_request.project_id,
+                    query_request.query,
+                    query_request.node_ids,
                 )
-                for result in results
-            ]
+
+                # Add null check and ensure results is a list
+                if not results or not isinstance(results, list):
+                    return []
+
+                return [
+                    QueryResponse(
+                        node_id=result.get("node_id"),
+                        docstring=result.get("docstring"),
+                        file_path=result.get("file_path"),
+                        start_line=result.get("start_line") or 0,
+                        end_line=result.get("end_line") or 0,
+                        similarity=result.get("similarity"),
+                    )
+                    for result in results
+                    if isinstance(result, dict)  # Ensure each result is a dict
+                ]
+            except Exception as e:
+                print(f"Error processing query '{query_request.query}': {str(e)}")
+                return []
+
+        # Check if queries list is not empty
+        if not queries:
+            return []
 
         tasks = [process_query(query) for query in queries]
-        results = await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        return results
+        # Filter out exceptions and ensure we return valid results
+        valid_results = []
+        for result in results:
+            if isinstance(result, Exception):
+                print(f"Query failed with exception: {str(result)}")
+                valid_results.append([])  # Add empty list for failed queries
+            else:
+                valid_results.append(result)
+
+        return valid_results
 
     async def arun(
         self, queries: List[str], project_id: str, node_ids: List[str] = []
-    ) -> Dict[str, str]:
+    ) -> Dict[str, List[QueryResponse]]:  # Fixed return type
         return await asyncio.to_thread(self.run, queries, project_id, node_ids)
 
     def run(
         self, queries: List[str], project_id: str, node_ids: List[str] = []
-    ) -> Dict[str, str]:
+    ) -> Dict[str, List[QueryResponse]]:  # Fixed return type
         """
         Query the code knowledge graph using multiple natural language questions.
         The knowledge graph contains information about every function, class, and file in the codebase.
@@ -101,23 +126,45 @@ class KnowledgeGraphQueryTool:
         - node_ids (List[str]): A list of node ids to query, this is an optional parameter that can be used to query a specific node.
 
         Returns:
-        - Dict[str, str]: A dictionary where keys are the original queries and values are the corresponding responses.
+        - Dict[str, List[QueryResponse]]: A dictionary where keys are the original queries and values are lists of QueryResponse objects.
         """
-        project = asyncio.run(
-            ProjectService(self.sql_db).get_project_repo_details_from_db(
-                project_id, self.user_id
+        try:
+            project = asyncio.run(
+                ProjectService(self.sql_db).get_project_repo_details_from_db(
+                    project_id, self.user_id
+                )
             )
-        )
-        if not project:
-            raise ValueError(
-                f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
-            )
-        project_id = project["id"]
-        query_list = [
-            QueryRequest(query=query, project_id=project_id, node_ids=node_ids)
-            for query in queries
-        ]
-        return asyncio.run(self.ask_multiple_knowledge_graph_queries(query_list))
+            if not project:
+                raise ValueError(
+                    f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
+                )
+
+            # Validate inputs
+            if not queries:
+                return {}
+
+            project_id = project["id"]
+            query_list = [
+                QueryRequest(query=query, project_id=project_id, node_ids=node_ids)
+                for query in queries
+            ]
+
+            results = asyncio.run(self.ask_multiple_knowledge_graph_queries(query_list))
+
+            # Create response dictionary mapping queries to their results
+            response = {}
+            for i, query in enumerate(queries):
+                if i < len(results):
+                    response[query] = results[i]
+                else:
+                    response[query] = []  # Empty list if no results
+
+            return response
+
+        except Exception as e:
+            print(f"Error in run method: {str(e)}")
+            # Return empty results for all queries in case of error
+            return {query: [] for query in queries}
 
 
 def get_ask_knowledge_graph_queries_tool(sql_db, user_id) -> StructuredTool:

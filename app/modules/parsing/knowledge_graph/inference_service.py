@@ -32,7 +32,17 @@ class InferenceService:
         )
 
         self.provider_service = ProviderService(db, user_id)
-        self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+        try:
+            self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+            import torch
+
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.embedding_model = self.embedding_model.to(device)
+
+        except Exception as e:
+            logger.error(f"Failed to initialize embedding model: {e}")
+            # Fallback initialization
+            self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
         self.search_service = SearchService(db)
         self.project_manager = ProjectService(db)
         self.parallel_requests = int(os.getenv("PARALLEL_REQUESTS", 50))
@@ -590,8 +600,30 @@ class InferenceService:
         return result
 
     def generate_embedding(self, text: str) -> List[float]:
-        embedding = self.embedding_model.encode(text)
-        return embedding.tolist()
+        try:
+            # Validate input
+            if not text or not isinstance(text, str):
+                logger.warning(f"Invalid text input for embedding: {text}")
+                text = "empty"  # fallback text
+
+            # Clean the text
+            text = text.strip()
+            if len(text) == 0:
+                text = "empty"
+
+            # Truncate if too long (most models have token limits)
+            if len(text) > 5000:  # Adjust based on your model's limits
+                text = text[:5000]
+
+            embedding = self.embedding_model.encode(text)
+            return embedding.tolist()
+
+        except Exception as e:
+            logger.error(
+                f"Error generating embedding for text: {text[:100]}... Error: {e}"
+            )
+            # Return a zero vector as fallback
+            return [0.0] * 384  # 384 is the dimension for all-MiniLM-L6-v2
 
     def update_neo4j_with_docstrings(self, repo_id: str, docstrings: DocstringResponse):
         with self.driver.session() as session:

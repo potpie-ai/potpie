@@ -54,34 +54,37 @@ class VerifyPatchDiff:
     @staticmethod
     def basic_patch_check(patch: str) -> Tuple[bool, str]:
         """Basic validation of patch format without relying on libraries."""
-        if not patch or not isinstance(patch, str):
-            return False, "Input must be a non-empty string."
+        try:
+            if not patch or not isinstance(patch, str):
+                return False, "Input must be a non-empty string."
 
-        # Check for file headers
-        if not re.search(r"^--- .+\n\+\+\+ .+", patch, re.MULTILINE):
-            return False, "Missing unified diff file headers (---, +++)."
+            # Check for file headers
+            if not re.search(r"^--- .+\n\+\+\+ .+", patch, re.MULTILINE):
+                return False, "Missing unified diff file headers (---, +++)."
 
-        # Check for hunk headers
-        if not re.search(r"^@@ .+? @@", patch, re.MULTILINE):
-            return False, "No hunk headers (starting with @@ ... @@) found."
+            # Check for hunk headers
+            if not re.search(r"^@@ .+? @@", patch, re.MULTILINE):
+                return False, "No hunk headers (starting with @@ ... @@) found."
 
-        # Check for proper line prefixes
-        lines = patch.splitlines()
-        in_hunk = False
-        for line in lines:
-            if line.startswith("@@"):
-                in_hunk = True
-                continue
+            # Check for proper line prefixes
+            lines = patch.splitlines()
+            in_hunk = False
+            for line in lines:
+                if line.startswith("@@"):
+                    in_hunk = True
+                    continue
 
-            if in_hunk and not (
-                line.startswith(" ")
-                or line.startswith("+")
-                or line.startswith("-")
-                or line.startswith("\\")
-            ):
-                return False, f"Invalid line prefix in hunk: '{line}'"
+                if in_hunk and not (
+                    line.startswith(" ")
+                    or line.startswith("+")
+                    or line.startswith("-")
+                    or line.startswith("\\")
+                ):
+                    return False, f"Invalid line prefix in hunk: '{line}'"
 
-        return True, "Patch format looks valid."
+            return True, "Patch format looks valid."
+        except Exception as e:
+            return False, f"Error during basic patch check: {type(e).__name__}: {e}"
 
     @staticmethod
     def verify_patch_applicability(
@@ -93,7 +96,7 @@ class VerifyPatchDiff:
         EXACT matching with no tolerance for whitespace differences.
         Returns success status, message, and the parsed PatchSet object if successful.
         """
-        if not _HAS_UNIDIFF:  # unidiff is needed for parsing and verification
+        if not _HAS_UNIDIFF:
             return (
                 False,
                 "Required library (unidiff) not available for strict verification.",
@@ -106,15 +109,13 @@ class VerifyPatchDiff:
             print(f"Parsed patch set with {len(patch_set)} files")
 
         except Exception as e:
-            # Handle errors during patch parsing
             return (
                 False,
-                f"Failed to parse patch string for verification: {type(e).__name__}: {e}\n{traceback.format_exc()}",
+                f"Failed to parse patch string for verification: {type(e).__name__}: {e}",
                 None,
             )
 
         if len(patch_set) != 1:
-            # Ensure the patch applies to exactly one file
             return (
                 False,
                 f"Verification failed: Expected 1 file in PatchSet, found {len(patch_set)}.",
@@ -135,29 +136,18 @@ class VerifyPatchDiff:
             print(f"File ends with newline: {file_ends_with_newline}")
 
             for i, hunk in enumerate(patched_file):
-                # Get the hunk header details
-                hunk_source_start = (
-                    hunk.source_start
-                )  # Line number where the hunk starts (1-indexed)
-                hunk_source_length = (
-                    hunk.source_length
-                )  # Number of context and removed lines
+                hunk_source_start = hunk.source_start
+                hunk_source_length = hunk.source_length
 
                 print(
                     f"Verifying hunk #{i+1}: source_start={hunk_source_start}, source_length={hunk_source_length}"
                 )
 
-                # Track the current line in the original file (convert to 0-indexed)
                 current_line_idx = hunk_source_start - 1
-
-                # Count the number of lines processed from the hunk
                 source_lines_processed = 0
 
-                # Process each line in the hunk
                 for line in hunk:
-                    # Handle context and removed lines (lines that should exist in the original file)
                     if line.is_context or line.is_removed:
-                        # Ensure we don't process more lines than the hunk header specifies
                         if source_lines_processed >= hunk_source_length:
                             return (
                                 False,
@@ -166,7 +156,6 @@ class VerifyPatchDiff:
                                 None,
                             )
 
-                        # Check if current line is within bounds of the file
                         if current_line_idx < 0 or current_line_idx >= len(
                             original_lines
                         ):
@@ -176,34 +165,23 @@ class VerifyPatchDiff:
                                 None,
                             )
 
-                        # Get content from the original file at this line
                         file_line = (
                             original_lines_without_endings[current_line_idx]
                             if current_line_idx < len(original_lines_without_endings)
                             else ""
                         )
 
-                        # Get content from the hunk line (remove the prefix character but keep exact whitespace)
-                        hunk_line_content = ""
-                        if line.is_context:
-                            hunk_line_content = line.value
-                        elif line.is_removed:
-                            hunk_line_content = line.value
-
-                        # Remove line ending from hunk line for comparison
+                        hunk_line_content = line.value
                         if hunk_line_content.endswith("\n"):
                             hunk_line_content = hunk_line_content[:-1]
                         if hunk_line_content.endswith("\r"):
                             hunk_line_content = hunk_line_content[:-1]
 
-                        # Debug output to see what's being compared
                         print(f"Comparing line {current_line_idx + 1}:")
                         print(f"  File line: '{file_line}'")
                         print(f"  Hunk line: '{hunk_line_content}'")
 
-                        # EXACT comparison - no tolerance for any differences
                         if hunk_line_content != file_line:
-                            # Generate detailed error message
                             return (
                                 False,
                                 f"Verification failed: Content mismatch at line {current_line_idx + 1}.\n"
@@ -213,15 +191,9 @@ class VerifyPatchDiff:
                                 None,
                             )
 
-                        # Move to the next line in the file
                         current_line_idx += 1
-                        # Count this line as processed from the source
                         source_lines_processed += 1
 
-                    # For added lines, we don't need to verify against the original file
-                    # and don't increment current_line_idx or source_lines_processed
-
-                # After processing all lines in the hunk, verify we've processed the expected number of source lines
                 if source_lines_processed != hunk_source_length:
                     return (
                         False,
@@ -234,10 +206,7 @@ class VerifyPatchDiff:
             for patched_file in patch_set:
                 for hunk in patched_file:
                     for line in hunk:
-                        # Check if we have the "\ No newline at end of file" marker
                         if line.value.startswith("\\ No newline at end of file"):
-                            # The previous line should be the last line of the file
-                            # Check if our file actually has no newline at end
                             if file_ends_with_newline:
                                 return (
                                     False,
@@ -246,13 +215,6 @@ class VerifyPatchDiff:
                                     None,
                                 )
 
-                # Check the opposite case - file has no newline but patch doesn't have the marker
-                if not file_ends_with_newline:
-                    # This is more complicated to verify - we would need to check if the last line
-                    # of the last hunk should have had the marker
-                    pass
-
-            # If we've reached here, all hunks have been verified successfully
             return (
                 True,
                 "Patch verification successful (strict exact matching)",
@@ -260,10 +222,9 @@ class VerifyPatchDiff:
             )
 
         except Exception as e:
-            # Catch any unexpected errors during the verification process
             return (
                 False,
-                f"Unexpected error during strict patch verification: {type(e).__name__}: {e}\n{traceback.format_exc()}",
+                f"Unexpected error during strict patch verification: {type(e).__name__}: {e}",
                 None,
             )
 
@@ -275,7 +236,7 @@ class VerifyPatchDiff:
         Apply a patch using a parsed unidiff.PatchSet object.
         This method implements the application logic directly using unidiff's structure.
         """
-        if not _HAS_UNIDIFF:  # unidiff is needed for the PatchSet object structure
+        if not _HAS_UNIDIFF:
             return (
                 False,
                 "Required library (unidiff) not available for application.",
@@ -283,7 +244,6 @@ class VerifyPatchDiff:
             )
 
         if len(patch_set) != 1:
-            # This should have been caught in verification, but adding a safeguard
             return (
                 False,
                 f"Application failed: Expected 1 file in PatchSet, found {len(patch_set)}.",
@@ -302,31 +262,23 @@ class VerifyPatchDiff:
             preserve_final_newline = file_ends_with_newline
 
             # Process each hunk sequentially to apply changes
-            line_offset = 0  # Track cumulative line changes across all hunks
+            line_offset = 0
 
             for i, hunk in enumerate(patched_file):
-                # Convert source_start (1-indexed) to 0-indexed list position
                 hunk_source_start_0_indexed = hunk.source_start - 1
-
-                # Track the current line being processed
                 current_line_idx = hunk_source_start_0_indexed
 
-                # Process each line in the hunk
                 for line in hunk:
-                    # Calculate the actual position in the result_lines list
                     adjusted_pos = current_line_idx + line_offset
 
                     if line.value.startswith("\\ No newline at end of file"):
-                        # This marker means the preceding line should not have a newline
                         preserve_final_newline = False
                         continue
 
                     if line.is_context:
-                        # Context lines remain unchanged
                         current_line_idx += 1
 
                     elif line.is_removed:
-                        # Remove the line at the adjusted position
                         if adjusted_pos < 0 or adjusted_pos >= len(result_lines):
                             return (
                                 False,
@@ -336,13 +288,10 @@ class VerifyPatchDiff:
                             )
 
                         del result_lines[adjusted_pos]
-                        line_offset -= (
-                            1  # Decrease the offset for subsequent operations
-                        )
-                        current_line_idx += 1  # Move to next line in original
+                        line_offset -= 1
+                        current_line_idx += 1
 
                     elif line.is_added:
-                        # Add new line at the adjusted position
                         if adjusted_pos < 0 or adjusted_pos > len(result_lines):
                             return (
                                 False,
@@ -351,20 +300,16 @@ class VerifyPatchDiff:
                                 None,
                             )
 
-                        # Insert the line content without the '+' prefix, preserving exact whitespace
                         content_to_add = (
                             line.value[1:] if line.value.startswith("+") else line.value
                         )
-                        # Remove potential trailing newline for consistent handling
                         if content_to_add.endswith("\n"):
                             content_to_add = content_to_add[:-1]
                         if content_to_add.endswith("\r"):
                             content_to_add = content_to_add[:-1]
 
                         result_lines.insert(adjusted_pos, content_to_add)
-                        line_offset += (
-                            1  # Increase the offset for subsequent operations
-                        )
+                        line_offset += 1
 
             # Join the lines back into a string, handling the final newline correctly
             result_content = "\n".join(result_lines)
@@ -374,153 +319,288 @@ class VerifyPatchDiff:
             return True, "Patch applied successfully", result_content
 
         except Exception as e:
-            # Catch any unexpected errors during the application process
             return (
                 False,
-                f"Unexpected error during patch application: {type(e).__name__}: {e}\n{traceback.format_exc()}",
+                f"Unexpected error during patch application: {type(e).__name__}: {e}",
                 None,
             )
+
+    def _safe_fetch_file(
+        self, project_id: str, file_path: str
+    ) -> Tuple[bool, str, Optional[str], Optional[str], int]:
+        """
+        Safely fetch file content with proper error handling.
+        Returns: (success, error_msg, file_content, file_content_with_linenumbers, line_count)
+        """
+        try:
+            # Validate inputs
+            if not project_id or not isinstance(project_id, str):
+                return False, "Invalid project_id parameter", None, None, 0
+
+            if not file_path or not isinstance(file_path, str):
+                return False, "Invalid file_path parameter", None, None, 0
+
+            # Check if fetchfiletool has the expected interface
+            if not hasattr(self.fetchfiletool, "func") or not callable(
+                self.fetchfiletool.func
+            ):
+                return (
+                    False,
+                    "fetchfiletool does not have expected 'func' attribute",
+                    None,
+                    None,
+                    0,
+                )
+
+            # Fetch content without line numbers
+            resp = self.fetchfiletool.func(project_id=project_id, file_path=file_path)
+
+            # Fetch content with line numbers for detailed error reporting
+            try:
+                resp_with_linenumbers = self.fetchfiletool.func(
+                    project_id=project_id, file_path=file_path, with_line_numbers=True
+                )
+            except Exception as e:
+                print(f"Warning: Could not fetch file with line numbers: {e}")
+                resp_with_linenumbers = None
+
+            # Validate response
+            if not resp or not isinstance(resp, dict) or "content" not in resp:
+                error_message = (
+                    resp.get("error", "Failed to fetch file content (unknown reason)")
+                    if isinstance(resp, dict)
+                    else f"Failed to fetch file content (unexpected response format: {type(resp)})"
+                )
+                return False, error_message, None, None, 0
+
+            file_content = resp["content"]
+            if not isinstance(file_content, str):
+                return (
+                    False,
+                    f"File content is not a string: {type(file_content)}",
+                    None,
+                    None,
+                    0,
+                )
+
+            file_content_with_linenumbers = None
+            if resp_with_linenumbers and isinstance(resp_with_linenumbers, dict):
+                file_content_with_linenumbers = resp_with_linenumbers.get("content")
+
+            original_file_lines_count = len(file_content.splitlines())
+
+            return (
+                True,
+                "",
+                file_content,
+                file_content_with_linenumbers,
+                original_file_lines_count,
+            )
+
+        except Exception as e:
+            error_msg = (
+                f"Error fetching file content for {file_path}: {type(e).__name__}: {e}"
+            )
+            print(f"File fetch error: {error_msg}")
+            return False, error_msg, None, None, 0
 
     async def arun(self, patch: str, project_id: str, file_path: str) -> Dict[str, Any]:
         """
         Asynchronous method to verify a patch and test its application.
         """
-        print(patch)
-        # 1. Basic patch format check (quick check)
-        base_valid, base_msg = self.basic_patch_check(patch)
-        if not base_valid:
-            return {
-                "valid": False,
-                "error": {
-                    "stage": "basic_check",
-                    "reason": "Invalid patch format",
-                    "details": base_msg,
-                    "file_path": file_path,
-                    "original_file_lines_count": 0,  # Not applicable at this stage
-                },
-            }
-
-        # 2. Fetch file content
-        file_content = None
-        file_content_with_linenumbers = None
         try:
-            # Fetch content without line numbers for verification/application logic
-            resp = self.fetchfiletool.func(project_id=project_id, file_path=file_path)  # type: ignore
-            # Fetch content with line numbers for detailed error reporting
-            resp_with_linenumbers = self.fetchfiletool.func(project_id=project_id, file_path=file_path, with_line_numbers=True)  # type: ignore
+            # Input validation
+            if not patch or not isinstance(patch, str):
+                return {
+                    "valid": False,
+                    "error": {
+                        "stage": "input_validation",
+                        "reason": "Invalid patch parameter",
+                        "details": "Patch must be a non-empty string",
+                        "file_path": file_path,
+                        "original_file_lines_count": 0,
+                    },
+                }
 
-            if not resp or "content" not in resp:
-                error_message = (
-                    resp.get("error", "Failed to fetch file content (unknown reason)")
-                    if isinstance(resp, dict)
-                    else "Failed to fetch file content (unexpected response format)"
-                )
+            if not project_id or not isinstance(project_id, str):
+                return {
+                    "valid": False,
+                    "error": {
+                        "stage": "input_validation",
+                        "reason": "Invalid project_id parameter",
+                        "details": "project_id must be a non-empty string",
+                        "file_path": file_path,
+                        "original_file_lines_count": 0,
+                    },
+                }
+
+            if not file_path or not isinstance(file_path, str):
+                return {
+                    "valid": False,
+                    "error": {
+                        "stage": "input_validation",
+                        "reason": "Invalid file_path parameter",
+                        "details": "file_path must be a non-empty string",
+                        "file_path": file_path,
+                        "original_file_lines_count": 0,
+                    },
+                }
+
+            print(f"Processing patch for file: {file_path}")
+
+            # 1. Basic patch format check (quick check)
+            base_valid, base_msg = self.basic_patch_check(patch)
+            if not base_valid:
+                return {
+                    "valid": False,
+                    "error": {
+                        "stage": "basic_check",
+                        "reason": "Invalid patch format",
+                        "details": base_msg,
+                        "file_path": file_path,
+                        "original_file_lines_count": 0,
+                    },
+                }
+
+            # 2. Fetch file content
+            (
+                fetch_success,
+                fetch_error,
+                file_content,
+                file_content_with_linenumbers,
+                original_file_lines_count,
+            ) = self._safe_fetch_file(project_id, file_path)
+
+            if not fetch_success:
                 return {
                     "valid": False,
                     "error": {
                         "stage": "fetch_file",
                         "reason": "Failed to fetch file content",
-                        "details": error_message,
+                        "details": fetch_error,
                         "file_path": file_path,
-                        "original_file_lines_count": 0,  # Cannot determine if fetch failed
+                        "original_file_lines_count": 0,
                     },
                 }
 
-            file_content = resp["content"]
-            file_content_with_linenumbers = (
-                resp_with_linenumbers.get(
-                    "content", "Could not fetch file content with line numbers."
-                )
-                if isinstance(resp_with_linenumbers, dict)
-                else "Could not fetch file content with line numbers."
+            # 3. Detailed patch applicability verification
+            verify_applicable, verify_msg, patch_set = self.verify_patch_applicability(
+                patch, file_content
             )
-            original_file_lines_count = len(file_content.splitlines())
+
+            if not verify_applicable:
+                print(f"Patch verification failed: {verify_msg}")
+                return {
+                    "valid": False,
+                    "error": {
+                        "stage": "verification",
+                        "reason": "Patch verification failed (strict exact matching)",
+                        "details": verify_msg,
+                        "file_path": file_path,
+                        "original_file_lines_count": original_file_lines_count,
+                    },
+                }
+
+            # 4. Apply the patch using the parsed unidiff.PatchSet
+            patch_applied, apply_msg, patched_content = self.apply_patch_from_parsed(
+                patch_set, file_content
+            )
+
+            if not patch_applied:
+                return {
+                    "valid": False,
+                    "error": {
+                        "stage": "application",
+                        "reason": "Patch application failed",
+                        "details": apply_msg,
+                        "file_path": file_path,
+                        "original_file_lines_count": original_file_lines_count,
+                    },
+                }
+
+            # 5. Success case
+            return {
+                "valid": True,
+                "message": "Patch is valid and can be applied successfully",
+                "patched_content": patched_content,
+            }
 
         except Exception as e:
-            # Catch any unexpected errors during file fetching
+            # Catch-all error handler to prevent unhandled exceptions
+            error_msg = (
+                f"Unexpected error in VerifyPatchDiff.arun: {type(e).__name__}: {e}"
+            )
+            print(f"Critical error: {error_msg}")
+            print(traceback.format_exc())
+
             return {
                 "valid": False,
                 "error": {
-                    "stage": "fetch_file",
-                    "reason": "Error during file fetch",
-                    "details": f"Error fetching file content for {file_path}: {type(e).__name__}: {e}\n{traceback.format_exc()}",
+                    "stage": "critical_error",
+                    "reason": "Unexpected error during patch verification",
+                    "details": error_msg,
                     "file_path": file_path,
-                    "original_file_lines_count": 0,  # Cannot determine if fetch failed
+                    "original_file_lines_count": 0,
                 },
             }
-
-        # 3. Detailed patch applicability verification (using strict logic)
-        # This checks if the patch hunks match the current file content and returns the parsed PatchSet
-        verify_applicable, verify_msg, patch_set = self.verify_patch_applicability(
-            patch, file_content
-        )
-
-        if not verify_applicable:
-            print(f"Patch verification failed: {verify_msg}")
-            return {
-                "valid": False,
-                "error": {
-                    "stage": "verification",
-                    "reason": "Patch verification failed (strict exact matching)",
-                    "details": verify_msg,
-                    "file_path": file_path,
-                    "original_file_lines_count": original_file_lines_count,
-                },
-            }
-
-        # 4. Apply the patch using the parsed unidiff.PatchSet
-        # This step actually performs the modification based on the verified hunks
-        patch_applied, apply_msg, patched_content = self.apply_patch_from_parsed(
-            patch_set, file_content  # Pass the parsed patch_set
-        )
-
-        if not patch_applied:
-            return {
-                "valid": False,
-                "error": {
-                    "stage": "application",
-                    "reason": "Patch application failed",
-                    "details": apply_msg,
-                    "file_path": file_path,
-                    "original_file_lines_count": original_file_lines_count,
-                },
-            }
-
-        # 5. Success case
-        return {
-            "valid": True,
-            "message": "Patch is valid and can be applied successfully",
-            "patched_content": patched_content,
-        }
 
     def run(self, patch: str, project_id: str, file_path: str) -> Dict[str, Any]:
         """
-        Synchronous wrapper for the arun method.
+        Synchronous wrapper for the arun method that works in any thread.
         """
         try:
+            # Try to get the current event loop
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                # If loop is already running, submit the coroutine to it
-                return asyncio.run_coroutine_threadsafe(
-                    self.arun(patch, project_id, file_path), loop
-                ).result()
+                # We're in an async context - use thread pool
+                import concurrent.futures
+
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(
+                        lambda: asyncio.run(self.arun(patch, project_id, file_path))
+                    )
+                    return future.result()
             else:
-                # If no loop is running, run the coroutine until complete
-                return loop.run_until_complete(self.arun(patch, project_id, file_path))
-        except RuntimeError:
-            # Handle cases where get_event_loop might fail (e.g., in some environments)
-            # and run the coroutine directly.
-            return asyncio.run(self.arun(patch, project_id, file_path))
+                # No running loop, we can use asyncio.run
+                return asyncio.run(self.arun(patch, project_id, file_path))
+
+        except RuntimeError as e:
+            if (
+                "no current event loop" in str(e).lower()
+                or "no running event loop" in str(e).lower()
+            ):
+                # No event loop, create one
+                return asyncio.run(self.arun(patch, project_id, file_path))
+            else:
+                # Other RuntimeError, try thread pool approach
+                try:
+                    import concurrent.futures
+
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(
+                            lambda: asyncio.run(self.arun(patch, project_id, file_path))
+                        )
+                        return future.result()
+                except Exception as inner_e:
+                    return {
+                        "valid": False,
+                        "error": {
+                            "stage": "runtime",
+                            "reason": "Event loop error in synchronous wrapper",
+                            "details": f"Original error: {e}. Thread pool error: {inner_e}",
+                            "file_path": file_path,
+                            "original_file_lines_count": 0,
+                        },
+                    }
         except Exception as e:
-            # Catch any other unexpected errors in the synchronous wrapper
             return {
                 "valid": False,
                 "error": {
                     "stage": "runtime",
                     "reason": "Unexpected error in synchronous wrapper",
-                    "details": f"Error in run method: {type(e).__name__}: {e}\n{traceback.format_exc()}",
+                    "details": f"Error in run method: {type(e).__name__}: {e}",
                     "file_path": file_path,
-                    "original_file_lines_count": 0,  # Cannot determine here
+                    "original_file_lines_count": 0,
                 },
             }
 

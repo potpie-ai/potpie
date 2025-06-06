@@ -306,6 +306,14 @@ AVAILABLE_MODELS = [
         is_inference_model=False,
     ),
     AvailableModelOption(
+        id="anthropic/claude-sonnet-4-20250514",
+        name="Claude Sonnet 4",
+        description="Faster, more efficient Claude model for code generation",
+        provider="anthropic",
+        is_chat_model=True,
+        is_inference_model=False,
+    ),
+    AvailableModelOption(
         id="openrouter/deepseek/deepseek-chat-v3-0324",
         name="DeepSeek V3",
         description="DeepSeek's latest chat model",
@@ -656,10 +664,19 @@ class ProviderService:
         self._initialize_llm(config, agent_type)
         return self.llm
 
-    def get_pydantic_model(self) -> Model | None:
+    def get_pydantic_model(
+        self, provider: str | None = None, model: str | None = None
+    ) -> Model | None:
         """Get the appropriate PydanticAI model based on the current provider."""
         config = self.chat_config
         model_name = config.model.split("/")[-1]
+
+        if provider:
+            config.provider = provider
+
+        if model:
+            model_name = model
+
         api_key = self._get_api_key(config.provider)
 
         if not api_key:
