@@ -91,13 +91,20 @@ class ParsingService:
                     repo_details,
                     user_id,
                     project_id,
+                    commit_id=repo_details.commit_id,
                 )
             else:
                 (
                     extracted_dir,
                     project_id,
                 ) = await self.parse_helper.setup_project_directory(
-                    repo, repo_details.branch_name, auth, repo, user_id, project_id
+                    repo,
+                    repo_details.branch_name,
+                    auth,
+                    repo,
+                    user_id,
+                    project_id,
+                    commit_id=repo_details.commit_id,
                 )
 
             if isinstance(repo, Repo):

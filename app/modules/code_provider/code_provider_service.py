@@ -23,8 +23,21 @@ class CodeProviderService:
         return await self.service_instance.get_project_structure_async(project_id, path)
 
     def get_file_content(
-        self, repo_name, file_path, start_line, end_line, branch_name, project_id
+        self,
+        repo_name,
+        file_path,
+        start_line,
+        end_line,
+        branch_name,
+        project_id,
+        commit_id,
     ):
         return self.service_instance.get_file_content(
-            repo_name, file_path, start_line, end_line, branch_name, project_id
+            repo_name,
+            file_path,
+            start_line,
+            end_line,
+            branch_name,
+            project_id,
+            commit_id,
         )
