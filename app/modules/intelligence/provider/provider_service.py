@@ -29,9 +29,216 @@ from .llm_config import LLMProviderConfig, build_llm_provider_config
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.anthropic import AnthropicProvider
 import litellm
+from agno.models.openai import OpenAIChat
+
+import random
+import time
+import asyncio
+from functools import wraps
 
 litellm.num_retries = 5  # Number of retries for rate limited requests
+
+OVERLOAD_ERROR_PATTERNS = {
+    "anthropic": ["overloaded", "overloaded_error", "capacity", "rate limit exceeded"],
+    "openai": [
+        "rate_limit_exceeded",
+        "capacity",
+        "overloaded",
+        "server_error",
+        "timeout",
+    ],
+    "general": [
+        "timeout",
+        "insufficient capacity",
+        "server_error",
+        "internal_server_error",
+    ],
+}
+
+
+class RetrySettings:
+    """Configuration class for retry behavior"""
+
+    def __init__(
+        self,
+        max_retries: int = 8,
+        min_delay: float = 1.0,
+        max_delay: float = 120.0,
+        base_delay: float = 2.0,
+        jitter_factor: float = 0.2,
+        step_increase: float = 1.8,
+        # Set what types of errors should be retried
+        retry_on_timeout: bool = True,
+        retry_on_overloaded: bool = True,
+        retry_on_rate_limit: bool = True,
+        retry_on_server_error: bool = True,
+    ):
+        self.max_retries = max_retries
+        self.min_delay = min_delay
+        self.max_delay = max_delay
+        self.base_delay = base_delay
+        self.jitter_factor = jitter_factor
+        self.step_increase = step_increase
+        self.retry_on_timeout = retry_on_timeout
+        self.retry_on_overloaded = retry_on_overloaded
+        self.retry_on_rate_limit = retry_on_rate_limit
+        self.retry_on_server_error = retry_on_server_error
+
+
+def identify_provider_from_error(error: Exception) -> str:
+    """Identify the provider from an exception"""
+    error_str = str(error).lower()
+
+    # Try to identify provider from error message
+    for provider in ["anthropic", "openai", "cohere", "azure"]:
+        if provider.lower() in error_str.lower():
+            return provider
+
+    return "unknown"
+
+
+def is_recoverable_error(error: Exception, settings: RetrySettings) -> bool:
+    """Determine if an error is recoverable based on retry settings"""
+    error_str = str(error).lower()
+    provider = identify_provider_from_error(error)
+
+    # Check for timeout errors
+    if settings.retry_on_timeout and "timeout" in error_str:
+        return True
+
+    # Check for overloaded errors
+    if settings.retry_on_overloaded:
+        overload_patterns = (
+            OVERLOAD_ERROR_PATTERNS.get(provider, [])
+            + OVERLOAD_ERROR_PATTERNS["general"]
+        )
+        if any(pattern in error_str for pattern in overload_patterns):
+            return True
+
+    # Check for rate limit errors
+    if settings.retry_on_rate_limit and any(
+        limit_pattern in error_str
+        for limit_pattern in [
+            "rate limit",
+            "rate_limit",
+            "ratelimit",
+            "requests per minute",
+        ]
+    ):
+        return True
+
+    # Check for server errors
+    if settings.retry_on_server_error and any(
+        server_err in error_str
+        for server_err in [
+            "server_error",
+            "internal_server_error",
+            "500",
+            "502",
+            "503",
+            "504",
+        ]
+    ):
+        return True
+
+    return False
+
+
+def calculate_backoff_time(retry_count: int, settings: RetrySettings) -> float:
+    """Calculate exponential backoff with jitter"""
+    # Calculate base exponential backoff
+    delay = min(
+        settings.max_delay, settings.base_delay * (settings.step_increase**retry_count)
+    )
+
+    # Add jitter to avoid thundering herd problem
+    jitter = random.uniform(1 - settings.jitter_factor, 1 + settings.jitter_factor)
+
+    # Ensure we stay within our bounds
+    final_delay = max(settings.min_delay, min(settings.max_delay, delay * jitter))
+
+    return final_delay
+
+
+# Create a custom retry function for litellm
+def custom_litellm_retry_handler(retry_count: int, exception: Exception) -> bool:
+    """
+    Custom retry handler for litellm's built-in retry mechanism
+    This gets registered with litellm.custom_retry_fn
+    """
+    # Default settings for litellm's built-in retry
+    settings = RetrySettings(max_retries=litellm.num_retries)
+
+    if not is_recoverable_error(exception, settings):
+        # If it's not a recoverable error, don't retry
+        return False
+
+    delay = calculate_backoff_time(retry_count, settings)
+
+    provider = identify_provider_from_error(exception)
+    logging.warning(
+        f"{provider.capitalize()} API error: {str(exception)}. "
+        f"Retry {retry_count}/{settings.max_retries}, "
+        f"waiting {delay:.2f}s before next attempt..."
+    )
+
+    time.sleep(delay)
+    return True
+
+
+# Decorator for robust LLM calls with advanced error handling
+def robust_llm_call(settings: Optional[RetrySettings] = None):
+    """
+    Decorator for robust handling of LLM API calls with exponential backoff
+    """
+    if settings is None:
+        settings = RetrySettings()
+
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            retries = 0
+            last_exception = None
+
+            while retries <= settings.max_retries:
+                try:
+                    return await func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+
+                    if not is_recoverable_error(e, settings):
+                        # If it's not a recoverable error, just raise
+                        raise
+
+                    provider = identify_provider_from_error(e)
+
+                    if retries >= settings.max_retries:
+                        logging.error(
+                            f"Max retries ({settings.max_retries}) exceeded for {provider} API call. "
+                            f"Last error: {str(e)}"
+                        )
+                        raise
+
+                    delay = calculate_backoff_time(retries, settings)
+
+                    logging.warning(
+                        f"{provider.capitalize()} API error: {str(e)}. "
+                        f"Retry {retries+1}/{settings.max_retries}, "
+                        f"waiting {delay:.2f}s before next attempt..."
+                    )
+
+                    await asyncio.sleep(delay)
+                    retries += 1
+
+            # This should never be reached due to the raise in the loop,
+            # but included for clarity
+            raise last_exception
+
+        return wrapper
+
+    return decorator
 
 
 class AgentProvider(Enum):
@@ -67,6 +274,14 @@ AVAILABLE_MODELS = [
         is_inference_model=True,
     ),
     AvailableModelOption(
+        id="openai/o4-mini",
+        name="O4 mini",
+        description="reasoning model",
+        provider="openai",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
         id="anthropic/claude-3-7-sonnet-20250219",
         name="Claude 3.7 Sonnet",
         description="Highest level of intelligence and capability with toggleable extended thinking",
@@ -81,6 +296,14 @@ AVAILABLE_MODELS = [
         provider="anthropic",
         is_chat_model=False,
         is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="anthropic/claude-sonnet-4-20250514",
+        name="Claude Sonnet 4",
+        description="Faster, more efficient Claude model for code generation",
+        provider="anthropic",
+        is_chat_model=True,
+        is_inference_model=False,
     ),
     AvailableModelOption(
         id="openrouter/deepseek/deepseek-chat-v3-0324",
@@ -102,6 +325,14 @@ AVAILABLE_MODELS = [
         id="openrouter/google/gemini-2.0-flash-001",
         name="Gemini 2.0 Flash",
         description="Google's Gemini model optimized for speed",
+        provider="gemini",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
+    AvailableModelOption(
+        id="openrouter/google/gemini-2.5-pro-preview",
+        name="Gemini 2.5 Pro",
+        description="Google's Latest pro Gemini model",
         provider="gemini",
         is_chat_model=True,
         is_inference_model=True,
@@ -130,6 +361,10 @@ class ProviderService:
         self.chat_config = build_llm_provider_config(user_config, config_type="chat")
         self.inference_config = build_llm_provider_config(
             user_config, config_type="inference"
+        )
+
+        self.retry_settings = RetrySettings(
+            max_retries=8, base_delay=2.0, max_delay=120.0
         )
 
     @classmethod
@@ -312,12 +547,13 @@ class ProviderService:
     ) -> bool:
         """Check if the current model is supported by PydanticAI."""
         config = self.chat_config if config_type == "chat" else self.inference_config
-        return config.provider in ["openai", "anthropic"]
+        return config.provider in ["openai", "anthropic", "openrouter"]
 
+    @robust_llm_call()  # Apply the robust_llm_call decorator
     async def call_llm(
         self, messages: list, stream: bool = False, config_type: str = "chat"
     ) -> Union[str, AsyncGenerator[str, None]]:
-        """Call LLM with the specified messages."""
+        """Call LLM with the specified messages with robust error handling."""
         # Select the appropriate config based on config_type
         config = self.chat_config if config_type == "chat" else self.inference_config
 
@@ -345,11 +581,10 @@ class ProviderService:
                 response = await acompletion(messages=messages, **params)
                 return response.choices[0].message.content
         except Exception as e:
-            logging.error(
-                f"Error calling LLM: {e}, params: {params}, messages: {messages}"
-            )
+            logging.error(f"Error calling LLM: {e}, provider: {routing_provider}")
             raise e
 
+    @robust_llm_call()
     async def call_llm_with_structured_output(
         self, messages: list, output_schema: BaseModel, config_type: str = "chat"
     ) -> Any:
@@ -421,10 +656,19 @@ class ProviderService:
         self._initialize_llm(config, agent_type)
         return self.llm
 
-    def get_pydantic_model(self) -> Model | None:
+    def get_pydantic_model(
+        self, provider: str | None = None, model: str | None = None
+    ) -> Model | None:
         """Get the appropriate PydanticAI model based on the current provider."""
         config = self.chat_config
         model_name = config.model.split("/")[-1]
+
+        if provider:
+            config.provider = provider
+
+        if model:
+            model_name = model
+
         api_key = self._get_api_key(config.provider)
 
         if not api_key:
@@ -451,14 +695,25 @@ class ProviderService:
                 case "anthropic":
                     return AnthropicModel(
                         model_name=model_name,
-                        anthropic_client=AsyncAnthropic(
-                            base_url=PORTKEY_GATEWAY_URL,
-                            api_key=api_key,
-                            default_headers=createHeaders(
-                                api_key=self.portkey_api_key,
-                                provider=config.provider,
-                                trace_id=str(uuid.uuid4())[:8],
+                        provider=AnthropicProvider(
+                            anthropic_client=AsyncAnthropic(
+                                base_url=PORTKEY_GATEWAY_URL,
+                                api_key=api_key,
+                                default_headers=createHeaders(
+                                    api_key=self.portkey_api_key,
+                                    provider=config.provider,
+                                    trace_id=str(uuid.uuid4())[:8],
+                                ),
                             ),
+                        ),
+                    )
+                case "openrouter":
+                    # PORTKEY has a issue when used with openrouter here
+                    return OpenAIModel(
+                        model_name=config.model.split("/")[-2] + "/" + model_name,
+                        provider=OpenAIProvider(
+                            api_key=api_key,
+                            base_url="https://openrouter.ai/api/v1",
                         ),
                     )
 
@@ -473,7 +728,16 @@ class ProviderService:
             case "anthropic":
                 return AnthropicModel(
                     model_name=model_name,
-                    anthropic_client=AsyncAnthropic(
+                    provider=AnthropicProvider(
                         api_key=api_key,
+                    ),
+                )
+            case "gemini":
+                # OpenRouter uses OpenAI-compatible API
+                return OpenAIModel(
+                    model_name="google/" + model_name,
+                    provider=OpenAIProvider(
+                        api_key=api_key,
+                        base_url="https://openrouter.ai/api/v1",
                     ),
                 )
