@@ -72,8 +72,8 @@ class BlastRadiusAgent(ChatAgent):
 blast_radius_task_prompt = """
 
     IMPORTANT: Use the following guide to accomplish tasks within the current context of execution
-    HOW TO GUIDE: 
-    
+    HOW TO GUIDE:
+
     IMPORATANT: steps on HOW TO traverse the codebase:
     1. You can use websearch, docstrings, readme to understand current feature/code you are working with better. Understand how to use current feature in context of codebase
     2. Use AskKnowledgeGraphQueries tool to understand where perticular feature or functionality resides or to fetch specific code related to some keywords. Fetch file structure to understand the codebase better, Use FetchFile tool to fetch code from a file
@@ -84,7 +84,7 @@ blast_radius_task_prompt = """
     7. Figure out how all the code ties together to implement current functionality
     8. Fetch Dir structure of the repo and use fetch file tool to fetch entire files, if file is too big the tool will throw error, then use code analysis tool to target proper line numbers (feel free to use set startline and endline such that few extra context lines are also fetched, tool won't throw out of bounds exception and return lines if they exist)
     9. Use above mentioned tools to fetch imported code, referenced code, helper functions, classes etc to understand the control flow
-    
+
     In the response, the patches contain the file patches for the changes.
     The changes contain the list of changes with the updated and entry point code. Entry point corresponds to the API/Consumer upstream of the function that the change was made in.
     The citations contain the list of file names referenced in the changed code and entry point code.

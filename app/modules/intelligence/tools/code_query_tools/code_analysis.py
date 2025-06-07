@@ -1,14 +1,14 @@
 import logging
 import os
 import warnings
-from collections import defaultdict, namedtuple
+from collections import namedtuple
 from pathlib import Path
-from typing import Optional, Type, Dict, Any, List, Union
+from typing import Optional, Type, Dict, Any, List
 
 from pydantic import BaseModel, Field
 from redis import Redis
 from sqlalchemy.orm import Session
-from grep_ast import TreeContext, filename_to_lang
+from grep_ast import filename_to_lang
 from pygments.lexers import guess_lexer_for_filename
 from pygments.token import Token
 from pygments.util import ClassNotFound
@@ -419,7 +419,7 @@ class UniversalAnalyzeCodeTool:
     description: str = (
         """Universal code structure analyzer that works with multiple programming languages using Tree-sitter.
         Supports Python, JavaScript, TypeScript, Java, C++, C, Rust, Go, PHP, Ruby, and more.
-        
+
         Extracts detailed information about:
         - All classes, structs, interfaces, enums with their docstrings and line ranges
         - All functions and methods with signatures and docstrings
@@ -427,13 +427,13 @@ class UniversalAnalyzeCodeTool:
         - Language-specific elements (traits in Rust, namespaces in C++, modules in Ruby, etc.)
         - Visibility and access modifiers
         - Async/static function detection
-        
+
         param project_id: string, the repository ID (UUID) to analyze
         param file_path: string, the path to the file in the repository
         param include_methods: bool, whether to include class methods (default: True)
         param include_private: bool, whether to include private functions/methods (default: False)
         param language: string, programming language (auto-detected from file extension if not provided)
-        
+
         Returns a structured analysis of the code with all extractable elements.
         """
     )

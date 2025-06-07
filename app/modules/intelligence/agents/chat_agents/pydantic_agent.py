@@ -43,7 +43,7 @@ def handle_exception(tool_func):
             return tool_func(*args, **kwargs)
         except Exception as e:
             logger.error(f"Exception in tool function: {e}")
-            return f"An internal error occurred. Please try again later."
+            return "An internal error occurred. Please try again later."
 
     return wrapper
 

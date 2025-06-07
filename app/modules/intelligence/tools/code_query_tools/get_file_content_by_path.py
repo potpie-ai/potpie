@@ -23,27 +23,27 @@ class FetchFileToolInput(BaseModel):
 class FetchFileTool:
     name: str = "fetch_file"
     description: str = (
-        """Fetch file content from a repository using the project_id and file path. 
+        """Fetch file content from a repository using the project_id and file path.
         Returns the content between optional start_line and end_line.
         Make sure the file exists before querying for it, confirm it by checking the file structure.
         File content is hashed for caching purposes. Cache won't be used if start_line or end_line are different.
         Use with_line_numbers to include line numbers in the response to better understand the context and location of the code.
-        
-        IMPORTANT LIMITS: 
+
+        IMPORTANT LIMITS:
         - Maximum 1200 lines can be fetched at once
         - If the entire file is requested and it has more than 1200 lines, an error will be returned
         - If start_line and end_line span more than 1200 lines, an error will be returned
         - Always use start_line and end_line to fetch specific sections of large files
-        
+
         param project_id: string, the repository ID (UUID) to get the file content for.
         param file_path: string, the path to the file in the repository.
         param with_line_numbers: bool, whether to include line numbers in the response.
         param start_line: int, the first line to fetch (1-based, inclusive).
         param end_line: int, the last line to fetch (inclusive).
-        
+
         IMPORTANT: Use line numbers as much as possible, some files are large. Use other tools to access small parts of the file.
         You can use knowledge graph tools and node_ids to fetch code snippets
-        
+
         example:
         {
             "project_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -52,20 +52,20 @@ class FetchFileTool:
             "end_line": 10
         }
         Returns string containing the content of the file.
-        
+
         If with_line_numbers is true, the content will be formatted with line numbers, starting from 1.
-        
+
         format:
         line_number:line
-        
+
         no extra spaces or tabs in between.
-        
+
         Example:
         1:def hello_world():
         2:    print("Hello, world!")
         3:
         4:hello_world()
-        
+
         """
     )
     args_schema: Type[BaseModel] = FetchFileToolInput

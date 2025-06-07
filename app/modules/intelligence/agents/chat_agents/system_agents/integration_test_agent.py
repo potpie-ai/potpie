@@ -143,8 +143,8 @@ class IntegrationTestAgent(ChatAgent):
 integration_test_task_prompt = """
 
     IMPORTANT: Use the following guide to accomplish tasks within the current context of execution
-    HOW TO GUIDE: 
-    
+    HOW TO GUIDE:
+
     IMPORATANT: steps on HOW TO traverse the codebase:
     1. You can use websearch, docstrings, readme to understand current feature/code you are working with better. Understand how to use current feature in context of codebase
     2. Use AskKnowledgeGraphQueries tool to understand where perticular feature or functionality resides or to fetch specific code related to some keywords. Fetch file structure to understand the codebase better, Use FetchFile tool to fetch code from a file
