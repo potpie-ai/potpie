@@ -93,7 +93,6 @@ class ThinkTool:
             loop = asyncio.get_running_loop()
             # If we're in a running loop, we need to use a different approach
             import concurrent.futures
-            import threading
 
             def run_in_thread():
                 # Create a new event loop in a separate thread
