@@ -123,13 +123,16 @@ class GithubService:
         end_line: int,
         branch_name: str,
         project_id: str,
+        commit_id: str,
     ) -> str:
         logger.info(f"Attempting to access file: {file_path} in repo: {repo_name}")
 
         try:
             # Try authenticated access first
             github, repo = self.get_repo(repo_name)
-            file_contents = repo.get_contents(file_path, ref=branch_name)
+            file_contents = repo.get_contents(
+                file_path, ref=commit_id if commit_id else branch_name
+            )
         except Exception as private_error:
             logger.info(f"Failed to access private repo: {str(private_error)}")
             # If authenticated access fails, try public access
@@ -166,8 +169,8 @@ class GithubService:
             if (start_line == end_line == 0) or (start_line == end_line == None):
                 return decoded_content
             # added -2 to start and end line to include the function definition/ decorator line
-            start = start_line - 2 if start_line - 2 > 0 else 0
-            selected_lines = lines[start:end_line]
+            # start = start_line - 2 if start_line - 2 > 0 else 0
+            selected_lines = lines[max(0, start_line - 1) : min(len(lines), end_line)]
             return "\n".join(selected_lines)
         except Exception as e:
             logger.error(
@@ -608,7 +611,15 @@ class GithubService:
 
             # Start structure fetch from the specified path with depth 0
             structure = await self._fetch_repo_structure_async(
-                repo, path or "", current_depth=0, base_path=path
+                repo,
+                path or "",
+                current_depth=0,
+                base_path=path or "",
+                ref=(
+                    project.get("branch_name")
+                    if project.get("branch_name")
+                    else project.get("commit_id")
+                ),
             )
             formatted_structure = self._format_tree_structure(structure)
 
@@ -632,6 +643,7 @@ class GithubService:
         path: str = "",
         current_depth: int = 0,
         base_path: Optional[str] = None,
+        ref: Optional[str] = None,
     ) -> Dict[str, Any]:
         exclude_extensions = [
             "png",
@@ -677,7 +689,7 @@ class GithubService:
 
         try:
             contents = await asyncio.get_event_loop().run_in_executor(
-                self.executor, repo.get_contents, path
+                self.executor, lambda: repo.get_contents(path, ref=ref)
             )
 
             if not isinstance(contents, list):
@@ -703,6 +715,7 @@ class GithubService:
                         item.path,
                         current_depth=current_depth,
                         base_path=base_path,
+                        ref=ref,
                     )
                     tasks.append(task)
                 else:

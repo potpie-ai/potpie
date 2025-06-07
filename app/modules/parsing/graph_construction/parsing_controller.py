@@ -91,13 +91,16 @@ class ParsingController:
 
         try:
             project = await project_manager.get_project_from_db(
-                repo_name, repo_details.branch_name, user_id
+                repo_name,
+                repo_details.branch_name,
+                user_id,
+                commit_id=repo_details.commit_id,
             )
 
             # First check if this is a demo project that hasn't been accessed by this user yet
             if not project and repo_details.repo_name in demo_repos:
                 existing_project = await project_manager.get_global_project_from_db(
-                    repo_name, repo_details.branch_name
+                    repo_name, repo_details.branch_name, repo_details.commit_id
                 )
 
                 new_project_id = str(uuid7())
@@ -226,6 +229,7 @@ class ParsingController:
             repo_details.branch_name,
             user_id,
             new_project_id,
+            repo_details.commit_id,
             repo_details.repo_path,
         )
         asyncio.create_task(
@@ -247,6 +251,7 @@ class ParsingController:
             {
                 "repo_name": repo_details.repo_name,
                 "branch": repo_details.branch_name,
+                "commit_id": repo_details.commit_id,
                 "project_id": new_project_id,
             },
         )

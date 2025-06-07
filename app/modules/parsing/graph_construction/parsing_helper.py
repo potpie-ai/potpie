@@ -300,6 +300,7 @@ class ParseHelper:
         repo_details,
         user_id,
         project_id=None,  # Change type to str
+        commit_id=None,
     ):
         full_name = (
             repo.working_tree_dir.split("/")[-1]
@@ -312,7 +313,7 @@ class ParseHelper:
         if full_name is None:
             full_name = repo_path.split("/")[-1]
         project = await self.project_manager.get_project_from_db(
-            full_name, branch, user_id, repo_path
+            full_name, branch, user_id, repo_path, commit_id
         )
         if not project:
             project_id = await self.project_manager.register_project(
@@ -320,6 +321,7 @@ class ParseHelper:
                 branch,
                 user_id,
                 project_id,
+                commit_id=commit_id,
             )
         if repo_path is not None:
             if os.getenv("isDevelopmentMode", "false").lower() == "false":
@@ -333,22 +335,41 @@ class ParseHelper:
             try:
                 current_dir = os.getcwd()
                 os.chdir(extracted_dir)  # Change to the cloned repo directory
-                repo_details.git.checkout(branch)
+                if commit_id:
+                    repo_details.git.checkout(commit_id)
+                    latest_commit_sha = commit_id
+                else:
+                    repo_details.git.checkout(branch)
+                    branch_details = repo_details.head.commit
+                    latest_commit_sha = branch_details.hexsha
             except GitCommandError as e:
-                logger.error(f"Error checking out branch: {e}")
+                logger.error(
+                    f"Error checking out {'commit' if commit_id else 'branch'}: {e}"
+                )
                 raise HTTPException(
-                    status_code=400, detail=f"Failed to checkout branch {branch}"
+                    status_code=400,
+                    detail=f"Failed to checkout {'commit ' + commit_id if commit_id else 'branch ' + branch}",
                 )
             finally:
                 os.chdir(current_dir)  # Restore the original working directory
-            branch_details = repo_details.head.commit
-            latest_commit_sha = branch_details.hexsha
         else:
-            extracted_dir = await self.download_and_extract_tarball(
-                repo, branch, os.getenv("PROJECT_PATH"), auth, repo_details, user_id
-            )
-            branch_details = repo_details.get_branch(branch)
-            latest_commit_sha = branch_details.commit.sha
+            if commit_id:
+                # For GitHub API, we need to download tarball for specific commit
+                extracted_dir = await self.download_and_extract_tarball(
+                    repo,
+                    commit_id,
+                    os.getenv("PROJECT_PATH"),
+                    auth,
+                    repo_details,
+                    user_id,
+                )
+                latest_commit_sha = commit_id
+            else:
+                extracted_dir = await self.download_and_extract_tarball(
+                    repo, branch, os.getenv("PROJECT_PATH"), auth, repo_details, user_id
+                )
+                branch_details = repo_details.get_branch(branch)
+                latest_commit_sha = branch_details.commit.sha
 
         repo_metadata = ParseHelper.extract_repository_metadata(repo_details)
         repo_metadata["error_message"] = None
@@ -473,11 +494,17 @@ class ParseHelper:
         repo_name = project.get("project_name")
         branch_name = project.get("branch_name")
 
-        if not repo_name or not branch_name:
+        if not repo_name:
             logger.error(
                 f"Repository name or branch name not found for project ID {project_id}"
             )
             return False
+
+        if not branch_name:
+            logger.error(
+                f"Branch is empty so sticking to commit and not updating it for: {project_id}"
+            )
+            return True
 
         if len(repo_name.split("/")) < 2:
             # Local repo, always parse local repos
@@ -485,6 +512,20 @@ class ParseHelper:
 
         try:
             github, repo = self.github_service.get_repo(repo_name)
+
+            # If current_commit_id is a specific commit (not a branch head),
+            # then we can assume it's not "latest" and should be reparsed
+            # This is because when using specific commits, we don't want to check branch head
+            if len(current_commit_id) == 40:  # SHA1 commit hash is 40 chars
+                try:
+                    # Try to verify if this is a specific commit instead of branch head
+                    repo.get_commit(current_commit_id)
+                    # If we successfully get a commit, assume that it was a pinned commit,
+                    # thus it's still up to date (we're parsing a specific commit, not latest)
+                    return True
+                except:
+                    # If we can't find the commit, we should reparse
+                    return False
             branch = repo.get_branch(branch_name)
             latest_commit_id = branch.commit.sha
 
