@@ -50,6 +50,8 @@ class IntegrationTestAgent(ChatAgent):
                 "webpage_extractor",
                 "web_search_tool",
                 "github_tool",
+                "fetch_file",
+                "analyze_code_structure",
             ]
         )
 
@@ -139,20 +141,26 @@ class IntegrationTestAgent(ChatAgent):
 
 
 integration_test_task_prompt = """
+
+    IMPORTANT: Use the following guide to accomplish tasks within the current context of execution
+    HOW TO GUIDE: 
+    
+    IMPORATANT: steps on HOW TO traverse the codebase:
+    1. You can use websearch, docstrings, readme to understand current feature/code you are working with better. Understand how to use current feature in context of codebase
+    2. Use AskKnowledgeGraphQueries tool to understand where perticular feature or functionality resides or to fetch specific code related to some keywords. Fetch file structure to understand the codebase better, Use FetchFile tool to fetch code from a file
+    3. Use GetcodefromProbableNodeIDs tool to fetch code for perticular class or function in a file, Use analyze_code_structure to get all the class/function/nodes in a file
+    4. Use GetcodeFromMultipleNodeIDs to fetch code for nodeIDs fetched from tools before
+    5. Use GetNodeNeighboursFromNodeIDs to fetch all the code referencing current code or code referenced in the current node (code snippet)
+    6. Above tools and steps can help you figure out full context about the current code in question
+    7. Figure out how all the code ties together to implement current functionality
+    8. Fetch Dir structure of the repo and use fetch file tool to fetch entire files, if file is too big the tool will throw error, then use code analysis tool to target proper line numbers (feel free to use set startline and endline such that few extra context lines are also fetched, tool won't throw out of bounds exception and return lines if they exist)
+    9. Use above mentioned tools to fetch imported code, referenced code, helper functions, classes etc to understand the control flow
+
     Your mission is to create comprehensive test plans and corresponding integration tests based on the user's query and provided code.
 
     **Process:**
 
-    1. **Code Graph Analysis:**
-    - **Graph Structure:**
-        - Analyze the provided graph structure to understand the entire code flow and component interactions.
-        - Identify all major components, their dependencies, and interaction points.
-    - **Code Retrieval:**
-        - Fetch the docstrings and code for the provided node IDs using the `Get Code and docstring From Multiple Node IDs` tool.
-        - Use the ProjectID and NodeIDs mentioned
-        - Fetch the code for all relevant nodes in the graph to understand the full context of the codebase.
-
-    2. **Detailed Component Analysis:**
+    **Detailed Component Analysis:**
     - **Functionality Understanding:**
         - For each component identified in the graph, analyze its purpose, inputs, outputs, and potential side effects.
         - Understand how each component interacts with others within the system.
@@ -161,7 +169,7 @@ integration_test_task_prompt = """
         - Use the `get_code_from_probable_node_name` tool to fetch code snippets for accurate import statements.
         - Validate that the fetched code matches the expected component names and discard any mismatches.
 
-    3. **Test Plan Generation:**
+    **Test Plan Generation:**
     Generate a test plan only if a test plan is not already present in the chat history or the user asks for it again.
     - **Comprehensive Coverage:**
         - For each component and their interactions, create detailed test plans covering:
@@ -173,7 +181,7 @@ integration_test_task_prompt = """
         - Identify all major integration points between components that require testing to ensure seamless interactions.
     - Format the test plan in two sections "Happy Path" and "Edge Cases" as neat bullet points.
 
-    4. **Integration Test Writing:**
+    **Integration Test Writing:**
     - **Test Suite Development:**
         - Based on the generated test plans, write comprehensive integration tests that cover all identified scenarios and integration points.
         - Ensure that the tests include:
@@ -184,7 +192,7 @@ integration_test_task_prompt = """
         - **Assertions:** Appropriate assertions to validate expected outcomes.
         - **Comments:** Explanatory comments for complex test logic or setup.
 
-    5. **Reflection and Iteration:**
+    **Reflection and Iteration:**
     - **Review and Refinement:**
         - Review the test plans and integration tests to ensure comprehensive coverage and correctness.
         - Make refinements as necessary, respecting the max iterations limit.

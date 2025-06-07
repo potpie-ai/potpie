@@ -61,6 +61,8 @@ class CodeGenAgent(ChatAgent):
                 "web_search_tool",
                 "github_tool",
                 "get_linear_issue",
+                "fetch_file",
+                "analyze_code_structure",
             ]
         )
         if self.llm_provider.is_current_model_supported_by_pydanticai(
@@ -97,32 +99,26 @@ class CodeGenAgent(ChatAgent):
 
 
 code_gen_task_prompt = """
+
+    IMPORTANT: Use the following guide to accomplish tasks within the current context of execution
+    HOW TO GUIDE: 
+    
+    IMPORATANT: steps on HOW TO traverse the codebase:
+    1. You can use websearch, docstrings, readme to understand current feature/code you are working with better. Understand how to use current feature in context of codebase
+    2. Use AskKnowledgeGraphQueries tool to understand where perticular feature or functionality resides or to fetch specific code related to some keywords. Fetch file structure to understand the codebase better, Use FetchFile tool to fetch code from a file
+    3. Use GetcodefromProbableNodeIDs tool to fetch code for perticular class or function in a file, Use analyze_code_structure to get all the class/function/nodes in a file
+    4. Use GetcodeFromMultipleNodeIDs to fetch code for nodeIDs fetched from tools before
+    5. Use GetNodeNeighboursFromNodeIDs to fetch all the code referencing current code or code referenced in the current node (code snippet)
+    6. Above tools and steps can help you figure out full context about the current code in question
+    7. Figure out how all the code ties together to implement current functionality
+    8. Fetch Dir structure of the repo and use fetch file tool to fetch entire files, if file is too big the tool will throw error, then use code analysis tool to target proper line numbers (feel free to use set startline and endline such that few extra context lines are also fetched, tool won't throw out of bounds exception and return lines if they exist)
+    9. Use above mentioned tools to fetch imported code, referenced code, helper functions, classes etc to understand the control flow
+
     Work to generate copy-paste ready code:
 
     Follow this structured approach:
 
-    1. Query Analysis:
-    - Identify ALL file names or function names mentioned in the query
-    - For files without node_ids, use get_code_from_probable_node_name tool
-    - Example: "Update file1.py and config.py" -> fetch config.py and file1.py using tool if you dont already have their code
-    - Look for words that could be file names or function names based on the query (e.g., requirements, utils, update document etc.)
-    - Identify any data storage or schema changes that might affect multiple files
-
-    2. Dependency Analysis:
-    - Use get_node_neighbours tool on EACH function or file to be modified (works best with function names)
-    - Analyze import relationships and dependencies EXHAUSTIVELY
-    - Identify ALL files that import the modified files
-    - Identify ALL files that interact with the modified functionality
-    - Map the complete chain of dependencies:
-    * Direct importers
-    * Interface implementations
-    * Shared data structures
-    * Database interactions
-    * API consumers
-    - Document required changes in ALL dependent files
-    - Flag any file that touches the modified functionality, even if changes seem minor
-
-    3. Context Analysis:
+    Context Analysis:
     - Review existing code precisely to maintain standard formatting
     - Note exact indentation patterns
     - Identify string literal formats
@@ -135,7 +131,7 @@ code_gen_task_prompt = """
     * FIRST Use get_file_structure tool to get the file structure of the project and get any relevant file context
     * THEN IF STILL NO SPECIFIC FILES ARE FOUND, use get_nodes_from_tags tool to search by relevant tags
 
-    4. Implementation Planning:
+    Implementation Planning:
     - Plan changes that maintain exact formatting
     - Never modify existing patterns unless requested
     - Identify required new imports
@@ -149,7 +145,7 @@ code_gen_task_prompt = """
     CRITICAL: If any file that is REQUIRED to propose changes is missing, stop and request the user to provide the file using "@filename" or "@functionname". NEVER create hypothetical files.
 
 
-    5. Code Generation Format:
+    Code Generation Format:
     Structure your response in this user-friendly format:
 
     📝 Overview
