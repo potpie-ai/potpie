@@ -9,7 +9,9 @@ from app.modules.intelligence.tools.code_query_tools.get_code_file_structure imp
     get_code_file_structure_tool,
     GetCodeFileStructureTool,
 )
-
+from app.modules.intelligence.tools.code_query_tools.code_analysis import (
+    universal_analyze_code_tool,
+)
 from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id_tool import (
     get_code_graph_from_node_id_tool,
     GetCodeGraphFromNodeIdTool,
@@ -121,6 +123,9 @@ class ToolService:
                 self.db, self.user_id
             ),
             "fetch_file": fetch_file_tool(self.db, self.user_id),
+            "analyze_code_structure": universal_analyze_code_tool(
+                self.db, self.user_id
+            ),
         }
 
         if self.webpage_extractor_tool:
