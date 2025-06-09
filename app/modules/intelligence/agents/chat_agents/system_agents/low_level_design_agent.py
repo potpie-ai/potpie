@@ -50,6 +50,8 @@ class LowLevelDesignAgent(ChatAgent):
                 "github_tool",
                 "think",
                 "get_linear_issue",
+                "fetch_file",
+                "analyze_code_structure",
             ]
         )
 
@@ -95,6 +97,21 @@ class LowLevelDesignAgent(ChatAgent):
 
 
 lld_task_prompt = """
+
+    IMPORTANT: Use the following guide to accomplish tasks within the current context of execution
+    HOW TO GUIDE:
+
+    IMPORATANT: steps on HOW TO traverse the codebase:
+    1. You can use websearch, docstrings, readme to understand current feature/code you are working with better. Understand how to use current feature in context of codebase
+    2. Use AskKnowledgeGraphQueries tool to understand where perticular feature or functionality resides or to fetch specific code related to some keywords. Fetch file structure to understand the codebase better, Use FetchFile tool to fetch code from a file
+    3. Use GetcodefromProbableNodeIDs tool to fetch code for perticular class or function in a file, Use analyze_code_structure to get all the class/function/nodes in a file
+    4. Use GetcodeFromMultipleNodeIDs to fetch code for nodeIDs fetched from tools before
+    5. Use GetNodeNeighboursFromNodeIDs to fetch all the code referencing current code or code referenced in the current node (code snippet)
+    6. Above tools and steps can help you figure out full context about the current code in question
+    7. Figure out how all the code ties together to implement current functionality
+    8. Fetch Dir structure of the repo and use fetch file tool to fetch entire files, if file is too big the tool will throw error, then use code analysis tool to target proper line numbers (feel free to use set startline and endline such that few extra context lines are also fetched, tool won't throw out of bounds exception and return lines if they exist)
+    9. Use above mentioned tools to fetch imported code, referenced code, helper functions, classes etc to understand the control flow
+
     Create a detailed low-level design plan for implementing the new feature. Your plan should include:
     1. A high-level overview of the implementation approach.
     2. Detailed steps for implementing the feature, including:

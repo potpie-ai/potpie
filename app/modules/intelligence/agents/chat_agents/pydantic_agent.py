@@ -1,6 +1,6 @@
+import functools
 import re
 from typing import List, AsyncGenerator
-
 from .tool_helpers import (
     get_tool_call_info_content,
     get_tool_response_message,
@@ -36,6 +36,18 @@ from langchain_core.tools import StructuredTool
 logger = setup_logger(__name__)
 
 
+def handle_exception(tool_func):
+    @functools.wraps(tool_func)
+    def wrapper(*args, **kwargs):
+        try:
+            return tool_func(*args, **kwargs)
+        except Exception as e:
+            logger.error(f"Exception in tool function: {e}")
+            return "An internal error occurred. Please try again later."
+
+    return wrapper
+
+
 class PydanticRagAgent(ChatAgent):
     def __init__(
         self,
@@ -52,22 +64,36 @@ class PydanticRagAgent(ChatAgent):
         for i, tool in enumerate(tools):
             tools[i].name = re.sub(r" ", "", tool.name)
 
-        self.agent = Agent(
-            model=llm_provider.get_pydantic_model(),
+        self.llm_provider = llm_provider
+        self.tools = tools
+        self.config = config
+
+    def _create_agent(self, ctx: ChatContext) -> Agent:
+        config = self.config
+        return Agent(
+            model=self.llm_provider.get_pydantic_model(),
             tools=[
                 Tool(
                     name=tool.name,
                     description=tool.description,
-                    function=tool.func,  # type: ignore
+                    function=handle_exception(tool.func),  # type: ignore
                 )
-                for tool in tools
+                for tool in self.tools
             ],
-            system_prompt=f"Role: {config.role}\nGoal: {config.goal}\nBackstory: {config.backstory}. Respond to the user query",
+            instructions=f"""
+            Role: {config.role}
+            Goal: {config.goal}
+            Backstory:
+            {config.backstory}
+            CURRENT CONTEXT AND AGENT TASK OVERVIEW:
+            {self._create_task_description(task_config=config.tasks[0],ctx=ctx)}
+            """,
             result_type=str,
-            retries=3,
+            output_retries=3,
+            output_type=str,
             defer_model_check=True,
             end_strategy="exhaustive",
-            model_settings={"parallel_tool_calls": True, "max_tokens": 8000},
+            model_settings={"max_tokens": 14000},
         )
 
     def _create_task_description(
@@ -83,7 +109,6 @@ class PydanticRagAgent(ChatAgent):
 
         return f"""
                 CONTEXT:
-                User Query: {ctx.query}
                 Project ID: {ctx.project_id}
                 Node IDs: {" ,".join(ctx.node_ids)}
                 Project Name (this is name from github. i.e. owner/repo): {ctx.project_name}
@@ -91,16 +116,13 @@ class PydanticRagAgent(ChatAgent):
                 Additional Context:
                 {ctx.additional_context if ctx.additional_context != "" else "no additional context"}
 
-                TASK:
+                TASK HANDLING: (follow the method below if the user asks you to execute your task for your role and goal)
                 {task_config.description}
-
-                Expected Output:
-                {task_config.expected_output}
 
                 INSTRUCTIONS:
                 1. Use the available tools to gather information
                 2. Process and synthesize the gathered information
-                3. Format your response in markdown, make sure it's well formatted
+                3. Format your response in markdown unless explicitely asked to output in a different format, make sure it's well formatted
                 4. Include relevant code snippets and file references
                 5. Provide clear explanations
                 6. Verify your output before submitting
@@ -108,8 +130,6 @@ class PydanticRagAgent(ChatAgent):
                 IMPORTANT:
                 - Use tools efficiently and avoid unnecessary API calls
                 - Only use the tools listed below
-
-                With above information answer the user query: {ctx.query}
             """
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
@@ -122,14 +142,17 @@ class PydanticRagAgent(ChatAgent):
             # session = agentops.start_session()
             # Create all tasks
 
-            task = self._create_task_description(self.tasks[0], ctx)
-
-            resp = await self.agent.run(user_prompt=task)
+            resp = await self._create_agent(ctx).run(
+                user_prompt=ctx.query,
+                message_history=[
+                    ModelResponse([TextPart(content=msg)]) for msg in ctx.history
+                ],
+            )
 
             # session and session.end_session("Success")
 
             return ChatAgentResponse(
-                response=resp.data,
+                response=resp.output,
                 tool_calls=[],
                 citations=[],
             )
@@ -142,10 +165,9 @@ class PydanticRagAgent(ChatAgent):
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         logger.info("running pydantic-ai agent stream")
-        task = self._create_task_description(self.tasks[0], ctx)
         try:
-            async with self.agent.iter(
-                user_prompt=task,
+            async with self._create_agent(ctx).iter(
+                user_prompt=ctx.query,
                 message_history=[
                     ModelResponse([TextPart(content=msg)]) for msg in ctx.history
                 ],
