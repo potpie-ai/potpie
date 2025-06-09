@@ -94,6 +94,7 @@ class ParsingController:
                 repo_name,
                 repo_details.branch_name,
                 user_id,
+                repo_path=repo_details.repo_path,
                 commit_id=repo_details.commit_id,
             )
 
