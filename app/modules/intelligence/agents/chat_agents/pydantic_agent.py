@@ -68,26 +68,6 @@ class PydanticRagAgent(ChatAgent):
         self.tools = tools
         self.config = config
 
-        self.agent = Agent(
-            model=llm_provider.get_pydantic_model(),
-            tools=[
-                Tool(
-                    name=tool.name,
-                    description=tool.description,
-                    function=handle_exception(tool.func),
-                )
-                for tool in tools
-            ],
-            system_prompt=f"Role: {config.role}\nGoal: {config.goal}\nBackstory: {config.backstory}. Respond to the user query",
-            output_type=str,
-            retries=3,
-            defer_model_check=True,
-            end_strategy="exhaustive",
-            model_settings={
-                "parallel_tool_calls": True,
-            },
-        )
-
     def _create_agent(self, ctx: ChatContext) -> Agent:
         config = self.config
         return Agent(

@@ -78,8 +78,6 @@ class UniversalCodeAnalyzer:
             / f"tree-sitter-{lang}-tags.scm"
         )
 
-        print(f"Looking for: {query_file}")
-        print(f"Exists: {query_file.exists()}")
         return query_file if query_file.exists() else None
 
     def detect_language(self, file_path: str) -> Optional[str]:
