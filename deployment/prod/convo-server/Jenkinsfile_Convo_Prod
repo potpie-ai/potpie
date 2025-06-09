@@ -25,7 +25,7 @@ pipeline {
                     } else if (branch == "origin/main") {
                         env.ENVIRONMENT = 'main'
                     } else if (branch == "origin/devops"){
-                        env.ENVIORNMENT = 'devops'
+                        env.ENVIRONMENT = 'devops'
                     } else {
                         error("Unknown branch: ${branch}. This pipeline only supports main and staging branches.")
                     }
