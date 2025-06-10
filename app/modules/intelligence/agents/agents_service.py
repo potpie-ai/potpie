@@ -133,8 +133,8 @@ class AgentsService:
             ),
             "benchmark_agent": AgentWithInfo(
                 id="benchmark_agent",
-                name="Code Generation Agent for fixing github issues",
-                description="Agent to generate diffs to fix github issues",
+                name="Service Level Test Generation Agent",
+                description="Agent to generate service level tests for the latest changes in the codebase",
                 agent=GithubIssueFixerAgent(
                     llm_provider, tools_provider, prompt_provider
                 ),
