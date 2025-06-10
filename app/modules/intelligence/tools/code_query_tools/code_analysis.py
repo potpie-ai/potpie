@@ -492,7 +492,7 @@ class UniversalAnalyzeCodeTool:
                 end_line=None,
                 branch_name=details["branch_name"],
                 project_id=project_id,
-                # commit_id=details["commit_id"],
+                commit_id=details["commit_id"],
             )
 
             # Analyze the code
