@@ -6,7 +6,8 @@ from pydantic import BaseModel, Field
 class ParsingRequest(BaseModel):
     repo_name: Optional[str] = Field(default=None)
     repo_path: Optional[str] = Field(default=None)
-    branch_name: str
+    branch_name: Optional[str] = Field(default=None)
+    commit_id: Optional[str] = Field(default=None)
 
     def __init__(self, **data):
         super().__init__(**data)

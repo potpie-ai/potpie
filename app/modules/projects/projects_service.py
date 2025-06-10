@@ -62,6 +62,7 @@ class ProjectService:
         branch_name: str,
         user_id: str,
         project_id: str,
+        commit_id: str = None,
         repo_path: str = None,
     ):
         project = Project(
@@ -70,6 +71,7 @@ class ProjectService:
             branch_name=branch_name,
             user_id=user_id,
             repo_path=repo_path,
+            commit_id=commit_id,
             status=ProjectStatusEnum.SUBMITTED.value,
         )
         project = ProjectService.create_project(self.db, project)
@@ -119,41 +121,86 @@ class ProjectService:
         )
 
     async def get_project_from_db(
-        self, repo_name: str, branch_name: str, user_id: str, repo_path: str = None
+        self,
+        repo_name: str,
+        branch_name: str,
+        user_id: str,
+        repo_path: str | None = None,
+        commit_id: str | None = None,
     ):
-        project = (
-            self.db.query(Project)
-            .filter(
-                Project.repo_name == repo_name,
-                Project.user_id == user_id,
-                Project.branch_name == branch_name,
-                Project.repo_path == repo_path,
-            )
-            .first()
+        """
+        Get a project from the database for a specific user, prioritizing commit_id over branch_name.
+
+        Args:
+            repo_name: Repository name
+            branch_name: Branch name (used as fallback if commit_id is None)
+            user_id: User ID
+            repo_path: Path to the repository (optional)
+            commit_id: Commit ID (optional, prioritized over branch_name if provided)
+
+        Returns:
+            Project object if found, None otherwise
+        """
+        query = self.db.query(Project).filter(
+            Project.repo_name == repo_name,
+            Project.user_id == user_id,
+            Project.repo_path == repo_path,
         )
-        if project:
-            return project
-        else:
-            return None
+
+        if commit_id:
+            # If commit_id is provided, use it for deduplication
+            project = query.filter(Project.commit_id == commit_id).first()
+            if project:
+                return project
+            else:
+                return None
+
+        # Fall back to branch_name if commit_id is not provided or no match was found
+        project = query.filter(Project.branch_name == branch_name).first()
+        return project
 
     async def get_global_project_from_db(
-        self, repo_name: str, branch_name: str, repo_path: str = None
+        self,
+        repo_name: str,
+        branch_name: str,
+        repo_path: str | None = None,
+        commit_id: str | None = None,
     ):
-        project = (
-            self.db.query(Project)
-            .filter(
-                Project.repo_name == repo_name,
-                Project.branch_name == branch_name,
-                Project.status == ProjectStatusEnum.READY.value,
-                Project.repo_path == repo_path,
+        """
+        Get a global project from the database, prioritizing commit_id over branch_name.
+
+        Args:
+            repo_name: Repository name
+            branch_name: Branch name (used as fallback if commit_id is None)
+            repo_path: Path to the repository (optional)
+            commit_id: Commit ID (optional, prioritized over branch_name if provided)
+
+        Returns:
+            Project object if found, None otherwise
+        """
+        query = self.db.query(Project).filter(
+            Project.repo_name == repo_name,
+            Project.status == ProjectStatusEnum.READY.value,
+            Project.repo_path == repo_path,
+        )
+
+        if commit_id:
+            # If commit_id is provided, use it for deduplication
+            project = (
+                query.filter(Project.commit_id == commit_id)
+                .order_by(Project.created_at.asc())
+                .first()
             )
+            if project:
+                return project
+
+        # Fall back to branch_name if commit_id is not provided or no match was found
+        project = (
+            query.filter(Project.branch_name == branch_name)
             .order_by(Project.created_at.asc())
             .first()
         )
-        if project:
-            return project
-        else:
-            return None
+        return project
 
     async def get_project_from_db_by_id(self, project_id: int):
         project = ProjectService.get_project_by_id(self.db, project_id)
@@ -198,6 +245,7 @@ class ProjectService:
                 "branch_name": project.branch_name,
                 "user_id": project.user_id,
                 "repo_path": project.repo_path,
+                "commit_id": project.commit_id,
             }
         else:
             return None
