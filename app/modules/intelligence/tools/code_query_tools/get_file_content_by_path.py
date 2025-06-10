@@ -172,7 +172,7 @@ class FetchFileTool:
                 start_line=start_line if start_line is not None else None,
                 end_line=end_line if end_line is not None else None,
                 project_id=project_id,
-                # commit_id=details["commit_id"],
+                commit_id=details["commit_id"],
             )
 
             # Check line limits for new content
