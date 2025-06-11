@@ -1,12 +1,8 @@
-import json
-from pydantic import BaseModel, validator
-from app.modules.intelligence.agents.chat_agents.adaptive_agent import AdaptiveAgent
+from pydantic import BaseModel
 from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
 from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent import (
     PydanticMultiAgent,
 )
-from app.modules.intelligence.prompts.classification_prompts import AgentType
-from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
