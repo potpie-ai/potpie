@@ -304,14 +304,22 @@ class ConversationService:
 
                 if stream:
                     async for chunk in self._generate_and_stream_ai_response(
-                        message.content, conversation_id, user_id, message.node_ids
+                        message.content,
+                        conversation_id,
+                        user_id,
+                        message.node_ids,
+                        is_task=message.is_task,
                     ):
                         yield chunk
                 else:
                     full_message = ""
                     all_citations = []
                     async for chunk in self._generate_and_stream_ai_response(
-                        message.content, conversation_id, user_id, message.node_ids
+                        message.content,
+                        conversation_id,
+                        user_id,
+                        message.node_ids,
+                        is_task=message.is_task,
                     ):
                         full_message += chunk.message
                         all_citations = all_citations + chunk.citations
@@ -503,6 +511,7 @@ class ConversationService:
         conversation_id: str,
         user_id: str,
         node_ids: List[NodeContext],
+        is_task: bool = False,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         conversation = (
             self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
@@ -551,6 +560,7 @@ class ConversationService:
                             node_ids=[node.node_id for node in node_ids],
                             query=query,
                         ),
+                        is_task=is_task,
                     )
                 )
                 async for chunk in res:

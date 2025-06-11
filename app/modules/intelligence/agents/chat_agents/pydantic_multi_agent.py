@@ -725,11 +725,9 @@ class PydanticMultiAgent(ChatAgent):
             for tool in tools
         ]
 
-        # Create the provider model
-        self.model = llm_provider.get_pydantic_model()
-        self.advanced_model = llm_provider.get_pydantic_model(
-            "anthropic", "claude-sonnet-4-20250514"
-        )
+        # Create the provider model: HARDCODE TO GPT-4.1 FOR NOW
+        self.model = llm_provider.get_pydantic_model("openai", "gpt-4.1")
+        self.advanced_model = self.model
 
         # Create individual agents for each role
         self.agents = {}

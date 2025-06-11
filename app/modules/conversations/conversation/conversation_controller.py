@@ -86,7 +86,11 @@ class ConversationController:
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         try:
             async for chunk in self.service.store_message(
-                conversation_id, message, MessageType.HUMAN, self.user_id, stream
+                conversation_id,
+                message,
+                MessageType.HUMAN,
+                self.user_id,
+                stream,
             ):
                 yield chunk
         except ConversationNotFoundError as e:

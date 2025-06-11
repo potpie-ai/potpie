@@ -2,6 +2,9 @@ import json
 from pydantic import BaseModel, validator
 from app.modules.intelligence.agents.chat_agents.adaptive_agent import AdaptiveAgent
 from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
+from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent import (
+    PydanticMultiAgent,
+)
 from app.modules.intelligence.prompts.classification_prompts import AgentType
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.provider_service import (
@@ -39,10 +42,12 @@ class RuntimeCustomAgent(ChatAgent):
         llm_provider: ProviderService,
         tools_provider: ToolService,
         agent_config: Dict[str, Any],
+        is_task: bool = False,
     ):
         self.llm_provider = llm_provider
         self.tools_provider = tools_provider
         self.agent_config = CustomAgentConfig(**agent_config)
+        self.is_task = is_task
 
     def _build_agent(self) -> ChatAgent:
         agent_config = AgentConfig(
@@ -58,12 +63,18 @@ class RuntimeCustomAgent(ChatAgent):
         )
 
         tools = self.tools_provider.get_tools(self.agent_config.tasks[0].tools)
-        if self.llm_provider.is_current_model_supported_by_pydanticai(
+        if not self.llm_provider.is_current_model_supported_by_pydanticai(
             config_type="chat"
         ):
-            return PydanticRagAgent(self.llm_provider, agent_config, tools)
-        else:
             return CrewAIAgent(self.llm_provider, agent_config, tools)
+        elif self.is_task:
+            return PydanticMultiAgent(
+                self.llm_provider,
+                agent_config,
+                tools,
+            )
+        else:
+            return PydanticRagAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if ctx.node_ids and len(ctx.node_ids) > 0:

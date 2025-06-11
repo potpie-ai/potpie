@@ -14,6 +14,7 @@ class NodeContext(BaseModel):
 class MessageRequest(BaseModel):
     content: str
     node_ids: Optional[List[NodeContext]] = None
+    is_task: bool = False
 
 
 class DirectMessageRequest(BaseModel):
