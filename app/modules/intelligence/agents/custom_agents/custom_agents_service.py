@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -7,6 +7,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.modules.intelligence.agents.chat_agent import ChatAgentResponse, ChatContext
 from app.modules.intelligence.agents.custom_agents.custom_agent_model import (
     CustomAgent as CustomAgentModel,
     CustomAgentShare as CustomAgentShareModel,
@@ -19,8 +20,9 @@ from app.modules.intelligence.agents.custom_agents.custom_agent_schema import (
     TaskCreate,
     AgentVisibility,
 )
+
 from app.modules.intelligence.agents.custom_agents.runtime_agent import (
-    RuntimeAgent,
+    RuntimeCustomAgent,
 )
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
@@ -33,9 +35,13 @@ logger = setup_logger(__name__)
 
 
 class CustomAgentService:
-    def __init__(self, db: Session):
+    def __init__(
+        self, db: Session, llm_provider: ProviderService, tool_service: ToolService
+    ):
         self.db = db
         self.secret_manager = SecretManager()
+        self.llm_provider = llm_provider
+        self.tool_service = tool_service
 
     async def _get_agent_by_id_and_user(
         self, agent_id: str, user_id: str
@@ -539,24 +545,21 @@ class CustomAgentService:
 
     async def execute_agent_runtime(
         self,
-        agent_id: str,
         user_id: str,
-        query: str,
-        node_ids: Optional[List[str]] = None,
-        project_id: Optional[str] = None,
-        project_name: Optional[str] = None,
-        conversation_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        ctx: ChatContext,
+        is_task: bool = False,
+    ) -> AsyncGenerator[ChatAgentResponse, None]:
         """Execute an agent at runtime without deployment"""
         logger.info(
-            f"Executing agent {agent_id} for user {user_id} with query: {query}"
+            f"Executing agent {ctx.curr_agent_id} for user {user_id} with query: {ctx.query}"
         )
 
         # First check if user is the owner
         agent_model = (
             self.db.query(CustomAgentModel)
             .filter(
-                CustomAgentModel.id == agent_id, CustomAgentModel.user_id == user_id
+                CustomAgentModel.id == ctx.curr_agent_id,
+                CustomAgentModel.user_id == user_id,
             )
             .first()
         )
@@ -564,51 +567,55 @@ class CustomAgentService:
         # If not owner, check if agent is public or shared with user
         if not agent_model:
             logger.info(
-                f"User {user_id} is not the owner of agent {agent_id}, checking visibility"
+                f"User {user_id} is not the owner of agent {ctx.curr_agent_id}, checking visibility"
             )
             agent_model = (
                 self.db.query(CustomAgentModel)
-                .filter(CustomAgentModel.id == agent_id)
+                .filter(CustomAgentModel.id == ctx.curr_agent_id)
                 .first()
             )
             if agent_model:
                 logger.info(
-                    f"Agent {agent_id} found, visibility: {agent_model.visibility}"
+                    f"Agent {ctx.curr_agent_id} found, visibility: {agent_model.visibility}"
                 )
                 # Check if agent is public
                 if agent_model.visibility == AgentVisibility.PUBLIC:
                     logger.info(
-                        f"Agent {agent_id} is public, accessible to user {user_id}"
+                        f"Agent {ctx.curr_agent_id} is public, accessible to user {user_id}"
                     )
                 # Check if agent is shared with this user
                 elif agent_model.visibility == AgentVisibility.SHARED:
                     logger.info(
-                        f"Agent {agent_id} is shared, checking if shared with user {user_id}"
+                        f"Agent {ctx.curr_agent_id} is shared, checking if shared with user {user_id}"
                     )
                     share = (
                         self.db.query(CustomAgentShareModel)
                         .filter(
-                            CustomAgentShareModel.agent_id == agent_id,
+                            CustomAgentShareModel.agent_id == ctx.curr_agent_id,
                             CustomAgentShareModel.shared_with_user_id == user_id,
                         )
                         .first()
                     )
                     if not share:
                         logger.info(
-                            f"Agent {agent_id} is not shared with user {user_id}"
+                            f"Agent {ctx.curr_agent_id} is not shared with user {user_id}"
                         )
                         raise HTTPException(status_code=404, detail="Agent not found")
-                    logger.info(f"Agent {agent_id} is shared with user {user_id}")
+                    logger.info(
+                        f"Agent {ctx.curr_agent_id} is shared with user {user_id}"
+                    )
                 else:
                     logger.info(
-                        f"Agent {agent_id} is private and user {user_id} is not the owner"
+                        f"Agent {ctx.curr_agent_id} is private and user {user_id} is not the owner"
                     )
                     raise HTTPException(status_code=404, detail="Agent not found")
             else:
-                logger.info(f"Agent {agent_id} not found")
+                logger.info(f"Agent {ctx.curr_agent_id} not found")
                 raise HTTPException(status_code=404, detail="Agent not found")
 
-        logger.info(f"Executing agent {agent_id} with role: {agent_model.role}")
+        logger.info(
+            f"Executing agent {ctx.curr_agent_id} with role: {agent_model.role}"
+        )
         agent_config = {
             "user_id": agent_model.user_id,
             "role": agent_model.role,
@@ -617,15 +624,14 @@ class CustomAgentService:
             "system_prompt": agent_model.system_prompt,
             "tasks": agent_model.tasks,
         }
-        runtime_agent = RuntimeAgent(self.db, agent_config)
+        runtime_agent = RuntimeCustomAgent(
+            self.llm_provider, self.tool_service, agent_config, is_task=is_task
+        )
         try:
-            result = await runtime_agent.run(
-                agent_id, query, project_id, project_name, conversation_id, node_ids
-            )
-            return {"message": result["response"]}
+            return runtime_agent.run_stream(ctx)
 
         except Exception as e:
-            logger.error(f"Error executing agent {agent_id}: {str(e)}")
+            logger.error(f"Error executing agent {ctx.curr_agent_id}: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
 
     async def create_agent_plan(

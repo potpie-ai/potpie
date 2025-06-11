@@ -13,6 +13,8 @@ from app.modules.intelligence.agents.custom_agents.custom_agent_schema import (
 from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
     CustomAgentService,
 )
+from app.modules.intelligence.provider.provider_service import ProviderService
+from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.users.user_service import UserService
 from app.modules.utils.logger import setup_logger
 
@@ -20,9 +22,11 @@ logger = setup_logger(__name__)
 
 
 class CustomAgentController:
-    def __init__(self, db: Session = Depends(get_db)):
+    def __init__(self, user_id: str, db: Session = Depends(get_db)):
         self.db = db
-        self.service = CustomAgentService(db)
+        provider_service = ProviderService(db, user_id)
+        tool_service = ToolService(db, user_id)
+        self.service = CustomAgentService(db, provider_service, tool_service)
         self.user_service = UserService(db)
 
     async def create_agent(self, user_id: str, agent_data: AgentCreate) -> Agent:
