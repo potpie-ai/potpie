@@ -138,6 +138,7 @@ class MainApp:
     def run(self):
         self.add_health_check()
         self.app.add_event_handler("startup", self.startup_event)
+        logging.info("Starting Potpie-pro app!!!")
         return self.app
 
 
