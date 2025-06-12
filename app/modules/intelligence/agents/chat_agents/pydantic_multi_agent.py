@@ -1,7 +1,7 @@
 from datetime import datetime
 import functools
 import re
-from typing import List, AsyncGenerator, Dict, Any, Optional, Literal
+from typing import List, AsyncGenerator, Optional
 from enum import Enum
 from pydantic_ai.usage import UsageLimits
 
@@ -14,7 +14,7 @@ from .tool_helpers import (
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
-from .crewai_agent import AgentConfig, TaskConfig
+from .crewai_agent import AgentConfig
 from app.modules.utils.logger import setup_logger
 
 from ..chat_agent import (
@@ -48,7 +48,7 @@ def handle_exception(tool_func):
             return tool_func(*args, **kwargs)
         except Exception as e:
             logger.error(f"Exception in tool function: {e}")
-            return f"An internal error occurred. Please try again later."
+            return "An internal error occurred. Please try again later."
 
     return wrapper
 
@@ -149,17 +149,17 @@ def create_system_prompt_for_role(
     base_prompt = f"""
         Role: {config.role}
         Goal: {config.goal}
-        Backstory: {config.backstory}     
-        
+        Backstory: {config.backstory}
+
         Project ID: {ctx.project_id}
         Node IDs: {" ,".join(ctx.node_ids)}
         Project Name (this is name from github. i.e. owner/repo): {ctx.project_name}
-        
-        
+
+
         TIPS TO HANDLE THE OVERALL CODEBASE TASKS: FOLLOW THE INSTRUCTIONS WHEREVER APPLICABLE
         {task_desc}
-        
-        
+
+
         You are part of a larger AI Workflow. Focus on your role ({role}) in answering user query or executing user task
         AI Workflow has many agents and follow the below ROUTE
         1. PLANNER AGENT
@@ -167,7 +167,7 @@ def create_system_prompt_for_role(
         3. VERIFIER AGENT
         4. FIXER AGENT (this agent's response is routed to verifier)
         5. FINALIZER (Once all requirements are verified)
-        
+
         IMPORTANT: Consider the ROUTE above and avoid unnecessary computation, keep your answers concise and DONT STRAY AWAY FROM YOUR ROLE
         """
 
@@ -186,10 +186,10 @@ def create_prompt_for_role(role: AgentRole, state: MultiAgentState, query: str) 
     """Create a role-specific prompt based on the current state, with loop awareness"""
 
     base_prompt = f"""
-    
+
     Full Problem statement:
     {query}
-    
+
     Current State:
     - Iterations: {state.iterations}
     """
@@ -227,19 +227,19 @@ def create_prompt_for_role(role: AgentRole, state: MultiAgentState, query: str) 
             + f"""
         The overall plan to execute is:
         {state.plan}
-        
+
         Steps Status:
         {steps_status}
-        
+
         Your role is to execute ONE SPECIFIC STEP of the plan methodically.
-        
+
         CURRENT STEP TO EXECUTE: {current_step.description if current_step else "No step defined yet"}
-        
+
         {loop_context}
-        
+
         Execute ONLY this specific step. Show your detailed work for this step only.
         If you encounter issues with this step, try to overcome them and note what adjustments were needed.
-        
+
         IMPORTANT:
         1. Focus ONLY on executing the CURRENT step above - do not try to execute other steps
         2. Use the tools at your disposal to assist with the execution
@@ -248,17 +248,17 @@ def create_prompt_for_role(role: AgentRole, state: MultiAgentState, query: str) 
         5. Show all your work in detail for this step
         6. Use Knowledge graph tools to explore codebase and all the code relations in the project. Maintain node_ids and summary in the CURRENT CONTEXT DATA
         7. Use CURRENT CONTEXT DATA from previous step to access relevant data in the project, build CURRENT CONTEXT DATA and update it in current iteration
-        8. Reuse existing helpers in the project, explore the project and helper files and reuse the helpers and already existing functions/classes etc 
+        8. Reuse existing helpers in the project, explore the project and helper files and reuse the helpers and already existing functions/classes etc
         9. USE CONTEXT DATA FROM PREVIOUS EXECUTION STEP, DO NOT FETCH DATA UNNECESSARILY, REUSE DATA FROM PREVIOUS CURRENT CONTEXT DATA
         10. Include code snippets, line numbers, node_ids, file references and how to access them for next steps to use. This is IMPORTANT.
-                       
+
         Previous execution results that might be helpful context:
         {[f'''
-        
+
         {result}
-        
+
         ''' for result in (state.execution_results[-2:] if len(state.execution_results) > 1 else state.execution_results)]}
-        
+
         Format your response:
         1. Start with a brief explanation of what you will do for this step
         2. Then provide the detailed implementation/solution for this step only
@@ -266,9 +266,9 @@ def create_prompt_for_role(role: AgentRole, state: MultiAgentState, query: str) 
         4. Provider a section (CURRENT CONTEXT DATA:), Update it from previous execution if any. Provide references and important results like code snippets, line numbers, node_ids, file references and how to access them for next steps to use. This is IMPORTANT.
             Just add whatever data was used in current iteration of execution step to the CURRENT CONTEXT DATA, don't go and fetch data unnecessarily, reuse data from previous CURRENT CONTEXT DATA
         5. Include key necessary CURRENT CONTEXT DATA from previous execution section aswell when generating it. Make sure you mention info in the repo and info in file changes (FileChangesManager) seperately
-        
+
         IF you need to generate a patch diff, use the GeneratePatchDiff Tool to create it, don't send too many lines when changes are small. Keep adequate amount of context lines in the patch diff.
-        
+
         IMPORTANT: Include CURRENT CONTEXT DATA in your response. CURRENT CONTEXT DATA should also carry all the relevant information from previous execution, Include the execution result also at the end of the current context data (basically attach the current progress of the update)
         IMPORTANT: Use nodes from knowledge graph tools extensively to understand what a piece of class/function etc really does, you can use GetCodeanddocstringFromProbableNodeName to fetch this data, use this recursively if needed
         IMPORTANT: When implementing solution and refactoring it etc explain key decisions and any information for reason changes in CURRENT CONTEXT DATA were done a perticular way so that the VERIFIER in next steps can understand the reasoning and not undo the made changes
@@ -282,7 +282,7 @@ def create_prompt_for_role(role: AgentRole, state: MultiAgentState, query: str) 
             base_prompt
             + """
             Your role is to create a detailed plan to accomplish the task.
-            
+
             Understand the task, use tools at your disposal to gather initial information regarding the task and then start with the plan
             Break down the task into clear steps that can be executed systematically.
             Consider edge cases and potential challenges in your plan. Don't go deep into execution.
@@ -291,7 +291,7 @@ def create_prompt_for_role(role: AgentRole, state: MultiAgentState, query: str) 
             If the user has explicitly mentioned steps include them in the list.
             Plan shouldn't be very strict, this is a overview multi step plan so that we can implement the solution in stages
             Keep room for exploration of codebase, understanding the context better, searching alternatives and verifying and comparing solutions
-            
+
             IMPORTANT: Always follow the PLANNING GUIDELINES provided. Make sure the task analysis is done deeply with exploration of codebase and tool calls
             before start with the plan and requirements
 
@@ -300,7 +300,7 @@ def create_prompt_for_role(role: AgentRole, state: MultiAgentState, query: str) 
             the output against requirements one by one. List of requirements should be EXHAUSTIVE and cover all aspects of the task.
             Include all the output formatting and do and don'ts in the user task as part of the requirements to verify later.
             Each requirement can span a few sentence but should be a single line (single point in the list)
-            
+
             IMPORTANT: All you requirements should be summarized within 4 points. 4 is max no. of requirements. Group similar requirements
             in the same line in same point (don't create sub-lists / sub points)
 
@@ -308,23 +308,23 @@ def create_prompt_for_role(role: AgentRole, state: MultiAgentState, query: str) 
             The verifier agent's response for EACH requirement will start STRICTLY with 'VERIFIED: YES' or 'VERIFIED: NO',
             followed by specific feedback SOLELY about that single requirement. Your requirements should be specific
             enough to allow for this clear YES/NO verification per requirement.
-            
+
             IMPORTANT: DO NOT have sub requirements or sub-steps in the requirements list.
             It can be few sentences long, but should not contain sub list. Make each point as clear and explicit as possible.
-            
+
             IMPORTANT: YOUR PLAN MUST BE IN A CLEAR NUMBERED LIST FORMAT. Each step will be executed one at a time. Each step will be prefixed with a number, Nudge the plan to use knowledge graphs and nodes effectively to explore the codebase and maintain node_ids for reference
-            
+
             LOOPING STEPS:
             You can now designate certain steps to be executed multiple times in a loop by adding [LOOP:N] to the step description,
             where N is the number of times to repeat the step. This is useful for exploring multiple solutions or approaches.
             Example: "3. [LOOP:3] Implement different sorting algorithms to compare performance"
             This will cause the step to be executed 3 times, with results from each iteration preserved.
-            
+
             Use loop steps when:
             1. You want to explore multiple alternative approaches to a problem
             2. You want to compare different implementations or algorithms
             3. You need to iteratively refine a solution through multiple attempts
-            
+
             Example output:
 --------------
             # Task Analysis
@@ -341,7 +341,7 @@ Before diving into a plan for creating a user registration API endpoint, let's u
 
 # Key Requirements
 
-1. Fixes the string, make sure the class implements toString(), print Methods, 
+1. Fixes the string, make sure the class implements toString(), print Methods,
 
 2. The API must validate user input including: email in proper format (e.g., user@domain.com), password minimum 8 characters with at least one uppercase letter, one lowercase letter, one number, and one special character.
 
@@ -356,7 +356,7 @@ Before diving into a plan for creating a user registration API endpoint, let's u
     IMPORTANT: EXPLORE THE PROBLEM AND OUTPUT THE PLAN AND KEY REQUIREMENTS. DO NOT SOLVE THE PROBLEM. CLUB SIMILAR REQUIREMENTS TOGETHER, DON"T CREATE TOO MANY UNNECCESSARY REQUIREMENTS. DO NOT HAVE SUB-POINTS IN THE REQUIREMENTS (IT WON"T BE PARSED PROPERLY).
     IMPORTANT: Last step in the plan has to output the final result expected by the user task
     IMPORTANT: Make sure the plan is fairly general and not too specific, it should be a high level plan that can be executed in multiple steps. DO NOT assume too much about the implementation details, focus on the overall task and how to achieve it in steps.
-    
+
     IMPORTANT: In Key Requirements include formating requirements, validations and check if any point from plan was missed.
             """
         )
@@ -369,31 +369,31 @@ Before diving into a plan for creating a user registration API endpoint, let's u
             + f"""
         The original plan was:
         {state.plan}
-        
+
         Requirements Status:
         {_format_requirements_status(state)}
-        
+
         The last few execution results are (older to latest):
         {[f'''
-        
+
         {result}
-        
+
         ''' for result in (state.execution_results[-2:] if len(state.execution_results) > 1 else state.execution_results)]}
         This above result is the current state of the code and the output of the last execution
-        
+
         Your role is to FIX a SPECIFIC ISSUE that was identified during verification.
-        
+
         CURRENT REQUIREMENT WITH ISSUE: {state.requirements[state.current_requirement_index].description}
-        
+
         Verification feedback on this requirement:
         {state.verification_results}
         {"" if state.verification_results == "" else "IMPORTANT: Fix the above issue from the verification feedback. This is the main cause for failure"}
-        
+
         IMPORTANT INSTRUCTIONS:
         1. Focus ONLY on fixing the SPECIFIC issue mentioned in the verification feedback
         2. Use any tool calls necessary to fix the issue or asked in the verification feedback
-        3. Reuse existing helpers in the project, explore the project and helper files and reuse the helpers and already existing functions/classes etc 
-        
+        3. Reuse existing helpers in the project, explore the project and helper files and reuse the helpers and already existing functions/classes etc
+
         Format your response:
         1. Start with a brief explanation of what needs to be fixed
         2. Then provide the fixed implementation/solution or All the tool calls and responses/results
@@ -402,16 +402,16 @@ Before diving into a plan for creating a user registration API endpoint, let's u
         4. Provider a section (CURRENT CONTEXT DATA:), Update it from previous execution if any. Provide references and important results like code snippets, line numbers, node_ids, file references and how to access them for next steps to use. This is IMPORTANT.
             Just add whatever data was used in current iteration of execution step to the CURRENT CONTEXT DATA, don't go and fetch data unnecessarily, reuse data from previous CURRENT CONTEXT DATA
         5. Include key necessary CURRENT CONTEXT DATA from previous execution section aswell when generating it. Make sure you mention info in the repo and info in file changes (FileChangesManager) seperately
-        
-        
+
+
         IMPORTANT:
         Use the tools at your disposal to assist with the execution.
         You are supposed to have full understanding of the codebase and the task. Exhaustively explore the codebase and the task to get the best results.
         This step is critical for the overall success of the task so make sure to do it thoroughly and take your time.
         Fetch the code and all the related context from the codebase.
-        
+
         IF you need to generate a patch diff, use the GeneratePatchDiff Tool to create it, don't send too many lines when changes are small. Keep adequate context in the patch diff.
-        
+
         IMPORTANT: Make sure the fix doesn't violate one of the previous requirements, ALWAYS RESPOND WITH THE FIXED RESULT AFTER FIXING
         IMPORTANT: Include CURRENT CONTEXT DATA in your response. CURRENT CONTEXT DATA should also carry all the relevant information from previous execution, Include the execution result also at the end of the current context data (basically attach the current progress of the update)
         """
@@ -422,55 +422,55 @@ Before diving into a plan for creating a user registration API endpoint, let's u
         current_req = state.requirements[state.current_requirement_index]
         return (
             base_prompt
-            + f"""    
-            
+            + f"""
+
             {"The fixer results for the current requirement are:" if state.fixer_results else ""}
             {state.fixer_results if state.fixer_results else ""}
-            
+
             Requirements Status:
             {_format_requirements_status(state)}
-            
+
             The last few execution results are (older to latest):
             {[f'''
-        
+
             {result}
-        
+
         ''' for result in (state.execution_results[-2:] if len(state.execution_results) > 1 else state.execution_results)]}
             This above result is the current state of the code and the output of the last execution
-            
+
             Your role is to verify if the {"execution" if not state.fixer_results else "fixer"} successfully completed the CURRENT requirement:
-            
+
             CURRENT REQUIREMENT: {current_req.description}
-            
+
             Check thoroughly if this specific requirement was met in the {"execution" if not state.fixer_results else "fixer"} results.
             Check user task/query for examples and further instructions regarding this requirement.
-            
+
             IMPORTANT: Your response format is critical. You MUST strictly follow this format:
             1. Verify if the current requirement is met
             2. Provide specific reasoning for your verification decision
             3. Respond with "VERIFIED: YES" or "VERIFIED: NO", this has to a part of your response (make sure it's the exact string)
             4. Focus ONLY on the current requirement - do not try to verify other requirements
-            
+
             Examples of proper verification responses:
-            
+
             Checking endpoints, finding api documentation...
             VERIFIED: YES
             The requirement was successfully implemented because the code contains a proper RESTful API endpoint for user registration at '/api/users' which accepts POST requests with username, email, and password fields.
-            
+
             OR
-            
+
             Checking endpoints, finding api documentation...
             VERIFIED: NO
             This requirement is not met because the email validation is missing. The current implementation only checks if an email is present but doesn't validate its format. The code needs to include email format validation using a regex pattern or validation library.
-            
+
             IMPORTANT: Respond with "VERIFIED: YES" or "VERIFIED: NO", this perticular string has to part of your response. DO NOT TRY TO FIX THE PROBLEM, ONLY DO YOUR ROLE. FIXING PART WILL BE TAKEN CARE OF BY FIXER AGENT
             IMPORTANT: If fixer has changed anything make sure it still satisfies all the previously verified requirements. We Don't want fixer to cause changes that impact previous requirements
-            
+
             IMPORTANT: Never change the result after it has been verified as "VERIFIED: YES". Output the result as it is, Make sure to return the exact verified result
-            
+
             IMPORTANT: If current requirement is one of the core requirements and you need to validate if it is correct, only flag "VERIFIED: NO" when you are absolutely sure there is some issue
             some of the fixes are hard to validate and so you might get confused. DO NOT fail the the core issue fix, only fail for minor fixes and validation changes etc. If you think the verification is complex or you don't understand how the fix solves the problem respond with "VERIFIED: YES" (IMPORTANT)
-            
+
             """
         )
 
@@ -481,23 +481,23 @@ Before diving into a plan for creating a user registration API endpoint, let's u
             + f"""
         The plan was:
         {state.plan}
-        
+
         Steps Status:
         {_format_steps_status(state)}
-        
+
         The execution result from the last step is:
         {state.execution_results[-1]}
-        
+
         Requirements Status:
         {_format_requirements_status(state)}
-        
+
         Your role is to produce the final output based on the execution results.
         Synthesize the information into a coherent, well-structured response.
         Format your response appropriately (markdown for text, proper code blocks for code, etc.)
-        
+
         IMPORTANT: If the final output is a patch diff, make sure you don't change any information in the patch.
         Copy the patch as it is.
-        
+
         """
         )
 
@@ -606,10 +606,10 @@ def extract_requirements(plan_text: str) -> List[Requirement]:
 
     clean_reqs.append(
         Requirement(
-            description="""In this step you HAVE to Use VerifyDiffTool (IMPORTANT) to make the result pass through for all the files in the hunk, 
+            description="""In this step you HAVE to Use VerifyDiffTool (IMPORTANT) to make the result pass through for all the files in the hunk,
             Run this tool again even if it has been previously run in the history. Current step is only verified once the diff passes through VerifyDiffTool and returns valid = True in current step (IMPORTANT)
-            Tool HAS to be used don't assume it will pass through, The result HAS to pass the VerifyDiffTool test with valid = True. 
-            Fix any issues that arise from the test using FileChangesManager tools and generate diffs. 
+            Tool HAS to be used don't assume it will pass through, The result HAS to pass the VerifyDiffTool test with valid = True.
+            Fix any issues that arise from the test using FileChangesManager tools and generate diffs.
             Make sure the final diff is exactly the one that was verified. Verify diff at the end everytime before responding as verified
             Respond with the exact final result that was verified at the end. Stop here (you can't edit the result anymore)""",
         )
@@ -725,11 +725,9 @@ class PydanticMultiAgent(ChatAgent):
             for tool in tools
         ]
 
-        # Create the provider model
-        self.model = llm_provider.get_pydantic_model()
-        self.advanced_model = llm_provider.get_pydantic_model(
-            "anthropic", "claude-sonnet-4-20250514"
-        )
+        # Create the provider model: HARDCODE TO GPT-4.1 FOR NOW
+        self.model = llm_provider.get_pydantic_model("openai", "gpt-4.1")
+        self.advanced_model = self.model
 
         # Create individual agents for each role
         self.agents = {}
@@ -1064,7 +1062,7 @@ class PydanticMultiAgent(ChatAgent):
                 # Yield transition message based on role and state
                 if current_role == AgentRole.PLANNER:
                     yield ChatAgentResponse(
-                        response=f"\n\n--- Starting planning phase... ---\n\n",
+                        response="\n\n--- Starting planning phase... ---\n\n",
                         tool_calls=[],
                         citations=[],
                     )

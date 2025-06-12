@@ -106,7 +106,7 @@ class ConversationService:
         agent_service = AgentsService(
             db, provider_service, prompt_service, tool_service
         )
-        custom_agent_service = CustomAgentService(db)
+        custom_agent_service = CustomAgentService(db, provider_service, tool_service)
         return cls(
             db,
             user_id,
@@ -304,14 +304,22 @@ class ConversationService:
 
                 if stream:
                     async for chunk in self._generate_and_stream_ai_response(
-                        message.content, conversation_id, user_id, message.node_ids
+                        message.content,
+                        conversation_id,
+                        user_id,
+                        message.node_ids,
+                        is_task=message.is_task,
                     ):
                         yield chunk
                 else:
                     full_message = ""
                     all_citations = []
                     async for chunk in self._generate_and_stream_ai_response(
-                        message.content, conversation_id, user_id, message.node_ids
+                        message.content,
+                        conversation_id,
+                        user_id,
+                        message.node_ids,
+                        is_task=message.is_task,
                     ):
                         full_message += chunk.message
                         all_citations = all_citations + chunk.citations
@@ -503,6 +511,7 @@ class ConversationService:
         conversation_id: str,
         user_id: str,
         node_ids: List[NodeContext],
+        is_task: bool = False,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         conversation = (
             self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
@@ -539,20 +548,38 @@ class ConversationService:
             )
 
             if type == "CUSTOM_AGENT":
-                # Custom agent doesn't support streaming, so we'll yield the entire response at once
-                response = (
+
+                res = (
                     await self.agent_service.custom_agent_service.execute_agent_runtime(
-                        agent_id,
                         user_id,
-                        query,
-                        node_ids,
-                        project_id,
-                        project_name,
-                        conversation.id,
+                        ChatContext(
+                            project_id=str(project_id),
+                            project_name=project_name,
+                            curr_agent_id=str(agent_id),
+                            history=validated_history[-8:],
+                            node_ids=[node.node_id for node in node_ids],
+                            query=query,
+                        ),
+                        is_task=is_task,
                     )
                 )
-                yield ChatMessageResponse(
-                    message=response["message"], citations=[], tool_calls=[]
+                async for chunk in res:
+                    self.history_manager.add_message_chunk(
+                        conversation_id,
+                        chunk.response,
+                        MessageType.AI_GENERATED,
+                        citations=chunk.citations,
+                    )
+                    yield ChatMessageResponse(
+                        message=chunk.response,
+                        citations=chunk.citations,
+                        tool_calls=[
+                            tool_call.model_dump_json()
+                            for tool_call in chunk.tool_calls
+                        ],
+                    )
+                self.history_manager.flush_message_buffer(
+                    conversation_id, MessageType.AI_GENERATED
                 )
             else:
                 res = self.agent_service.execute_stream(

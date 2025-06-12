@@ -31,7 +31,7 @@ async def create_custom_agent(
 ):
     """Create a new custom agent"""
     user_id = user["user_id"]
-    custom_agent_controller = CustomAgentController(db)
+    custom_agent_controller = CustomAgentController(user_id, db)
     try:
         return await custom_agent_controller.create_agent(
             user_id=user_id,
@@ -52,7 +52,7 @@ async def share_agent(
 ):
     """Share an agent with another user or change its visibility"""
     user_id = user["user_id"]
-    custom_agent_controller = CustomAgentController(db)
+    custom_agent_controller = CustomAgentController(user_id, db)
     try:
         return await custom_agent_controller.manage_agent_sharing(
             agent_id=request.agent_id,
@@ -75,7 +75,7 @@ async def revoke_agent_access(
 ):
     """Revoke a specific user's access to an agent"""
     user_id = user["user_id"]
-    custom_agent_controller = CustomAgentController(db)
+    custom_agent_controller = CustomAgentController(user_id, db)
     try:
         return await custom_agent_controller.revoke_agent_access(
             agent_id=request.agent_id,
@@ -97,7 +97,7 @@ async def list_agents(
 ):
     """List all agents accessible to the user including public and shared agents"""
     user_id = user["user_id"]
-    custom_agent_controller = CustomAgentController(db)
+    custom_agent_controller = CustomAgentController(user_id, db)
     try:
         return await custom_agent_controller.list_agents(
             user_id=user_id,
@@ -118,7 +118,8 @@ async def delete_custom_agent(
     user=Depends(auth_handler.check_auth),
 ):
     """Delete a custom agent"""
-    custom_agent_controller = CustomAgentController(db)
+    user_id = user["user_id"]
+    custom_agent_controller = CustomAgentController(user_id, db)
     try:
         return await custom_agent_controller.delete_agent(agent_id, user["user_id"])
     except ValueError as ve:
@@ -136,7 +137,8 @@ async def update_custom_agent(
     user=Depends(auth_handler.check_auth),
 ):
     """Update a custom agent"""
-    custom_agent_controller = CustomAgentController(db)
+    user_id = user["user_id"]
+    custom_agent_controller = CustomAgentController(user_id, db)
     try:
         return await custom_agent_controller.update_agent(
             agent_id, user["user_id"], request
@@ -156,7 +158,8 @@ async def get_custom_agent_info(
 ):
     """Get information about a specific custom agent"""
     logger.info(f"Getting custom agent info for agent_id: {agent_id}")
-    custom_agent_controller = CustomAgentController(db)
+    user_id = user["user_id"]
+    custom_agent_controller = CustomAgentController(user_id, db)
     try:
         return await custom_agent_controller.get_agent(agent_id, user["user_id"])
     except ValueError as ve:
@@ -174,7 +177,8 @@ async def get_agent_shares(
 ):
     """Get a list of all emails this agent has been shared with"""
     logger.info(f"Getting shares for agent_id: {agent_id}")
-    custom_agent_controller = CustomAgentController(db)
+    user_id = user["user_id"]
+    custom_agent_controller = CustomAgentController(user_id, db)
     try:
         shared_emails = await custom_agent_controller.list_agent_shares(
             agent_id, user["user_id"]
@@ -196,7 +200,8 @@ async def create_agent_from_prompt(
     user=Depends(auth_handler.check_auth),
 ):
     """Create a custom agent from a natural language prompt"""
-    custom_agent_controller = CustomAgentController(db)
+    user_id = user["user_id"]
+    custom_agent_controller = CustomAgentController(user_id, db)
     try:
         return await custom_agent_controller.create_agent_from_prompt(
             prompt=request.prompt,

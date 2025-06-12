@@ -57,7 +57,11 @@ class AgentsService:
             llm_provider, prompt_provider, tools_provider
         )
         self.supervisor_agent = SupervisorAgent(llm_provider, self.system_agents)
-        self.custom_agent_service = CustomAgentService(self.db)
+        self.llm_provider = llm_provider
+        self.tools_provider = tools_provider
+        self.custom_agent_service = CustomAgentService(
+            self.db, llm_provider, tools_provider
+        )
 
     def _system_agents(
         self,
@@ -151,9 +155,9 @@ class AgentsService:
         ]
 
         try:
-            custom_agents = await CustomAgentService(self.db).list_agents(
-                current_user["user_id"]
-            )
+            custom_agents = await CustomAgentService(
+                self.db, self.llm_provider, self.tools_provider
+            ).list_agents(current_user["user_id"])
         except Exception as e:
             logger.error(
                 f"Failed to fetch custom agents for user {current_user['user_id']}: {e}"
