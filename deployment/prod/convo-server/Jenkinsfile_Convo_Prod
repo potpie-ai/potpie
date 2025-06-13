@@ -83,7 +83,7 @@ pipeline {
                         sudo docker build \
                             --build-arg GIT_COMMIT_HASH=${imageTag} \
                             --no-cache \
-                            -f deployment/prod/convo-server/api.Dockerfile \
+                            -f deployment/prod/convo-server/convo.Dockerfile \
                             -t ${DOCKER_REGISTRY}/convo:${imageTag} \
                             ${env.WORKSPACE}
                     """
