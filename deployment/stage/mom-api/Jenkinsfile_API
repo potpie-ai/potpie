@@ -38,6 +38,19 @@ pipeline {
                     echo "Building for branch: ${branch}"
                     echo "Commit hash: ${env.GIT_COMMIT_HASH}"
                     echo "Full commit: ${env.GIT_COMMIT_FULL}"
+                    echo "Current workspace: ${env.WORKSPACE}"
+                    
+                    // Debug: Show git status and recent commits
+                    sh """
+                        echo "=== Git Status ==="
+                        git status
+                        echo "=== Recent Commits ==="
+                        git log --oneline -5
+                        echo "=== Current Branch ==="
+                        git branch -a
+                        echo "=== Remote URL ==="
+                        git remote -v
+                    """
                 }
             }
         }
@@ -62,14 +75,18 @@ pipeline {
                     echo "Building Docker image with tag: ${imageTag}"
                     echo "Docker registry: ${dockerRegistry}"
 
-                    // Add --no-cache flag to ensure fresh build if needed
+                    echo "Current workspace: ${env.WORKSPACE}"
+                    echo "Current directory contents:"
+                    sh "ls -la"
+                    
+                    // Use current workspace instead of hardcoded path
                     sh """
                         sudo docker build \
                             --build-arg GIT_COMMIT_HASH=${imageTag} \
                             --no-cache \
                             -f deployment/stage/mom-api/api.Dockerfile \
                             -t ${DOCKER_REGISTRY}/mom-api:${imageTag} \
-                            /var/lib/jenkins/workspace/mom_api-pipeline
+                            ${env.WORKSPACE}
                     """
                 }
             }
