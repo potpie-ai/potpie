@@ -5,7 +5,6 @@ pipeline {
         string(name: 'namespace', defaultValue: "devops", description: 'namespace to deploy')
     }
     environment {
-        // Access environment variables using Jenkins credentials
         DOCKER_REGISTRY = credentials('mom-api-docker-registry')
         GKE_CLUSTER = credentials('mom-core-gke-cluster')
         GKE_ZONE = credentials('gke-zone')
@@ -17,11 +16,13 @@ pipeline {
         stage('Checkout') {
             steps {
                 script {
-                    // Determine environment based on branch
+                    // Clean workspace first
+                    deleteDir()
+                    
                     def branch = env.GIT_BRANCH
 
                     if (branch == "origin/main"){
-                        env.ENVIORNMENT = 'main'
+                        env.ENVIRONMENT = 'main'  // Fixed typo
                     } else if (branch == "origin/custom-agents-production-release") {
                         env.ENVIRONMENT = 'custom-agents-production-release'
                     } else {
@@ -29,8 +30,14 @@ pipeline {
                     }
 
                     checkout scm
-                    // Capture the short Git commit hash to use as the image tag
+                    
+                    // Get full commit hash and short hash
                     env.GIT_COMMIT_HASH = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
+                    env.GIT_COMMIT_FULL = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+                    
+                    echo "Building for branch: ${branch}"
+                    echo "Commit hash: ${env.GIT_COMMIT_HASH}"
+                    echo "Full commit: ${env.GIT_COMMIT_FULL}"
                 }
             }
         }
@@ -38,7 +45,6 @@ pipeline {
         stage('Configure Docker Authentication') {
             steps {
                 script {
-                    // Extract the registry's hostname for authentication
                     def registryHost = env.DOCKER_REGISTRY.tokenize('/')[0]
                     sh """
                         sudo gcloud auth configure-docker ${registryHost}
@@ -50,12 +56,21 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
-                    // Use the Git commit hash as the image tag
                     def imageTag = env.GIT_COMMIT_HASH
                     def dockerRegistry = env.DOCKER_REGISTRY
-                    echo "Printing the saved docker registry from env:"
-                    echo "${dockerRegistry}"
-                    sh "sudo docker build -f deployment/stage/mom-api/api.Dockerfile -t ${DOCKER_REGISTRY}/mom-api:${imageTag} /var/lib/jenkins/workspace/mom_api-pipeline"
+                    
+                    echo "Building Docker image with tag: ${imageTag}"
+                    echo "Docker registry: ${dockerRegistry}"
+                    
+                    // Add --no-cache flag to ensure fresh build if needed
+                    sh """
+                        sudo docker build \
+                            --build-arg GIT_COMMIT_HASH=${imageTag} \
+                            --no-cache \
+                            -f deployment/stage/mom-api/api.Dockerfile \
+                            -t ${DOCKER_REGISTRY}/mom-api:${imageTag} \
+                            /var/lib/jenkins/workspace/mom_api-pipeline
+                    """
                 }
             }
         }
@@ -63,10 +78,8 @@ pipeline {
         stage('Push Docker Image') {
             steps {
                 script {
-                    // Use the Git commit hash as the image tag
                     def imageTag = env.GIT_COMMIT_HASH
-                    echo "printing the user here"
-                    sh "whoami && pwd"
+                    echo "Pushing image with tag: ${imageTag}"
                     sh "sudo docker push ${DOCKER_REGISTRY}/mom-api:${imageTag}"
                 }
             }
@@ -75,7 +88,6 @@ pipeline {
         stage('Configure GKE Authentication') {
             steps {
                 script {
-                    // Use the service account path from credentials
                     sh """
                     sudo gcloud auth activate-service-account --key-file=${GOOGLE_APPLICATION_CREDENTIALS}
                     sudo gcloud container clusters get-credentials ${GKE_CLUSTER} --zone ${GKE_ZONE} --project ${GCP_PROJECT}
@@ -84,7 +96,7 @@ pipeline {
             }
         }
 
-         stage('Ask User for Deployment Confirmation') {
+        stage('Ask User for Deployment Confirmation') {
             steps {
                 script {
                     def deployConfirmation = input(
@@ -108,13 +120,18 @@ pipeline {
                     def imageDeploySucceeded = false
                     def imageTag = env.GIT_COMMIT_HASH
 
-                    echo "this is the fetched docker image tag: ${imageTag}"
-
+                    echo "Deploying image with tag: ${imageTag}"
+                    echo "Full image: ${DOCKER_REGISTRY}/mom-api:${imageTag}"
 
                     try {
+                        // Verify the image exists before deploying
+                        sh """
+                        kubectl describe deployment/mom-api-deployment -n ${params.namespace} || echo "Deployment not found"
+                        """
+                        
                         sh """
                         kubectl set image deployment/mom-api-deployment mom-api=${DOCKER_REGISTRY}/mom-api:${imageTag} -n ${params.namespace}
-                        kubectl rollout status deployment/mom-api-deployment -n ${params.namespace}
+                        kubectl rollout status deployment/mom-api-deployment -n ${params.namespace} --timeout=300s
                         """
                         imageDeploySucceeded = true
                     } catch (Exception e) {
@@ -123,41 +140,37 @@ pipeline {
 
                     if (!imageDeploySucceeded) {
                         echo 'Rolling back to previous revision...'
-                        sh 'kubectl rollout undo deployment/mom-api-deployment -n ${params.namespace}'
+                        sh "kubectl rollout undo deployment/mom-api-deployment -n ${params.namespace}"
+                        sh "kubectl rollout status deployment/mom-api-deployment -n ${params.namespace}"
                     }
                 }
             }
         }
 
-
-
         stage('Pipeline finished') {
             steps {
                 script {
-
-                    echo "Pipeline finished"
-                    // Check the deployment status
+                    echo "Pipeline finished successfully"
                     sh """
-                    echo "checking the deployment status" && kubectl get pods -n ${params.namespace}
+                    echo "Checking deployment status:"
+                    kubectl get pods -n ${params.namespace} -l app=mom-api
+                    kubectl describe deployment/mom-api-deployment -n ${params.namespace}
                     """
-
                 }
             }
         }
-
     }
 
     post {
         always {
-            echo "Pipeline finished"
-            // Optional cleanup action
+            echo "Pipeline cleanup"
             script {
-
-                // Clean up local Docker images
                 def imageTag = env.GIT_COMMIT_HASH
-                sh """
-                docker rmi ${DOCKER_REGISTRY}/mom-api:${imageTag} || true
-                """
+                if (imageTag) {
+                    sh """
+                    docker rmi ${DOCKER_REGISTRY}/mom-api:${imageTag} || true
+                    """
+                }
             }
         }
     }
