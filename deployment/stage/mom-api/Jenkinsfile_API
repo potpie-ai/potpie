@@ -39,7 +39,7 @@ pipeline {
                     echo "Commit hash: ${env.GIT_COMMIT_HASH}"
                     echo "Full commit: ${env.GIT_COMMIT_FULL}"
                     echo "Current workspace: ${env.WORKSPACE}"
-                    
+
                     // Debug: Show git status and recent commits
                     sh """
                         echo "=== Git Status ==="
@@ -78,7 +78,7 @@ pipeline {
                     echo "Current workspace: ${env.WORKSPACE}"
                     echo "Current directory contents:"
                     sh "ls -la"
-                    
+
                     // Use current workspace instead of hardcoded path
                     sh """
                         sudo docker build \

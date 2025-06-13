@@ -17,20 +17,42 @@ pipeline {
         stage('Checkout') {
             steps {
                 script {
+                    // Clean workspace first
+                    deleteDir()
+
                     // Determine environment based on branch
                     def branch = env.GIT_BRANCH
 
                     if (branch == "origin/dir-restruct") {
                         env.ENVIRONMENT = 'dir-restruct'
                     } else if (branch == "origin/main"){
-                        env.ENVIORNMENT = 'main'
+                        env.ENVIRONMENT = 'main'  // Fixed typo: ENVIORNMENT → ENVIRONMENT
                     } else {
                         error("Unknown branch: ${branch}. This pipeline only supports main and staging branches.")
                     }
 
                     checkout scm
+
                     // Capture the short Git commit hash to use as the image tag
                     env.GIT_COMMIT_HASH = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
+                    env.GIT_COMMIT_FULL = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+
+                    echo "Building for branch: ${branch}"
+                    echo "Commit hash: ${env.GIT_COMMIT_HASH}"
+                    echo "Full commit: ${env.GIT_COMMIT_FULL}"
+                    echo "Current workspace: ${env.WORKSPACE}"
+
+                    // Debug: Show git status and recent commits
+                    sh """
+                        echo "=== Git Status ==="
+                        git status
+                        echo "=== Recent Commits ==="
+                        git log --oneline -5
+                        echo "=== Current Branch ==="
+                        git branch -a
+                        echo "=== Remote URL ==="
+                        git remote -v
+                    """
                 }
             }
         }
@@ -53,9 +75,22 @@ pipeline {
                     // Use the Git commit hash as the image tag
                     def imageTag = env.GIT_COMMIT_HASH
                     def dockerRegistry = env.DOCKER_REGISTRY
-                    echo "Printing the saved docker registry from env:"
-                    echo "${dockerRegistry}"
-                    sh "sudo docker build -f deployment/prod/celery/celery.Dockerfile -t ${DOCKER_REGISTRY}/celery-api:${imageTag} /var/lib/jenkins/workspace/celery_flower-pipeline"
+
+                    echo "Building Docker image with tag: ${imageTag}"
+                    echo "Docker registry: ${dockerRegistry}"
+                    echo "Current workspace: ${env.WORKSPACE}"
+                    echo "Current directory contents:"
+                    sh "ls -la"
+
+                    // Use current workspace instead of hardcoded path
+                    sh """
+                        sudo docker build \
+                            --build-arg GIT_COMMIT_HASH=${imageTag} \
+                            --no-cache \
+                            -f deployment/prod/celery/celery.Dockerfile \
+                            -t ${DOCKER_REGISTRY}/celery-api:${imageTag} \
+                            ${env.WORKSPACE}
+                    """
                 }
             }
         }
@@ -65,7 +100,7 @@ pipeline {
                 script {
                     // Use the Git commit hash as the image tag
                     def imageTag = env.GIT_COMMIT_HASH
-                    echo "printing the user here"
+                    echo "Pushing image with tag: ${imageTag}"
                     sh "whoami && pwd"
                     sh "sudo docker push ${DOCKER_REGISTRY}/celery-api:${imageTag}"
                 }
@@ -84,7 +119,7 @@ pipeline {
             }
         }
 
-         stage('Ask User for Deployment Confirmation') {
+        stage('Ask User for Deployment Confirmation') {
             steps {
                 script {
                     def deployConfirmation = input(
@@ -108,13 +143,18 @@ pipeline {
                     def imageDeploySucceeded = false
                     def imageTag = env.GIT_COMMIT_HASH
 
-                    echo "this is the fetched docker image tag: ${imageTag}"
-
+                    echo "Deploying image with tag: ${imageTag}"
+                    echo "Full image: ${DOCKER_REGISTRY}/celery-api:${imageTag}"
 
                     try {
+                        // Verify the deployment exists before updating
+                        sh """
+                        kubectl describe deployment/celery-api-deployment -n ${params.namespace} || echo "Deployment not found"
+                        """
+
                         sh """
                         kubectl set image deployment/celery-api-deployment celery-api=${DOCKER_REGISTRY}/celery-api:${imageTag} -n ${params.namespace}
-                        kubectl rollout status deployment/celery-api-deployment -n ${params.namespace}
+                        kubectl rollout status deployment/celery-api-deployment -n ${params.namespace} --timeout=300s
                         """
                         imageDeploySucceeded = true
                     } catch (Exception e) {
@@ -123,41 +163,40 @@ pipeline {
 
                     if (!imageDeploySucceeded) {
                         echo 'Rolling back to previous revision...'
-                        sh 'kubectl rollout undo deployment/celery-api-deployment -n ${params.namespace}'
+                        sh "kubectl rollout undo deployment/celery-api-deployment -n ${params.namespace}"
+                        sh "kubectl rollout status deployment/celery-api-deployment -n ${params.namespace}"
                     }
                 }
             }
         }
 
-
-
         stage('Pipeline finished') {
             steps {
                 script {
-
-                    echo "Pipeline finished"
+                    echo "Pipeline finished successfully"
                     // Check the deployment status
                     sh """
-                    echo "checking the deployment status" && kubectl get pods -n ${params.namespace}
+                    echo "Checking deployment status:"
+                    kubectl get pods -n ${params.namespace} -l app=celery-api
+                    kubectl describe deployment/celery-api-deployment -n ${params.namespace}
                     """
-
                 }
             }
         }
-
     }
 
     post {
         always {
-            echo "Pipeline finished"
+            echo "Pipeline cleanup"
             // Optional cleanup action
             script {
-
                 // Clean up local Docker images
                 def imageTag = env.GIT_COMMIT_HASH
-                sh """
-                docker rmi ${DOCKER_REGISTRY}/celery-api:${imageTag} || true
-                """
+                if (imageTag) {
+                    sh """
+                    docker rmi ${DOCKER_REGISTRY}/celery-api:${imageTag} || true
+                    """
+                }
             }
         }
     }
