@@ -147,7 +147,7 @@ pipeline {
 
                         sh """
                         kubectl set image deployment/conversation-server-deployment conversation-server=${DOCKER_REGISTRY}/convo:${imageTag} -n ${params.namespace}
-                        kubectl rollout status deployment/conversation-server-deployments -n ${params.namespace} --timeout=300s
+                        kubectl rollout status deployment/conversation-server-deployment -n ${params.namespace} --timeout=300s
                         """
                         imageDeploySucceeded = true
                     } catch (Exception e) {
