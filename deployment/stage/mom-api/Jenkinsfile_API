@@ -18,7 +18,7 @@ pipeline {
                 script {
                     // Clean workspace first
                     deleteDir()
-                    
+
                     def branch = env.GIT_BRANCH
 
                     if (branch == "origin/main"){
@@ -30,11 +30,11 @@ pipeline {
                     }
 
                     checkout scm
-                    
+
                     // Get full commit hash and short hash
                     env.GIT_COMMIT_HASH = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
                     env.GIT_COMMIT_FULL = sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
-                    
+
                     echo "Building for branch: ${branch}"
                     echo "Commit hash: ${env.GIT_COMMIT_HASH}"
                     echo "Full commit: ${env.GIT_COMMIT_FULL}"
@@ -71,9 +71,10 @@ pipeline {
                 script {
                     def imageTag = env.GIT_COMMIT_HASH
                     def dockerRegistry = env.DOCKER_REGISTRY
-                    
+
                     echo "Building Docker image with tag: ${imageTag}"
                     echo "Docker registry: ${dockerRegistry}"
+
                     echo "Current workspace: ${env.WORKSPACE}"
                     echo "Current directory contents:"
                     sh "ls -la"
@@ -144,7 +145,7 @@ pipeline {
                         sh """
                         kubectl describe deployment/mom-api-deployment -n ${params.namespace} || echo "Deployment not found"
                         """
-                        
+
                         sh """
                         kubectl set image deployment/mom-api-deployment mom-api=${DOCKER_REGISTRY}/mom-api:${imageTag} -n ${params.namespace}
                         kubectl rollout status deployment/mom-api-deployment -n ${params.namespace} --timeout=300s
