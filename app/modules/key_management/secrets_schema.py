@@ -45,6 +45,7 @@ class BaseSecretRequest(BaseModel):
             "meta-llama",
             "gemini",
             "openrouter",
+            "simplismart",
         ]:
             raise ValueError(f"Invalid provider in chat model: {provider}")
 
@@ -79,6 +80,7 @@ class BaseSecretRequest(BaseModel):
             "meta-llama",
             "gemini",
             "openrouter",
+            "simplismart",
         ]:
             raise ValueError(f"Invalid provider in inference model: {provider}")
 
