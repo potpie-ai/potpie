@@ -14,6 +14,7 @@ from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
+from app.core.config_provider import config_provider
 
 logger = logging.getLogger(__name__)
 
@@ -48,14 +49,15 @@ class ParseHelper:
         auth = None
         repo = None
 
-        if repo_details.repo_path:
-            if not os.path.exists(repo_details.repo_path):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Local repository does not exist on the given path",
-                )
+        logger.info(f"clone_or_copy_repository called with repo_details: repo_name={repo_details.repo_name}, repo_path={repo_details.repo_path}")
+
+        # Check if repo_path is provided and is a valid local path
+        if repo_details.repo_path and os.path.exists(repo_details.repo_path):
+            logger.info(f"Using local repository at path: {repo_details.repo_path}")
             repo = Repo(repo_details.repo_path)
-        else:
+        elif repo_details.repo_name:
+            # Remote repository - use GitHub service
+            logger.info(f"Using remote repository: {repo_details.repo_name}")
             try:
                 github, repo = self.github_service.get_repo(repo_details.repo_name)
                 owner = repo.owner.login
@@ -69,6 +71,12 @@ class ParseHelper:
                     status_code=404,
                     detail="Repository not found or inaccessible on GitHub",
                 )
+        else:
+            logger.error(f"Neither valid repo_path nor repo_name provided: repo_path={repo_details.repo_path}, repo_name={repo_details.repo_name}")
+            raise HTTPException(
+                status_code=400,
+                detail="Either a valid local repository path or remote repository name must be provided",
+            )
 
         return repo, owner, auth
 
@@ -323,12 +331,9 @@ class ParseHelper:
                 project_id,
                 commit_id=commit_id,
             )
-        if repo_path is not None:
-            if os.getenv("isDevelopmentMode", "false").lower() == "false":
-                raise HTTPException(
-                    status_code=400,
-                    detail="Passing remote repositories is not allowed in development mode",
-                )
+        # Check if repo_path is provided and is a valid local path
+        if repo_path and os.path.exists(repo_path):
+            # Local repository path provided - always allowed
             return repo_details.repo_path, project_id
         if isinstance(repo_details, Repo):
             extracted_dir = repo_details.working_tree_dir

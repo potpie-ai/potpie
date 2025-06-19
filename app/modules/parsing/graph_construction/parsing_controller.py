@@ -38,37 +38,83 @@ class ParsingController:
     async def parse_directory(
         repo_details: ParsingRequest, db: AsyncSession, user: Dict[str, Any]
     ):
-        if "email" not in user:
-            user_email = None
-        else:
-            user_email = user["email"]
-
+        logger.info(f"=== PARSING CONTROLLER ENTRY ===")
+        logger.info(f"Raw repo_details: {repo_details.model_dump()}")
+        logger.info(f"User: {user}")
+        
+        user_email = user["email"]
         user_id = user["user_id"]
         project_manager = ProjectService(db)
         parse_helper = ParseHelper(db)
         parsing_service = ParsingService(db, user_id)
+        
+        # Store original values for logging
+        original_repo_name = repo_details.repo_name
+        original_repo_path = repo_details.repo_path
+        
+        logger.info(f"=== PARSING CONTROLLER DEBUG ===")
+        logger.info(f"Development mode: {config_provider.get_is_development_mode()}")
+        logger.info(f"GitHub configured: {config_provider.is_github_configured()}")
+        logger.info(f"Original repo_name: {original_repo_name}")
+        logger.info(f"Original repo_path: {original_repo_path}")
+        
+        # Apply development mode logic for data manipulation
         if config_provider.get_is_development_mode():
-            # In dev mode: if repo_name exists, move it to repo_path and set repo_name to None
-            if repo_details.repo_name:
-                repo_details.repo_path = repo_details.repo_name
-                repo_details.repo_name = None
+            # In dev mode: if repo_name exists and no repo_path, check if it looks like a local path
+            if repo_details.repo_name and not repo_details.repo_path:
+                # Check if repo_name looks like a local path (starts with / or ./ or contains more than one /)
+                # vs a GitHub repo name (format: owner/repo)
+                repo_name_parts = repo_details.repo_name.split("/")
+                is_github_format = len(repo_name_parts) == 2 and not repo_details.repo_name.startswith("/")
+                is_local_path = (repo_details.repo_name.startswith("/") or 
+                               repo_details.repo_name.startswith("./") or 
+                               repo_details.repo_name.startswith("../") or
+                               len(repo_name_parts) > 2)
+                
+                if is_local_path:
+                    logger.info(f"Dev mode: Treating repo_name '{repo_details.repo_name}' as local path")
+                    repo_details.repo_path = repo_details.repo_name
+                    repo_details.repo_name = None
+                    logger.info(f"Dev mode: After manipulation - repo_name: {repo_details.repo_name}, repo_path: {repo_details.repo_path}")
+                elif is_github_format:
+                    logger.info(f"Dev mode: Keeping repo_name '{repo_details.repo_name}' as remote repository (GitHub format)")
+                else:
+                    logger.info(f"Dev mode: Ambiguous repo_name '{repo_details.repo_name}', treating as local path")
+                    repo_details.repo_path = repo_details.repo_name
+                    repo_details.repo_name = None
+                    logger.info(f"Dev mode: After manipulation - repo_name: {repo_details.repo_name}, repo_path: {repo_details.repo_path}")
+            else:
+                logger.info(f"Dev mode: No manipulation needed - repo_name: {repo_details.repo_name}, repo_path: {repo_details.repo_path}")
         else:
             # In non-dev mode: if repo_name is None but repo_path exists, extract repo_name from repo_path
             if not repo_details.repo_name and repo_details.repo_path:
-                repo_details.repo_name = repo_details.repo_path.split("/")[-1]
+                extracted_name = repo_details.repo_path.split("/")[-1]
+                logger.info(f"Non-dev mode: Extracting repo_name '{extracted_name}' from repo_path '{repo_details.repo_path}'")
+                repo_details.repo_name = extracted_name
+                logger.info(f"Non-dev mode: After manipulation - repo_name: {repo_details.repo_name}, repo_path: {repo_details.repo_path}")
+            else:
+                logger.info(f"Non-dev mode: No manipulation needed - repo_name: {repo_details.repo_name}, repo_path: {repo_details.repo_path}")
 
         # For later use in the code
         repo_name = repo_details.repo_name or (
             repo_details.repo_path.split("/")[-1] if repo_details.repo_path else None
         )
         repo_path = repo_details.repo_path
+        
+        logger.info(f"After manipulation - repo_name: {repo_details.repo_name}, repo_path: {repo_details.repo_path}")
+        logger.info(f"Computed repo_name: {repo_name}, repo_path: {repo_path}")
+        
+        # Check if repo_path is provided
         if repo_path:
+            # Check if development mode is enabled for local repositories
             if os.getenv("isDevelopmentMode") != "enabled":
                 raise HTTPException(
                     status_code=400,
                     detail="Parsing local repositories is only supported in development mode",
                 )
-            else:
+            # Check if the local path actually exists
+            elif os.path.exists(repo_path):
+                logger.info(f"Local repository detected: {repo_path}")
                 new_project_id = str(uuid7())
                 return await ParsingController.handle_new_project(
                     repo_details,
@@ -78,6 +124,31 @@ class ParsingController:
                     project_manager,
                     db,
                 )
+            else:
+                # repo_path provided but doesn't exist
+                logger.error(f"Local repository path does not exist: {repo_path}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Local repository does not exist at path: {repo_path}",
+                )
+        elif repo_details.repo_name and not config_provider.is_github_configured():
+            # Remote repository requested but GitHub not configured
+            logger.error(f"Remote repository '{repo_details.repo_name}' requested but GitHub not configured")
+            raise HTTPException(
+                status_code=400,
+                detail="GitHub is not configured, cannot parse remote repositories. Use repo_path for local repositories.",
+            )
+        elif repo_details.repo_name:
+            # Remote repository with GitHub configured - proceed
+            logger.info(f"Remote repository detected: {repo_details.repo_name}")
+        else:
+            # Neither local path nor remote repo name provided
+            logger.error(f"Neither local path nor remote repo name provided after manipulation")
+            logger.error(f"Final repo_name: {repo_details.repo_name}, repo_path: {repo_details.repo_path}")
+            raise HTTPException(
+                status_code=400,
+                detail="Either a valid local repository path or remote repository name must be provided.",
+            )
 
         demo_repos = [
             "Portkey-AI/gateway",
@@ -167,8 +238,9 @@ class ParsingController:
                     logger.info(
                         f"Submitting parsing task for existing project {project_id}"
                     )
+                    logger.info(f"Repo details for Celery: {repo_details.model_dump(exclude_none=True)}")
                     process_parsing.delay(
-                        repo_details.model_dump(),
+                        repo_details.model_dump(exclude_none=True),
                         user_id,
                         user_email,
                         project_id,
@@ -224,7 +296,10 @@ class ParsingController:
         }
 
         logger.info(f"Submitting parsing task for new project {new_project_id}")
-        repo_name = repo_details.repo_name or repo_details.repo_path.split("/")[-1]
+        logger.info(f"Repo details for Celery: {repo_details.model_dump(exclude_none=True)}")
+        repo_name = repo_details.repo_name or (
+            repo_details.repo_path.split("/")[-1] if repo_details.repo_path else None
+        )
         await project_manager.register_project(
             repo_name,
             repo_details.branch_name,
@@ -240,7 +315,7 @@ class ParsingController:
             user_email = None
 
         process_parsing.delay(
-            repo_details.model_dump(),
+            repo_details.model_dump(exclude_none=True),
             user_id,
             user_email,
             new_project_id,

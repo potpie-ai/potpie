@@ -82,5 +82,6 @@
     ```
 
 ## Additional Notes
-- Ensure that the environment variable `isDevelopmentMode` is set to "enabled" to parse local repositories.
+- **Local repositories**: Can be parsed by providing a `repo_path` parameter pointing to a local directory. This works regardless of GitHub configuration.
+- **Remote repositories**: Can be parsed by providing a `repo_name` parameter (e.g., "owner/repo-name"). This requires GitHub to be configured (`GITHUB_APP_ID` and `GITHUB_PRIVATE_KEY` must be set).
 - The `user_id` must not match the `defaultUsername` environment variable when parsing remote repositories.
