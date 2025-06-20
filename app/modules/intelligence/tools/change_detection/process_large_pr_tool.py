@@ -52,6 +52,7 @@ class ProcessLargePRTool:
                 0,
                 branch_name,
                 project_id,
+                None
             )
         except Exception as e:
             logging.error(f"Error getting content for {file_path}: {str(e)}")

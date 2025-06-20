@@ -131,8 +131,8 @@ class AgentsService:
                     llm_provider, tools_provider, prompt_provider
                 ),
             ),
-            "benchmark_agent": AgentWithInfo(
-                id="benchmark_agent",
+            "slt_generation_agent": AgentWithInfo(
+                id="slt_generation_agent",
                 name="Service Level Test Generation Agent",
                 description="Agent to generate service level tests for the latest changes in the codebase",
                 agent=GithubIssueFixerAgent(

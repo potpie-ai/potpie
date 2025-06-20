@@ -49,7 +49,7 @@ class AutoRouterAgent(ChatAgent):
             {"role": "user", "content": prompt},
         ]
 
-        if ctx.curr_agent_id == "benchmark_agent":
+        if ctx.curr_agent_id == "slt_generation_agent":
             return self.agents[ctx.curr_agent_id].agent
 
         try:

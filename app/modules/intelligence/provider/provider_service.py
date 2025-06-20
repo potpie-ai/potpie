@@ -248,66 +248,11 @@ class AgentProvider(Enum):
 
 # Available models with their metadata
 AVAILABLE_MODELS = [
-    AvailableModelOption(
-        id="openai/gpt-4.1",
-        name="GPT-4.1",
-        description="OpenAI's latest model for complex tasks with large context",
-        provider="openai",
-        is_chat_model=True,
-        is_inference_model=False,
-    ),
-    AvailableModelOption(
-        id="openai/gpt-4o",
-        name="GPT-4o",
-        description="High-intelligence model for complex tasks",
-        provider="openai",
-        is_chat_model=True,
-        is_inference_model=False,
-    ),
-    AvailableModelOption(
-        id="openai/gpt-4.1-mini",
-        name="GPT-4.1 Mini",
-        description="Smaller model for fast, lightweight tasks",
-        provider="openai",
-        is_chat_model=False,
-        is_inference_model=True,
-    ),
-    AvailableModelOption(
-        id="anthropic/claude-3-7-sonnet-20250219",
-        name="Claude 3.7 Sonnet",
-        description="Highest level of intelligence and capability with toggleable extended thinking",
-        provider="anthropic",
-        is_chat_model=True,
-        is_inference_model=False,
-    ),
-    AvailableModelOption(
-        id="anthropic/claude-3-5-sonnet-20241022",
-        name="Claude 3.5 Sonnet",
-        description="Highest level of intelligence and capability with toggleable extended thinking",
-        provider="anthropic",
-        is_chat_model=True,
-        is_inference_model=False,
-    ),
-    AvailableModelOption(
-        id="anthropic/claude-3-5-haiku-20241022",
-        name="Claude 3.5 Haiku",
-        description="Faster, more efficient Claude model",
-        provider="anthropic",
-        is_chat_model=False,
-        is_inference_model=True,
-    ),
-    AvailableModelOption(
-        id="anthropic/claude-3-5-sonnet-20241022",
-        name="Claude 3.5 Sonnet",
-        description="Faster, more efficient Claude model for code generation",
-        provider="anthropic",
-        is_chat_model=True,
-        is_inference_model=False,
-    ),
+
     AvailableModelOption(
         id="openrouter/deepseek/deepseek-chat-v3-0324",
         name="DeepSeek V3",
-        description="DeepSeek's latest chat model",
+        description="DeepSeek's latest chat model hosted on Simplismart",
         provider="deepseek",
         is_chat_model=True,
         is_inference_model=True,
@@ -315,7 +260,7 @@ AVAILABLE_MODELS = [
     AvailableModelOption(
         id="openrouter/deepseek/deepseek-r1",
         name="DeepSeek R1",
-        description="DeepSeek's latest reasoning model",
+        description="DeepSeek's latest reasoning model hosted on Simplismart",
         provider="deepseek",
         is_chat_model=True,
         is_inference_model=True,
@@ -323,35 +268,11 @@ AVAILABLE_MODELS = [
     AvailableModelOption(
         id="openrouter/meta-llama/llama-3.3-70b-instruct",
         name="Llama 3.3 70B",
-        description="Meta's latest Llama model",
+        description="Meta's latest Llama model hosted on Simplismart",
         provider="meta-llama",
         is_chat_model=True,
         is_inference_model=True,
-    ),
-    AvailableModelOption(
-        id="openrouter/google/gemini-2.0-flash-001",
-        name="Gemini 2.0 Flash",
-        description="Google's Gemini model optimized for speed",
-        provider="gemini",
-        is_chat_model=True,
-        is_inference_model=True,
-    ),
-    AvailableModelOption(
-        id="openrouter/google/gemini-2.5-flash-preview",
-        name="Gemini 2.5 Flash",
-        description="Google's Latest Gemini model optimized for speed",
-        provider="gemini",
-        is_chat_model=True,
-        is_inference_model=True,
-    ),
-    AvailableModelOption(
-        id="openrouter/qwen/qwen3-235b-a22b",
-        name="Qwen 3 235B",
-        description="Alibaba's latest Qwen model with 235B parameters",
-        provider="qwen",
-        is_chat_model=True,
-        is_inference_model=True,
-    ),
+    )
 ]
 
 # Extract unique platform providers from the available models

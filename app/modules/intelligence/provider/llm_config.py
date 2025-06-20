@@ -7,32 +7,6 @@ DEFAULT_INFERENCE_MODEL = "openai/gpt-4.1-mini"
 
 # Model configuration mappings - now keyed by full model name
 MODEL_CONFIG_MAP = {
-    # OpenAI Models
-    "openai/gpt-4.1-mini": {
-        "provider": "openai",
-        "default_params": {"temperature": 0.3},
-    },
-    "openai/gpt-4.1": {
-        "provider": "openai",
-        "default_params": {"temperature": 0.3},
-    },
-    "openai/gpt-4o": {
-        "provider": "openai",
-        "default_params": {"temperature": 0.3},
-    },
-    # Anthropic Models
-    "anthropic/claude-3-7-sonnet-20250219": {
-        "provider": "anthropic",
-        "default_params": {"temperature": 0.3, "max_tokens": 8000},
-    },
-    "anthropic/claude-3-5-sonnet-20241022": {
-        "provider": "anthropic",
-        "default_params": {"temperature": 0.3, "max_tokens": 8000},
-    },
-    "anthropic/claude-3-5-haiku-20241022": {
-        "provider": "anthropic",
-        "default_params": {"temperature": 0.2, "max_tokens": 8000},
-    },
     # DeepSeek Models
     "openrouter/deepseek/deepseek-chat-v3-0324": {
         "provider": "deepseek",
@@ -47,11 +21,7 @@ MODEL_CONFIG_MAP = {
         "provider": "meta-llama",
         "default_params": {"temperature": 0.3},
     },
-    # Gemini Models
-    "openrouter/google/gemini-2.0-flash-001": {
-        "provider": "gemini",
-        "default_params": {"temperature": 0.3},
-    },
+
 }
 
 
