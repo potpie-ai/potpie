@@ -470,6 +470,7 @@ SERVICE_CATEGORIES = {
         "meta-llama",
         "gemini",
         "openrouter",
+        "simplismart",
     ],
     "integration": ["linear", "notion"],
 }
@@ -482,6 +483,7 @@ AIProviderType = Literal[
     "meta-llama",
     "gemini",
     "openrouter",
+    "simplismart",
 ]
 
 IntegrationServiceType = Literal[
@@ -497,6 +499,7 @@ ServiceType = Literal[
     "meta-llama",
     "gemini",
     "openrouter",
+    "simplismart",
     "linear",
     "notion",
 ]
@@ -624,6 +627,7 @@ class SecretManager:
             "meta-llama",
             "gemini",
             "openrouter",
+            "simplismart",
             "all",
         ],
         user=Depends(AuthService.check_auth),
@@ -815,6 +819,7 @@ class SecretManager:
             "meta-llama",
             "gemini",
             "openrouter",
+            "simplismart",
             "all",
         ],
         user=Depends(AuthService.check_auth),

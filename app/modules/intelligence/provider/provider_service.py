@@ -1,5 +1,6 @@
 import logging
 import os
+import json
 from enum import Enum
 from typing import List, Dict, Any, Union, AsyncGenerator, Optional
 import uuid
@@ -7,11 +8,9 @@ from anthropic import AsyncAnthropic
 from crewai import LLM
 from pydantic import BaseModel
 from pydantic_ai.models import Model
-from litellm import litellm, AsyncOpenAI, acompletion
 import instructor
 import httpx
 from portkey_ai import createHeaders, PORTKEY_GATEWAY_URL
-
 from app.modules.key_management.secret_manager import SecretManager
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.posthog_helper import PostHogClient
@@ -30,12 +29,33 @@ from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.anthropic import AnthropicProvider
-import litellm
+from litellm import litellm, AsyncOpenAI, acompletion
 
 import random
 import time
 import asyncio
 from functools import wraps
+
+# Simplismart configuration with environment overrides
+SIMPLISMART_BASE_URL = os.getenv(
+    "SIMPLISMART_BASE_URL", "https://http.llm.proxy.prod.s9t.link"
+)
+
+
+def load_simplismart_id_map() -> dict:
+    """Load the Simplismart model ID map from env or use defaults."""
+    env_map = os.getenv("SIMPLISMART_ID_MAP")
+    if env_map:
+        try:
+            return json.loads(env_map)
+        except json.JSONDecodeError:
+            logging.warning("Invalid SIMPLISMART_ID_MAP; using default mapping")
+    return {"deepseek-r1": "e04b66b0-e8ac-410e-b028-b25716a91a92"}
+
+
+SIMPLISMART_ID_MAP = load_simplismart_id_map()
+
+
 
 litellm.num_retries = 5  # Number of retries for rate limited requests
 
@@ -249,90 +269,10 @@ class AgentProvider(Enum):
 # Available models with their metadata
 AVAILABLE_MODELS = [
     AvailableModelOption(
-        id="openai/gpt-4.1",
-        name="GPT-4.1",
-        description="OpenAI's latest model for complex tasks with large context",
-        provider="openai",
-        is_chat_model=True,
-        is_inference_model=False,
-    ),
-    AvailableModelOption(
-        id="openai/gpt-4o",
-        name="GPT-4o",
-        description="High-intelligence model for complex tasks",
-        provider="openai",
-        is_chat_model=True,
-        is_inference_model=False,
-    ),
-    AvailableModelOption(
-        id="openai/gpt-4.1-mini",
-        name="GPT-4.1 Mini",
-        description="Smaller model for fast, lightweight tasks",
-        provider="openai",
-        is_chat_model=False,
-        is_inference_model=True,
-    ),
-    AvailableModelOption(
-        id="openai/o4-mini",
-        name="O4 mini",
-        description="reasoning model",
-        provider="openai",
-        is_chat_model=True,
-        is_inference_model=True,
-    ),
-    AvailableModelOption(
-        id="anthropic/claude-3-7-sonnet-20250219",
-        name="Claude 3.7 Sonnet",
-        description="Highest level of intelligence and capability with toggleable extended thinking",
-        provider="anthropic",
-        is_chat_model=True,
-        is_inference_model=False,
-    ),
-    AvailableModelOption(
-        id="anthropic/claude-3-5-haiku-20241022",
-        name="Claude 3.5 Haiku",
-        description="Faster, more efficient Claude model",
-        provider="anthropic",
-        is_chat_model=False,
-        is_inference_model=True,
-    ),
-    AvailableModelOption(
-        id="anthropic/claude-sonnet-4-20250514",
-        name="Claude Sonnet 4",
-        description="Faster, more efficient Claude model for code generation",
-        provider="anthropic",
-        is_chat_model=True,
-        is_inference_model=False,
-    ),
-    AvailableModelOption(
-        id="openrouter/deepseek/deepseek-chat-v3-0324",
-        name="DeepSeek V3",
-        description="DeepSeek's latest chat model",
-        provider="deepseek",
-        is_chat_model=True,
-        is_inference_model=True,
-    ),
-    AvailableModelOption(
-        id="openrouter/meta-llama/llama-3.3-70b-instruct",
-        name="Llama 3.3 70B",
-        description="Meta's latest Llama model",
-        provider="meta-llama",
-        is_chat_model=True,
-        is_inference_model=True,
-    ),
-    AvailableModelOption(
-        id="openrouter/google/gemini-2.0-flash-001",
-        name="Gemini 2.0 Flash",
-        description="Google's Gemini model optimized for speed",
-        provider="gemini",
-        is_chat_model=True,
-        is_inference_model=True,
-    ),
-    AvailableModelOption(
-        id="openrouter/google/gemini-2.5-pro-preview",
-        name="Gemini 2.5 Pro",
-        description="Google's Latest pro Gemini model",
-        provider="gemini",
+        id="simplismart/deepseek-r1",
+        name="DeepSeek R1",
+        description="Simplismart hosted DeepSeek model",
+        provider="simplismart",
         is_chat_model=True,
         is_inference_model=True,
     ),
@@ -457,7 +397,7 @@ class ProviderService:
         return config.get_llm_params(api_key)
 
     def get_extra_params_and_headers(
-        self, routing_provider: Optional[str]
+        self, routing_provider: Optional[str], model: Optional[str] = None
     ) -> tuple[dict[str, Any], Any]:
         """Get extra parameters and headers for API calls."""
         extra_params = {}
@@ -468,13 +408,18 @@ class ProviderService:
             custom_host=os.environ.get("LLM_API_BASE"),
             api_version=os.environ.get("LLM_API_VERSION"),
         )
-        if self.portkey_api_key and routing_provider != "ollama":
+        if self.portkey_api_key and routing_provider != "ollama" and routing_provider != "simplismart":
             # ollama + portkey is not supported currently
             extra_params["base_url"] = PORTKEY_GATEWAY_URL
             extra_params["extra_headers"] = headers
         elif routing_provider == "azure":
             extra_params["api_base"] = os.environ.get("LLM_API_BASE")
             extra_params["api_version"] = os.environ.get("LLM_API_VERSION")
+        elif routing_provider == "simplismart":
+            extra_params["api_base"] = SIMPLISMART_BASE_URL
+            model_name = model.split("/")[-1] if model else ""
+            if model_name in SIMPLISMART_ID_MAP:
+                extra_params["extra_headers"] = {"id": SIMPLISMART_ID_MAP[model_name]}
         return extra_params, headers
 
     async def get_global_ai_provider(self, user_id: str) -> GetProviderResponse:
@@ -546,7 +491,7 @@ class ProviderService:
     ) -> bool:
         """Check if the current model is supported by PydanticAI."""
         config = self.chat_config if config_type == "chat" else self.inference_config
-        return config.provider in ["openai", "anthropic", "openrouter"]
+        return config.provider in ["openai", "anthropic", "openrouter", "simplismart"]
 
     @robust_llm_call()  # Apply the robust_llm_call decorator
     async def call_llm(
@@ -561,7 +506,13 @@ class ProviderService:
         routing_provider = config.model.split("/")[0]
 
         # Get extra parameters and headers for API calls
-        extra_params, _ = self.get_extra_params_and_headers(routing_provider)
+        extra_params, _ = self.get_extra_params_and_headers(
+            routing_provider, config.model
+        )
+        if routing_provider == "simplismart":
+            params["model"] = 'openai/' + params["model"].split("/")[-1]
+            params["api_base"] = SIMPLISMART_BASE_URL
+            
         params.update(extra_params)
 
         # Handle streaming response if requested
@@ -596,7 +547,9 @@ class ProviderService:
         routing_provider = config.model.split("/")[0]
 
         # Get extra parameters and headers
-        extra_params, _ = self.get_extra_params_and_headers(routing_provider)
+        extra_params, _ = self.get_extra_params_and_headers(
+            routing_provider, config.model
+        )
 
         try:
             if config.provider == "ollama":
@@ -612,6 +565,17 @@ class ProviderService:
                     temperature=params.get("temperature", 0.3),
                     max_tokens=params.get("max_tokens"),
                     **extra_params,
+                )
+            elif config.provider == "simplismart":
+                client = instructor.from_openai(AsyncOpenAI(base_url=extra_params.get("api_base"),api_key=params.get("api_key"),default_headers={"id": SIMPLISMART_ID_MAP[params["model"].split("/")[-1]]}),mode=instructor.Mode.JSON)
+                response = await client.chat.completions.create(
+                    
+                    model=params["model"].split("/")[-1],
+                    messages=messages,
+                    response_model=output_schema,
+                    temperature=params.get("temperature", 0.3),
+                    max_tokens=params.get("max_tokens"),
+                    
                 )
             else:
                 client = instructor.from_litellm(acompletion, mode=instructor.Mode.JSON)
@@ -636,7 +600,9 @@ class ProviderService:
         routing_provider = config.model.split("/")[0]
 
         # Get extra parameters and headers
-        extra_params, headers = self.get_extra_params_and_headers(routing_provider)
+        extra_params, headers = self.get_extra_params_and_headers(
+            routing_provider, config.model
+        )
 
         if agent_type == AgentProvider.CREWAI:
             crewai_params = {"model": params["model"], **params}
@@ -713,6 +679,17 @@ class ProviderService:
                         provider=OpenAIProvider(
                             api_key=api_key,
                             base_url="https://openrouter.ai/api/v1",
+                        ),
+                    )
+                case "simplismart":
+                    return OpenAIModel(
+                        model_name=model_name,
+                        provider=OpenAIProvider(
+                            api_key=api_key,
+                            base_url=SIMPLISMART_BASE_URL,
+                            http_client=httpx.AsyncClient(
+                                headers={'id': SIMPLISMART_ID_MAP[model_name]}
+                            ),
                         ),
                     )
 
