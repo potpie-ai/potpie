@@ -2,7 +2,7 @@ import logging
 from datetime import datetime
 
 from fastapi import HTTPException
-from sqlalchemy import String, cast
+from sqlalchemy import String, cast, func
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -113,6 +113,45 @@ class ProjectService:
             }
             project_list.append(project_dict)
         return project_list
+
+    async def get_ready_unique_projects(self, user_id: str):
+        """
+        Get ready, unique, and deduped projects for a user.
+        Returns the first (oldest) ready project for each unique repo_name.
+        """
+        try:
+            # Subquery to get the minimum (oldest) project ID for each repo_name that has READY status
+            subquery = (
+                self.db.query(Project.repo_name, func.min(Project.id).label("min_id"))
+                .filter(
+                    Project.user_id == user_id,
+                    Project.status == ProjectStatusEnum.READY.value,
+                    Project.is_deleted == False
+                )
+                .group_by(Project.repo_name)
+                .subquery()
+            )
+            
+            # Get the actual projects using the subquery
+            projects = (
+                self.db.query(Project)
+                .join(
+                    subquery,
+                    (Project.repo_name == subquery.c.repo_name)
+                    & (Project.id == subquery.c.min_id),
+                )
+                .all()
+            )
+            
+            logger.info(f"Retrieved {len(projects)} ready unique projects for user {user_id}")
+            return projects
+            
+        except SQLAlchemyError as e:
+            logger.error(f"Database error in get_ready_unique_projects for user {user_id}: {e}", exc_info=True)
+            raise ProjectServiceError(f"Failed to retrieve ready unique projects for user {user_id}") from e
+        except Exception as e:
+            logger.error(f"Unexpected error in get_ready_unique_projects for user {user_id}: {e}", exc_info=True)
+            raise ProjectServiceError(f"An unexpected error occurred while retrieving ready unique projects for user {user_id}") from e
 
     async def update_project_status(self, project_id: int, status: ProjectStatusEnum):
         ProjectService.update_project(self.db, project_id, status=status.value)

@@ -429,51 +429,58 @@ class GithubService:
             )  # Log total duration
 
     async def get_combined_user_repos(self, user_id: str):
-        subquery = (
-            self.db.query(Project.repo_name, func.min(Project.id).label("min_id"))
-            .filter(Project.user_id == user_id)
-            .group_by(Project.repo_name)
-            .subquery()
-        )
-        projects = (
-            self.db.query(Project)
-            .join(
-                subquery,
-                (Project.repo_name == subquery.c.repo_name)
-                & (Project.id == subquery.c.min_id),
-            )
-            .all()
-        )
-        project_list = (
-            [
-                {
-                    "id": project.id,
-                    "name": project.repo_name.split("/")[-1],
-                    "full_name": (
-                        project.repo_name
-                        if not self.is_development_mode
-                        else project.repo_path
-                    ),
-                    "private": False,
-                    "url": f"https://github.com/{project.repo_name}",
-                    "owner": project.repo_name.split("/")[0],
-                }
-                for project in projects
-            ]
-            if projects is not None
-            else []
-        )
+        # Get ready, unique, and deduped projects from the database
+        ready_projects = await self.project_manager.get_ready_unique_projects(user_id)
+        
+        # Format the ready projects for the response (matching production format exactly)
+        project_list = []
+        for project in ready_projects:
+            # Ensure full_name is never null - use repo_name or fallback to repo_path
+            if project.repo_name:
+                full_name = project.repo_name
+                name = project.repo_name.split("/")[-1]
+                owner = project.repo_name.split("/")[0]
+                url = f"https://github.com/{project.repo_name}"
+            elif project.repo_path:
+                # Use the last part of the repo_path as fallback
+                full_name = project.repo_path.rstrip("/").split("/")[-1] if project.repo_path else f"project-{project.id}"
+                name = full_name
+                owner = "local"
+                url = f"file://{project.repo_path}" if project.repo_path else ""
+            else:
+                # Ultimate fallback
+                full_name = f"project-{project.id}"
+                name = full_name
+                owner = "unknown"
+                url = ""
+            
+            project_list.append({
+                "id": project.id,
+                "name": name,
+                "full_name": full_name,
+                "private": False,
+                "url": url,
+                "owner": owner,
+            })
+        
+        # Get user repositories from GitHub
         user_repo_response = await self.get_repos_for_user(user_id)
         user_repos = user_repo_response["repositories"]
+        
+        # Create a set of full names from ready projects to avoid duplicates
         db_project_full_names = {project["full_name"] for project in project_list}
 
+        # Filter out GitHub repos that are already parsed and ready in the database
         filtered_user_repos = [
-            {**user_repo, "private": True}
-            for user_repo in user_repos
-            if user_repo["full_name"]
-            not in db_project_full_names  # Only include unique user repos
+            user_repo for user_repo in user_repos
+            if user_repo["full_name"] not in db_project_full_names
         ]
-        combined_repos = list(reversed(project_list + filtered_user_repos))
+        
+        # Combine ready projects (first) with unprocessed GitHub repos
+        combined_repos = project_list + filtered_user_repos
+        
+        logger.info(f"Combined repos for user {user_id}: {len(project_list)} ready projects, {len(filtered_user_repos)} unprocessed GitHub repos")
+        
         return {"repositories": combined_repos}
 
     async def get_branch_list(self, repo_name: str):
