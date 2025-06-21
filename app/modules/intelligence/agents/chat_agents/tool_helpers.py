@@ -27,6 +27,8 @@ def get_tool_run_message(tool_name: str):
             return "Fetching file content"
         case "WebSearchTool":
             return "Searching the web"
+        case "analyze_code_structure":
+            return "Analyzing code structure"
         case _:
             return "Querying data"
 
@@ -53,6 +55,8 @@ def get_tool_response_message(tool_name: str):
             return "File contents fetched from github"
         case "fetch_file":
             return "File content fetched successfully"
+        case "analyze_code_structure":
+            return "Code structure analyzed successfully"
         case "WebSearchTool":
             return "Web search successful"
         case _:
@@ -95,6 +99,8 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             return ""
         case "fetch_file":
             return f"fetching contents for file {args.get('file_path')}"
+        case "analyze_code_structure":
+            return f"Analyzing file - {args.get('file_path')}\n"
         case "WebSearchTool":
             return f"-> searching the web for {args.get('query')}\n"
         case _:
@@ -192,6 +198,14 @@ description:
                     return f"""
 ```{content.get("content")}```
                 """
+        case "analyze_code_structure":
+            if isinstance(content, Dict):
+                if not content.get("success"):
+                    return "Failed to analyze code structure"
+                else:
+                    return f"""
+{[ f''' {element.get("type")}: {element.get("name")} ''' for element in content.get("elements")]}
+"""
         case "WebSearchTool":
             if isinstance(content, Dict):
                 res = content.get("content")

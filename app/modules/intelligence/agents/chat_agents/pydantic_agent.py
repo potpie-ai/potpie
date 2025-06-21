@@ -1,6 +1,6 @@
+import functools
 import re
 from typing import List, AsyncGenerator
-
 from .tool_helpers import (
     get_tool_call_info_content,
     get_tool_response_message,
@@ -36,6 +36,18 @@ from langchain_core.tools import StructuredTool
 logger = setup_logger(__name__)
 
 
+def handle_exception(tool_func):
+    @functools.wraps(tool_func)
+    def wrapper(*args, **kwargs):
+        try:
+            return tool_func(*args, **kwargs)
+        except Exception as e:
+            logger.error(f"Exception in tool function: {e}")
+            return "An internal error occurred. Please try again later."
+
+    return wrapper
+
+
 class PydanticRagAgent(ChatAgent):
     def __init__(
         self,
@@ -56,22 +68,32 @@ class PydanticRagAgent(ChatAgent):
         self.tools = tools
         self.config = config
 
-        self.agent = Agent(
-            model=llm_provider.get_pydantic_model(),
+    def _create_agent(self, ctx: ChatContext) -> Agent:
+        config = self.config
+        return Agent(
+            model=self.llm_provider.get_pydantic_model(),
             tools=[
                 Tool(
                     name=tool.name,
                     description=tool.description,
-                    function=tool.func,  # type: ignore
+                    function=handle_exception(tool.func),  # type: ignore
                 )
-                for tool in tools
+                for tool in self.tools
             ],
-            system_prompt=f"Role: {config.role}\nGoal: {config.goal}\nBackstory: {config.backstory}. Respond to the user query",
+            instructions=f"""
+            Role: {config.role}
+            Goal: {config.goal}
+            Backstory:
+            {config.backstory}
+            CURRENT CONTEXT AND AGENT TASK OVERVIEW:
+            {self._create_task_description(task_config=config.tasks[0],ctx=ctx)}
+            """,
             result_type=str,
-            retries=3,
+            output_retries=3,
+            output_type=str,
             defer_model_check=True,
             end_strategy="exhaustive",
-            model_settings={"parallel_tool_calls": True, "max_tokens": 8000},
+            model_settings={"max_tokens": 14000},
         )
 
     def _create_agent(self, ctx: ChatContext) -> Agent:
@@ -144,12 +166,17 @@ class PydanticRagAgent(ChatAgent):
         try:
             # Create all tasks
 
-            resp = await self._create_agent(ctx).run(user_prompt=ctx.query)
+            resp = await self._create_agent(ctx).run(
+                user_prompt=ctx.query,
+                message_history=[
+                    ModelResponse([TextPart(content=msg)]) for msg in ctx.history
+                ],
+            )
 
             # session and session.end_session("Success")
 
             return ChatAgentResponse(
-                response=resp.data,
+                response=resp.output,
                 tool_calls=[],
                 citations=[],
             )

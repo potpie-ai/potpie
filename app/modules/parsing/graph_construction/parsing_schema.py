@@ -1,6 +1,6 @@
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 
 class ParsingRequest(BaseModel):
@@ -9,8 +9,15 @@ class ParsingRequest(BaseModel):
     branch_name: Optional[str] = Field(default=None)
     commit_id: Optional[str] = Field(default=None)
 
+    @validator('repo_name', 'repo_path', pre=True)
+    def clean_empty_strings(cls, v):
+        if v == "":
+            return None
+        return v
+
     def __init__(self, **data):
         super().__init__(**data)
+        # Only validate if both fields are None or empty
         if not self.repo_name and not self.repo_path:
             raise ValueError("Either repo_name or repo_path must be provided.")
 

@@ -58,6 +58,7 @@ class QnAAgent(ChatAgent):
                 "web_search_tool",
                 "github_tool",
                 "get_linear_issue",
+                "analyze_code_structure",
             ]
         )
 
@@ -103,75 +104,43 @@ class QnAAgent(ChatAgent):
 
 
 qna_task_prompt = """
-    1. Analyze project structure:
+    IMPORTANT: Use the following guide to accomplish tasks within the current context of execution
+    HOW TO GUIDE:
 
-    - Identify key directories, files, and modules
-    - Guide search strategy and provide context
-    - For directories of interest that show "└── ...", use "Get Code File Structure" tool with the directory path to reveal nested files
-    - Only after getting complete file paths, use "Get Code and docstring From Probable Node Name" tool
-    - Locate relevant files or subdirectory path
+    IMPORATANT: steps on HOW TO traverse the codebase:
+    1. You can use websearch, docstrings, readme to understand current feature/code you are working with better. Understand how to use current feature in context of codebase
+    2. Use AskKnowledgeGraphQueries tool to understand where perticular feature or functionality resides or to fetch specific code related to some keywords. Fetch file structure to understand the codebase better, Use FetchFile tool to fetch code from a file
+    3. Use GetcodefromProbableNodeIDs tool to fetch code for perticular class or function in a file, Use analyze_code_structure to get all the class/function/nodes in a file
+    4. Use GetcodeFromMultipleNodeIDs to fetch code for nodeIDs fetched from tools before
+    5. Use GetNodeNeighboursFromNodeIDs to fetch all the code referencing current code or code referenced in the current node (code snippet)
+    6. Above tools and steps can help you figure out full context about the current code in question
+    7. Figure out how all the code ties together to implement current functionality
+    8. Fetch Dir structure of the repo and use fetch file tool to fetch entire files, if file is too big the tool will throw error, then use code analysis tool to target proper line numbers (feel free to use set startline and endline such that few extra context lines are also fetched, tool won't throw out of bounds exception and return lines if they exist)
+    9. Use above mentioned tools to fetch imported code, referenced code, helper functions, classes etc to understand the control flow
 
+    Analyze and enrich results:
+    - Evaluate relevance, identify gaps
+    - Develop scoring mechanism
+    - Retrieve code only if docstring insufficient
 
-    Directory traversal strategy:
+    Compose response:
+    - Organize results logically
+    - Include citations and references
+    - Provide comprehensive, focused answer
 
-    - Start with high-level file structure analysis
-    - When encountering a directory with hidden contents (indicated by "└── ..."):
-        a. First: Use "Get Code File Structure" tool with the directory path
-        b. Then: From the returned structure, identify relevant files
-        c. Finally: Use "Get Code and docstring From Probable Node Name" tool with the complete file paths
-    - Subdirectories with hidden nested files are followed by "│   │   │          └── ..."
-
-
-    2. Initial context retrieval:
-        - Analyze provided Code Results for user node ids
-        - If code results are not relevant move to next step`
-
-    3. Knowledge graph query (if needed):
-        - Transform query for knowledge graph tool
-        - Execute query and analyze results
-
-    Additional context retrieval (if needed):
-
-    - For each relevant directory with hidden contents:
-        a. FIRST: Call "Get Code File Structure" tool with directory path
-        b. THEN: From returned structure, extract complete file paths
-        c. THEN: For each relevant file, call "Get Code and docstring From Probable Node Name" tool
-    - Never call "Get Code and docstring From Probable Node Name" tool with directory paths
-    - Always ensure you have complete file paths before using the probable node tool
-    - Extract hidden file names from the file structure subdirectories that seem relevant
-    - Extract probable node names. Nodes can be files or functions/classes. But not directories.
-
-
-    5. Use "Get Nodes from Tags" tool as last resort only if absolutely necessary
-
-    6. Analyze and enrich results:
-        - Evaluate relevance, identify gaps
-        - Develop scoring mechanism
-        - Retrieve code only if docstring insufficient
-
-    7. Compose response:
-        - Organize results logically
-        - Include citations and references
-        - Provide comprehensive, focused answer
-
-    8. Final review:
-        - Check coherence and relevance
-        - Identify areas for improvement
-        - Format the file paths as follows (only include relevant project details from file path):
-            path: potpie/projects/username-reponame-branchname-userid/gymhero/models/training_plan.py
-            output: gymhero/models/training_plan.py
-
+    Final review:
+    - Check coherence and relevance
+    - Identify areas for improvement
+    - Format the file paths as follows (only include relevant project details from file path):
+        path: potpie/projects/username-reponame-branchname-userid/gymhero/models/training_plan.py
+        output: gymhero/models/training_plan.py
 
     Note:
 
-    - Always traverse directories before attempting to access files
-    - Never skip the directory structure retrieval step
     - Use available tools in the correct order: structure first, then code
     - Use markdown for code snippets with language name in the code block like python or javascript
     - Prioritize "Get Code and docstring From Probable Node Name" tool for stacktraces or specific file/function mentions
     - Prioritize "Get Code File Structure" tool to get the nested file structure of a relevant subdirectory when deeper levels are not provided
-    - Use available tools as directed
-    - Proceed to next step if insufficient information found
 
     Ground your responses in provided code context and tool results. Use markdown for code snippets. Be concise and avoid repetition. If unsure, state it clearly. For debugging, unit testing, or unrelated code explanations, suggest specialized agents.
     Tailor your response based on question type:

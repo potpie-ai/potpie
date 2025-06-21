@@ -68,7 +68,7 @@ class GithubIssueFixerAgent(ChatAgent):
         if self.llm_provider.is_current_model_supported_by_pydanticai(
             config_type="chat"
         ):
-            return PydanticMultiAgent(self.llm_provider, agent_config, tools)
+            return PydanticMultiAgent(self.llm_provider, agent_config, tools, self.tools_provider)
         else:
             return AdaptiveAgent(
                 llm_provider=self.llm_provider,

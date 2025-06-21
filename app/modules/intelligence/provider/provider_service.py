@@ -1,5 +1,6 @@
 import logging
 import os
+import json
 from enum import Enum
 from typing import List, Dict, Any, Union, AsyncGenerator, Optional
 import uuid
@@ -7,11 +8,9 @@ from anthropic import AsyncAnthropic
 from crewai import LLM
 from pydantic import BaseModel
 from pydantic_ai.models import Model
-from litellm import litellm, AsyncOpenAI, acompletion
 import instructor
 import httpx
 from portkey_ai import createHeaders, PORTKEY_GATEWAY_URL
-
 from app.modules.key_management.secret_manager import SecretManager
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.posthog_helper import PostHogClient
@@ -30,7 +29,33 @@ from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.anthropic import AnthropicProvider
-import litellm
+from litellm import litellm, AsyncOpenAI, acompletion
+
+import random
+import time
+import asyncio
+from functools import wraps
+
+# Simplismart configuration with environment overrides
+SIMPLISMART_BASE_URL = os.getenv(
+    "SIMPLISMART_BASE_URL", "https://http.llm.proxy.prod.s9t.link"
+)
+
+
+def load_simplismart_id_map() -> dict:
+    """Load the Simplismart model ID map from env or use defaults."""
+    env_map = os.getenv("SIMPLISMART_ID_MAP")
+    if env_map:
+        try:
+            return json.loads(env_map)
+        except json.JSONDecodeError:
+            logging.warning("Invalid SIMPLISMART_ID_MAP; using default mapping")
+    return {"deepseek-r1": "e04b66b0-e8ac-410e-b028-b25716a91a92", "deepseek-v3": "018037b8-90fe-47f6-b131-33de9fbe79ab" }
+
+
+SIMPLISMART_ID_MAP = load_simplismart_id_map()
+
+
 
 import random
 import time
@@ -248,31 +273,22 @@ class AgentProvider(Enum):
 
 # Available models with their metadata
 AVAILABLE_MODELS = [
-
     AvailableModelOption(
-        id="openrouter/deepseek/deepseek-chat-v3-0324",
-        name="DeepSeek V3",
-        description="DeepSeek's latest chat model hosted on Simplismart",
-        provider="deepseek",
-        is_chat_model=True,
-        is_inference_model=True,
-    ),
-    AvailableModelOption(
-        id="openrouter/deepseek/deepseek-r1",
+        id="simplismart/deepseek-r1",
         name="DeepSeek R1",
-        description="DeepSeek's latest reasoning model hosted on Simplismart",
-        provider="deepseek",
+        description="Simplismart hosted DeepSeek R1 reasoning model",
+        provider="simplismart",
+        is_chat_model=True,
+        is_inference_model=False,
+    ),
+    AvailableModelOption(
+        id="simplismart/deepseek-v3",
+        name="DeepSeek V3",
+        description="Simplismart hosted DeepSeek V3 model",
+        provider="simplismart",
         is_chat_model=True,
         is_inference_model=True,
     ),
-    AvailableModelOption(
-        id="openrouter/meta-llama/llama-3.3-70b-instruct",
-        name="Llama 3.3 70B",
-        description="Meta's latest Llama model hosted on Simplismart",
-        provider="meta-llama",
-        is_chat_model=True,
-        is_inference_model=True,
-    )
 ]
 
 # Extract unique platform providers from the available models
@@ -394,7 +410,7 @@ class ProviderService:
         return config.get_llm_params(api_key)
 
     def get_extra_params_and_headers(
-        self, routing_provider: Optional[str]
+        self, routing_provider: Optional[str], model: Optional[str] = None
     ) -> tuple[dict[str, Any], Any]:
         """Get extra parameters and headers for API calls."""
         extra_params = {}
@@ -405,13 +421,18 @@ class ProviderService:
             custom_host=os.environ.get("LLM_API_BASE"),
             api_version=os.environ.get("LLM_API_VERSION"),
         )
-        if self.portkey_api_key and routing_provider != "ollama":
+        if self.portkey_api_key and routing_provider != "ollama" and routing_provider != "simplismart":
             # ollama + portkey is not supported currently
             extra_params["base_url"] = PORTKEY_GATEWAY_URL
             extra_params["extra_headers"] = headers
         elif routing_provider == "azure":
             extra_params["api_base"] = os.environ.get("LLM_API_BASE")
             extra_params["api_version"] = os.environ.get("LLM_API_VERSION")
+        elif routing_provider == "simplismart":
+            extra_params["api_base"] = SIMPLISMART_BASE_URL
+            model_name = model.split("/")[-1] if model else ""
+            if model_name in SIMPLISMART_ID_MAP:
+                extra_params["extra_headers"] = {"id": SIMPLISMART_ID_MAP[model_name]}
         return extra_params, headers
 
     async def get_global_ai_provider(self, user_id: str) -> GetProviderResponse:
@@ -484,7 +505,7 @@ class ProviderService:
         return True
         """Check if the current model is supported by PydanticAI."""
         config = self.chat_config if config_type == "chat" else self.inference_config
-        return config.provider in ["openai", "anthropic", "gemini"]
+        return config.provider in ["openai", "anthropic", "openrouter", "simplismart"]
 
     @robust_llm_call()  # Apply the robust_llm_call decorator
     async def call_llm(
@@ -499,7 +520,13 @@ class ProviderService:
         routing_provider = config.model.split("/")[0]
 
         # Get extra parameters and headers for API calls
-        extra_params, _ = self.get_extra_params_and_headers(routing_provider)
+        extra_params, _ = self.get_extra_params_and_headers(
+            routing_provider, config.model
+        )
+        if routing_provider == "simplismart":
+            params["model"] = 'openai/' + params["model"].split("/")[-1]
+            params["api_base"] = SIMPLISMART_BASE_URL
+            
         params.update(extra_params)
 
         # Handle streaming response if requested
@@ -534,7 +561,9 @@ class ProviderService:
         routing_provider = config.model.split("/")[0]
 
         # Get extra parameters and headers
-        extra_params, _ = self.get_extra_params_and_headers(routing_provider)
+        extra_params, _ = self.get_extra_params_and_headers(
+            routing_provider, config.model
+        )
 
         try:
             if config.provider == "ollama":
@@ -550,6 +579,17 @@ class ProviderService:
                     temperature=params.get("temperature", 0.3),
                     max_tokens=params.get("max_tokens"),
                     **extra_params,
+                )
+            elif config.provider == "simplismart":
+                client = instructor.from_openai(AsyncOpenAI(base_url=extra_params.get("api_base"),api_key=params.get("api_key"),default_headers={"id": SIMPLISMART_ID_MAP[params["model"].split("/")[-1]]}),mode=instructor.Mode.JSON)
+                response = await client.chat.completions.create(
+                    
+                    model=params["model"].split("/")[-1],
+                    messages=messages,
+                    response_model=output_schema,
+                    temperature=params.get("temperature", 0.3),
+                    max_tokens=params.get("max_tokens"),
+                    
                 )
             else:
                 client = instructor.from_litellm(acompletion, mode=instructor.Mode.JSON)
@@ -574,7 +614,9 @@ class ProviderService:
         routing_provider = config.model.split("/")[0]
 
         # Get extra parameters and headers
-        extra_params, headers = self.get_extra_params_and_headers(routing_provider)
+        extra_params, headers = self.get_extra_params_and_headers(
+            routing_provider, config.model
+        )
 
         if agent_type == AgentProvider.CREWAI:
             crewai_params = {"model": params["model"], **params}
@@ -593,10 +635,19 @@ class ProviderService:
         self._initialize_llm(config, agent_type)
         return self.llm
 
-    def get_pydantic_model(self) -> Model | None:
+    def get_pydantic_model(
+        self, provider: str | None = None, model: str | None = None
+    ) -> Model | None:
         """Get the appropriate PydanticAI model based on the current provider."""
         config = self.chat_config
         model_name = config.model.split("/")[-1]
+
+        if provider:
+            config.provider = provider
+
+        if model:
+            model_name = model
+
         api_key = self._get_api_key(config.provider)
 
         if not api_key:
@@ -632,6 +683,26 @@ class ProviderService:
                                     provider=config.provider,
                                     trace_id=str(uuid.uuid4())[:8],
                                 ),
+                            ),
+                        ),
+                    )
+                case "openrouter":
+                    # PORTKEY has a issue when used with openrouter here
+                    return OpenAIModel(
+                        model_name=config.model.split("/")[-2] + "/" + model_name,
+                        provider=OpenAIProvider(
+                            api_key=api_key,
+                            base_url="https://openrouter.ai/api/v1",
+                        ),
+                    )
+                case "simplismart":
+                    return OpenAIModel(
+                        model_name=model_name,
+                        provider=OpenAIProvider(
+                            api_key=api_key,
+                            base_url=SIMPLISMART_BASE_URL,
+                            http_client=httpx.AsyncClient(
+                                headers={'id': SIMPLISMART_ID_MAP[model_name]}
                             ),
                         ),
                     )

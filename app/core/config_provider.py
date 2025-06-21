@@ -21,6 +21,10 @@ class ConfigProvider:
     def get_github_key(self):
         return self.github_key
 
+    def is_github_configured(self):
+        """Check if GitHub is properly configured with both APP_ID and PRIVATE_KEY"""
+        return bool(os.getenv("GITHUB_APP_ID") and self.github_key)
+
     def get_demo_repo_list(self):
         return [
             {

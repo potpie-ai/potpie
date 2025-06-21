@@ -144,7 +144,7 @@ class ProjectService:
         query = self.db.query(Project).filter(
             Project.repo_name == repo_name,
             Project.user_id == user_id,
-            # Project.repo_path == repo_path,
+            Project.repo_path == repo_path,
         )
 
         if commit_id:

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from typing import Dict, Optional
 
 from fastapi import HTTPException
@@ -8,8 +9,6 @@ from pydantic import BaseModel, Field
 
 from app.core.database import get_db
 from app.modules.code_provider.code_provider_service import CodeProviderService
-from app.modules.code_provider.github.github_service import GithubService
-from app.modules.code_provider.local_repo.local_repo_service import LocalRepoService
 from app.modules.projects.projects_service import ProjectService
 
 
@@ -63,23 +62,33 @@ class PatchExtractionTool:
         branch_name = project_details["branch_name"]
         repo_path = project_details["repo_path"]
         
-        # Use CodeProviderService to get the appropriate service instance
+        # Use CodeProviderService to get patches
         code_service = CodeProviderService(self.sql_db)
+        
         try:
-            if isinstance(code_service.service_instance, GithubService):
-                github, _, _ = code_service.service_instance.get_github_repo_details(
-                    repo_name
-                )
-                repo = github.get_repo(repo_name)
-                base_branch = base_branch if base_branch else repo.default_branch
-                git_diff = repo.compare(base_branch, branch_name)
-                patches_dict = {
-                    file.filename: file.patch for file in git_diff.files if file.patch
-                }
-            elif isinstance(code_service.service_instance, LocalRepoService):
-                patches_dict = code_service.service_instance.get_local_repo_diff(
-                    repo_path, branch_name, base_branch
-                )
+            # Check if it's a local repository first
+            if repo_path and os.path.exists(repo_path) and os.path.isdir(repo_path):
+                # Use local service for local repositories
+                if code_service.local_service:
+                    patches_dict = code_service.local_service.get_local_repo_diff(
+                        repo_path, branch_name, base_branch
+                    )
+                else:
+                    raise Exception("Local repository service not available")
+            else:
+                # Use GitHub service for remote repositories
+                if code_service.github_service:
+                    github, _, _ = code_service.github_service.get_github_repo_details(
+                        repo_name
+                    )
+                    repo = github.get_repo(repo_name)
+                    base_branch = base_branch if base_branch else repo.default_branch
+                    git_diff = repo.compare(base_branch, branch_name)
+                    patches_dict = {
+                        file.filename: file.patch for file in git_diff.files if file.patch
+                    }
+                else:
+                    raise Exception("GitHub service not configured and no local repository found")
             
             return PatchExtractionResponse(patches=patches_dict)
             

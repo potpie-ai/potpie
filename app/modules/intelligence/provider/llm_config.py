@@ -7,21 +7,14 @@ DEFAULT_INFERENCE_MODEL = "openai/gpt-4.1-mini"
 
 # Model configuration mappings - now keyed by full model name
 MODEL_CONFIG_MAP = {
-    # DeepSeek Models
-    "openrouter/deepseek/deepseek-chat-v3-0324": {
-        "provider": "deepseek",
-        "default_params": {"temperature": 0.3, "max_tokens": 8000},
-    },
-        "openrouter/deepseek/deepseek-r1": {
-        "provider": "deepseek",
-        "default_params": {"temperature": 0.3, "max_tokens": 8000},
-    },
-    # Meta-Llama Models
-    "openrouter/meta-llama/llama-3.3-70b-instruct": {
-        "provider": "meta-llama",
+    "simplismart/deepseek-r1": {
+        "provider": "simplismart",
         "default_params": {"temperature": 0.3},
     },
-
+    "simplismart/deepseek-v3": {
+        "provider": "simplismart",
+        "default_params": {"temperature": 0.3},
+    },
 }
 
 

@@ -470,6 +470,7 @@ SERVICE_CATEGORIES = {
         "meta-llama",
         "gemini",
         "openrouter",
+        "simplismart",
     ],
     "integration": ["linear", "notion"],
 }
@@ -482,6 +483,7 @@ AIProviderType = Literal[
     "meta-llama",
     "gemini",
     "openrouter",
+    "simplismart",
 ]
 
 IntegrationServiceType = Literal[
@@ -497,6 +499,7 @@ ServiceType = Literal[
     "meta-llama",
     "gemini",
     "openrouter",
+    "simplismart",
     "linear",
     "notion",
 ]
@@ -624,6 +627,7 @@ class SecretManager:
             "meta-llama",
             "gemini",
             "openrouter",
+            "simplismart",
             "all",
         ],
         user=Depends(AuthService.check_auth),
@@ -815,6 +819,7 @@ class SecretManager:
             "meta-llama",
             "gemini",
             "openrouter",
+            "simplismart",
             "all",
         ],
         user=Depends(AuthService.check_auth),
@@ -938,7 +943,7 @@ class SecretManager:
             logger.info(f"API key retrieved successfully for user: {user['user_id']}")
             if api_key is None:
                 logger.info(f"No API key found for user: {user['user_id']}")
-                raise
+                raise ValueError(f"No API key found for user: {user['user_id']}")
             return APIKeyResponse(api_key=api_key)
         except Exception as e:
             logger.error(f"Error getting API key for user {user['user_id']}: {str(e)}")

@@ -47,6 +47,7 @@ class BlastRadiusAgent(ChatAgent):
                 "fetch_file",
                 "web_search_tool",
                 "github_tool",
+                "analyze_code_structure",
             ]
         )
         if self.llm_provider.is_current_model_supported_by_pydanticai(
@@ -72,6 +73,21 @@ class BlastRadiusAgent(ChatAgent):
 
 
 blast_radius_task_prompt = """
+
+    IMPORTANT: Use the following guide to accomplish tasks within the current context of execution
+    HOW TO GUIDE:
+
+    IMPORATANT: steps on HOW TO traverse the codebase:
+    1. You can use websearch, docstrings, readme to understand current feature/code you are working with better. Understand how to use current feature in context of codebase
+    2. Use AskKnowledgeGraphQueries tool to understand where perticular feature or functionality resides or to fetch specific code related to some keywords. Fetch file structure to understand the codebase better, Use FetchFile tool to fetch code from a file
+    3. Use GetcodefromProbableNodeIDs tool to fetch code for perticular class or function in a file, Use analyze_code_structure to get all the class/function/nodes in a file
+    4. Use GetcodeFromMultipleNodeIDs to fetch code for nodeIDs fetched from tools before
+    5. Use GetNodeNeighboursFromNodeIDs to fetch all the code referencing current code or code referenced in the current node (code snippet)
+    6. Above tools and steps can help you figure out full context about the current code in question
+    7. Figure out how all the code ties together to implement current functionality
+    8. Fetch Dir structure of the repo and use fetch file tool to fetch entire files, if file is too big the tool will throw error, then use code analysis tool to target proper line numbers (feel free to use set startline and endline such that few extra context lines are also fetched, tool won't throw out of bounds exception and return lines if they exist)
+    9. Use above mentioned tools to fetch imported code, referenced code, helper functions, classes etc to understand the control flow
+
     In the response, the patches contain the file patches for the changes.
     The changes contain the list of changes with the updated and entry point code. Entry point corresponds to the API/Consumer upstream of the function that the change was made in.
     The citations contain the list of file names referenced in the changed code and entry point code.
@@ -80,7 +96,7 @@ blast_radius_task_prompt = """
     Based on the response from the get code changes tool, formulate queries to ask details about specific changed code elements.
     1. Frame your query for the knowledge graph tool:
     - Identify key concepts, code elements, and implied relationships from the changed code.
-    - Consider the context from the users query: {query}.
+    - Consider the context from the users query:
     - Determine the intent and key technical terms.
     - Transform into keyword phrases that might match docstrings:
         * Use concise, functionality-based phrases (e.g., "creates document MongoDB collection").
@@ -100,7 +116,7 @@ blast_radius_task_prompt = """
     4. How might these changes impact the overall system behavior?
     5. Based on the entry point code, determine which APIs or consumers etc are impacted by the changes.
 
-    Refer to the {query} for any specific instructions and follow them.
+    Refer to the for any specific instructions and follow them.
 
     Based on the analysis, provide a structured inference of the blast radius:
     1. Summarize the direct changes

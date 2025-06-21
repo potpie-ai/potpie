@@ -170,7 +170,7 @@ class GithubService:
                 return decoded_content
             # added -2 to start and end line to include the function definition/ decorator line
             # start = start_line - 2 if start_line - 2 > 0 else 0
-            selected_lines = lines[start_line - 1 : end_line]
+            selected_lines = lines[max(0, start_line - 1) : min(len(lines), end_line)]
             return "\n".join(selected_lines)
         except Exception as e:
             logger.error(

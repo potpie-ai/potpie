@@ -80,7 +80,12 @@ class ParsingService:
             repo, owner, auth = await self.parse_helper.clone_or_copy_repository(
                 repo_details, user_id
             )
-            if config_provider.get_is_development_mode():
+            
+            # Determine if this is a local repository
+            is_local_repo = hasattr(repo_details, 'repo_path') and repo_details.repo_path is not None
+            
+            if is_local_repo:
+                # Local repository - use repo_details (local path)
                 (
                     extracted_dir,
                     project_id,
@@ -94,6 +99,7 @@ class ParsingService:
                     commit_id=repo_details.commit_id,
                 )
             else:
+                # Remote repository - use repo (GitHub object)
                 (
                     extracted_dir,
                     project_id,

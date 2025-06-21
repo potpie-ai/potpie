@@ -2,6 +2,7 @@ import os
 from functools import wraps
 
 from fastapi import HTTPException
+from app.core.config_provider import config_provider
 
 
 def validate_parsing_input(func):
@@ -12,10 +13,11 @@ def validate_parsing_input(func):
         user_id = kwargs.get("user_id")
 
         if repo_details and user_id:
-            if os.getenv("isDevelopmentMode") != "enabled" and repo_details.repo_path:
+            # If GitHub is not configured, only allow local repositories
+            if not config_provider.is_github_configured() and repo_details.repo_name and not repo_details.repo_path:
                 raise HTTPException(
                     status_code=403,
-                    detail="Development mode is not enabled, cannot parse local repository.",
+                    detail="GitHub is not configured, cannot parse remote repositories. Use repo_path for local repositories.",
                 )
             if user_id == os.getenv("defaultUsername") and repo_details.repo_name:
                 raise HTTPException(
