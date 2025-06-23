@@ -168,7 +168,7 @@ async def create_conversation_and_message(
     res = await controller.create_conversation(
         CreateConversationRequest(
             user_id=user_id,
-            title=message.content,
+            title=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             project_ids=[project_id],
             agent_ids=[message.agent_id],
             status=ConversationStatus.ACTIVE,  # Let hidden parameter control the final status
