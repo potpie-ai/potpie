@@ -471,7 +471,7 @@ SERVICE_CATEGORIES = {
         "gemini",
         "openrouter",
     ],
-    "integration": ["linear", "notion"],
+    "integration": ["linear", "notion", "slack"],
 }
 
 # Define service types using the categories
@@ -487,6 +487,7 @@ AIProviderType = Literal[
 IntegrationServiceType = Literal[
     "linear",
     "notion",
+    "slack",
 ]
 
 # Create a unified ServiceType that includes all services
@@ -499,6 +500,7 @@ ServiceType = Literal[
     "openrouter",
     "linear",
     "notion",
+    "slack",
 ]
 
 

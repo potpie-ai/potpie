@@ -2,7 +2,6 @@ import json
 import os
 from datetime import datetime
 
-import requests
 from dotenv import load_dotenv
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse, Response
@@ -17,17 +16,12 @@ from app.modules.users.user_schema import CreateUser
 from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.utils.posthog_helper import PostHogClient
+from app.modules.intelligence.tools.slack_tools import send_slack_message
 
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", None)
 
 auth_router = APIRouter()
 load_dotenv(override=True)
-
-
-async def send_slack_message(message: str):
-    payload = {"text": message}
-    if SLACK_WEBHOOK_URL:
-        requests.post(SLACK_WEBHOOK_URL, json=payload)
 
 
 class AuthAPI:
@@ -82,9 +76,11 @@ class AuthAPI:
             )
             uid, message, error = user_service.create_user(user)
 
-            await send_slack_message(
-                f"New signup: {body['email']} ({body['displayName']})"
-            )
+            if SLACK_WEBHOOK_URL:
+                await send_slack_message(
+                    f"New signup: {body['email']} ({body['displayName']})",
+                    SLACK_WEBHOOK_URL
+                )
 
             PostHogClient().send_event(
                 uid,
