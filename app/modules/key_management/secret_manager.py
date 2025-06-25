@@ -20,6 +20,10 @@ from app.modules.key_management.secrets_schema import (
     IntegrationKey,
     CreateIntegrationKeyRequest,
     UpdateIntegrationKeyRequest,
+    WorkflowSecret,
+    CreateWorkflowSecretRequest,
+    UpdateWorkflowSecretRequest,
+    WorkflowSecretResponse,
 )
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.APIRouter import APIRouter
@@ -65,16 +69,24 @@ class SecretStorageHandler:
             )
 
     @staticmethod
-    def format_secret_id(service, customer_id, service_type="ai_provider"):
-        """Generate a standardized secret ID."""
+    def format_secret_id(service, customer_id, service_type="ai_provider", unique_id=None):
+        """Generate a standardized secret ID with optional unique identifier."""
         if os.environ.get("isDevelopmentMode") == "enabled":
             return None
 
         prefix = ""
         if service_type == "integration":
             prefix = "integration-"
+        elif service_type == "workflow":
+            prefix = "workflow-"
 
-        return f"{prefix}{service}-api-key-{customer_id}"
+        base_id = f"{prefix}{service}-api-key-{customer_id}"
+        
+        # Add unique_id if provided for extensibility
+        if unique_id:
+            base_id += f"-{unique_id}"
+            
+        return base_id
 
     @staticmethod
     def encrypt_value(value):
@@ -103,18 +115,19 @@ class SecretStorageHandler:
         service_type="ai_provider",
         db=None,
         preferences=None,
+        unique_id=None,
     ):
         """Store a secret in GCP or fallback to database."""
         try:
             logger.info(
-                f"Storing secret for service: {service}, type: {service_type}, user: {customer_id}"
+                f"Storing secret for service: {service}, type: {service_type}, user: {customer_id}, unique_id: {unique_id}"
             )
             client, project_id = SecretStorageHandler.get_client_and_project()
 
             if client and project_id:
                 # Store in Google Secret Manager
                 secret_id = SecretStorageHandler.format_secret_id(
-                    service, customer_id, service_type
+                    service, customer_id, service_type, unique_id
                 )
                 parent = f"projects/{project_id}/secrets/{secret_id}"
                 version = {"payload": {"data": api_key.encode("UTF-8")}}
@@ -169,6 +182,9 @@ class SecretStorageHandler:
                 encrypted_key = SecretStorageHandler.encrypt_value(api_key)
                 if service_type == "integration":
                     key_name = f"integration_api_key_{service}"
+                elif service_type == "workflow":
+                    # For workflow secrets, include unique_id in the key name
+                    key_name = f"workflow_api_key_{service}_{unique_id}" if unique_id else f"workflow_api_key_{service}"
                 else:
                     key_name = f"api_key_{service}"
 
@@ -191,19 +207,19 @@ class SecretStorageHandler:
 
     @staticmethod
     def get_secret(
-        service, customer_id, service_type="ai_provider", db=None, preferences=None
+        service, customer_id, service_type="ai_provider", db=None, preferences=None, unique_id=None
     ):
         """Get a secret from GCP or fallback to database."""
         try:
             logger.info(
-                f"Getting secret for service: {service}, type: {service_type}, user: {customer_id}"
+                f"Getting secret for service: {service}, type: {service_type}, user: {customer_id}, unique_id: {unique_id}"
             )
             client, project_id = SecretStorageHandler.get_client_and_project()
 
             if client and project_id:
                 # Try to get from Google Secret Manager
                 secret_id = SecretStorageHandler.format_secret_id(
-                    service, customer_id, service_type
+                    service, customer_id, service_type, unique_id
                 )
                 name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
                 logger.info(f"Attempting to get secret from GCP: {name}")
@@ -222,6 +238,9 @@ class SecretStorageHandler:
                 # Fallback: get from UserPreferences
                 if service_type == "integration":
                     key_name = f"integration_api_key_{service}"
+                elif service_type == "workflow":
+                    # For workflow secrets, include unique_id in the key name
+                    key_name = f"workflow_api_key_{service}_{unique_id}" if unique_id else f"workflow_api_key_{service}"
                 else:
                     key_name = f"api_key_{service}"
 
@@ -246,14 +265,14 @@ class SecretStorageHandler:
             raise
 
     @staticmethod
-    def delete_secret(service, customer_id, service_type="ai_provider", db=None):
+    def delete_secret(service, customer_id, service_type="ai_provider", db=None, unique_id=None):
         """Delete a secret from GCP or fallback to database."""
         deleted = False
         client, project_id = SecretStorageHandler.get_client_and_project()
 
         if client and project_id:
             secret_id = SecretStorageHandler.format_secret_id(
-                service, customer_id, service_type
+                service, customer_id, service_type, unique_id
             )
             try:
                 name = f"projects/{project_id}/secrets/{secret_id}"
@@ -273,6 +292,9 @@ class SecretStorageHandler:
 
             if service_type == "integration":
                 key_name = f"integration_api_key_{service}"
+            elif service_type == "workflow":
+                # For workflow secrets, include unique_id in the key name
+                key_name = f"workflow_api_key_{service}_{unique_id}" if unique_id else f"workflow_api_key_{service}"
             else:
                 key_name = f"api_key_{service}"
 
@@ -292,14 +314,14 @@ class SecretStorageHandler:
 
     @staticmethod
     async def check_secret_exists(
-        service, customer_id, service_type="ai_provider", db=None
+        service, customer_id, service_type="ai_provider", db=None, unique_id=None
     ):
         """Check if a secret exists without raising exceptions."""
         client, project_id = SecretStorageHandler.get_client_and_project()
 
         if client and project_id:
             secret_id = SecretStorageHandler.format_secret_id(
-                service, customer_id, service_type
+                service, customer_id, service_type, unique_id
             )
             name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
             try:
@@ -324,6 +346,9 @@ class SecretStorageHandler:
         # For integrations, check the appropriate key format
         if service_type == "integration":
             key_name = f"integration_api_key_{service}"
+        elif service_type == "workflow":
+            # For workflow secrets, include unique_id in the key name
+            key_name = f"workflow_api_key_{service}_{unique_id}" if unique_id else f"workflow_api_key_{service}"
         else:
             key_name = f"api_key_{service}"
 
@@ -472,6 +497,7 @@ SERVICE_CATEGORIES = {
         "openrouter",
     ],
     "integration": ["linear", "notion", "slack"],
+    "workflow": ["slack-webhook"],
 }
 
 # Define service types using the categories
@@ -490,6 +516,11 @@ IntegrationServiceType = Literal[
     "slack",
 ]
 
+# Define workflow-specific service types
+WorkflowServiceType = Literal[
+    "slack-webhook",
+]
+
 # Create a unified ServiceType that includes all services
 ServiceType = Literal[
     "openai",
@@ -501,6 +532,7 @@ ServiceType = Literal[
     "linear",
     "notion",
     "slack",
+    "slack-webhook",
 ]
 
 
@@ -513,10 +545,12 @@ class SecretManager:
     # Define category constants for better code clarity
     AI_PROVIDER = "ai_provider"
     INTEGRATION = "integration"
+    WORKFLOW = "workflow"
 
     # Use the centralized service categories
     AI_PROVIDERS = SERVICE_CATEGORIES["ai_provider"]
     INTEGRATION_SERVICES = SERVICE_CATEGORIES["integration"]
+    WORKFLOW_SERVICES = SERVICE_CATEGORIES["workflow"]
 
     @staticmethod
     def encrypt_api_key(api_key: str) -> str:
@@ -560,9 +594,10 @@ class SecretManager:
         customer_id: str,
         db: Session = None,
         service_type: Literal["ai_provider", "integration"] = "ai_provider",
+        unique_id=None
     ):
         """Retrieve a secret - delegates to SecretStorageHandler"""
-        return SecretStorageHandler.get_secret(service, customer_id, service_type, db)
+        return SecretStorageHandler.get_secret(service, customer_id, service_type, db, None, unique_id)
 
     @router.post("/secrets")
     @SecretProcessor.handle_secret_operation
@@ -1407,6 +1442,272 @@ class SecretManager:
 
         return {
             "message": "Integration keys deletion completed",
+            "successful_deletions": successful_deletions,
+            "not_found": not_found,
+        }
+
+    # Workflow secret endpoints
+
+    @router.post("/workflow-secrets")
+    async def create_workflow_secrets(
+        request: CreateWorkflowSecretRequest,
+        user=Depends(AuthService.check_auth),
+        db: Session = Depends(get_db),
+    ):
+        """Create workflow-specific secrets (e.g., Slack webhook URLs)"""
+        customer_id = user["user_id"]
+
+        # Get or create user preferences
+        user_pref = (
+            db.query(UserPreferences)
+            .filter(UserPreferences.user_id == customer_id)
+            .first()
+        )
+        if not user_pref:
+            user_pref = UserPreferences(user_id=customer_id, preferences={})
+            db.add(user_pref)
+            db.flush()
+
+        # Create a copy of preferences
+        preferences = user_pref.preferences.copy() if user_pref.preferences else {}
+        updated_services = []
+
+        # Process each workflow secret
+        for workflow_secret in request.workflow_secrets:
+            service = workflow_secret.service
+            workflow_id = workflow_secret.workflow_id
+            api_key = workflow_secret.api_key
+
+            try:
+                SecretStorageHandler.store_secret(
+                    service,
+                    customer_id,
+                    api_key,
+                    SecretManager.WORKFLOW,
+                    db,
+                    preferences,
+                    workflow_id,
+                )
+                updated_services.append(f"{service}:{workflow_id}")
+            except Exception as e:
+                logger.error(f"Error storing workflow secret for {service}:{workflow_id}: {str(e)}")
+                continue
+
+        # Update preferences
+        user_pref.preferences = preferences
+        db.commit()
+        db.refresh(user_pref)
+
+        # Track with PostHog if services were updated
+        if updated_services:
+            PostHogClient().send_event(
+                customer_id,
+                "workflow_secret_creation_event",
+                {"services": updated_services, "secrets_added": "true"},
+            )
+
+        return {"message": "Workflow secrets created successfully"}
+
+    @router.get("/workflow-secrets/{service}/{workflow_id}")
+    async def get_workflow_secret(
+        service: WorkflowServiceType,
+        workflow_id: str,
+        user=Depends(AuthService.check_auth),
+        db: Session = Depends(get_db),
+    ):
+        """Get a specific workflow secret"""
+        customer_id = user["user_id"]
+
+        try:
+            secret = SecretStorageHandler.get_secret(
+                service, customer_id, SecretManager.WORKFLOW, db, None, workflow_id
+            )
+            return WorkflowSecretResponse(
+                service=service, workflow_id=workflow_id, api_key=secret
+            )
+        except HTTPException:
+            raise  # Re-raise HTTP exceptions
+        except Exception as e:
+            logger.error(f"Error getting workflow secret: {str(e)}")
+            raise HTTPException(
+                status_code=500, detail=f"Error retrieving workflow secret: {str(e)}"
+            )
+
+    @router.get("/workflow-secrets/{workflow_id}")
+    async def get_workflow_secrets_by_workflow_id(
+        workflow_id: str,
+        user=Depends(AuthService.check_auth),
+        db: Session = Depends(get_db),
+    ):
+        """Get all secrets for a specific workflow"""
+        customer_id = user["user_id"]
+        results = []
+
+        for service in SecretManager.WORKFLOW_SERVICES:
+            try:
+                secret = SecretStorageHandler.get_secret(
+                    service, customer_id, SecretManager.WORKFLOW, db, None, workflow_id
+                )
+                results.append({
+                    "service": service,
+                    "workflow_id": workflow_id,
+                    "api_key": secret
+                })
+            except HTTPException:
+                # Secret not found for this service, skip
+                continue
+            except Exception:
+                # Other errors, skip
+                continue
+
+        if not results:
+            raise HTTPException(
+                status_code=404, detail=f"No secrets found for workflow {workflow_id}"
+            )
+
+        return results
+
+    @router.put("/workflow-secrets")
+    async def update_workflow_secrets(
+        request: UpdateWorkflowSecretRequest,
+        user=Depends(AuthService.check_auth),
+        db: Session = Depends(get_db),
+    ):
+        """Update workflow-specific secrets"""
+        customer_id = user["user_id"]
+
+        # Get user preferences
+        user_pref = (
+            db.query(UserPreferences)
+            .filter(UserPreferences.user_id == customer_id)
+            .first()
+        )
+        if not user_pref:
+            user_pref = UserPreferences(user_id=customer_id, preferences={})
+            db.add(user_pref)
+            db.flush()
+
+        # Create a copy of preferences
+        preferences = user_pref.preferences.copy() if user_pref.preferences else {}
+        updated_services = []
+
+        # Process each workflow secret - same logic as create but for update
+        for workflow_secret in request.workflow_secrets:
+            service = workflow_secret.service
+            workflow_id = workflow_secret.workflow_id
+            api_key = workflow_secret.api_key
+
+            try:
+                SecretStorageHandler.store_secret(
+                    service,
+                    customer_id,
+                    api_key,
+                    SecretManager.WORKFLOW,
+                    db,
+                    preferences,
+                    workflow_id,
+                )
+                updated_services.append(f"{service}:{workflow_id}")
+            except Exception as e:
+                logger.error(f"Error updating workflow secret for {service}:{workflow_id}: {str(e)}")
+                continue
+
+        # Update preferences
+        user_pref.preferences = preferences
+        db.commit()
+        db.refresh(user_pref)
+
+        # Track with PostHog if services were updated
+        if updated_services:
+            PostHogClient().send_event(
+                customer_id,
+                "workflow_secret_update_event",
+                {"services": updated_services, "secrets_updated": "true"},
+            )
+
+        return {"message": "Workflow secrets updated successfully"}
+
+    @router.delete("/workflow-secrets/{service}/{workflow_id}")
+    async def delete_workflow_secret(
+        service: WorkflowServiceType,
+        workflow_id: str,
+        user=Depends(AuthService.check_auth),
+        db: Session = Depends(get_db),
+    ):
+        """Delete a specific workflow secret"""
+        customer_id = user["user_id"]
+
+        try:
+            SecretStorageHandler.delete_secret(
+                service, customer_id, SecretManager.WORKFLOW, db, workflow_id
+            )
+
+            # Track the deletion with PostHog
+            PostHogClient().send_event(
+                customer_id,
+                "workflow_secret_deletion_event",
+                {"service": service, "workflow_id": workflow_id, "secret_removed": "true"},
+            )
+
+            return {"message": f"Successfully deleted {service} secret for workflow {workflow_id}"}
+        except HTTPException:
+            raise  # Re-raise HTTP exceptions
+        except Exception as e:
+            logger.error(f"Error deleting workflow secret: {str(e)}")
+            raise HTTPException(
+                status_code=500, detail=f"Error deleting workflow secret: {str(e)}"
+            )
+
+    @router.delete("/workflow-secrets/{workflow_id}")
+    async def delete_all_workflow_secrets_for_workflow(
+        workflow_id: str,
+        user=Depends(AuthService.check_auth),
+        db: Session = Depends(get_db),
+    ):
+        """Delete all secrets for a specific workflow"""
+        customer_id = user["user_id"]
+        successful_deletions = []
+        not_found = []
+
+        for service in SecretManager.WORKFLOW_SERVICES:
+            try:
+                SecretStorageHandler.delete_secret(
+                    service, customer_id, SecretManager.WORKFLOW, db, workflow_id
+                )
+                successful_deletions.append({
+                    "service": service,
+                    "workflow_id": workflow_id,
+                    "status": "success",
+                    "message": f"Successfully deleted {service} for workflow {workflow_id}"
+                })
+
+                # Track the deletion with PostHog
+                PostHogClient().send_event(
+                    customer_id,
+                    "workflow_secret_deletion_event",
+                    {"service": service, "workflow_id": workflow_id, "secret_removed": "true"},
+                )
+            except HTTPException as e:
+                if e.status_code == 404:
+                    not_found.append({
+                        "service": service,
+                        "workflow_id": workflow_id,
+                        "status": "not_found",
+                        "message": f"No {service} secret found for workflow {workflow_id}"
+                    })
+                else:
+                    raise
+            except Exception as e:
+                logger.error(f"Error deleting {service} secret for workflow {workflow_id}: {str(e)}")
+                continue
+
+        if not successful_deletions:
+            raise HTTPException(
+                status_code=404, detail=f"No secrets found for workflow {workflow_id}"
+            )
+
+        return {
+            "message": f"Workflow secrets deletion completed for workflow {workflow_id}",
             "successful_deletions": successful_deletions,
             "not_found": not_found,
         }
