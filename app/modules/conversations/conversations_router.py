@@ -1,7 +1,7 @@
 import json
-from typing import Any, AsyncGenerator, List
+from typing import Any, AsyncGenerator, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,7 @@ from app.modules.conversations.conversation.conversation_controller import (
     ConversationController,
 )
 from app.modules.usage.usage_service import UsageService
+from app.modules.media.media_service import MediaService
 
 
 from .conversation.conversation_schema import (
@@ -96,16 +97,15 @@ class ConversationAPI:
     @router.post("/conversations/{conversation_id}/message/")
     async def post_message(
         conversation_id: str,
-        message: MessageRequest,
+        content: str = Form(...),
+        node_ids: Optional[str] = Form(None),
+        images: Optional[List[UploadFile]] = File(None),
         stream: bool = Query(True, description="Whether to stream the response"),
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
-        if (
-            message.content == ""
-            or message.content is None
-            or message.content.isspace()
-        ):
+        # Validate message content
+        if content == "" or content is None or content.isspace():
             raise HTTPException(
                 status_code=400, detail="Message content cannot be empty"
             )
@@ -118,6 +118,53 @@ class ConversationAPI:
                 status_code=402,
                 detail="Subscription required to create a conversation.",
             )
+
+        # Process images if present
+        attachment_ids = []
+        if images:
+            media_service = MediaService(db)
+            for image in images:
+                # Check if image has content by checking filename and content_type
+                if image.filename and image.content_type:
+                    try:
+                        # Read file data first and pass as bytes to avoid UploadFile issues
+                        file_content = await image.read()
+                        upload_result = await media_service.upload_image(
+                            file=file_content,
+                            file_name=image.filename,
+                            mime_type=image.content_type,
+                            message_id=None  # Will be linked after message creation
+                        )
+                        attachment_ids.append(upload_result.id)
+                    except Exception as e:
+                        # Clean up any successfully uploaded attachments
+                        for uploaded_id in attachment_ids:
+                            try:
+                                await media_service.delete_attachment(uploaded_id)
+                            except:
+                                pass
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Failed to upload image {image.filename}: {str(e)}"
+                        )
+
+        # Parse node_ids if provided
+        parsed_node_ids = None
+        if node_ids:
+            try:
+                parsed_node_ids = json.loads(node_ids)
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=400, detail="Invalid node_ids format"
+                )
+
+        # Create message request
+        message = MessageRequest(
+            content=content,
+            node_ids=parsed_node_ids,
+            attachment_ids=attachment_ids if attachment_ids else None
+        )
+
         controller = ConversationController(db, user_id, user_email)
         message_stream = controller.post_message(conversation_id, message, stream)
         if stream:

@@ -47,6 +47,7 @@ from app.modules.intelligence.agents.chat_agents.adaptive_agent import (
     PromptService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
+from app.modules.media.media_service import MediaService
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,7 @@ class ConversationService:
         promt_service: PromptService,
         agent_service: AgentsService,
         custom_agent_service: CustomAgentService,
+        media_service: MediaService,
     ):
         self.sql_db = db
         self.user_id = user_id
@@ -95,6 +97,7 @@ class ConversationService:
         self.prompt_service = promt_service
         self.agent_service = agent_service
         self.custom_agent_service = custom_agent_service
+        self.media_service = media_service
 
     @classmethod
     def create(cls, db: Session, user_id: str, user_email: str):
@@ -107,6 +110,7 @@ class ConversationService:
             db, provider_service, prompt_service, tool_service
         )
         custom_agent_service = CustomAgentService(db)
+        media_service = MediaService(db)
         return cls(
             db,
             user_id,
@@ -118,6 +122,7 @@ class ConversationService:
             prompt_service,
             agent_service,
             custom_agent_service,
+            media_service,
         )
 
     async def check_conversation_access(
@@ -273,10 +278,21 @@ class ConversationService:
             self.history_manager.add_message_chunk(
                 conversation_id, message.content, message_type, user_id
             )
-            self.history_manager.flush_message_buffer(
+            message_id = self.history_manager.flush_message_buffer(
                 conversation_id, message_type, user_id
             )
             logger.info(f"Stored message in conversation {conversation_id}")
+
+            # Handle attachments if present
+            if message_type == MessageType.HUMAN and message.attachment_ids:
+                try:
+                    await self.media_service.update_message_attachments(
+                        message_id, message.attachment_ids
+                    )
+                    logger.info(f"Linked {len(message.attachment_ids)} attachments to message {message_id}")
+                except Exception as e:
+                    logger.error(f"Failed to link attachments to message {message_id}: {str(e)}")
+                    # Continue processing even if attachment linking fails
 
             if message_type == MessageType.HUMAN:
                 conversation = await self._get_conversation_with_message_count(
@@ -757,21 +773,34 @@ class ConversationService:
                 .all()
             )
 
-            return [
-                MessageResponse(
-                    id=message.id,
-                    conversation_id=message.conversation_id,
-                    content=message.content,
-                    sender_id=message.sender_id,
-                    type=message.type,
-                    status=message.status,
-                    created_at=message.created_at,
-                    citations=(
-                        message.citations.split(",") if message.citations else None
-                    ),
+            message_responses = []
+            for message in messages:
+                # Get attachments for this message
+                attachments = None
+                if message.has_attachments:
+                    try:
+                        attachments = await self.media_service.get_message_attachments(message.id)
+                    except Exception as e:
+                        logger.error(f"Failed to get attachments for message {message.id}: {str(e)}")
+                        attachments = []
+
+                message_responses.append(
+                    MessageResponse(
+                        id=message.id,
+                        conversation_id=message.conversation_id,
+                        content=message.content,
+                        sender_id=message.sender_id,
+                        type=message.type,
+                        status=message.status,
+                        created_at=message.created_at,
+                        citations=(
+                            message.citations.split(",") if message.citations else None
+                        ),
+                        has_attachments=message.has_attachments,
+                        attachments=attachments,
+                    )
                 )
-                for message in messages
-            ]
+            return message_responses
         except ConversationNotFoundError as e:
             logger.warning(str(e))
             raise

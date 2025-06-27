@@ -2,6 +2,7 @@ from app.modules.conversations.conversation.conversation_model import (  # noqa
     Conversation,
 )
 from app.modules.conversations.message.message_model import Message  # noqa
+from app.modules.media.media_model import MessageAttachment, AttachmentType, StorageProvider  # noqa
 from app.modules.intelligence.prompts.prompt_model import (  # noqa
     AgentPromptMapping,
     Prompt,
