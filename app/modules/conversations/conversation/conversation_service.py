@@ -421,6 +421,27 @@ class ConversationService:
             if not last_human_message:
                 raise MessageNotFoundError("No human message found to regenerate from")
 
+            # Get attachment IDs from the last human message
+            attachment_ids = None
+            if last_human_message.has_attachments:
+                try:
+                    attachments = await self.media_service.get_message_attachments(
+                        last_human_message.id, include_download_urls=False
+                    )
+                    # Extract only image attachment IDs for multimodal processing
+                    from app.modules.media.media_model import AttachmentType
+                    attachment_ids = [
+                        att.id for att in attachments 
+                        if att.attachment_type == AttachmentType.IMAGE
+                    ]
+                    if attachment_ids:
+                        logger.info(f"Found {len(attachment_ids)} image attachments for regeneration: {attachment_ids}")
+                    else:
+                        logger.info("No image attachments found in last human message")
+                except Exception as e:
+                    logger.warning(f"Failed to retrieve attachments for message {last_human_message.id}: {e}")
+                    attachment_ids = None
+
             await self._archive_subsequent_messages(
                 conversation_id, last_human_message.created_at
             )
@@ -432,7 +453,7 @@ class ConversationService:
 
             if stream:
                 async for chunk in self._generate_and_stream_ai_response(
-                    last_human_message.content, conversation_id, user_id, node_ids, None
+                    last_human_message.content, conversation_id, user_id, node_ids, attachment_ids
                 ):
                     yield chunk
             else:
@@ -440,7 +461,7 @@ class ConversationService:
                 all_citations = []
 
                 async for chunk in self._generate_and_stream_ai_response(
-                    last_human_message.content, conversation_id, user_id, node_ids, None
+                    last_human_message.content, conversation_id, user_id, node_ids, attachment_ids
                 ):
                     full_message += chunk.message
                     all_citations = all_citations + chunk.citations
