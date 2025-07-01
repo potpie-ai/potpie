@@ -41,7 +41,7 @@ class Message(Base):
     has_attachments = Column(Boolean, default=False, nullable=False)
 
     conversation = relationship("Conversation", back_populates="messages")
-    attachments = relationship("MessageAttachment", back_populates="message", cascade="all, delete-orphan")
+    attachments = relationship("MessageAttachment", cascade="all, delete-orphan")
 
     __table_args__ = (
         CheckConstraint(

@@ -1,6 +1,7 @@
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -11,6 +12,7 @@ from app.modules.media.media_schema import (
     AttachmentAccessResponse,
     AttachmentInfo,
 )
+
 
 router = APIRouter()
 
@@ -67,6 +69,29 @@ class MediaAPI:
         
         controller = MediaController(db, user_id, user_email)
         return await controller.get_attachment_access_url(attachment_id, expiration_minutes)
+
+    @staticmethod
+    @router.get("/media/{attachment_id}/download")
+    async def download_attachment(
+        attachment_id: str,
+        db: Session = Depends(get_db),
+        user=Depends(AuthService.check_auth),
+    ):
+        """
+        Direct download of an attachment file.
+        
+        - **attachment_id**: Unique attachment identifier  
+        - Returns the file content directly with appropriate headers
+        
+        This endpoint serves as a fallback when signed URLs are not available.
+        Access is granted only if user has permission to view the conversation
+        containing the attachment.
+        """
+        user_id = user["user_id"]
+        user_email = user["email"]
+        
+        controller = MediaController(db, user_id, user_email)
+        return await controller.download_attachment(attachment_id)
 
     @staticmethod
     @router.get("/media/{attachment_id}/info", response_model=AttachmentInfo)
@@ -132,4 +157,28 @@ class MediaAPI:
         user_email = user["email"]
         
         controller = MediaController(db, user_id, user_email)
-        return await controller.get_message_attachments(message_id) 
+        return await controller.get_message_attachments(message_id)
+
+    @staticmethod
+    @router.get("/media/{attachment_id}/test-multimodal")
+    async def test_multimodal_functionality(
+        attachment_id: str,
+        db: Session = Depends(get_db),
+        user=Depends(AuthService.check_auth),
+    ):
+        """
+        Test multimodal functionality for an attachment.
+        
+        - **attachment_id**: Unique attachment identifier
+        - Returns test results showing if the attachment can be used for multimodal AI
+        
+        This endpoint tests:
+        1. Image retrieval from storage
+        2. Base64 conversion for LLM processing
+        3. Multimodal readiness status
+        """
+        user_id = user["user_id"]
+        user_email = user["email"]
+        
+        controller = MediaController(db, user_id, user_email)
+        return await controller.test_multimodal_functionality(attachment_id) 

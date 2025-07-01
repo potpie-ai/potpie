@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
-from typing import AsyncGenerator, List
+from typing import AsyncGenerator, List, Optional, Dict, Union
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -270,6 +270,7 @@ class ConversationService:
         stream: bool = True,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         try:
+            logger.info(f"DEBUG: store_message called with message.attachment_ids: {message.attachment_ids}")
             access_level = await self.check_conversation_access(
                 conversation_id, self.user_email
             )
@@ -320,14 +321,14 @@ class ConversationService:
 
                 if stream:
                     async for chunk in self._generate_and_stream_ai_response(
-                        message.content, conversation_id, user_id, message.node_ids
+                        message.content, conversation_id, user_id, message.node_ids, message.attachment_ids
                     ):
                         yield chunk
                 else:
                     full_message = ""
                     all_citations = []
                     async for chunk in self._generate_and_stream_ai_response(
-                        message.content, conversation_id, user_id, message.node_ids
+                        message.content, conversation_id, user_id, message.node_ids, message.attachment_ids
                     ):
                         full_message += chunk.message
                         all_citations = all_citations + chunk.citations
@@ -431,7 +432,7 @@ class ConversationService:
 
             if stream:
                 async for chunk in self._generate_and_stream_ai_response(
-                    last_human_message.content, conversation_id, user_id, node_ids
+                    last_human_message.content, conversation_id, user_id, node_ids, None
                 ):
                     yield chunk
             else:
@@ -439,7 +440,7 @@ class ConversationService:
                 all_citations = []
 
                 async for chunk in self._generate_and_stream_ai_response(
-                    last_human_message.content, conversation_id, user_id, node_ids
+                    last_human_message.content, conversation_id, user_id, node_ids, None
                 ):
                     full_message += chunk.message
                     all_citations = all_citations + chunk.citations
@@ -519,6 +520,7 @@ class ConversationService:
         conversation_id: str,
         user_id: str,
         node_ids: List[NodeContext],
+        attachment_ids: Optional[List[str]] = None,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         conversation = (
             self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
@@ -550,9 +552,24 @@ class ConversationService:
                 project_ids=[project_id]
             )
 
+            # Prepare multimodal context - use current message attachments if available
+            image_attachments = None
+            if attachment_ids:
+                logger.info(f"DEBUG: Preparing {len(attachment_ids)} attachment_ids as images: {attachment_ids}")
+                image_attachments = await self._prepare_attachments_as_images(attachment_ids)
+                logger.info(f"DEBUG: Prepared image_attachments: {list(image_attachments.keys()) if image_attachments else None}")
+            else:
+                logger.info("DEBUG: No attachment_ids provided for current message")
+            
+            # Also get context images from recent conversation history
+            context_images = await self._prepare_conversation_context_images(conversation_id)
+
             logger.info(
                 f"conversation_id: {conversation_id} Running agent {agent_id} with query: {query}"
             )
+            
+            if image_attachments or context_images:
+                logger.info(f"Multimodal context: {len(image_attachments) if image_attachments else 0} current images, {len(context_images) if context_images else 0} context images")
 
             if type == "CUSTOM_AGENT":
                 # Custom agent doesn't support streaming, so we'll yield the entire response at once
@@ -571,16 +588,20 @@ class ConversationService:
                     message=response["message"], citations=[], tool_calls=[]
                 )
             else:
-                res = self.agent_service.execute_stream(
-                    ChatContext(
-                        project_id=str(project_id),
-                        project_name=project_name,
-                        curr_agent_id=str(agent_id),
-                        history=validated_history[-8:],
-                        node_ids=[node.node_id for node in node_ids],
-                        query=query,
-                    )
+                # Create enhanced ChatContext with multimodal support
+                nodes = [] if node_ids is None else [node.node_id for node in node_ids]
+                chat_context = ChatContext(
+                    project_id=str(project_id),
+                    project_name=project_name,
+                    curr_agent_id=str(agent_id),
+                    history=validated_history[-8:],
+                    node_ids=nodes,
+                    query=query,
+                    image_attachments=image_attachments,
+                    context_images=context_images
                 )
+
+                res = self.agent_service.execute_stream(chat_context)
 
                 async for chunk in res:
                     self.history_manager.add_message_chunk(
@@ -612,6 +633,76 @@ class ConversationService:
             raise ConversationServiceError(
                 "Failed to generate and stream AI response."
             ) from e
+
+    async def _prepare_attachments_as_images(self, attachment_ids: List[str]) -> Optional[Dict[str, Dict[str, Union[str, int]]]]:
+        """Convert attachment IDs directly to base64 images for multimodal processing"""
+        try:
+            if not attachment_ids:
+                return None
+            
+            images = {}
+            for attachment_id in attachment_ids:
+                try:
+                    # Get attachment info
+                    attachment = await self.media_service.get_attachment(attachment_id)
+                    logger.info(f"DEBUG: Retrieved attachment {attachment_id}: type={attachment.attachment_type.value if attachment else 'None'}, mime_type={attachment.mime_type if attachment else 'None'}")
+                    if attachment and attachment.attachment_type.value.upper() == "IMAGE":  # Check if it's an image
+                        base64_data = await self.media_service.get_image_as_base64(attachment_id)
+                        images[attachment_id] = {
+                            "base64": base64_data,
+                            "mime_type": attachment.mime_type,
+                            "file_name": attachment.file_name,
+                            "file_size": attachment.file_size
+                        }
+                        logger.info(f"Prepared image {attachment_id} ({attachment.file_name}) for multimodal processing")
+                    else:
+                        logger.info(f"DEBUG: Skipping attachment {attachment_id} - not an image or attachment not found")
+                except Exception as e:
+                    logger.error(f"Failed to prepare attachment {attachment_id} as image: {str(e)}")
+                    continue
+            
+            logger.info(f"Prepared {len(images)} images from {len(attachment_ids)} attachments for multimodal processing")
+            return images if images else None
+            
+        except Exception as e:
+            logger.error(f"Error preparing attachments as images: {str(e)}")
+            return None
+
+    async def _prepare_current_message_images(self, conversation_id: str) -> Optional[Dict[str, Dict[str, Union[str, int]]]]:
+        """Get images from the most recent human message in the conversation"""
+        try:
+            # Get the most recent human message with attachments
+            latest_human_message = (
+                self.sql_db.query(Message)
+                .filter_by(conversation_id=conversation_id, type=MessageType.HUMAN, status=MessageStatus.ACTIVE)
+                .filter(Message.has_attachments == True)
+                .order_by(Message.created_at.desc())
+                .first()
+            )
+            
+            if not latest_human_message:
+                return None
+            
+            # Get images from this message
+            images = await self.media_service.get_message_images_as_base64(latest_human_message.id)
+            return images if images else None
+            
+        except Exception as e:
+            logger.error(f"Error preparing current message images: {str(e)}")
+            return None
+
+    async def _prepare_conversation_context_images(self, conversation_id: str, limit: int = 3) -> Optional[Dict[str, Dict[str, Union[str, int]]]]:
+        """Get recent images from conversation history for additional context"""
+        try:
+            # Get recent images from conversation (excluding the most recent message to avoid duplicates)
+            context_images = await self.media_service.get_conversation_recent_images(
+                conversation_id, limit=limit
+            )
+            return context_images if context_images else None
+            
+        except Exception as e:
+            logger.error(f"Error preparing conversation context images: {str(e)}")
+            return None
 
     async def delete_conversation(self, conversation_id: str, user_id: str) -> dict:
         try:

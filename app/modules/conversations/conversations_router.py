@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import Any, AsyncGenerator, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -32,6 +33,7 @@ from .conversation.conversation_schema import (
 from .message.message_schema import MessageRequest, MessageResponse, RegenerateRequest
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 async def get_stream(data_stream: AsyncGenerator[Any, None]):
@@ -122,13 +124,16 @@ class ConversationAPI:
         # Process images if present
         attachment_ids = []
         if images:
+            logger.info(f"DEBUG: Processing {len(images)} uploaded images")
             media_service = MediaService(db)
-            for image in images:
+            for i, image in enumerate(images):
+                logger.info(f"DEBUG: Processing image {i}: filename={image.filename}, content_type={image.content_type}, size={getattr(image, 'size', 'unknown')}")
                 # Check if image has content by checking filename and content_type
                 if image.filename and image.content_type:
                     try:
                         # Read file data first and pass as bytes to avoid UploadFile issues
                         file_content = await image.read()
+                        logger.info(f"DEBUG: Read {len(file_content)} bytes from {image.filename}")
                         upload_result = await media_service.upload_image(
                             file=file_content,
                             file_name=image.filename,
@@ -136,7 +141,9 @@ class ConversationAPI:
                             message_id=None  # Will be linked after message creation
                         )
                         attachment_ids.append(upload_result.id)
+                        logger.info(f"DEBUG: Uploaded image {image.filename} with ID: {upload_result.id}")
                     except Exception as e:
+                        logger.error(f"DEBUG: Failed to upload image {image.filename}: {str(e)}")
                         # Clean up any successfully uploaded attachments
                         for uploaded_id in attachment_ids:
                             try:
@@ -147,6 +154,12 @@ class ConversationAPI:
                             status_code=400,
                             detail=f"Failed to upload image {image.filename}: {str(e)}"
                         )
+                else:
+                    logger.info(f"DEBUG: Skipping image {i} - no filename ({image.filename}) or content_type ({image.content_type})")
+        else:
+            logger.info(f"DEBUG: No images to process. images is None or empty")
+        
+        logger.info(f"DEBUG: Final attachment_ids: {attachment_ids}")
 
         # Parse node_ids if provided
         parsed_node_ids = None
@@ -164,6 +177,7 @@ class ConversationAPI:
             node_ids=parsed_node_ids,
             attachment_ids=attachment_ids if attachment_ids else None
         )
+        logger.info(f"DEBUG: Created MessageRequest with attachment_ids: {message.attachment_ids}")
 
         controller = ConversationController(db, user_id, user_email)
         message_stream = controller.post_message(conversation_id, message, stream)

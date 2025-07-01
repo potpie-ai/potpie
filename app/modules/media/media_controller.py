@@ -2,7 +2,9 @@ import logging
 from typing import List, Optional
 
 from fastapi import HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+import io
 
 from app.modules.media.media_service import MediaService, MediaServiceError
 from app.modules.media.media_schema import AttachmentUploadResponse, AttachmentAccessResponse, AttachmentInfo
@@ -88,6 +90,45 @@ class MediaController:
         except Exception as e:
             logger.error(f"Error generating attachment access URL: {str(e)}")
             raise HTTPException(status_code=500, detail="Failed to generate access URL")
+
+    async def download_attachment(self, attachment_id: str) -> StreamingResponse:
+        """Download attachment file directly"""
+        try:
+            # Get attachment to verify it exists and check permissions
+            attachment = await self.media_service.get_attachment(attachment_id)
+            if not attachment:
+                raise HTTPException(status_code=404, detail="Attachment not found")
+            
+            # Check if user has access to the message/conversation containing this attachment
+            if attachment.message_id:
+                access_granted = await self._check_attachment_access(attachment.message_id)
+                if not access_granted:
+                    raise HTTPException(status_code=403, detail="Access denied")
+            
+            # Get the file data from storage
+            file_data = await self.media_service.get_attachment_data(attachment_id)
+            
+            # Create streaming response
+            file_stream = io.BytesIO(file_data)
+            
+            # Set appropriate headers
+            headers = {
+                "Content-Disposition": f'inline; filename="{attachment.file_name}"',
+                "Content-Type": attachment.mime_type,
+                "Content-Length": str(len(file_data))
+            }
+            
+            return StreamingResponse(
+                io.BytesIO(file_data),
+                media_type=attachment.mime_type,
+                headers=headers
+            )
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error downloading attachment: {str(e)}")
+            raise HTTPException(status_code=500, detail="Failed to download attachment")
     
     async def get_attachment_info(self, attachment_id: str) -> AttachmentInfo:
         """Get attachment information"""
@@ -187,4 +228,27 @@ class MediaController:
             
         except Exception as e:
             logger.error(f"Error checking attachment access: {str(e)}")
-            return False 
+            return False
+
+    async def test_multimodal_functionality(self, attachment_id: str) -> dict:
+        """Test multimodal functionality for an attachment"""
+        try:
+            attachment = await self.media_service.get_attachment(attachment_id)
+            if not attachment:
+                raise HTTPException(status_code=404, detail="Attachment not found")
+            
+            # Check access permissions
+            if attachment.message_id:
+                access_granted = await self._check_attachment_access(attachment.message_id)
+                if not access_granted:
+                    raise HTTPException(status_code=403, detail="Access denied")
+            
+            # Test multimodal functionality
+            result = await self.media_service.test_multimodal_functionality(attachment_id)
+            return result
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error testing multimodal functionality: {str(e)}")
+            raise HTTPException(status_code=500, detail="Failed to test multimodal functionality") 

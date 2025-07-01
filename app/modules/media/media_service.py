@@ -35,17 +35,31 @@ class MediaService:
     }
     
     MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
-    MAX_DIMENSION = 4096  # Max width/height
-    JPEG_QUALITY = 95
+    MAX_DIMENSION = 2048  # Reduce from 4096 to preserve more detail in base64
+    JPEG_QUALITY = 98  # Increase from 95 to preserve text readability
+    # Add minimum dimension threshold to avoid over-compression of small images
+    MIN_DIMENSION_FOR_RESIZE = 1024  # Only resize if larger than this
     
     def __init__(self, db: Session):
         self.db = db
         self.bucket_name = os.getenv("GCS_BUCKET_NAME", "potpie-media-attachments")
         self.gcs_project_id = os.getenv("GCS_PROJECT_ID")
         
-        # Initialize GCS client
+        # Initialize GCS client with service account credentials for signed URLs
         try:
-            self.gcs_client = storage.Client(project=self.gcs_project_id)
+            service_account_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+            
+            if service_account_path and os.path.exists(service_account_path):
+                # Use service account credentials for signed URL support
+                from google.oauth2 import service_account
+                credentials = service_account.Credentials.from_service_account_file(service_account_path)
+                self.gcs_client = storage.Client(credentials=credentials, project=self.gcs_project_id)
+                logger.info("Initialized GCS client with service account credentials (signed URLs supported)")
+            else:
+                # Fallback to default credentials (signed URLs will fail)
+                self.gcs_client = storage.Client(project=self.gcs_project_id)
+                logger.warning("GCS client initialized with default credentials (signed URLs not supported)")
+            
             self.bucket = self.gcs_client.bucket(self.bucket_name)
         except Exception as e:
             logger.error(f"Failed to initialize GCS client: {str(e)}")
@@ -172,12 +186,17 @@ class MediaService:
             needs_resize = img.width > self.MAX_DIMENSION or img.height > self.MAX_DIMENSION
             
             if needs_resize:
-                # Calculate new dimensions maintaining aspect ratio
-                img.thumbnail((self.MAX_DIMENSION, self.MAX_DIMENSION), Image.Resampling.LANCZOS)
-                file_metadata["resized"] = True
-                file_metadata["new_width"] = img.width
-                file_metadata["new_height"] = img.height
-                logger.info(f"Resized image from {file_metadata['original_width']}x{file_metadata['original_height']} to {img.width}x{img.height}")
+                # Only resize if the image is significantly larger than minimum threshold
+                if max(img.width, img.height) > self.MIN_DIMENSION_FOR_RESIZE:
+                    # Calculate new dimensions maintaining aspect ratio
+                    img.thumbnail((self.MAX_DIMENSION, self.MAX_DIMENSION), Image.Resampling.LANCZOS)
+                    file_metadata["resized"] = True
+                    file_metadata["new_width"] = img.width
+                    file_metadata["new_height"] = img.height
+                    logger.info(f"Resized image from {file_metadata['original_width']}x{file_metadata['original_height']} to {img.width}x{img.height}")
+                else:
+                    logger.info(f"Skipping resize for small image: {img.width}x{img.height}")
+                    file_metadata["resized"] = False
             
             # Convert to RGB if necessary (for JPEG output)
             if img.mode not in ('RGB', 'L'):
@@ -329,7 +348,8 @@ class MediaService:
         try:
             # Update attachments with message_id
             if attachment_ids:
-                self.db.query(MessageAttachment).filter(
+                # Update attachments with message_id
+                updated_count = self.db.query(MessageAttachment).filter(
                     MessageAttachment.id.in_(attachment_ids),
                     MessageAttachment.message_id.is_(None)
                 ).update(
@@ -351,27 +371,161 @@ class MediaService:
             logger.error(f"Error updating message attachments: {str(e)}")
             raise MediaServiceError(f"Failed to update message attachments: {str(e)}")
     
-    async def get_message_attachments(self, message_id: str) -> List[AttachmentInfo]:
-        """Get all attachments for a message"""
+    async def get_message_attachments(self, message_id: str, include_download_urls: bool = True) -> List[AttachmentInfo]:
+        """Get all attachments for a specific message with optional signed URLs"""
         try:
-            attachments = self.db.query(MessageAttachment).filter(
-                MessageAttachment.message_id == message_id
-            ).all()
+            attachments = (
+                self.db.query(MessageAttachment)
+                .filter_by(message_id=message_id)
+                .all()
+            )
             
-            return [
-                AttachmentInfo(
-                    id=att.id,
-                    attachment_type=att.attachment_type,
-                    file_name=att.file_name,
-                    mime_type=att.mime_type,
-                    file_size=att.file_size,
-                    storage_provider=att.storage_provider,
-                    file_metadata=att.file_metadata,
-                    created_at=att.created_at
+            result = []
+            for attachment in attachments:
+                download_url = None
+                
+                # Generate signed URL if requested
+                if include_download_urls:
+                    try:
+                        download_url = await self.generate_signed_url(attachment.id, expiration_minutes=60)
+                        logger.info(f"Generated signed URL for attachment {attachment.id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to generate signed URL for attachment {attachment.id}: {str(e)}")
+                        # Fallback to direct download endpoint
+                        download_url = f"/api/media/{attachment.id}/download"
+                        logger.info(f"Using fallback download URL for attachment {attachment.id}: {download_url}")
+                
+                result.append(
+                    AttachmentInfo(
+                        id=attachment.id,
+                        attachment_type=attachment.attachment_type,
+                        file_name=attachment.file_name,
+                        file_size=attachment.file_size,
+                        mime_type=attachment.mime_type,
+                        storage_provider=attachment.storage_provider,
+                        created_at=attachment.created_at,
+                        file_metadata=attachment.file_metadata or {},
+                        download_url=download_url
+                    )
                 )
-                for att in attachments
-            ]
+            
+            return result
+        except Exception as e:
+            logger.error(f"Error getting message attachments for message {message_id}: {str(e)}")
+            raise MediaServiceError(f"Failed to get message attachments: {str(e)}")
+
+    async def get_image_as_base64(self, attachment_id: str) -> str:
+        """Get image as base64 string for LLM processing"""
+        try:
+            attachment = await self.get_attachment(attachment_id)
+            if not attachment:
+                raise MediaServiceError(f"Attachment {attachment_id} not found")
+            
+            if attachment.attachment_type != AttachmentType.IMAGE:
+                raise MediaServiceError(f"Attachment {attachment_id} is not an image")
+            
+            # Get image data from storage
+            image_data = await self.get_attachment_data(attachment_id)
+            
+            # Convert to base64
+            base64_string = base64.b64encode(image_data).decode('utf-8')
+            
+            logger.info(f"Converted image {attachment_id} to base64 (size: {len(base64_string)} chars)")
+            return base64_string
             
         except Exception as e:
-            logger.error(f"Error getting message attachments: {str(e)}")
-            raise MediaServiceError(f"Failed to get message attachments: {str(e)}") 
+            logger.error(f"Error converting image {attachment_id} to base64: {str(e)}")
+            raise MediaServiceError(f"Failed to convert image to base64: {str(e)}")
+    
+    async def get_message_images_as_base64(self, message_id: str) -> Dict[str, Dict[str, Union[str, int]]]:
+        """Get all images for a message as base64 dict with metadata"""
+        try:
+            attachments = await self.get_message_attachments(message_id, include_download_urls=False)
+            image_attachments = [att for att in attachments if att.attachment_type == AttachmentType.IMAGE]
+            
+            if not image_attachments:
+                return {}
+            
+            result = {}
+            for attachment in image_attachments:
+                try:
+                    base64_data = await self.get_image_as_base64(attachment.id)
+                    result[attachment.id] = {
+                        "base64": base64_data,
+                        "mime_type": attachment.mime_type,
+                        "file_name": attachment.file_name,
+                        "file_size": attachment.file_size
+                    }
+                except Exception as e:
+                    logger.error(f"Failed to convert attachment {attachment.id} to base64: {str(e)}")
+                    # Continue with other images even if one fails
+                    continue
+            
+            logger.info(f"Converted {len(result)} images to base64 for message {message_id}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error getting message images as base64 for message {message_id}: {str(e)}")
+            raise MediaServiceError(f"Failed to get message images as base64: {str(e)}")
+    
+    async def get_conversation_recent_images(self, conversation_id: str, limit: int = 10) -> Dict[str, Dict[str, Union[str, int]]]:
+        """Get recent images from conversation history for multimodal context"""
+        try:
+            from app.modules.conversations.message.message_model import Message, MessageStatus, MessageType
+            
+            # Get recent messages with attachments
+            recent_messages = (
+                self.db.query(Message)
+                .filter_by(conversation_id=conversation_id, status=MessageStatus.ACTIVE)
+                .filter(Message.has_attachments == True)
+                .filter(Message.type == MessageType.HUMAN)  # Only user messages
+                .order_by(Message.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+            
+            all_images = {}
+            for message in recent_messages:
+                try:
+                    message_images = await self.get_message_images_as_base64(message.id)
+                    all_images.update(message_images)
+                except Exception as e:
+                    logger.error(f"Failed to get images for message {message.id}: {str(e)}")
+                    continue
+            
+            logger.info(f"Retrieved {len(all_images)} recent images from conversation {conversation_id}")
+            return all_images
+            
+        except Exception as e:
+            logger.error(f"Error getting recent images for conversation {conversation_id}: {str(e)}")
+            raise MediaServiceError(f"Failed to get recent conversation images: {str(e)}")
+
+    async def test_multimodal_functionality(self, attachment_id: str) -> Dict[str, Any]:
+        """Test method to verify multimodal functionality"""
+        try:
+            # Get attachment info
+            attachment = await self.get_attachment(attachment_id)
+            if not attachment:
+                return {"error": "Attachment not found"}
+            
+            # Test base64 conversion
+            base64_data = await self.get_image_as_base64(attachment_id)
+            
+            return {
+                "status": "success",
+                "attachment_id": attachment_id,
+                "file_name": attachment.file_name,
+                "mime_type": attachment.mime_type,
+                "file_size": attachment.file_size,
+                "base64_length": len(base64_data),
+                "base64_preview": base64_data[:50] + "..." if len(base64_data) > 50 else base64_data,
+                "multimodal_ready": True
+            }
+            
+        except Exception as e:
+            logger.error(f"Error testing multimodal functionality: {str(e)}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "multimodal_ready": False
+            } 

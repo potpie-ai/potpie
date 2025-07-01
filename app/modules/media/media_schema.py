@@ -16,6 +16,7 @@ class AttachmentInfo(BaseModel):
     storage_provider: StorageProvider
     file_metadata: Optional[Dict[str, Any]] = None
     created_at: datetime
+    download_url: Optional[str] = None  # Signed URL for client access
 
     class Config:
         from_attributes = True

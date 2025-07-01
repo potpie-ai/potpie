@@ -44,5 +44,5 @@ class MessageAttachment(Base):
     file_metadata = Column(JSONB, nullable=True)  # dimensions, format, etc.
     created_at = Column(TIMESTAMP(timezone=True), default=func.now(), nullable=False)
 
-    # Relationship
-    message = relationship("Message", back_populates="attachments") 
+    # Relationship removed to avoid import issues in standalone MediaService
+    # The Message model still has the attachments relationship for navigation 
