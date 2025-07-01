@@ -70,6 +70,10 @@ class PydanticRagAgent(ChatAgent):
 
     def _create_agent(self, ctx: ChatContext) -> Agent:
         config = self.config
+        
+        # Prepare multimodal instructions if images are present
+        multimodal_instructions = self._prepare_multimodal_instructions(ctx)
+        
         return Agent(
             model=self.llm_provider.get_pydantic_model(),
             tools=[
@@ -85,6 +89,9 @@ class PydanticRagAgent(ChatAgent):
             Goal: {config.goal}
             Backstory:
             {config.backstory}
+            
+            {multimodal_instructions}
+            
             CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             {self._create_task_description(task_config=config.tasks[0],ctx=ctx)}
             """,
@@ -95,6 +102,36 @@ class PydanticRagAgent(ChatAgent):
             end_strategy="exhaustive",
             model_settings={"max_tokens": 14000},
         )
+
+    def _prepare_multimodal_instructions(self, ctx: ChatContext) -> str:
+        """Prepare multimodal-specific instructions when images are present"""
+        if not ctx.has_images():
+            return ""
+        
+        all_images = ctx.get_all_images()
+        current_images = ctx.get_current_images_only()
+        context_images = ctx.get_context_images_only()
+        
+        return f"""
+        MULTIMODAL ANALYSIS INSTRUCTIONS:
+        You have access to {len(all_images)} image(s) - {len(current_images)} from the current message and {len(context_images)} from conversation history.
+        
+        CRITICAL GUIDELINES FOR ACCURATE ANALYSIS:
+        1. **ONLY analyze what you can clearly see** - Do not infer or guess about unclear details
+        2. **Distinguish between current and historical images** - Focus primarily on current message images
+        3. **State uncertainty** - If you cannot clearly see something, say "I cannot clearly see..." instead of guessing
+        4. **Be specific** - Reference exact text, colors, shapes, or elements you observe
+        5. **Avoid assumptions** - Do not assume context beyond what's explicitly visible
+        
+        ANALYSIS APPROACH:
+        - **Current Images**: These are directly related to the user's current query
+        - **Historical Images**: These provide context but may not be directly relevant
+        - **Text Recognition**: Only transcribe text that is clearly legible
+        - **UI Elements**: Only describe elements that are clearly visible and identifiable
+        - **Error Messages**: Only report errors that are clearly displayed and readable
+        
+        IMPORTANT: If an image is unclear, blurry, or doesn't contain the type of content the user is asking about, explicitly state this rather than making assumptions.
+        """
 
     def _create_task_description(
         self,
@@ -107,11 +144,33 @@ class PydanticRagAgent(ChatAgent):
         if isinstance(ctx.node_ids, str):
             ctx.node_ids = [ctx.node_ids]
 
+        # Add image context information
+        image_context = ""
+        if ctx.has_images():
+            all_images = ctx.get_all_images()
+            image_details = []
+            for attachment_id, image_data in all_images.items():
+                file_name = image_data.get("file_name", "unknown")
+                file_size = image_data.get("file_size", 0)
+                image_details.append(f"- {file_name} ({file_size} bytes)")
+            
+            image_context = f"""
+            ATTACHED IMAGES:
+            {chr(10).join(image_details)}
+            
+            Image Analysis Notes:
+            - These images are provided for visual analysis and debugging
+            - Reference specific details from the images in your response
+            - Correlate visual evidence with the user's query
+            """
+
         return f"""
                 CONTEXT:
                 Project ID: {ctx.project_id}
                 Node IDs: {" ,".join(ctx.node_ids)}
                 Project Name (this is name from github. i.e. owner/repo): {ctx.project_name}
+                
+                {image_context}
 
                 Additional Context:
                 {ctx.additional_context if ctx.additional_context != "" else "no additional context"}
@@ -121,35 +180,54 @@ class PydanticRagAgent(ChatAgent):
 
                 INSTRUCTIONS:
                 1. Use the available tools to gather information
-                2. Process and synthesize the gathered information
+                2. {"Analyze the provided images in detail and " if ctx.has_images() else ""}Process and synthesize the gathered information
                 3. Format your response in markdown unless explicitely asked to output in a different format, make sure it's well formatted
                 4. Include relevant code snippets and file references
-                5. Provide clear explanations
+                5. {"Reference specific details from the images when relevant" if ctx.has_images() else "Provide clear explanations"}
                 6. Verify your output before submitting
 
                 IMPORTANT:
                 - Use tools efficiently and avoid unnecessary API calls
                 - Only use the tools listed below
+                {"- Provide detailed image analysis when images are present" if ctx.has_images() else ""}
             """
 
+    async def _prepare_multimodal_message_history(self, ctx: ChatContext) -> List[ModelResponse]:
+        """Prepare message history with multimodal support"""
+        history_messages = []
+        
+        for msg in ctx.history:
+            # For now, keep history as text-only to avoid token bloat
+            # Images are only added to the current query
+            history_messages.append(ModelResponse([TextPart(content=str(msg))]))
+        
+        return history_messages
+
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
-        """Main execution flow"""
-        logger.info("running pydantic-ai agent")
+        """Main execution flow with multimodal support"""
+        logger.info(f"Running pydantic-ai agent {'with multimodal support' if ctx.has_images() else ''}")
+        
+        if ctx.has_images():
+            logger.info(f"Processing {len(ctx.get_all_images())} images")
+            # Use direct multimodal LLM call for image analysis
+            return await self._run_multimodal(ctx)
+        else:
+            # Use standard PydanticAI agent for text-only
+            return await self._run_standard(ctx)
+
+    async def _run_standard(self, ctx: ChatContext) -> ChatAgentResponse:
+        """Standard text-only agent execution"""
         try:
-            # agentops.init(
-            #     os.getenv("AGENTOPS_API_KEY"), default_tags=["openai-gpt-notebook"]
-            # )
-            # session = agentops.start_session()
-            # Create all tasks
-
-            resp = await self._create_agent(ctx).run(
+            # Prepare message history
+            message_history = await self._prepare_multimodal_message_history(ctx)
+            
+            # Create and run agent
+            agent = self._create_agent(ctx)
+            
+            resp = await agent.run(
                 user_prompt=ctx.query,
-                message_history=[
-                    ModelResponse([TextPart(content=msg)]) for msg in ctx.history
-                ],
+                message_history=message_history,
             )
-
-            # session and session.end_session("Success")
 
             return ChatAgentResponse(
                 response=resp.output,
@@ -158,18 +236,158 @@ class PydanticRagAgent(ChatAgent):
             )
 
         except Exception as e:
-            logger.error(f"Error in run method: {str(e)}", exc_info=True)
+            logger.error(f"Error in standard run method: {str(e)}", exc_info=True)
             raise Exception from e
+
+    async def _run_multimodal(self, ctx: ChatContext) -> ChatAgentResponse:
+        """Multimodal agent execution using provider service directly"""
+        try:
+            # Check if provider supports vision
+            if not self.llm_provider.is_vision_model():
+                logger.warning("Current model doesn't support vision, falling back to text-only")
+                return await self._run_standard(ctx)
+            
+            # Prepare system message with instructions
+            system_message = self._create_multimodal_system_message(ctx)
+            
+            # Prepare conversation history (text only for now)
+            messages = [{"role": "system", "content": system_message}]
+            
+            # Add conversation history
+            for msg in ctx.history[-6:]:  # Limit history to avoid token overflow
+                if isinstance(msg, str):
+                    # Parse the message format: "MessageType: content"
+                    if ": " in msg:
+                        msg_type, content = msg.split(": ", 1)
+                        role = "assistant" if "AI" in msg_type else "user"
+                        messages.append({"role": role, "content": content})
+            
+            # Add current user query
+            messages.append({"role": "user", "content": ctx.query})
+            
+            # Use only current images to reduce hallucinations from mixed context
+            images_to_use = ctx.get_current_images_only()
+            if not images_to_use and ctx.get_context_images_only():
+                logger.info("No current images found, using recent context images")
+                images_to_use = ctx.get_context_images_only()
+            
+            logger.info(f"Using {len(images_to_use)} images for multimodal analysis")
+            
+            # Call multimodal LLM
+            response = await self.llm_provider.call_llm_multimodal(
+                messages=messages,
+                images=images_to_use,
+                stream=False,
+                config_type="chat"
+            )
+            
+            return ChatAgentResponse(
+                response=response,
+                tool_calls=[],
+                citations=[],
+            )
+
+        except Exception as e:
+            logger.error(f"Error in multimodal run method: {str(e)}", exc_info=True)
+            # Fallback to standard execution
+            logger.info("Falling back to standard text-only execution")
+            return await self._run_standard(ctx)
+
+    def _create_multimodal_system_message(self, ctx: ChatContext) -> str:
+        """Create comprehensive system message for multimodal analysis"""
+        config = self.config
+        
+        multimodal_instructions = self._prepare_multimodal_instructions(ctx)
+        task_description = self._create_task_description(config.tasks[0], ctx)
+        
+        return f"""
+        You are an AI assistant with vision capabilities.
+        
+        Role: {config.role}
+        Goal: {config.goal}
+        Backstory: {config.backstory}
+        
+        {multimodal_instructions}
+        
+        {task_description}
+        
+        Important: Analyze any images provided and correlate your visual analysis with the user's query. Provide specific, actionable insights based on what you observe.
+        """
 
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        logger.info("running pydantic-ai agent stream")
+        logger.info(f"Running pydantic-ai agent stream {'with multimodal support' if ctx.has_images() else ''}")
+        
+        if ctx.has_images():
+            # For multimodal, stream the response from direct LLM call
+            async for chunk in self._run_multimodal_stream(ctx):
+                yield chunk
+        else:
+            # Use standard PydanticAI streaming for text-only
+            async for chunk in self._run_standard_stream(ctx):
+                yield chunk
+
+    async def _run_multimodal_stream(self, ctx: ChatContext) -> AsyncGenerator[ChatAgentResponse, None]:
+        """Stream multimodal response"""
+        try:
+            # Check if provider supports vision
+            if not self.llm_provider.is_vision_model():
+                logger.warning("Current model doesn't support vision, falling back to text-only")
+                async for chunk in self._run_standard_stream(ctx):
+                    yield chunk
+                return
+            
+            # Prepare system message and conversation
+            system_message = self._create_multimodal_system_message(ctx)
+            messages = [{"role": "system", "content": system_message}]
+            
+            # Add conversation history
+            for msg in ctx.history[-6:]:
+                if isinstance(msg, str) and ": " in msg:
+                    msg_type, content = msg.split(": ", 1)
+                    role = "assistant" if "AI" in msg_type else "user"
+                    messages.append({"role": role, "content": content})
+            
+            # Add current user query
+            messages.append({"role": "user", "content": ctx.query})
+            
+            # Use only current images to reduce hallucinations from mixed context
+            images_to_use = ctx.get_current_images_only()
+            if not images_to_use and ctx.get_context_images_only():
+                logger.info("No current images found, using recent context images")
+                images_to_use = ctx.get_context_images_only()
+            
+            logger.info(f"Using {len(images_to_use)} images for multimodal streaming")
+            
+            # Stream multimodal response
+            response_stream = await self.llm_provider.call_llm_multimodal(
+                messages=messages,
+                images=images_to_use,
+                stream=True,
+                config_type="chat"
+            )
+            
+            async for chunk in response_stream:
+                yield ChatAgentResponse(
+                    response=chunk,
+                    tool_calls=[],
+                    citations=[],
+                )
+
+        except Exception as e:
+            logger.error(f"Error in multimodal stream: {str(e)}", exc_info=True)
+            # Fallback to standard streaming
+            async for chunk in self._run_standard_stream(ctx):
+                yield chunk
+
+    async def _run_standard_stream(self, ctx: ChatContext) -> AsyncGenerator[ChatAgentResponse, None]:
+        """Standard streaming execution"""
         try:
             async with self._create_agent(ctx).iter(
                 user_prompt=ctx.query,
                 message_history=[
-                    ModelResponse([TextPart(content=msg)]) for msg in ctx.history
+                    ModelResponse([TextPart(content=str(msg))]) for msg in ctx.history
                 ],
             ) as run:
                 async for node in run:
