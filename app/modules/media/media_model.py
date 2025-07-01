@@ -1,10 +1,8 @@
 import enum
-from datetime import datetime
 
-from sqlalchemy import TIMESTAMP, Column, ForeignKey, Integer, String, Text, func
+from sqlalchemy import TIMESTAMP, Column, ForeignKey, Integer, String, func
 from sqlalchemy import Enum as SQLAEnum
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import relationship
 
 from app.core.base_model import Base
 
@@ -45,4 +43,4 @@ class MessageAttachment(Base):
     created_at = Column(TIMESTAMP(timezone=True), default=func.now(), nullable=False)
 
     # Relationship removed to avoid import issues in standalone MediaService
-    # The Message model still has the attachments relationship for navigation 
+    # The Message model still has the attachments relationship for navigation

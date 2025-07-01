@@ -38,4 +38,4 @@ class AttachmentAccessResponse(BaseModel):
 
 class MediaUploadError(BaseModel):
     error: str
-    details: Optional[str] = None 
+    details: Optional[str] = None

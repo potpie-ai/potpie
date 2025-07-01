@@ -127,23 +127,31 @@ class ConversationAPI:
             logger.info(f"DEBUG: Processing {len(images)} uploaded images")
             media_service = MediaService(db)
             for i, image in enumerate(images):
-                logger.info(f"DEBUG: Processing image {i}: filename={image.filename}, content_type={image.content_type}, size={getattr(image, 'size', 'unknown')}")
+                logger.info(
+                    f"DEBUG: Processing image {i}: filename={image.filename}, content_type={image.content_type}, size={getattr(image, 'size', 'unknown')}"
+                )
                 # Check if image has content by checking filename and content_type
                 if image.filename and image.content_type:
                     try:
                         # Read file data first and pass as bytes to avoid UploadFile issues
                         file_content = await image.read()
-                        logger.info(f"DEBUG: Read {len(file_content)} bytes from {image.filename}")
+                        logger.info(
+                            f"DEBUG: Read {len(file_content)} bytes from {image.filename}"
+                        )
                         upload_result = await media_service.upload_image(
                             file=file_content,
                             file_name=image.filename,
                             mime_type=image.content_type,
-                            message_id=None  # Will be linked after message creation
+                            message_id=None,  # Will be linked after message creation
                         )
                         attachment_ids.append(upload_result.id)
-                        logger.info(f"DEBUG: Uploaded image {image.filename} with ID: {upload_result.id}")
+                        logger.info(
+                            f"DEBUG: Uploaded image {image.filename} with ID: {upload_result.id}"
+                        )
                     except Exception as e:
-                        logger.error(f"DEBUG: Failed to upload image {image.filename}: {str(e)}")
+                        logger.error(
+                            f"DEBUG: Failed to upload image {image.filename}: {str(e)}"
+                        )
                         # Clean up any successfully uploaded attachments
                         for uploaded_id in attachment_ids:
                             try:
@@ -152,13 +160,15 @@ class ConversationAPI:
                                 pass
                         raise HTTPException(
                             status_code=400,
-                            detail=f"Failed to upload image {image.filename}: {str(e)}"
+                            detail=f"Failed to upload image {image.filename}: {str(e)}",
                         )
                 else:
-                    logger.info(f"DEBUG: Skipping image {i} - no filename ({image.filename}) or content_type ({image.content_type})")
+                    logger.info(
+                        f"DEBUG: Skipping image {i} - no filename ({image.filename}) or content_type ({image.content_type})"
+                    )
         else:
-            logger.info(f"DEBUG: No images to process. images is None or empty")
-        
+            logger.info("DEBUG: No images to process. images is None or empty")
+
         logger.info(f"DEBUG: Final attachment_ids: {attachment_ids}")
 
         # Parse node_ids if provided
@@ -167,17 +177,17 @@ class ConversationAPI:
             try:
                 parsed_node_ids = json.loads(node_ids)
             except json.JSONDecodeError:
-                raise HTTPException(
-                    status_code=400, detail="Invalid node_ids format"
-                )
+                raise HTTPException(status_code=400, detail="Invalid node_ids format")
 
         # Create message request
         message = MessageRequest(
             content=content,
             node_ids=parsed_node_ids,
-            attachment_ids=attachment_ids if attachment_ids else None
+            attachment_ids=attachment_ids if attachment_ids else None,
         )
-        logger.info(f"DEBUG: Created MessageRequest with attachment_ids: {message.attachment_ids}")
+        logger.info(
+            f"DEBUG: Created MessageRequest with attachment_ids: {message.attachment_ids}"
+        )
 
         controller = ConversationController(db, user_id, user_email)
         message_stream = controller.post_message(conversation_id, message, stream)
