@@ -31,6 +31,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     TextPart,
 )
+from pydantic_ai.usage import UsageLimits
 from langchain_core.tools import StructuredTool
 
 logger = setup_logger(__name__)
@@ -93,7 +94,7 @@ class PydanticRagAgent(ChatAgent):
             output_type=str,
             defer_model_check=True,
             end_strategy="exhaustive",
-            model_settings={"max_tokens": 14000},
+            model_settings={"max_tokens": 14000, "extra_body": {"max_tokens": "14000"}},
         )
 
     def _create_agent(self, ctx: ChatContext) -> Agent:
@@ -192,6 +193,9 @@ class PydanticRagAgent(ChatAgent):
         try:
             async with self._create_agent(ctx).iter(
                 user_prompt=ctx.query,
+                usage_limits=UsageLimits(
+                    response_tokens_limit=8000,
+                ),
                 message_history=[
                     ModelResponse([TextPart(content=msg)]) for msg in ctx.history
                 ],

@@ -34,7 +34,9 @@ from pydantic_ai.messages import (
     TextPartDelta,
     ModelResponse,
     TextPart,
+    
 )
+from pydantic_ai.usage import UsageLimits
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
@@ -914,7 +916,7 @@ class PydanticMultiAgent(ChatAgent):
             output_type=str,
             retries=3,
             defer_model_check=True,
-            model_settings={"parallel_tool_calls": True, "max_tokens": 8000},
+            model_settings={"parallel_tool_calls": True},
         )
 
     def _get_next_role(self, state: MultiAgentState) -> AgentRole:
@@ -1123,7 +1125,7 @@ class PydanticMultiAgent(ChatAgent):
     ) -> AsyncGenerator[ChatAgentResponse, None]:
             
         logger.info("Running pydantic-ai multi-agent stream")
-        context = await self.tool_service.process_large_pr_tool.arun({"project_id": ctx.project_id, "base_branch": "prev-2"})
+        context = await self.tool_service.process_large_pr_tool.arun({"project_id": ctx.project_id, "base_branch": "master"})
         prompt = f"""    
         Based on a provided PR change summary, you will create or update functional tests that verify new features and changes work correctly across service boundaries.
         Input Instructions
@@ -1284,6 +1286,9 @@ class PydanticMultiAgent(ChatAgent):
                 result = ""
                 async with current_agent.iter(
                     user_prompt=current_prompt,
+                    usage_limits=UsageLimits(
+                        response_tokens_limit=8000,
+                    ),
                     # message_history=[
                     #     ModelResponse([TextPart(content=msg)]) for msg in ctx.history
                     # ],

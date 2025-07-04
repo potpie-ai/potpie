@@ -9,11 +9,11 @@ DEFAULT_INFERENCE_MODEL = "openai/gpt-4.1-mini"
 MODEL_CONFIG_MAP = {
     "simplismart/deepseek-r1": {
         "provider": "simplismart",
-        "default_params": {"temperature": 0.3},
+        "default_params": {"temperature": 0.3, "max_tokens": 8000},
     },
     "simplismart/deepseek-v3": {
         "provider": "simplismart",
-        "default_params": {"temperature": 0.3},
+        "default_params": {"temperature": 0.3, "max_tokens": 8000},
     },
 }
 
@@ -60,7 +60,7 @@ def get_config_for_model(model_string: str) -> Dict[str, Any]:
     provider, _ = parse_model_string(model_string)
     return {
         "provider": provider,
-        "default_params": {"temperature": 0.3},
+        "default_params": {"temperature": 0.3, "max_tokens": 8000},
     }
 
 

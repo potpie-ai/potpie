@@ -588,7 +588,7 @@ class ProviderService:
                     messages=messages,
                     response_model=output_schema,
                     temperature=params.get("temperature", 0.3),
-                    max_tokens=params.get("max_tokens"),
+                    max_tokens=8000,
                     
                 )
             else:
@@ -696,14 +696,12 @@ class ProviderService:
                         ),
                     )
                 case "simplismart":
+                    from portkey_ai import AsyncPortkey
+                    portkey = AsyncPortkey(base_url=PORTKEY_GATEWAY_URL,api_key=self.portkey_api_key, stream=True, provider='simplismart-5551e9', trace_id=str(uuid.uuid4())[:8],metadata={"id": SIMPLISMART_ID_MAP[model_name]})
                     return OpenAIModel(
                         model_name=model_name,
                         provider=OpenAIProvider(
-                            api_key=api_key,
-                            base_url=SIMPLISMART_BASE_URL,
-                            http_client=httpx.AsyncClient(
-                                headers={'id': SIMPLISMART_ID_MAP[model_name]}
-                            ),
+                            openai_client=portkey,
                         ),
                     )
                 case "gemini":
