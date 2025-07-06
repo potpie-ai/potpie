@@ -13,6 +13,7 @@ from app.core.database import SessionLocal, engine
 from app.core.models import *  # noqa #necessary for models to not give import errors
 from app.modules.auth.auth_router import auth_router
 from app.modules.code_provider.github.github_router import router as github_router
+from app.modules.code_provider.github.github_webhook_router import router as github_webhook_router
 from app.modules.conversations.conversations_router import (
     router as conversations_router,
 )
@@ -100,6 +101,7 @@ class MainApp:
         self.app.include_router(projects_router, prefix="/api/v1", tags=["Projects"])
         self.app.include_router(search_router, prefix="/api/v1", tags=["Search"])
         self.app.include_router(github_router, prefix="/api/v1", tags=["Github"])
+        self.app.include_router(github_webhook_router, prefix="/api/v1", tags=["Github Webhooks"])
         self.app.include_router(agent_router, prefix="/api/v1", tags=["Agents"])
         self.app.include_router(provider_router, prefix="/api/v1", tags=["Providers"])
         self.app.include_router(tool_router, prefix="/api/v1", tags=["Tools"])

@@ -3,8 +3,10 @@ import logging
 import os
 import random
 import re
+import json
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime
 
 import aiohttp
 import chardet
@@ -27,6 +29,10 @@ logger = logging.getLogger(__name__)
 
 class GithubService:
     gh_token_list: List[str] = []
+    
+    # Cache configuration
+    REPO_VISIBILITY_CACHE_TTL = 604800  # 1 week
+    REPO_VISIBILITY_CACHE_PREFIX = "repo_visibility"
 
     @classmethod
     def initialize_tokens(cls):
@@ -50,6 +56,8 @@ class GithubService:
         self.max_depth = 4
         self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
         self.is_development_mode = config_provider.get_is_development_mode()
+    
+
 
     def get_github_repo_details(self, repo_name: str) -> Tuple[Github, Dict, str]:
         private_key = (
@@ -763,10 +771,89 @@ class GithubService:
 
         return "\n".join(_format_node(structure))
 
-    async def check_public_repo(self, repo_name: str) -> bool:
+    async def is_repository_public(self, repo_name: str) -> bool:
+        """Check if repository is publicly accessible with Redis caching"""
+        try:
+            # Find project by repo_name to get project_id for caching
+            projects = await asyncio.get_event_loop().run_in_executor(
+                self.executor, self._find_projects_by_repository_name_sync, repo_name
+            )
+            
+            # Use first project's ID as cache key (multiple projects can have same repo_name)
+            project_id = projects[0].id if projects else repo_name
+            cache_key = f"{self.REPO_VISIBILITY_CACHE_PREFIX}:{project_id}"
+            
+            # Check cache first
+            cached_result = await asyncio.get_event_loop().run_in_executor(
+                self.executor, self._get_cache_value_sync, cache_key
+            )
+            if cached_result:
+                cached_data = json.loads(cached_result.decode("utf-8"))
+                logger.info(f"Repository visibility found in cache for {repo_name}")
+                return cached_data["is_public"]
+            
+            # Call GitHub API if not cached
+            is_public = await asyncio.get_event_loop().run_in_executor(
+                self.executor, self._fetch_repository_visibility_sync, repo_name
+            )
+            
+            # Cache result with project_id as key
+            cache_data = {
+                "is_public": is_public,
+                "cached_at": datetime.utcnow().isoformat(),
+                "repo_name": repo_name
+            }
+            await asyncio.get_event_loop().run_in_executor(
+                self.executor, self._store_cache_value_sync, cache_key, json.dumps(cache_data)
+            )
+            logger.info(f"Repository visibility cached for {repo_name}: {is_public}")
+            
+            return is_public
+            
+        except Exception as e:
+            logger.error(f"Error checking repository visibility for {repo_name}: {e}")
+            return False
+    
+    def _fetch_repository_visibility_sync(self, repo_name: str) -> bool:
+        """Fetch repository visibility from GitHub API synchronously"""
         try:
             github = self.get_public_github_instance()
             github.get_repo(repo_name)
             return True
         except Exception:
             return False
+    
+    def _get_cache_value_sync(self, cache_key: str):
+        """Retrieve cache value synchronously"""
+        return self.redis.get(cache_key)
+    
+    def _store_cache_value_sync(self, cache_key: str, cache_data: str):
+        """Store cache value with TTL synchronously"""
+        return self.redis.setex(cache_key, self.REPO_VISIBILITY_CACHE_TTL, cache_data)
+    
+    async def clear_repository_cache(self, repo_name: str):
+        """Clear cached repository visibility data"""
+        try:
+            # Find project by repo_name to get project_id for cache key
+            projects = await asyncio.get_event_loop().run_in_executor(
+                self.executor, self._find_projects_by_repository_name_sync, repo_name
+            )
+            
+            # Use first project's ID as cache key (same logic as check_public_repo)
+            project_id = projects[0].id if projects else repo_name
+            cache_key = f"{self.REPO_VISIBILITY_CACHE_PREFIX}:{project_id}"
+            
+            await asyncio.get_event_loop().run_in_executor(
+                self.executor, self._delete_cache_value_sync, cache_key
+            )
+            logger.info(f"Cache invalidated for repository {repo_name}")
+        except Exception as e:
+            logger.error(f"Error invalidating cache for {repo_name}: {e}")
+    
+    def _find_projects_by_repository_name_sync(self, repo_name: str):
+        """Find all projects matching repository name"""
+        return self.db.query(Project).filter(Project.repo_name == repo_name).all()
+    
+    def _delete_cache_value_sync(self, cache_key: str):
+        """Delete cache value synchronously"""
+        return self.redis.delete(cache_key)
