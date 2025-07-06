@@ -35,6 +35,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     TextPart,
 )
+from pydantic_ai.usage import UsageLimits
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
@@ -914,7 +915,7 @@ class PydanticMultiAgent(ChatAgent):
             output_type=str,
             retries=3,
             defer_model_check=True,
-            model_settings={"parallel_tool_calls": True, "max_tokens": 8000},
+            model_settings={"parallel_tool_calls": True, "max_tokens": 14000, "temperature": 0.4, "extra_body": {"max_tokens": 14000, "temperature": 0.3}},
         )
 
     def _get_next_role(self, state: MultiAgentState) -> AgentRole:
@@ -1284,7 +1285,10 @@ class PydanticMultiAgent(ChatAgent):
                 result = ""
                 async with current_agent.iter(
                     user_prompt=current_prompt,
-                    # message_history=[
+                    usage_limits=UsageLimits(
+                        response_tokens_limit=14000,
+                    ),
+                    # message_hist`ory=[
                     #     ModelResponse([TextPart(content=msg)]) for msg in ctx.history
                     # ],
                 ) as agent_run:

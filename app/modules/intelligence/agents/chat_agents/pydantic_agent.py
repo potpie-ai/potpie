@@ -31,6 +31,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     TextPart,
 )
+from pydantic_ai.usage import UsageLimits
 from langchain_core.tools import StructuredTool
 
 logger = setup_logger(__name__)
@@ -93,35 +94,7 @@ class PydanticRagAgent(ChatAgent):
             output_type=str,
             defer_model_check=True,
             end_strategy="exhaustive",
-            model_settings={"max_tokens": 14000},
-        )
-
-    def _create_agent(self, ctx: ChatContext) -> Agent:
-        config = self.config
-        return Agent(
-            model=self.llm_provider.get_pydantic_model(),
-            tools=[
-                Tool(
-                    name=tool.name,
-                    description=tool.description,
-                    function=tool.func,  # type: ignore
-                )
-                for tool in self.tools
-            ],
-            instructions=f"""
-            Role: {config.role}
-            Goal: {config.goal}
-            Backstory:
-            {config.backstory}
-            CURRENT CONTEXT AND AGENT TASK OVERVIEW:
-            {self._create_task_description(task_config=config.tasks[0],ctx=ctx)}
-            """,
-            result_type=str,
-            output_retries=3,
-            output_type=str,
-            defer_model_check=True,
-            end_strategy="exhaustive",
-            model_settings={"max_tokens": 14000},
+            model_settings={"max_tokens": 14000, "extra_body": {"max_tokens": 14000}},
         )
 
     def _create_task_description(
@@ -192,6 +165,9 @@ class PydanticRagAgent(ChatAgent):
         try:
             async with self._create_agent(ctx).iter(
                 user_prompt=ctx.query,
+                usage_limits=UsageLimits(
+                    response_tokens_limit=14000,
+                ),
                 message_history=[
                     ModelResponse([TextPart(content=msg)]) for msg in ctx.history
                 ],
