@@ -54,6 +54,54 @@ def handle_exception(tool_func):
     return wrapper
 
 
+class ThinkTagFilter:
+    """Filter to remove content inside <think></think> tags from streaming text"""
+
+    def __init__(self):
+        self.buffer = ""
+        self.in_think_block = False
+
+    def filter_chunk(self, chunk: str) -> str:
+        """
+        Filter a chunk of text to remove <think></think> content.
+        Returns the filtered text that should be yielded.
+        """
+        self.buffer += chunk
+
+        # Process complete think blocks
+        while True:
+            if not self.in_think_block:
+                # Look for opening tag
+                think_start = self.buffer.find("<think>")
+                if think_start == -1:
+                    # No opening tag found, return all buffered content
+                    result = self.buffer
+                    self.buffer = ""
+                    return result
+                else:
+                    # Opening tag found, return content before it
+                    result = self.buffer[:think_start]
+                    self.buffer = self.buffer[think_start:]
+                    self.in_think_block = True
+                    if result:
+                        return result
+                    # Continue processing if no content to return
+            else:
+                # We're in a think block, look for closing tag
+                think_end = self.buffer.find("</think>")
+                if think_end == -1:
+                    # No closing tag found, discard all buffered content
+                    self.buffer = ""
+                    return ""
+                else:
+                    # Closing tag found, remove the think block and continue
+                    self.buffer = self.buffer[think_end + 8 :]  # 8 = len('</think>')
+                    self.in_think_block = False
+                    # Continue processing remaining buffer
+
+        return ""
+
+
 class AgentRole(str, Enum):
     PLANNER = "planner"
     EXECUTOR = "executor"
@@ -915,7 +963,12 @@ class PydanticMultiAgent(ChatAgent):
             output_type=str,
             retries=3,
             defer_model_check=True,
-            model_settings={"parallel_tool_calls": True, "max_tokens": 14000, "temperature": 0.4, "extra_body": {"max_tokens": 14000, "temperature": 0.3}},
+            model_settings={
+                "parallel_tool_calls": True,
+                "max_tokens": 14000,
+                "temperature": 0.4,
+                "extra_body": {"max_tokens": 14000, "temperature": 0.3},
+            },
         )
 
     def _get_next_role(self, state: MultiAgentState) -> AgentRole:
@@ -1122,9 +1175,11 @@ class PydanticMultiAgent(ChatAgent):
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-            
+
         logger.info("Running pydantic-ai multi-agent stream")
-        context = await self.tool_service.process_large_pr_tool.arun({"project_id": ctx.project_id, "base_branch": "master"})
+        context = await self.tool_service.process_large_pr_tool.arun(
+            {"project_id": ctx.project_id, "base_branch": "master"}
+        )
         prompt = f"""    
         Based on a provided PR change summary, you will create or update functional tests that verify new features and changes work correctly across service boundaries.
         Input Instructions
@@ -1281,6 +1336,8 @@ class PydanticMultiAgent(ChatAgent):
                         citations=[],
                     )
 
+                think_filter = ThinkTagFilter()
+
                 # Stream the agent execution
                 result = ""
                 async with current_agent.iter(
@@ -1300,22 +1357,28 @@ class PydanticMultiAgent(ChatAgent):
                                     if isinstance(event, PartStartEvent) and isinstance(
                                         event.part, TextPart
                                     ):
+                                        filtered_content = think_filter.filter_chunk(
+                                            event.part.content
+                                        )
                                         yield ChatAgentResponse(
-                                            response=f"[{current_role.value.upper()}] {event.part.content}",
+                                            response=f"[{current_role.value.upper()}] {filtered_content}",
                                             tool_calls=[],
                                             citations=[],
                                         )
-                                        result += event.part.content
+                                        result += filtered_content
                                     if isinstance(event, PartDeltaEvent) and isinstance(
                                         event.delta, TextPartDelta
                                     ):
+                                        filtered_content = think_filter.filter_chunk(
+                                            event.delta.content_delta
+                                        )
                                         yield ChatAgentResponse(
                                             thought=event.delta.content_delta,
-                                            response=event.delta.content_delta,
+                                            response=filtered_content,
                                             tool_calls=[],
                                             citations=[],
                                         )
-                                        result += event.delta.content_delta
+                                        result += filtered_content
 
                         elif Agent.is_call_tools_node(node):
                             # Stream tool calls
