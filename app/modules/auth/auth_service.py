@@ -1,5 +1,7 @@
 import logging
 import os
+import time
+from datetime import datetime, timedelta
 
 import requests
 from dotenv import load_dotenv
@@ -70,7 +72,20 @@ class AuthService:
                 )
             try:
                 decoded_token = auth.verify_id_token(credential.credentials)
+
+                current_time = int(time.time())
+                token_exp = decoded_token.get("exp", 0)
+
+                if current_time > token_exp:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Token has expired",
+                        headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
+                    )
+
                 request.state.user = decoded_token
+            except HTTPException:
+                raise
             except Exception as err:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
