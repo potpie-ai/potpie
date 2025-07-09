@@ -4,8 +4,6 @@ from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi import HTTPException
 from app.modules.code_provider.code_provider_service import CodeProviderService
 
-from app.modules.code_provider.github.github_service import GithubService
-
 
 @pytest.fixture
 def mock_sql_db():
@@ -122,10 +120,11 @@ class TestCodeProviderServiceDelegation:
                 start_line=10,
                 end_line=20,
                 branch_name="feature-branch",
-                project_id="proj_local"
+                project_id="proj_local",
+                commit_id="abc123"
             )
             mock_local_instance.get_file_content.assert_called_once_with(
-                "my_repo", "src/main.py", 10, 20, "feature-branch", "proj_local"
+                "my_repo", "src/main.py", 10, 20, "feature-branch", "proj_local", "abc123"
             )
             assert result == "local file content"
 
@@ -144,10 +143,11 @@ class TestCodeProviderServiceDelegation:
                 start_line=1,
                 end_line=5,
                 branch_name="main",
-                project_id="proj_gh"
+                project_id="proj_gh",
+                commit_id="commit123"
             )
             mock_github_instance.get_file_content.assert_called_once_with(
-                "owner/repo", "src/app.js", 1, 5, "main", "proj_gh"
+                "owner/repo", "src/app.js", 1, 5, "main", "proj_gh", "commit123"
             )
             assert result == "github file content"
 
@@ -214,7 +214,7 @@ class TestCodeProviderServiceExceptionHandling:
             
             service = CodeProviderService(mock_sql_db)
             with pytest.raises(HTTPException) as excinfo:
-                service.get_file_content("repo", "file.py", 1, 10, "main", "nonexistent_id")
+                service.get_file_content("repo", "file.py", 1, 10, "main", "nonexistent_id", "commit123")
             assert excinfo.value.status_code == 404
             assert excinfo.value.detail == "Project not found"
 
@@ -229,7 +229,7 @@ class TestCodeProviderServiceExceptionHandling:
             
             service = CodeProviderService(mock_sql_db)
             with pytest.raises(HTTPException) as excinfo:
-                service.get_file_content("repo", "file.py", 1, 10, "main", "proj")
+                service.get_file_content("repo", "file.py", 1, 10, "main", "proj", "commit123")
             assert excinfo.value.status_code == 500
             assert "Error processing file content" in excinfo.value.detail
 
@@ -239,7 +239,7 @@ class TestCodeProviderServiceExceptionHandling:
         """
         Raise ValueError if 'GH_TOKEN_LIST' is empty, whitespace, or just commas in Production
         """
-        mock_GithubService.side_effect = GithubService 
+        mock_GithubService.side_effect = ValueError("GitHub token list is empty or not set in environment variables")
         mock_getenv.return_value = token_list
         with patch.dict(os.environ, {}, clear=True):
              with pytest.raises(ValueError, match="GitHub token list is empty or not set in environment variables"):
@@ -247,7 +247,7 @@ class TestCodeProviderServiceExceptionHandling:
 
     def test_get_repo_github_inaccessible_exception(self, mock_LocalRepoService, mock_GithubService, mock_sql_db):
         """
-        Raise HTTP Exception if Repo is inaccesible in production
+        Raise HTTP Exception if Repo is inaccessible in production
         """
         with patch.dict(os.environ, {}, clear=True):
             mock_github_instance = mock_GithubService.return_value
@@ -280,7 +280,7 @@ class TestCodeProviderServiceExceptionHandling:
     @pytest.mark.asyncio
     async def test_get_project_structure_github_fetch_failure(self, mock_LocalRepoService, mock_GithubService, mock_sql_db):
         """
-        Raise HTTP Exception when unable to fetch project structure is inaccesible in production
+        Raise HTTP Exception when unable to fetch project structure is inaccessible in production
         """
         with patch.dict(os.environ, {}, clear=True):
             mock_github_instance = mock_GithubService.return_value
@@ -295,7 +295,7 @@ class TestCodeProviderServiceExceptionHandling:
 
     def test_get_file_content_github_public_failure(self, mock_LocalRepoService, mock_GithubService, mock_sql_db):
         """
-        Raise HTTP Exception if file is inaccesible in production
+        Raise HTTP Exception if file is inaccessible in production
         """
         with patch.dict(os.environ, {}, clear=True):
             mock_github_instance = mock_GithubService.return_value
@@ -305,7 +305,7 @@ class TestCodeProviderServiceExceptionHandling:
             
             service = CodeProviderService(mock_sql_db)
             with pytest.raises(HTTPException) as excinfo:
-                service.get_file_content("owner/repo", "file.py", 1, 10, "main", "proj")
+                service.get_file_content("owner/repo", "file.py", 1, 10, "main", "proj", "commit123")
             assert excinfo.value.status_code == 404
             assert excinfo.value.detail == err_detail
 
@@ -320,6 +320,6 @@ class TestCodeProviderServiceExceptionHandling:
             
             service = CodeProviderService(mock_sql_db)
             with pytest.raises(HTTPException) as excinfo:
-                service.get_file_content("owner/repo", "file.py", 1, 10, "main", "proj")
+                service.get_file_content("owner/repo", "file.py", 1, 10, "main", "proj", "commit123")
             assert excinfo.value.status_code == 500
             assert "Error processing file content" in excinfo.value.detail
