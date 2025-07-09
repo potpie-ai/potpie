@@ -5,7 +5,6 @@ from fastapi import HTTPException
 from app.modules.code_provider.code_provider_service import CodeProviderService
 
 from app.modules.code_provider.github.github_service import GithubService
-from app.modules.code_provider.local_repo.local_repo_service import LocalRepoService
 
 
 @pytest.fixture
