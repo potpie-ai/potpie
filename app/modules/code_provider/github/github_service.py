@@ -1,9 +1,11 @@
 import asyncio
+import json
 import logging
 import os
 import random
 import re
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
@@ -27,6 +29,10 @@ logger = logging.getLogger(__name__)
 
 class GithubService:
     gh_token_list: List[str] = []
+    
+    # Cache configuration for repository visibility
+    REPO_VISIBILITY_CACHE_TTL = 604800  # 1 week
+    REPO_VISIBILITY_CACHE_PREFIX = "repo_visibility"
 
     @classmethod
     def initialize_tokens(cls):
@@ -764,9 +770,55 @@ class GithubService:
         return "\n".join(_format_node(structure))
 
     async def check_public_repo(self, repo_name: str) -> bool:
+        """Check if repository is publicly accessible with Redis caching"""
+        try:
+            # Use repository name as cache key
+            cache_key = f"{self.REPO_VISIBILITY_CACHE_PREFIX}:{repo_name}"
+            
+            # Check cache first
+            cached_result = await asyncio.get_event_loop().run_in_executor(
+                self.executor, self._get_cache_value_sync, cache_key
+            )
+            if cached_result:
+                cached_data = json.loads(cached_result.decode("utf-8"))
+                return cached_data["is_public"]
+            
+            # Call GitHub API if not cached
+            is_public = await asyncio.get_event_loop().run_in_executor(
+                self.executor, self._fetch_repository_visibility_sync, repo_name
+            )
+            
+            # Cache result with repository name as key
+            cache_data = {
+                "is_public": is_public,
+                "cached_at": datetime.utcnow().isoformat(),
+                "repo_name": repo_name
+            }
+            await asyncio.get_event_loop().run_in_executor(
+                self.executor, self._store_cache_value_sync, cache_key, json.dumps(cache_data)
+            )
+            
+            return is_public
+            
+        except Exception as e:
+            logger.error(f"Error checking repository visibility for {repo_name}: {e}")
+            return False
+    
+    def _fetch_repository_visibility_sync(self, repo_name: str) -> bool:
+        """Fetch repository visibility from GitHub API synchronously"""
         try:
             github = self.get_public_github_instance()
             github.get_repo(repo_name)
             return True
         except Exception:
             return False
+    
+    def _get_cache_value_sync(self, cache_key: str):
+        """Retrieve cache value synchronously"""
+        return self.redis.get(cache_key)
+    
+    def _store_cache_value_sync(self, cache_key: str, cache_data: str):
+        """Store cache value with TTL synchronously"""
+        return self.redis.setex(cache_key, self.REPO_VISIBILITY_CACHE_TTL, cache_data)
+    
+
