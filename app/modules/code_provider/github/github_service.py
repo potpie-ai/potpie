@@ -835,7 +835,7 @@ class GithubService:
             owner, repo = repo_name.split('/', 1)
             
             # Webhook configuration
-            webhook_url = f"https://potpie.ai/api/v1/github/webhook"
+            webhook_url = "https://potpie.ai/api/v1/github/webhook"
             webhook_config = {
                 "name": "web",
                 "active": True,
