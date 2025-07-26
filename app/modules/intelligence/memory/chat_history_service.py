@@ -85,7 +85,7 @@ class ChatHistoryService:
         conversation_id: str,
         message_type: MessageType,
         sender_id: Optional[str] = None,
-    ):
+    ) -> Optional[str]:
         try:
             if (
                 conversation_id in self.message_buffer
@@ -111,6 +111,8 @@ class ChatHistoryService:
                 logger.info(
                     f"Flushed message buffer for conversation: {conversation_id}"
                 )
+                return new_message.id
+            return None
         except SQLAlchemyError as e:
             logger.error(
                 f"Database error in flush_message_buffer for conversation {conversation_id}: {e}",
