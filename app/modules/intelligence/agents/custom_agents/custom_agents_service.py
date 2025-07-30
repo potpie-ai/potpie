@@ -627,7 +627,10 @@ class CustomAgentService:
             self.llm_provider, self.tool_service, agent_config
         )
         try:
-            return runtime_agent.run_stream(ctx)
+            result = await runtime_agent.run(
+                agent_id, query, project_id, project_name, conversation_id, node_ids
+            )
+            return {"message": result["response"]}
 
         except Exception as e:
             logger.error(f"Error executing agent {ctx.curr_agent_id}: {str(e)}")
