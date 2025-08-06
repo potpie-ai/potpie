@@ -1,9 +1,7 @@
 import functools
 import re
 from typing import List, AsyncGenerator
-from contextlib import asynccontextmanager
 
-import httpx
 import anyio
 
 from pydantic_ai.mcp import MCPServerStreamableHTTP
@@ -262,7 +260,7 @@ class PydanticRagAgent(ChatAgent):
                                         f"Pydantic-ai error in model request stream: {pydantic_error}"
                                     )
                                     yield ChatAgentResponse(
-                                        response=f"\n\n*Encountered an issue while processing your request. Trying to recover...*\n\n",
+                                        response="\n\n*Encountered an issue while processing your request. Trying to recover...*\n\n",
                                         tool_calls=[],
                                         citations=[],
                                     )
@@ -277,7 +275,7 @@ class PydanticRagAgent(ChatAgent):
                                         f"Unexpected error in model request stream: {e}"
                                     )
                                     yield ChatAgentResponse(
-                                        response=f"\n\n*An unexpected error occurred. Continuing...*\n\n",
+                                        response="\n\n*An unexpected error occurred. Continuing...*\n\n",
                                         tool_calls=[],
                                         citations=[],
                                     )
@@ -345,7 +343,7 @@ class PydanticRagAgent(ChatAgent):
                                         f"Pydantic-ai error in tool call stream: {pydantic_error}"
                                     )
                                     yield ChatAgentResponse(
-                                        response=f"\n\n*Encountered an issue while calling tools. Trying to recover...*\n\n",
+                                        response="\n\n*Encountered an issue while calling tools. Trying to recover...*\n\n",
                                         tool_calls=[],
                                         citations=[],
                                     )
@@ -360,7 +358,7 @@ class PydanticRagAgent(ChatAgent):
                                         f"Unexpected error in tool call stream: {e}"
                                     )
                                     yield ChatAgentResponse(
-                                        response=f"\n\n*An unexpected error occurred during tool execution. Continuing...*\n\n",
+                                        response="\n\n*An unexpected error occurred during tool execution. Continuing...*\n\n",
                                         tool_calls=[],
                                         citations=[],
                                     )
@@ -414,7 +412,7 @@ class PydanticRagAgent(ChatAgent):
                                         f"Pydantic-ai error in fallback model request stream: {pydantic_error}"
                                     )
                                     yield ChatAgentResponse(
-                                        response=f"\n\n*Encountered an issue while processing your request. Trying to recover...*\n\n",
+                                        response="\n\n*Encountered an issue while processing your request. Trying to recover...*\n\n",
                                         tool_calls=[],
                                         citations=[],
                                     )
@@ -429,7 +427,7 @@ class PydanticRagAgent(ChatAgent):
                                         f"Unexpected error in fallback model request stream: {e}"
                                     )
                                     yield ChatAgentResponse(
-                                        response=f"\n\n*An unexpected error occurred. Continuing...*\n\n",
+                                        response="\n\n*An unexpected error occurred. Continuing...*\n\n",
                                         tool_calls=[],
                                         citations=[],
                                     )
@@ -497,7 +495,7 @@ class PydanticRagAgent(ChatAgent):
                                         f"Pydantic-ai error in fallback tool call stream: {pydantic_error}"
                                     )
                                     yield ChatAgentResponse(
-                                        response=f"\n\n*Encountered an issue while calling tools. Trying to recover...*\n\n",
+                                        response="\n\n*Encountered an issue while calling tools. Trying to recover...*\n\n",
                                         tool_calls=[],
                                         citations=[],
                                     )
@@ -512,7 +510,7 @@ class PydanticRagAgent(ChatAgent):
                                         f"Unexpected error in fallback tool call stream: {e}"
                                     )
                                     yield ChatAgentResponse(
-                                        response=f"\n\n*An unexpected error occurred during tool execution. Continuing...*\n\n",
+                                        response="\n\n*An unexpected error occurred during tool execution. Continuing...*\n\n",
                                         tool_calls=[],
                                         citations=[],
                                     )
@@ -551,7 +549,7 @@ class PydanticRagAgent(ChatAgent):
         except Exception as e:
             logger.error(f"Error in run_stream method: {str(e)}", exc_info=True)
             yield ChatAgentResponse(
-                response=f"\n\n*An error occurred during streaming*\n\n",
+                response="\n\n*An error occurred during streaming*\n\n",
                 tool_calls=[],
                 citations=[],
             )
