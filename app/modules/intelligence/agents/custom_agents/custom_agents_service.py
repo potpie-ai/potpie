@@ -559,6 +559,7 @@ class CustomAgentService:
         self,
         user_id: str,
         ctx: ChatContext,
+        is_task: bool = False,
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         """Execute an agent at runtime without deployment"""
         logger.info(
@@ -637,7 +638,7 @@ class CustomAgentService:
             "tasks": agent_model.tasks,
         }
         runtime_agent = RuntimeCustomAgent(
-            self.llm_provider, self.tool_service, agent_config
+            self.llm_provider, self.tool_service, agent_config, is_task=is_task
         )
         try:
             return runtime_agent.run_stream(ctx)

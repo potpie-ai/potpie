@@ -384,3 +384,5 @@ This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENS
 Thanks for spending your time helping build Potpie. Keep rocking 🥂
 
 <img src="https://contributors-img.web.app/image?repo=potpie-ai/potpie" alt="Contributors"/>
+
+This is full version of open-source potpie-ai repo
