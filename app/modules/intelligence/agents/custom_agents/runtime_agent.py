@@ -3,13 +3,17 @@ from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticR
 from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent import (
     PydanticMultiAgent,
 )
+
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
 from ..chat_agents.crewai_agent import AgentConfig, CrewAIAgent, TaskConfig
 from ..chat_agent import ChatAgent, ChatAgentResponse, ChatContext
+from app.modules.utils.logger import setup_logger
 from typing import Any, AsyncGenerator, Dict, List, Union
+
+logger = setup_logger(__name__)
 
 
 class CustomTaskConfig(BaseModel):
@@ -18,6 +22,7 @@ class CustomTaskConfig(BaseModel):
     tools: List[str]
     description: str
     expected_output: Union[Dict[str, Any], str]
+    mcp_servers: List[Dict[str, Any]] = []
 
 
 class CustomAgentConfig(BaseModel):
@@ -59,6 +64,35 @@ class RuntimeCustomAgent(ChatAgent):
         )
 
         tools = self.tools_provider.get_tools(self.agent_config.tasks[0].tools)
+
+
+        # Extract MCP servers from the first task with graceful error handling
+        mcp_servers = []
+        try:
+            if (
+                hasattr(self.agent_config.tasks[0], "mcp_servers")
+                and self.agent_config.tasks[0].mcp_servers
+            ):
+                mcp_servers = self.agent_config.tasks[0].mcp_servers
+                logger.info(
+                    f"Found {len(mcp_servers)} MCP servers in task configuration"
+                )
+        except Exception as e:
+            logger.warning(
+                f"Failed to extract MCP servers from task configuration: {e}. Continuing without MCP servers."
+            )
+            mcp_servers = []
+
+        if self.llm_provider.is_current_model_supported_by_pydanticai(
+            config_type="chat"
+        ):
+            agent = PydanticRagAgent(
+                self.llm_provider, agent_config, tools, mcp_servers
+            )
+            self._pydantic_agent = agent  # Store reference for status access
+            return agent
+        else:
+
         if not self.llm_provider.is_current_model_supported_by_pydanticai(
             config_type="chat"
         ):

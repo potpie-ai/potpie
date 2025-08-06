@@ -291,11 +291,23 @@ class CustomAgentService:
                     raise ValueError(
                         "Invalid JSON format for expected_output in a task."
                     )
+            # Convert MCP servers from dict to MCPServer objects if present
+            mcp_servers = []
+            if task.get("mcp_servers"):
+                from app.modules.intelligence.agents.custom_agents.custom_agent_schema import (
+                    MCPServer,
+                )
+
+                mcp_servers = [
+                    MCPServer(**server) for server in task.get("mcp_servers", [])
+                ]
+
             task_schemas.append(
                 Task(
                     id=i,
                     description=task["description"],
                     tools=task.get("tools", []),
+                    mcp_servers=mcp_servers,  # Convert to MCPServer objects
                     expected_output=expected_output,
                 )
             )
@@ -616,6 +628,7 @@ class CustomAgentService:
         logger.info(
             f"Executing agent {ctx.curr_agent_id} with role: {agent_model.role}"
         )
+        # Build agent config
         agent_config = {
             "user_id": agent_model.user_id,
             "role": agent_model.role,

@@ -5,9 +5,15 @@ from typing import Any, List, Optional
 from pydantic import BaseModel, Field, field_validator
 
 
+class MCPServer(BaseModel):
+    name: str
+    link: str
+
+
 class TaskBase(BaseModel):
     description: str
     tools: List[str]
+    mcp_servers: List[MCPServer] = []  # List of MCPServer objects with name and link
     expected_output: Any = Field(description="A JSON object")
 
     @field_validator("expected_output")
