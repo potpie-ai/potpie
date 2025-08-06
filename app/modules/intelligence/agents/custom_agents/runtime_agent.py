@@ -65,7 +65,6 @@ class RuntimeCustomAgent(ChatAgent):
 
         tools = self.tools_provider.get_tools(self.agent_config.tasks[0].tools)
 
-
         # Extract MCP servers from the first task with graceful error handling
         mcp_servers = []
         try:
@@ -82,16 +81,6 @@ class RuntimeCustomAgent(ChatAgent):
                 f"Failed to extract MCP servers from task configuration: {e}. Continuing without MCP servers."
             )
             mcp_servers = []
-
-        if self.llm_provider.is_current_model_supported_by_pydanticai(
-            config_type="chat"
-        ):
-            agent = PydanticRagAgent(
-                self.llm_provider, agent_config, tools, mcp_servers
-            )
-            self._pydantic_agent = agent  # Store reference for status access
-            return agent
-        else:
 
         if not self.llm_provider.is_current_model_supported_by_pydanticai(
             config_type="chat"
