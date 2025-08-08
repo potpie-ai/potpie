@@ -93,7 +93,7 @@ class RuntimeCustomAgent(ChatAgent):
                 tools,
             )
         else:
-            return PydanticRagAgent(self.llm_provider, agent_config, tools)
+            return PydanticRagAgent(self.llm_provider, agent_config, tools, mcp_servers)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if ctx.node_ids and len(ctx.node_ids) > 0:
