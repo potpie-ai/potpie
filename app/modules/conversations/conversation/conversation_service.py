@@ -106,7 +106,7 @@ class ConversationService:
         agent_service = AgentsService(
             db, provider_service, prompt_service, tool_service
         )
-        custom_agent_service = CustomAgentService(db)
+        custom_agent_service = CustomAgentService(db, provider_service, tool_service)
         return cls(
             db,
             user_id,
@@ -539,20 +539,37 @@ class ConversationService:
             )
 
             if type == "CUSTOM_AGENT":
-                # Custom agent doesn't support streaming, so we'll yield the entire response at once
-                response = (
+
+                res = (
                     await self.agent_service.custom_agent_service.execute_agent_runtime(
-                        agent_id,
                         user_id,
-                        query,
-                        node_ids,
-                        project_id,
-                        project_name,
-                        conversation.id,
+                        ChatContext(
+                            project_id=str(project_id),
+                            project_name=project_name,
+                            curr_agent_id=str(agent_id),
+                            history=validated_history[-12:],
+                            node_ids=[node.node_id for node in node_ids],
+                            query=query,
+                        ),
                     )
                 )
-                yield ChatMessageResponse(
-                    message=response["message"], citations=[], tool_calls=[]
+                async for chunk in res:
+                    self.history_manager.add_message_chunk(
+                        conversation_id,
+                        chunk.response,
+                        MessageType.AI_GENERATED,
+                        citations=chunk.citations,
+                    )
+                    yield ChatMessageResponse(
+                        message=chunk.response,
+                        citations=chunk.citations,
+                        tool_calls=[
+                            tool_call.model_dump_json()
+                            for tool_call in chunk.tool_calls
+                        ],
+                    )
+                self.history_manager.flush_message_buffer(
+                    conversation_id, MessageType.AI_GENERATED
                 )
             else:
                 res = self.agent_service.execute_stream(
