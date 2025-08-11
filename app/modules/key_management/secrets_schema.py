@@ -137,3 +137,43 @@ class UpdateIntegrationKeyRequest(CreateIntegrationKeyRequest):
 class IntegrationKeyResponse(BaseModel):
     service: str
     api_key: str
+
+
+# New schema classes for workflow-specific secrets
+class WorkflowSecret(BaseModel):
+    api_key: str  # This could be a webhook URL, API key, etc.
+    service: Literal["slack-webhook"]
+    workflow_id: str
+
+    @field_validator("api_key")
+    @classmethod
+    def validate_webhook_url(cls, v, info):
+        data = info.data
+        service = data.get("service")
+        
+        if service == "slack-webhook":
+            if not v.startswith("https://hooks.slack.com/"):
+                raise ValueError("Slack webhook URL must start with 'https://hooks.slack.com/'")
+        
+        return v
+
+
+class CreateWorkflowSecretRequest(BaseModel):
+    workflow_secrets: List[WorkflowSecret]
+
+    @field_validator("workflow_secrets")
+    @classmethod
+    def validate_secrets(cls, v):
+        if not v:
+            raise ValueError("At least one workflow secret must be provided")
+        return v
+
+
+class UpdateWorkflowSecretRequest(CreateWorkflowSecretRequest):
+    pass
+
+
+class WorkflowSecretResponse(BaseModel):
+    service: str
+    workflow_id: str
+    api_key: str
