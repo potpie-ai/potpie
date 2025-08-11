@@ -67,3 +67,4 @@ pydantic_ai==0.4.3
 pathspec==0.12.1
 pytest
 pytest-asyncio
+pytest-mock
