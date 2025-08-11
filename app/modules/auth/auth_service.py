@@ -23,6 +23,7 @@ class AuthService:
                 "email": email,
                 "password": password,
                 "returnSecureToken": True,
+                "expiresIn": "1200s",  # 20 mins
             },
         )
 
