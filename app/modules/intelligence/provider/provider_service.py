@@ -864,22 +864,51 @@ class ProviderService:
         config = self.chat_config if config_type == "chat" else self.inference_config
         model_name = config.model.lower()
 
-        # Known vision models
+        logger.info(f"Checking if model '{config.model}' supports vision capabilities")
+
+        # Known vision models - expanded list
         vision_models = [
+            # OpenAI models
             "gpt-4-vision",
             "gpt-4v",
             "gpt-4-turbo",
             "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4.1",
+            "gpt-4.1-mini",
+            "o4-mini",
+            # Anthropic models
             "claude-3",
             "claude-3-sonnet",
             "claude-3-opus",
             "claude-3-haiku",
+            "claude-sonnet-4",
+            # Google models
             "gemini-pro-vision",
             "gemini-1.5",
+            "gemini-1.5-pro",
+            "gemini-1.5-flash",
+            "gemini-2.0",
+            "gemini-2.0-flash",
+            "gemini-2.5",
+            "gemini-2.5-pro",
             "gemini-ultra",
+            # Other models that might support vision
+            "deepseek-chat",
+            "llama-3.3",
+            "llama-3.3-70b",
+            "llama-3.3-8b",
         ]
 
-        return any(vision_model in model_name for vision_model in vision_models)
+        is_vision = any(vision_model in model_name for vision_model in vision_models)
+        logger.info(f"Model '{config.model}' vision support: {is_vision}")
+
+        if not is_vision:
+            logger.warning(
+                f"Model '{config.model}' may not support vision. Known vision models: {vision_models}"
+            )
+
+        return is_vision
 
     def _initialize_llm(self, config: LLMProviderConfig, agent_type: AgentProvider):
         """Initialize LLM for the specified agent type."""

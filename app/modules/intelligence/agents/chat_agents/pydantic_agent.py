@@ -1,6 +1,6 @@
 import functools
 import re
-from typing import List, AsyncGenerator
+from typing import List, AsyncGenerator, Sequence
 from .tool_helpers import (
     get_tool_call_info_content,
     get_tool_response_message,
@@ -30,6 +30,9 @@ from pydantic_ai.messages import (
     TextPartDelta,
     ModelResponse,
     TextPart,
+    ImageUrl,
+    UserContent,
+    ModelMessage,
 )
 from langchain_core.tools import StructuredTool
 
@@ -192,9 +195,185 @@ class PydanticRagAgent(ChatAgent):
                 {"- Provide detailed image analysis when images are present" if ctx.has_images() else ""}
             """
 
+    def _debug_multimodal_content(self, ctx: ChatContext) -> None:
+        """Debug method to log detailed information about multimodal content"""
+        logger.info("=== MULTIMODAL CONTENT DEBUG ===")
+        logger.info(f"Context has images: {ctx.has_images()}")
+
+        if ctx.has_images():
+            all_images = ctx.get_all_images()
+            current_images = ctx.get_current_images_only()
+            context_images = ctx.get_context_images_only()
+
+            logger.info(f"Total images: {len(all_images)}")
+            logger.info(f"Current images: {len(current_images)}")
+            logger.info(f"Context images: {len(context_images)}")
+
+            for img_id, img_data in all_images.items():
+                logger.info(f"Image {img_id}:")
+                logger.info(f"  - Type: {img_data.get('context_type', 'unknown')}")
+                logger.info(f"  - File name: {img_data.get('file_name', 'unknown')}")
+                logger.info(f"  - File size: {img_data.get('file_size', 'unknown')}")
+                logger.info(f"  - MIME type: {img_data.get('mime_type', 'unknown')}")
+                logger.info(f"  - Has base64: {'base64' in img_data}")
+                if "base64" in img_data and isinstance(img_data["base64"], str):
+                    base64_len = len(img_data["base64"])
+                    logger.info(f"  - Base64 length: {base64_len}")
+                    if base64_len > 100:
+                        logger.info(f"  - Base64 preview: {img_data['base64'][:50]}...")
+                    else:
+                        logger.info(f"  - Base64: {img_data['base64']}")
+
+        # Test vision model detection
+        is_vision = self.llm_provider.is_vision_model()
+        logger.info(f"Current model supports vision: {is_vision}")
+
+        logger.info("=== END MULTIMODAL DEBUG ===")
+
+    def _create_multimodal_user_content(
+        self, ctx: ChatContext
+    ) -> Sequence[UserContent]:
+        """Create multimodal user content with images using PydanticAI's ImageUrl"""
+        content: List[UserContent] = [ctx.query]
+
+        # Add current images to the content
+        current_images = ctx.get_current_images_only()
+        logger.info(
+            f"Processing {len(current_images)} current images for multimodal content"
+        )
+
+        for attachment_id, image_data in current_images.items():
+            try:
+                # Validate image data structure
+                if not isinstance(image_data, dict):
+                    logger.error(
+                        f"Invalid image data structure for {attachment_id}: {type(image_data)}"
+                    )
+                    continue
+
+                # Validate required fields
+                if "base64" not in image_data:
+                    logger.error(f"Missing base64 data for image {attachment_id}")
+                    continue
+
+                base64_data = image_data["base64"]
+                if not isinstance(base64_data, str) or not base64_data:
+                    logger.error(f"Invalid base64 data for image {attachment_id}")
+                    continue
+
+                # Validate base64 format
+                try:
+                    import base64
+
+                    # Test if base64 is valid
+                    base64.b64decode(base64_data)
+                except Exception as e:
+                    logger.error(
+                        f"Invalid base64 format for image {attachment_id}: {str(e)}"
+                    )
+                    continue
+
+                # Get mime type with better fallback
+                mime_type = image_data.get("mime_type", "image/jpeg")
+                if (
+                    not mime_type
+                    or not isinstance(mime_type, str)
+                    or not mime_type.startswith("image/")
+                ):
+                    logger.warning(
+                        f"Invalid mime type for image {attachment_id}: {mime_type}, defaulting to image/jpeg"
+                    )
+                    mime_type = "image/jpeg"
+
+                # Create data URL
+                data_url = f"data:{mime_type};base64,{base64_data}"
+
+                # Log image details for debugging
+                file_name = image_data.get("file_name", "unknown")
+                file_size = image_data.get("file_size", 0)
+                logger.info(
+                    f"Adding image {attachment_id} ({file_name}, {file_size} bytes, {mime_type}) to multimodal content"
+                )
+
+                content.append(ImageUrl(url=data_url))
+                logger.info(
+                    f"Successfully added image {attachment_id} to multimodal content"
+                )
+
+            except Exception as e:
+                logger.error(
+                    f"Failed to add image {attachment_id} to content: {str(e)}",
+                    exc_info=True,
+                )
+                continue
+
+        # If no current images, add context images as fallback
+        if not current_images:
+            context_images = ctx.get_context_images_only()
+            logger.info(
+                f"No current images found, processing {len(context_images)} context images as fallback"
+            )
+
+            for attachment_id, image_data in context_images.items():
+                try:
+                    # Apply same validation as above
+                    if not isinstance(image_data, dict) or "base64" not in image_data:
+                        logger.error(f"Invalid context image data for {attachment_id}")
+                        continue
+
+                    base64_data = image_data["base64"]
+                    if not isinstance(base64_data, str) or not base64_data:
+                        logger.error(
+                            f"Invalid base64 data for context image {attachment_id}"
+                        )
+                        continue
+
+                    # Validate base64 format
+                    try:
+                        import base64
+
+                        base64.b64decode(base64_data)
+                    except Exception as e:
+                        logger.error(
+                            f"Invalid base64 format for context image {attachment_id}: {str(e)}"
+                        )
+                        continue
+
+                    mime_type = image_data.get("mime_type", "image/jpeg")
+                    if (
+                        not mime_type
+                        or not isinstance(mime_type, str)
+                        or not mime_type.startswith("image/")
+                    ):
+                        mime_type = "image/jpeg"
+
+                    data_url = f"data:{mime_type};base64,{base64_data}"
+
+                    file_name = image_data.get("file_name", "unknown")
+                    file_size = image_data.get("file_size", 0)
+                    logger.info(
+                        f"Adding context image {attachment_id} ({file_name}, {file_size} bytes, {mime_type}) to multimodal content"
+                    )
+
+                    content.append(ImageUrl(url=data_url))
+                    logger.info(
+                        f"Successfully added context image {attachment_id} to multimodal content"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to add context image {attachment_id} to content: {str(e)}",
+                        exc_info=True,
+                    )
+                    continue
+
+        logger.info(
+            f"Final multimodal content has {len(content)} elements: 1 text + {len(content)-1} images"
+        )
+        return content
+
     async def _prepare_multimodal_message_history(
         self, ctx: ChatContext
-    ) -> List[ModelResponse]:
+    ) -> List[ModelMessage]:
         """Prepare message history with multimodal support"""
         history_messages = []
 
@@ -206,16 +385,22 @@ class PydanticRagAgent(ChatAgent):
         return history_messages
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
-        """Main execution flow with multimodal support"""
+        """Main execution flow with multimodal support using PydanticAI's native capabilities"""
         logger.info(
             f"Running pydantic-ai agent {'with multimodal support' if ctx.has_images() else ''}"
         )
 
-        if ctx.has_images():
-            logger.info(f"Processing {len(ctx.get_all_images())} images")
-            # Use direct multimodal LLM call for image analysis
+        # Check if we have images and if the model supports vision
+        if ctx.has_images() and self.llm_provider.is_vision_model():
+            logger.info(
+                f"Processing {len(ctx.get_all_images())} images with PydanticAI multimodal"
+            )
             return await self._run_multimodal(ctx)
         else:
+            if ctx.has_images() and not self.llm_provider.is_vision_model():
+                logger.warning(
+                    "Images provided but current model doesn't support vision, proceeding with text-only"
+                )
             # Use standard PydanticAI agent for text-only
             return await self._run_standard(ctx)
 
@@ -244,51 +429,27 @@ class PydanticRagAgent(ChatAgent):
             raise Exception from e
 
     async def _run_multimodal(self, ctx: ChatContext) -> ChatAgentResponse:
-        """Multimodal agent execution using provider service directly"""
+        """Multimodal agent execution using PydanticAI's native multimodal capabilities"""
         try:
-            # Check if provider supports vision
-            if not self.llm_provider.is_vision_model():
-                logger.warning(
-                    "Current model doesn't support vision, falling back to text-only"
-                )
-                return await self._run_standard(ctx)
+            # Debug multimodal content
+            self._debug_multimodal_content(ctx)
 
-            # Prepare system message with instructions
-            system_message = self._create_multimodal_system_message(ctx)
+            # Create multimodal user content with images
+            multimodal_content = self._create_multimodal_user_content(ctx)
 
-            # Prepare conversation history (text only for now)
-            messages = [{"role": "system", "content": system_message}]
+            # Prepare message history (text-only for now to avoid token bloat)
+            message_history = await self._prepare_multimodal_message_history(ctx)
 
-            # Add conversation history
-            for msg in ctx.history[-6:]:  # Limit history to avoid token overflow
-                if isinstance(msg, str):
-                    # Parse the message format: "MessageType: content"
-                    if ": " in msg:
-                        msg_type, content = msg.split(": ", 1)
-                        role = "assistant" if "AI" in msg_type else "user"
-                        messages.append({"role": role, "content": content})
+            # Create and run agent
+            agent = self._create_agent(ctx)
 
-            # Add current user query
-            messages.append({"role": "user", "content": ctx.query})
-
-            # Use only current images to reduce hallucinations from mixed context
-            images_to_use = ctx.get_current_images_only()
-            if not images_to_use and ctx.get_context_images_only():
-                logger.info("No current images found, using recent context images")
-                images_to_use = ctx.get_context_images_only()
-
-            logger.info(f"Using {len(images_to_use)} images for multimodal analysis")
-
-            # Call multimodal LLM
-            response = await self.llm_provider.call_llm_multimodal(
-                messages=messages,
-                images=images_to_use,
-                stream=False,
-                config_type="chat",
+            resp = await agent.run(
+                user_prompt=multimodal_content,
+                message_history=message_history,
             )
 
             return ChatAgentResponse(
-                response=response,
+                response=resp.output,
                 tool_calls=[],
                 citations=[],
             )
@@ -299,27 +460,6 @@ class PydanticRagAgent(ChatAgent):
             logger.info("Falling back to standard text-only execution")
             return await self._run_standard(ctx)
 
-    def _create_multimodal_system_message(self, ctx: ChatContext) -> str:
-        """Create comprehensive system message for multimodal analysis"""
-        config = self.config
-
-        multimodal_instructions = self._prepare_multimodal_instructions(ctx)
-        task_description = self._create_task_description(config.tasks[0], ctx)
-
-        return f"""
-        You are an AI assistant with vision capabilities.
-
-        Role: {config.role}
-        Goal: {config.goal}
-        Backstory: {config.backstory}
-
-        {multimodal_instructions}
-
-        {task_description}
-
-        Important: Analyze any images provided and correlate your visual analysis with the user's query. Provide specific, actionable insights based on what you observe.
-        """
-
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
@@ -327,11 +467,18 @@ class PydanticRagAgent(ChatAgent):
             f"Running pydantic-ai agent stream {'with multimodal support' if ctx.has_images() else ''}"
         )
 
-        if ctx.has_images():
-            # For multimodal, stream the response from direct LLM call
+        # Check if we have images and if the model supports vision
+        if ctx.has_images() and self.llm_provider.is_vision_model():
+            logger.info(
+                f"Processing {len(ctx.get_all_images())} images with PydanticAI multimodal streaming"
+            )
             async for chunk in self._run_multimodal_stream(ctx):
                 yield chunk
         else:
+            if ctx.has_images() and not self.llm_provider.is_vision_model():
+                logger.warning(
+                    "Images provided but current model doesn't support vision, proceeding with text-only streaming"
+                )
             # Use standard PydanticAI streaming for text-only
             async for chunk in self._run_standard_stream(ctx):
                 yield chunk
@@ -339,50 +486,98 @@ class PydanticRagAgent(ChatAgent):
     async def _run_multimodal_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        """Stream multimodal response"""
+        """Stream multimodal response using PydanticAI's native capabilities"""
         try:
-            # Check if provider supports vision
-            if not self.llm_provider.is_vision_model():
-                logger.warning(
-                    "Current model doesn't support vision, falling back to text-only"
-                )
-                async for chunk in self._run_standard_stream(ctx):
-                    yield chunk
-                return
+            # Debug multimodal content
+            self._debug_multimodal_content(ctx)
 
-            # Prepare system message and conversation
-            system_message = self._create_multimodal_system_message(ctx)
-            messages = [{"role": "system", "content": system_message}]
+            # Create multimodal user content with images
+            multimodal_content = self._create_multimodal_user_content(ctx)
 
-            # Add conversation history
-            for msg in ctx.history[-6:]:
-                if isinstance(msg, str) and ": " in msg:
-                    msg_type, content = msg.split(": ", 1)
-                    role = "assistant" if "AI" in msg_type else "user"
-                    messages.append({"role": role, "content": content})
+            # Prepare message history (text-only for now to avoid token bloat)
+            message_history = await self._prepare_multimodal_message_history(ctx)
 
-            # Add current user query
-            messages.append({"role": "user", "content": ctx.query})
+            # Create agent
+            agent = self._create_agent(ctx)
 
-            # Use only current images to reduce hallucinations from mixed context
-            images_to_use = ctx.get_current_images_only()
-            if not images_to_use and ctx.get_context_images_only():
-                logger.info("No current images found, using recent context images")
-                images_to_use = ctx.get_context_images_only()
+            # Stream the response
+            async with agent.iter(
+                user_prompt=multimodal_content,
+                message_history=message_history,
+            ) as run:
+                async for node in run:
+                    if Agent.is_model_request_node(node):
+                        # A model request node => We can stream tokens from the model's request
+                        async with node.stream(run.ctx) as request_stream:
+                            async for event in request_stream:
+                                if isinstance(event, PartStartEvent) and isinstance(
+                                    event.part, TextPart
+                                ):
+                                    yield ChatAgentResponse(
+                                        response=event.part.content,
+                                        tool_calls=[],
+                                        citations=[],
+                                    )
+                                if isinstance(event, PartDeltaEvent) and isinstance(
+                                    event.delta, TextPartDelta
+                                ):
+                                    yield ChatAgentResponse(
+                                        response=event.delta.content_delta,
+                                        tool_calls=[],
+                                        citations=[],
+                                    )
 
-            logger.info(f"Using {len(images_to_use)} images for multimodal streaming")
+                    elif Agent.is_call_tools_node(node):
+                        async with node.stream(run.ctx) as handle_stream:
+                            async for event in handle_stream:
+                                if isinstance(event, FunctionToolCallEvent):
+                                    yield ChatAgentResponse(
+                                        response="",
+                                        tool_calls=[
+                                            ToolCallResponse(
+                                                call_id=event.part.tool_call_id or "",
+                                                event_type=ToolCallEventType.CALL,
+                                                tool_name=event.part.tool_name,
+                                                tool_response=get_tool_run_message(
+                                                    event.part.tool_name
+                                                ),
+                                                tool_call_details={
+                                                    "summary": get_tool_call_info_content(
+                                                        event.part.tool_name,
+                                                        event.part.args_as_dict(),
+                                                    )
+                                                },
+                                            )
+                                        ],
+                                        citations=[],
+                                    )
+                                if isinstance(event, FunctionToolResultEvent):
+                                    yield ChatAgentResponse(
+                                        response="",
+                                        tool_calls=[
+                                            ToolCallResponse(
+                                                call_id=event.result.tool_call_id or "",
+                                                event_type=ToolCallEventType.RESULT,
+                                                tool_name=event.result.tool_name
+                                                or "unknown tool",
+                                                tool_response=get_tool_response_message(
+                                                    event.result.tool_name
+                                                    or "unknown tool"
+                                                ),
+                                                tool_call_details={
+                                                    "summary": get_tool_result_info_content(
+                                                        event.result.tool_name
+                                                        or "unknown tool",
+                                                        event.result.content,
+                                                    )
+                                                },
+                                            )
+                                        ],
+                                        citations=[],
+                                    )
 
-            # Stream multimodal response
-            response_stream = await self.llm_provider.call_llm_multimodal(
-                messages=messages, images=images_to_use, stream=True, config_type="chat"
-            )
-
-            async for chunk in response_stream:
-                yield ChatAgentResponse(
-                    response=chunk,
-                    tool_calls=[],
-                    citations=[],
-                )
+                    elif Agent.is_end_node(node):
+                        logger.info("multimodal result streamed successfully!!")
 
         except Exception as e:
             logger.error(f"Error in multimodal stream: {str(e)}", exc_info=True)
