@@ -250,10 +250,6 @@ class PydanticRagAgent(ChatAgent):
                 if "base64" in img_data and isinstance(img_data["base64"], str):
                     base64_len = len(img_data["base64"])
                     logger.info(f"  - Base64 length: {base64_len}")
-                    if base64_len > 100:
-                        logger.info(f"  - Base64 preview: {img_data['base64'][:50]}...")
-                    else:
-                        logger.info(f"  - Base64: {img_data['base64']}")
 
         # Test vision model detection
         is_vision = self.llm_provider.is_vision_model()
