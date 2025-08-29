@@ -69,4 +69,4 @@ pathspec==0.12.1
 pytest
 pytest-asyncio
 Pillow==10.0.1
-python-multipart==0.0.6
+python-multipart>=0.0.7
