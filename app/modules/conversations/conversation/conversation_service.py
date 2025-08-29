@@ -658,7 +658,7 @@ class ConversationService:
                 )
 
                 # Debug logging for ChatContext
-                logger.info(f"DEBUG: Created ChatContext for custom agent:")
+                logger.info("DEBUG: Created ChatContext for custom agent:")
                 logger.info(f"  has_images(): {chat_context.has_images()}")
                 logger.info(
                     f"  image_attachments: {list(chat_context.image_attachments.keys()) if chat_context.image_attachments else None}"

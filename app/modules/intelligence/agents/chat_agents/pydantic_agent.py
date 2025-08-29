@@ -418,7 +418,7 @@ class PydanticRagAgent(ChatAgent):
         )
 
         # Debug logging for ChatContext
-        logger.info(f"DEBUG: PydanticRagAgent received ChatContext:")
+        logger.info("DEBUG: PydanticRagAgent received ChatContext:")
         logger.info(f"  has_images(): {ctx.has_images()}")
         logger.info(
             f"  image_attachments: {list(ctx.image_attachments.keys()) if ctx.image_attachments else None}"
@@ -527,7 +527,7 @@ class PydanticRagAgent(ChatAgent):
         )
 
         # Debug logging for ChatContext
-        logger.info(f"DEBUG: PydanticRagAgent stream received ChatContext:")
+        logger.info("DEBUG: PydanticRagAgent stream received ChatContext:")
         logger.info(f"  has_images(): {ctx.has_images()}")
         logger.info(
             f"  image_attachments: {list(ctx.image_attachments.keys()) if ctx.image_attachments else None}"
