@@ -601,20 +601,34 @@ class ConversationService:
                 project_ids=[project_id]
             )
 
-            # Prepare multimodal context - use current message attachments if available
+            # Get the most recent human message to retrieve its images
+            latest_human_message = (
+                self.sql_db.query(Message)
+                .filter_by(
+                    conversation_id=conversation_id,
+                    type=MessageType.HUMAN,
+                    status=MessageStatus.ACTIVE,
+                )
+                .order_by(Message.created_at.desc())
+                .first()
+            )
+
+            # Prepare multimodal context - get images from the most recent message
             image_attachments = None
-            if attachment_ids:
+            if latest_human_message and latest_human_message.has_attachments:
                 logger.info(
-                    f"DEBUG: Preparing {len(attachment_ids)} attachment_ids as images: {attachment_ids}"
+                    f"DEBUG: Getting images from message {latest_human_message.id} (has_attachments: {latest_human_message.has_attachments})"
                 )
-                image_attachments = await self._prepare_attachments_as_images(
-                    attachment_ids
+                image_attachments = (
+                    await self.media_service.get_message_images_as_base64(
+                        latest_human_message.id
+                    )
                 )
                 logger.info(
-                    f"DEBUG: Prepared image_attachments: {list(image_attachments.keys()) if image_attachments else None}"
+                    f"DEBUG: Retrieved {len(image_attachments) if image_attachments else 0} images from message {latest_human_message.id}"
                 )
             else:
-                logger.info("DEBUG: No attachment_ids provided for current message")
+                logger.info("DEBUG: No recent human message with attachments found")
 
             # Also get context images from recent conversation history
             context_images = await self._prepare_conversation_context_images(
@@ -631,18 +645,35 @@ class ConversationService:
                 )
 
             if type == "CUSTOM_AGENT":
+                # Create ChatContext with multimodal support
+                chat_context = ChatContext(
+                    project_id=str(project_id),
+                    project_name=project_name,
+                    curr_agent_id=str(agent_id),
+                    history=validated_history[-12:],
+                    node_ids=[node.node_id for node in node_ids],
+                    query=query,
+                    image_attachments=image_attachments,
+                    context_images=context_images,
+                )
+
+                # Debug logging for ChatContext
+                logger.info(f"DEBUG: Created ChatContext for custom agent:")
+                logger.info(f"  has_images(): {chat_context.has_images()}")
+                logger.info(
+                    f"  image_attachments: {list(chat_context.image_attachments.keys()) if chat_context.image_attachments else None}"
+                )
+                logger.info(
+                    f"  context_images: {list(chat_context.context_images.keys()) if chat_context.context_images else None}"
+                )
+                logger.info(
+                    f"  get_all_images(): {list(chat_context.get_all_images().keys()) if chat_context.get_all_images() else None}"
+                )
 
                 res = (
                     await self.agent_service.custom_agent_service.execute_agent_runtime(
                         user_id,
-                        ChatContext(
-                            project_id=str(project_id),
-                            project_name=project_name,
-                            curr_agent_id=str(agent_id),
-                            history=validated_history[-12:],
-                            node_ids=[node.node_id for node in node_ids],
-                            query=query,
-                        ),
+                        chat_context,
                     )
                 )
                 async for chunk in res:
