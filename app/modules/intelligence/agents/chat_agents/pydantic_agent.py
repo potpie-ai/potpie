@@ -208,126 +208,6 @@ class PydanticRagAgent(ChatAgent):
                 citations=[],
             )
 
-    async def _stream_agent_execution(
-        self, agent: Agent, ctx: ChatContext, run_context
-    ) -> AsyncGenerator[ChatAgentResponse, None]:
-        """Common streaming logic for agent execution"""
-        async for node in run_context:
-            if Agent.is_model_request_node(node):
-                try:
-                    async with node.stream(run_context.ctx) as request_stream:
-                        async for event in request_stream:
-                            if isinstance(event, PartStartEvent) and isinstance(
-                                event.part, TextPart
-                            ):
-                                yield ChatAgentResponse(
-                                    response=event.part.content,
-                                    tool_calls=[],
-                                    citations=[],
-                                )
-                            if isinstance(event, PartDeltaEvent) and isinstance(
-                                event.delta, TextPartDelta
-                            ):
-                                yield ChatAgentResponse(
-                                    response=event.delta.content_delta,
-                                    tool_calls=[],
-                                    citations=[],
-                                )
-                except (ModelRetry, AgentRunError, UserError) as pydantic_error:
-                    logger.warning(
-                        f"Pydantic-ai error in model request stream: {pydantic_error}"
-                    )
-                    yield ChatAgentResponse(
-                        response="\n\n*Encountered an issue while processing your request. Trying to recover...*\n\n",
-                        tool_calls=[],
-                        citations=[],
-                    )
-                    continue
-                except anyio.WouldBlock:
-                    logger.warning("Model request stream would block - continuing...")
-                    continue
-                except Exception as e:
-                    logger.error(f"Unexpected error in model request stream: {e}")
-                    yield ChatAgentResponse(
-                        response="\n\n*An unexpected error occurred. Continuing...*\n\n",
-                        tool_calls=[],
-                        citations=[],
-                    )
-                    continue
-
-            elif Agent.is_call_tools_node(node):
-                try:
-                    async with node.stream(run_context.ctx) as handle_stream:
-                        async for event in handle_stream:
-                            if isinstance(event, FunctionToolCallEvent):
-                                yield ChatAgentResponse(
-                                    response="",
-                                    tool_calls=[
-                                        ToolCallResponse(
-                                            call_id=event.part.tool_call_id or "",
-                                            event_type=ToolCallEventType.CALL,
-                                            tool_name=event.part.tool_name,
-                                            tool_response=get_tool_run_message(
-                                                event.part.tool_name
-                                            ),
-                                            tool_call_details={
-                                                "summary": get_tool_call_info_content(
-                                                    event.part.tool_name,
-                                                    event.part.args_as_dict(),
-                                                )
-                                            },
-                                        )
-                                    ],
-                                    citations=[],
-                                )
-                            if isinstance(event, FunctionToolResultEvent):
-                                yield ChatAgentResponse(
-                                    response="",
-                                    tool_calls=[
-                                        ToolCallResponse(
-                                            call_id=event.result.tool_call_id or "",
-                                            event_type=ToolCallEventType.RESULT,
-                                            tool_name=event.result.tool_name
-                                            or "unknown tool",
-                                            tool_response=get_tool_response_message(
-                                                event.result.tool_name or "unknown tool"
-                                            ),
-                                            tool_call_details={
-                                                "summary": get_tool_result_info_content(
-                                                    event.result.tool_name
-                                                    or "unknown tool",
-                                                    event.result.content,
-                                                )
-                                            },
-                                        )
-                                    ],
-                                    citations=[],
-                                )
-                except (ModelRetry, AgentRunError, UserError) as pydantic_error:
-                    logger.warning(
-                        f"Pydantic-ai error in tool call stream: {pydantic_error}"
-                    )
-                    yield ChatAgentResponse(
-                        response="\n\n*Encountered an issue while calling tools. Trying to recover...*\n\n",
-                        tool_calls=[],
-                        citations=[],
-                    )
-                    continue
-                except anyio.WouldBlock:
-                    logger.warning("Tool call stream would block - continuing...")
-                    continue
-                except Exception as e:
-                    logger.error(f"Unexpected error in tool call stream: {e}")
-                    yield ChatAgentResponse(
-                        response="\n\n*An unexpected error occurred during tool execution. Continuing...*\n\n",
-                        tool_calls=[],
-                        citations=[],
-                    )
-                    continue
-
-            elif Agent.is_end_node(node):
-                logger.info("result streamed successfully!!")
-
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
@@ -347,10 +227,145 @@ class PydanticRagAgent(ChatAgent):
                             for msg in ctx.history
                         ],
                     ) as run:
-                        async for response in self._stream_agent_execution(
-                            agent, ctx, run
-                        ):
-                            yield response
+                        async for node in run:
+                            if Agent.is_model_request_node(node):
+                                # A model request node => We can stream tokens from the model's request
+                                try:
+                                    async with node.stream(run.ctx) as request_stream:
+                                        async for event in request_stream:
+                                            if isinstance(
+                                                event, PartStartEvent
+                                            ) and isinstance(event.part, TextPart):
+                                                yield ChatAgentResponse(
+                                                    response=event.part.content,
+                                                    tool_calls=[],
+                                                    citations=[],
+                                                )
+                                            if isinstance(
+                                                event, PartDeltaEvent
+                                            ) and isinstance(
+                                                event.delta, TextPartDelta
+                                            ):
+                                                yield ChatAgentResponse(
+                                                    response=event.delta.content_delta,
+                                                    tool_calls=[],
+                                                    citations=[],
+                                                )
+                                except (
+                                    ModelRetry,
+                                    AgentRunError,
+                                    UserError,
+                                ) as pydantic_error:
+                                    logger.warning(
+                                        f"Pydantic-ai error in model request stream: {pydantic_error}"
+                                    )
+                                    yield ChatAgentResponse(
+                                        response="\n\n*Encountered an issue while processing your request. Trying to recover...*\n\n",
+                                        tool_calls=[],
+                                        citations=[],
+                                    )
+                                    continue
+                                except anyio.WouldBlock:
+                                    logger.warning(
+                                        "Model request stream would block - continuing..."
+                                    )
+                                    continue
+                                except Exception as e:
+                                    logger.error(
+                                        f"Unexpected error in model request stream: {e}"
+                                    )
+                                    yield ChatAgentResponse(
+                                        response="\n\n*An unexpected error occurred. Continuing...*\n\n",
+                                        tool_calls=[],
+                                        citations=[],
+                                    )
+                                    continue
+
+                            elif Agent.is_call_tools_node(node):
+                                try:
+                                    async with node.stream(run.ctx) as handle_stream:
+                                        async for event in handle_stream:
+                                            if isinstance(event, FunctionToolCallEvent):
+                                                yield ChatAgentResponse(
+                                                    response="",
+                                                    tool_calls=[
+                                                        ToolCallResponse(
+                                                            call_id=event.part.tool_call_id
+                                                            or "",
+                                                            event_type=ToolCallEventType.CALL,
+                                                            tool_name=event.part.tool_name,
+                                                            tool_response=get_tool_run_message(
+                                                                event.part.tool_name
+                                                            ),
+                                                            tool_call_details={
+                                                                "summary": get_tool_call_info_content(
+                                                                    event.part.tool_name,
+                                                                    event.part.args_as_dict(),
+                                                                )
+                                                            },
+                                                        )
+                                                    ],
+                                                    citations=[],
+                                                )
+                                            if isinstance(
+                                                event, FunctionToolResultEvent
+                                            ):
+                                                yield ChatAgentResponse(
+                                                    response="",
+                                                    tool_calls=[
+                                                        ToolCallResponse(
+                                                            call_id=event.result.tool_call_id
+                                                            or "",
+                                                            event_type=ToolCallEventType.RESULT,
+                                                            tool_name=event.result.tool_name
+                                                            or "unknown tool",
+                                                            tool_response=get_tool_response_message(
+                                                                event.result.tool_name
+                                                                or "unknown tool"
+                                                            ),
+                                                            tool_call_details={
+                                                                "summary": get_tool_result_info_content(
+                                                                    event.result.tool_name
+                                                                    or "unknown tool",
+                                                                    event.result.content,
+                                                                )
+                                                            },
+                                                        )
+                                                    ],
+                                                    citations=[],
+                                                )
+                                except (
+                                    ModelRetry,
+                                    AgentRunError,
+                                    UserError,
+                                ) as pydantic_error:
+                                    logger.warning(
+                                        f"Pydantic-ai error in tool call stream: {pydantic_error}"
+                                    )
+                                    yield ChatAgentResponse(
+                                        response="\n\n*Encountered an issue while calling tools. Trying to recover...*\n\n",
+                                        tool_calls=[],
+                                        citations=[],
+                                    )
+                                    continue
+                                except anyio.WouldBlock:
+                                    logger.warning(
+                                        "Tool call stream would block - continuing..."
+                                    )
+                                    continue
+                                except Exception as e:
+                                    logger.error(
+                                        f"Unexpected error in tool call stream: {e}"
+                                    )
+                                    yield ChatAgentResponse(
+                                        response="\n\n*An unexpected error occurred during tool execution. Continuing...*\n\n",
+                                        tool_calls=[],
+                                        citations=[],
+                                    )
+                                    continue
+
+                            elif Agent.is_end_node(node):
+                                logger.info("result streamed successfully!!")
 
             except (TimeoutError, anyio.WouldBlock, Exception) as mcp_error:
                 logger.warning(f"MCP server initialization failed: {mcp_error}")
@@ -365,10 +380,144 @@ class PydanticRagAgent(ChatAgent):
                             for msg in ctx.history
                         ],
                     ) as run:
-                        async for response in self._stream_agent_execution(
-                            agent, ctx, run
-                        ):
-                            yield response
+                        async for node in run:
+                            if Agent.is_model_request_node(node):
+                                try:
+                                    async with node.stream(run.ctx) as request_stream:
+                                        async for event in request_stream:
+                                            if isinstance(
+                                                event, PartStartEvent
+                                            ) and isinstance(event.part, TextPart):
+                                                yield ChatAgentResponse(
+                                                    response=event.part.content,
+                                                    tool_calls=[],
+                                                    citations=[],
+                                                )
+                                            if isinstance(
+                                                event, PartDeltaEvent
+                                            ) and isinstance(
+                                                event.delta, TextPartDelta
+                                            ):
+                                                yield ChatAgentResponse(
+                                                    response=event.delta.content_delta,
+                                                    tool_calls=[],
+                                                    citations=[],
+                                                )
+                                except (
+                                    ModelRetry,
+                                    AgentRunError,
+                                    UserError,
+                                ) as pydantic_error:
+                                    logger.warning(
+                                        f"Pydantic-ai error in fallback model request stream: {pydantic_error}"
+                                    )
+                                    yield ChatAgentResponse(
+                                        response="\n\n*Encountered an issue while processing your request. Trying to recover...*\n\n",
+                                        tool_calls=[],
+                                        citations=[],
+                                    )
+                                    continue
+                                except anyio.WouldBlock:
+                                    logger.warning(
+                                        "Model request stream would block - continuing..."
+                                    )
+                                    continue
+                                except Exception as e:
+                                    logger.error(
+                                        f"Unexpected error in fallback model request stream: {e}"
+                                    )
+                                    yield ChatAgentResponse(
+                                        response="\n\n*An unexpected error occurred. Continuing...*\n\n",
+                                        tool_calls=[],
+                                        citations=[],
+                                    )
+                                    continue
+
+                            elif Agent.is_call_tools_node(node):
+                                try:
+                                    async with node.stream(run.ctx) as handle_stream:
+                                        async for event in handle_stream:
+                                            if isinstance(event, FunctionToolCallEvent):
+                                                yield ChatAgentResponse(
+                                                    response="",
+                                                    tool_calls=[
+                                                        ToolCallResponse(
+                                                            call_id=event.part.tool_call_id
+                                                            or "",
+                                                            event_type=ToolCallEventType.CALL,
+                                                            tool_name=event.part.tool_name,
+                                                            tool_response=get_tool_run_message(
+                                                                event.part.tool_name
+                                                            ),
+                                                            tool_call_details={
+                                                                "summary": get_tool_call_info_content(
+                                                                    event.part.tool_name,
+                                                                    event.part.args_as_dict(),
+                                                                )
+                                                            },
+                                                        )
+                                                    ],
+                                                    citations=[],
+                                                )
+                                            if isinstance(
+                                                event, FunctionToolResultEvent
+                                            ):
+                                                yield ChatAgentResponse(
+                                                    response="",
+                                                    tool_calls=[
+                                                        ToolCallResponse(
+                                                            call_id=event.result.tool_call_id
+                                                            or "",
+                                                            event_type=ToolCallEventType.RESULT,
+                                                            tool_name=event.result.tool_name
+                                                            or "unknown tool",
+                                                            tool_response=get_tool_response_message(
+                                                                event.result.tool_name
+                                                                or "unknown tool"
+                                                            ),
+                                                            tool_call_details={
+                                                                "summary": get_tool_result_info_content(
+                                                                    event.result.tool_name
+                                                                    or "unknown tool",
+                                                                    event.result.content,
+                                                                )
+                                                            },
+                                                        )
+                                                    ],
+                                                    citations=[],
+                                                )
+                                except (
+                                    ModelRetry,
+                                    AgentRunError,
+                                    UserError,
+                                ) as pydantic_error:
+                                    logger.warning(
+                                        f"Pydantic-ai error in fallback tool call stream: {pydantic_error}"
+                                    )
+                                    yield ChatAgentResponse(
+                                        response="\n\n*Encountered an issue while calling tools. Trying to recover...*\n\n",
+                                        tool_calls=[],
+                                        citations=[],
+                                    )
+                                    continue
+                                except anyio.WouldBlock:
+                                    logger.warning(
+                                        "Tool call stream would block - continuing..."
+                                    )
+                                    continue
+                                except Exception as e:
+                                    logger.error(
+                                        f"Unexpected error in fallback tool call stream: {e}"
+                                    )
+                                    yield ChatAgentResponse(
+                                        response="\n\n*An unexpected error occurred during tool execution. Continuing...*\n\n",
+                                        tool_calls=[],
+                                        citations=[],
+                                    )
+                                    continue
+
+                            elif Agent.is_end_node(node):
+                                logger.info("result streamed successfully!!")
 
                 except (ModelRetry, AgentRunError, UserError) as pydantic_error:
                     logger.error(

@@ -560,7 +560,6 @@ class ConversationService:
                             node_ids=[node.node_id for node in node_ids],
                             query=query,
                         ),
-                        is_task=is_task,
                     )
                 )
                 async for chunk in res:
