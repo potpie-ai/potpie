@@ -417,6 +417,20 @@ class PydanticRagAgent(ChatAgent):
             f"Running pydantic-ai agent {'with multimodal support' if ctx.has_images() else ''}"
         )
 
+        # Debug logging for ChatContext
+        logger.info(f"DEBUG: PydanticRagAgent received ChatContext:")
+        logger.info(f"  has_images(): {ctx.has_images()}")
+        logger.info(
+            f"  image_attachments: {list(ctx.image_attachments.keys()) if ctx.image_attachments else None}"
+        )
+        logger.info(
+            f"  context_images: {list(ctx.context_images.keys()) if ctx.context_images else None}"
+        )
+        logger.info(
+            f"  get_all_images(): {list(ctx.get_all_images().keys()) if ctx.get_all_images() else None}"
+        )
+        logger.info(f"  is_vision_model(): {self.llm_provider.is_vision_model()}")
+
         # Check if we have images and if the model supports vision
         if ctx.has_images() and self.llm_provider.is_vision_model():
             logger.info(
@@ -428,6 +442,8 @@ class PydanticRagAgent(ChatAgent):
                 logger.warning(
                     "Images provided but current model doesn't support vision, proceeding with text-only"
                 )
+            elif not ctx.has_images():
+                logger.warning("No images found in ChatContext")
             # Use standard PydanticAI agent for text-only
             return await self._run_standard(ctx)
 
@@ -509,6 +525,20 @@ class PydanticRagAgent(ChatAgent):
         logger.info(
             f"Running pydantic-ai agent stream {'with multimodal support' if ctx.has_images() else ''}"
         )
+
+        # Debug logging for ChatContext
+        logger.info(f"DEBUG: PydanticRagAgent stream received ChatContext:")
+        logger.info(f"  has_images(): {ctx.has_images()}")
+        logger.info(
+            f"  image_attachments: {list(ctx.image_attachments.keys()) if ctx.image_attachments else None}"
+        )
+        logger.info(
+            f"  context_images: {list(ctx.context_images.keys()) if ctx.context_images else None}"
+        )
+        logger.info(
+            f"  get_all_images(): {list(ctx.get_all_images().keys()) if ctx.get_all_images() else None}"
+        )
+        logger.info(f"  is_vision_model(): {self.llm_provider.is_vision_model()}")
 
         # Check if we have images and if the model supports vision
         if ctx.has_images() and self.llm_provider.is_vision_model():
