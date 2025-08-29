@@ -1,9 +1,5 @@
 from pydantic import BaseModel
 from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
-from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent import (
-    PydanticMultiAgent,
-)
-
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
@@ -48,7 +44,6 @@ class RuntimeCustomAgent(ChatAgent):
         self.llm_provider = llm_provider
         self.tools_provider = tools_provider
         self.agent_config = CustomAgentConfig(**agent_config)
-        self.is_task = is_task
 
     def _build_agent(self) -> ChatAgent:
         agent_config = AgentConfig(
@@ -82,18 +77,16 @@ class RuntimeCustomAgent(ChatAgent):
             )
             mcp_servers = []
 
-        if not self.llm_provider.is_current_model_supported_by_pydanticai(
+        if self.llm_provider.is_current_model_supported_by_pydanticai(
             config_type="chat"
         ):
-            return CrewAIAgent(self.llm_provider, agent_config, tools)
-        elif self.is_task:
-            return PydanticMultiAgent(
-                self.llm_provider,
-                agent_config,
-                tools,
+            agent = PydanticRagAgent(
+                self.llm_provider, agent_config, tools, mcp_servers
             )
+            self._pydantic_agent = agent  # Store reference for status access
+            return agent
         else:
-            return PydanticRagAgent(self.llm_provider, agent_config, tools, mcp_servers)
+            return CrewAIAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if ctx.node_ids and len(ctx.node_ids) > 0:
