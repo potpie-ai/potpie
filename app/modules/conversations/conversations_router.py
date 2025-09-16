@@ -1,6 +1,7 @@
 import json
 import logging
-from typing import Any, AsyncGenerator, List, Optional
+from typing import Any, AsyncGenerator, Generator, List, Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -36,9 +37,75 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def _normalize_run_id(conversation_id: str, session_id: str = None) -> str:
+    """
+    Normalize run_id handling both old UUID and new deterministic formats.
+    Maintains backward compatibility while supporting new pattern.
+    """
+    if session_id:
+        # Check if session_id is already in new format
+        if ":" in session_id and session_id.startswith(f"{conversation_id}:"):
+            return session_id
+        # Check if it's an old UUID format
+        elif len(session_id) == 36 and "-" in session_id:
+            return session_id  # Keep old UUID format as-is
+        else:
+            return session_id  # Pass through any other format
+    else:
+        # Generate new deterministic format
+        return f"{conversation_id}:new"
+
+
 async def get_stream(data_stream: AsyncGenerator[Any, None]):
     async for chunk in data_stream:
         yield json.dumps(chunk.dict())
+
+
+def redis_stream_generator(
+    conversation_id: str, 
+    run_id: str, 
+    cursor: Optional[str] = None
+) -> Generator[str, None, None]:
+    """Stream events from Redis to client"""
+    from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+    from app.modules.conversations.conversation.conversation_schema import ChatMessageResponse
+    from app.modules.conversations.message.message_model import MessageType
+    
+    logger.info(f"DEBUG: redis_stream_generator called for conversation {conversation_id}, run_id {run_id}, cursor {cursor}")
+    
+    def json_serializer(obj):
+        """Custom JSON serializer to handle bytes objects"""
+        if isinstance(obj, bytes):
+            return obj.decode('utf-8', errors='replace')
+        return str(obj)
+    
+    redis_manager = RedisStreamManager()
+    logger.info(f"DEBUG: Created RedisStreamManager, starting stream consumption...")
+    
+    try:
+        for event in redis_manager.consume_stream(conversation_id, run_id, cursor):
+            logger.info(f"DEBUG: Redis event received: {event.get('type', 'unknown')} - {event}")
+            # Convert to ChatMessageResponse format for compatibility
+            if event.get('type') == 'chunk':
+                tool_calls = event.get('tool_calls', [])
+                content = event.get('content', '')
+                logger.info(f"DEBUG: Streaming chunk - content: '{content}', tool_calls: {tool_calls}")
+                response = ChatMessageResponse(
+                    message=content,
+                    citations=event.get('citations', []),
+                    tool_calls=tool_calls
+                )
+                json_response = json.dumps(response.dict(), default=json_serializer)
+                logger.info(f"DEBUG: Yielding JSON response: {json_response[:200]}...")
+                yield json_response
+                
+            elif event.get('type') == 'end':
+                # End the stream when we receive an end event
+                break
+                    
+    except Exception as e:
+        logger.error(f"Redis streaming error: {str(e)}")
+        # Don't yield error events to match original behavior
 
 
 class ConversationAPI:
@@ -73,10 +140,23 @@ class ConversationAPI:
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
+        logger.info(f"DEBUG: get_conversation_info called for conversation_id: {conversation_id}")
+        logger.info(f"DEBUG: Authenticated user: {user}")
+        
         user_id = user["user_id"]
         user_email = user["email"]
+        logger.info(f"DEBUG: Extracted user_id: {user_id}, user_email: {user_email}")
+        
         controller = ConversationController(db, user_id, user_email)
-        return await controller.get_conversation_info(conversation_id)
+        logger.info(f"DEBUG: Created ConversationController for user {user_id}")
+        
+        try:
+            result = await controller.get_conversation_info(conversation_id)
+            logger.info(f"DEBUG: Successfully retrieved conversation info for {conversation_id}")
+            return result
+        except Exception as e:
+            logger.error(f"DEBUG: Error in get_conversation_info for {conversation_id}: {str(e)}", exc_info=True)
+            raise
 
     @staticmethod
     @router.get(
@@ -90,10 +170,23 @@ class ConversationAPI:
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
+        logger.info(f"DEBUG: get_conversation_messages called for conversation_id: {conversation_id}, start: {start}, limit: {limit}")
+        logger.info(f"DEBUG: Authenticated user: {user}")
+        
         user_id = user["user_id"]
         user_email = user["email"]
+        logger.info(f"DEBUG: Extracted user_id: {user_id}, user_email: {user_email}")
+        
         controller = ConversationController(db, user_id, user_email)
-        return await controller.get_conversation_messages(conversation_id, start, limit)
+        logger.info(f"DEBUG: Created ConversationController for user {user_id}")
+        
+        try:
+            result = await controller.get_conversation_messages(conversation_id, start, limit)
+            logger.info(f"DEBUG: Successfully retrieved {len(result)} messages for conversation {conversation_id}")
+            return result
+        except Exception as e:
+            logger.error(f"DEBUG: Error in get_conversation_messages for {conversation_id}: {str(e)}", exc_info=True)
+            raise
 
     @staticmethod
     @router.post("/conversations/{conversation_id}/message/")
@@ -103,6 +196,8 @@ class ConversationAPI:
         node_ids: Optional[str] = Form(None),
         images: Optional[List[UploadFile]] = File(None),
         stream: bool = Query(True, description="Whether to stream the response"),
+        session_id: Optional[str] = Query(None, description="Session ID for reconnection"),
+        cursor: Optional[str] = Query(None, description="Stream cursor for replay"),
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
@@ -190,24 +285,65 @@ class ConversationAPI:
         )
 
         controller = ConversationController(db, user_id, user_email)
-        message_stream = controller.post_message(conversation_id, message, stream)
-        if stream:
-            return StreamingResponse(
-                get_stream(message_stream), media_type="text/event-stream"
-            )
-        else:
-            # TODO: fix this, add types. In below stream we have only one output.
+        
+        if not stream:
+            # Non-streaming behavior unchanged
+            message_stream = controller.post_message(conversation_id, message, stream)
             async for chunk in message_stream:
                 return chunk
+        
+        # Streaming with session management
+        run_id = _normalize_run_id(conversation_id, session_id)
+        
+        # Start background agent execution (non-blocking)
+        from app.celery.tasks.agent_tasks import execute_agent_background
+        
+        # Extract agent_id from conversation (will be handled in background task)
+        agent_id = message.agent_id if hasattr(message, 'agent_id') else None
+        
+        # Use parsed node_ids
+        node_ids_list = parsed_node_ids or []
+        
+        # Initialize Redis stream immediately to prevent "expired" error
+        from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+        redis_manager = RedisStreamManager()
+        redis_manager.publish_event(
+            conversation_id=conversation_id,
+            run_id=run_id,
+            event_type="start",
+            payload={"message": "Message processing started", "status": "initializing"}
+        )
+
+        # Start background task
+        logger.info(f"DEBUG: Starting background task for conversation {conversation_id}, run_id {run_id}")
+        execute_agent_background.delay(
+            conversation_id=conversation_id,
+            run_id=run_id,
+            user_id=user_id,
+            query=content,
+            agent_id=agent_id,
+            node_ids=node_ids_list,
+            attachment_ids=attachment_ids or []
+        )
+        
+        # Return Redis stream response
+        logger.info(f"DEBUG: Returning streaming response for conversation {conversation_id}, run_id {run_id}")
+        return StreamingResponse(
+            redis_stream_generator(conversation_id, run_id, cursor),
+            media_type="text/event-stream"
+        )
 
     @staticmethod
     @router.post(
-        "/conversations/{conversation_id}/regenerate/", response_model=MessageResponse
+        "/conversations/{conversation_id}/regenerate/"
     )
     async def regenerate_last_message(
         conversation_id: str,
         request: RegenerateRequest,
         stream: bool = Query(True, description="Whether to stream the response"),
+        session_id: Optional[str] = Query(None, description="Session ID for reconnection"),
+        cursor: Optional[str] = Query(None, description="Stream cursor for replay"),
+        background: bool = Query(True, description="Use background execution (recommended)"),
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
@@ -219,17 +355,72 @@ class ConversationAPI:
                 detail="Subscription required to create a conversation.",
             )
         user_email = user["email"]
-        controller = ConversationController(db, user_id, user_email)
-        message_stream = controller.regenerate_last_message(
-            conversation_id, request.node_ids, stream
-        )
-        if stream:
-            return StreamingResponse(
-                get_stream(message_stream), media_type="text/event-stream"
+
+        if not stream or not background:
+            # Fallback to existing direct execution for non-streaming or explicit direct mode
+            controller = ConversationController(db, user_id, user_email)
+            message_stream = controller.regenerate_last_message(
+                conversation_id, request.node_ids, stream
             )
+            if stream:
+                return StreamingResponse(
+                    get_stream(message_stream), media_type="text/event-stream"
+                )
+            else:
+                async for chunk in message_stream:
+                    return chunk
+
+        # NEW: Background execution with session management
+        controller = ConversationController(db, user_id, user_email)
+        
+        if session_id:
+            run_id = _normalize_run_id(conversation_id, session_id)
         else:
-            async for chunk in message_stream:
-                return chunk
+            # Generate deterministic run_id for regeneration
+            try:
+                last_human_message = await controller.get_last_human_message(conversation_id)
+                run_id = f"{conversation_id}:{last_human_message.id}" if last_human_message else f"{conversation_id}:initial"
+            except Exception as e:
+                logger.error(f"Failed to get last human message: {str(e)}")
+                run_id = f"{conversation_id}:fallback-{str(uuid4())[:8]}"
+
+        # Extract attachment IDs from last human message
+        try:
+            # Get last human message to extract attachments
+            last_human_message = await controller.get_last_human_message(conversation_id)
+            attachment_ids = []
+            if last_human_message and last_human_message.attachments:
+                attachment_ids = [att.id for att in last_human_message.attachments]
+        except Exception as e:
+            logger.error(f"Failed to get last human message for regenerate: {str(e)}")
+            attachment_ids = []
+
+        # Initialize Redis stream immediately to prevent "expired" error
+        from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+        redis_manager = RedisStreamManager()
+        redis_manager.publish_event(
+            conversation_id=conversation_id,
+            run_id=run_id,
+            event_type="start",
+            payload={"message": "Regeneration started", "status": "initializing"}
+        )
+
+        # Start background regenerate task
+        from app.celery.tasks.agent_tasks import execute_regenerate_background
+
+        execute_regenerate_background.delay(
+            conversation_id=conversation_id,
+            run_id=run_id,
+            user_id=user_id,
+            node_ids=request.node_ids or [],
+            attachment_ids=attachment_ids
+        )
+
+        # Return Redis stream response
+        return StreamingResponse(
+            redis_stream_generator(conversation_id, run_id, cursor),
+            media_type="text/event-stream"
+        )
 
     @staticmethod
     @router.delete("/conversations/{conversation_id}/", response_model=dict)
@@ -247,13 +438,14 @@ class ConversationAPI:
     @router.post("/conversations/{conversation_id}/stop/", response_model=dict)
     async def stop_generation(
         conversation_id: str,
+        session_id: Optional[str] = Query(None, description="Session ID to stop"),
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
         user_email = user["email"]
         controller = ConversationController(db, user_id, user_email)
-        return await controller.stop_generation(conversation_id)
+        return await controller.stop_generation(conversation_id, session_id)
 
     @staticmethod
     @router.patch("/conversations/{conversation_id}/rename/", response_model=dict)

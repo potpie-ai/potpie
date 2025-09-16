@@ -48,6 +48,12 @@ def configure_celery(queue_prefix: str):
             "app.celery.tasks.parsing_tasks.process_parsing": {
                 "queue": f"{queue_prefix}_process_repository"
             },
+            "app.celery.tasks.agent_tasks.execute_agent_background": {
+                "queue": f"{queue_prefix}_agent_tasks"
+            },
+            "app.celery.tasks.agent_tasks.execute_regenerate_background": {
+                "queue": f"{queue_prefix}_agent_tasks"  # Same queue as other agent tasks
+            },
         },
         # Optimize task distribution
         worker_prefetch_multiplier=1,
@@ -74,3 +80,4 @@ from celery.contrib.abortable import AbortableTask  # noqa
 
 # Import tasks to ensure they are registered
 import app.celery.tasks.parsing_tasks  # noqa # Ensure the task module is imported
+import app.celery.tasks.agent_tasks  # noqa # Ensure the agent task module is imported

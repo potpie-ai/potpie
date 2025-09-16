@@ -56,29 +56,51 @@ class ConversationController:
     async def get_conversation_info(
         self, conversation_id: str
     ) -> ConversationInfoResponse:
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info(f"DEBUG: ConversationController.get_conversation_info called for conversation_id: {conversation_id}")
+        logger.info(f"DEBUG: Controller user_id: {self.user_id}, user_email: {self.user_email}")
+        
         try:
-            return await self.service.get_conversation_info(
+            result = await self.service.get_conversation_info(
                 conversation_id, self.user_id
             )
+            logger.info(f"DEBUG: Successfully retrieved conversation info from service for {conversation_id}")
+            return result
         except ConversationNotFoundError as e:
+            logger.error(f"DEBUG: ConversationNotFoundError for {conversation_id}: {str(e)}")
             raise HTTPException(status_code=404, detail=str(e))
         except AccessTypeNotFoundError as e:
+            logger.error(f"DEBUG: AccessTypeNotFoundError for {conversation_id}: {str(e)}")
             raise HTTPException(status_code=401, detail=str(e))
         except ConversationServiceError as e:
+            logger.error(f"DEBUG: ConversationServiceError for {conversation_id}: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
 
     async def get_conversation_messages(
         self, conversation_id: str, start: int, limit: int
     ) -> List[MessageResponse]:
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        logger.info(f"DEBUG: ConversationController.get_conversation_messages called for conversation_id: {conversation_id}, start: {start}, limit: {limit}")
+        logger.info(f"DEBUG: Controller user_id: {self.user_id}, user_email: {self.user_email}")
+        
         try:
-            return await self.service.get_conversation_messages(
+            result = await self.service.get_conversation_messages(
                 conversation_id, start, limit, self.user_id
             )
+            logger.info(f"DEBUG: Successfully retrieved {len(result)} messages from service for {conversation_id}")
+            return result
         except ConversationNotFoundError as e:
+            logger.error(f"DEBUG: ConversationNotFoundError for {conversation_id}: {str(e)}")
             raise HTTPException(status_code=404, detail=str(e))
         except AccessTypeNotFoundError as e:
+            logger.error(f"DEBUG: AccessTypeNotFoundError for {conversation_id}: {str(e)}")
             raise HTTPException(status_code=401, detail=str(e))
         except ConversationServiceError as e:
+            logger.error(f"DEBUG: ConversationServiceError for {conversation_id}: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
 
     async def post_message(
@@ -114,9 +136,9 @@ class ConversationController:
         except ConversationServiceError as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    async def stop_generation(self, conversation_id: str) -> dict:
+    async def stop_generation(self, conversation_id: str, session_id: str = None) -> dict:
         try:
-            return await self.service.stop_generation(conversation_id, self.user_id)
+            return await self.service.stop_generation(conversation_id, self.user_id, session_id)
         except ConversationNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e))
         except ConversationServiceError as e:
@@ -131,5 +153,16 @@ class ConversationController:
             raise HTTPException(status_code=404, detail=str(e))
         except AccessTypeReadError as e:
             raise HTTPException(status_code=403, detail=str(e))
+        except ConversationServiceError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    async def get_last_human_message(self, conversation_id: str):
+        """Get the last human message for regeneration purposes"""
+        try:
+            return await self.service._get_last_human_message(conversation_id)
+        except ConversationNotFoundError:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        except AccessTypeReadError:
+            raise HTTPException(status_code=403, detail="Access denied")
         except ConversationServiceError as e:
             raise HTTPException(status_code=500, detail=str(e))

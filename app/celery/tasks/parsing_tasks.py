@@ -2,29 +2,12 @@ import asyncio
 import logging
 from typing import Any, Dict
 
-from celery import Task
-
 from app.celery.celery_app import celery_app
-from app.core.database import SessionLocal
+from app.celery.tasks.base_task import BaseTask
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
 
 logger = logging.getLogger(__name__)
-
-
-class BaseTask(Task):
-    _db = None
-
-    @property
-    def db(self):
-        if self._db is None:
-            self._db = SessionLocal()
-        return self._db
-
-    def after_return(self, *args, **kwargs):
-        if self._db is not None:
-            self._db.close()
-            self._db = None
 
 
 @celery_app.task(
