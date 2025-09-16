@@ -128,66 +128,54 @@ class ConversationService:
     async def check_conversation_access(
         self, conversation_id: str, user_email: str, firebase_user_id: str = None
     ) -> str:
-        logger.info(f"DEBUG: check_conversation_access called for conversation_id: {conversation_id}, user_email: {user_email}, firebase_user_id: {firebase_user_id}")
         
         if not user_email:
-            logger.info(f"DEBUG: No user_email provided, returning WRITE access")
             return ConversationAccessType.WRITE
             
         # Use Firebase user ID directly if available, otherwise fall back to email lookup
         if firebase_user_id:
             user_id = firebase_user_id
-            logger.info(f"DEBUG: Using Firebase user_id directly: {user_id}")
         else:
             user_service = UserService(self.sql_db)
             user_id = user_service.get_user_id_by_email(user_email)
-            logger.info(f"DEBUG: Retrieved user_id from database: {user_id} for email: {user_email}")
 
         # Retrieve the conversation
         conversation = (
             self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
         )
         if not conversation:
-            logger.warning(f"DEBUG: Conversation {conversation_id} not found in database")
+            logger.warning(f"Conversation {conversation_id} not found in database")
             return (
                 ConversationAccessType.NOT_FOUND
             )  # Return 'not found' if conversation doesn't exist
 
-        logger.info(f"DEBUG: Found conversation {conversation_id}, user_id: {conversation.user_id}, visibility: {conversation.visibility}")
 
         if not conversation.visibility:
             conversation.visibility = Visibility.PRIVATE
-            logger.info(f"DEBUG: Set default visibility to PRIVATE for conversation {conversation_id}")
 
         if user_id == conversation.user_id:  # Check if the user is the creator
-            logger.info(f"DEBUG: User {user_id} is the creator of conversation {conversation_id}, returning WRITE access")
             return ConversationAccessType.WRITE  # Creator always has write access
 
         if conversation.visibility == Visibility.PUBLIC:
-            logger.info(f"DEBUG: Conversation {conversation_id} is PUBLIC, returning READ access for user {user_id}")
             return ConversationAccessType.READ  # Public users get read access
 
         # Check if the conversation is shared
         if conversation.shared_with_emails:
-            logger.info(f"DEBUG: Conversation {conversation_id} is shared with emails: {conversation.shared_with_emails}")
             user_service = UserService(self.sql_db)
             shared_user_ids = user_service.get_user_ids_by_emails(
                 conversation.shared_with_emails
             )
-            logger.info(f"DEBUG: Shared user IDs: {shared_user_ids}")
             if shared_user_ids is None:
-                logger.warning(f"DEBUG: Failed to get user IDs for shared emails, returning NOT_FOUND")
+                logger.warning(f"Failed to get user IDs for shared emails, returning NOT_FOUND")
                 return ConversationAccessType.NOT_FOUND
             # Check if the current user ID is in the shared user IDs
             if user_id in shared_user_ids:
-                logger.info(f"DEBUG: User {user_id} is in shared list, returning READ access")
                 return ConversationAccessType.READ  # Shared users can only read
             else:
-                logger.info(f"DEBUG: User {user_id} is not in shared list, returning NOT_FOUND")
+                return ConversationAccessType.NOT_FOUND
         else:
-            logger.info(f"DEBUG: Conversation {conversation_id} is not shared with anyone")
+            return ConversationAccessType.NOT_FOUND
             
-        logger.info(f"DEBUG: No access granted for user {user_id} to conversation {conversation_id}, returning NOT_FOUND")
         return ConversationAccessType.NOT_FOUND
 
     async def create_conversation(
@@ -685,17 +673,9 @@ class ConversationService:
             # Prepare multimodal context - use current message attachments if available
             image_attachments = None
             if attachment_ids:
-                logger.info(
-                    f"DEBUG: Preparing {len(attachment_ids)} attachment_ids as images: {attachment_ids}"
-                )
                 image_attachments = await self._prepare_attachments_as_images(
                     attachment_ids
                 )
-                logger.info(
-                    f"DEBUG: Prepared image_attachments: {list(image_attachments.keys()) if image_attachments else None}"
-                )
-            else:
-                logger.info("DEBUG: No attachment_ids provided for current message")
 
             # Also get context images from recent conversation history
             context_images = await self._prepare_conversation_context_images(
@@ -973,30 +953,25 @@ class ConversationService:
     async def get_conversation_info(
         self, conversation_id: str, user_id: str
     ) -> ConversationInfoResponse:
-        logger.info(f"DEBUG: get_conversation_info service method called for conversation_id: {conversation_id}, user_id: {user_id}")
-        logger.info(f"DEBUG: Service user_email: {self.user_email}")
         
         try:
             conversation = (
                 self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
             )
             if not conversation:
-                logger.warning(f"DEBUG: Conversation {conversation_id} not found in database")
+                logger.warning(f"Conversation {conversation_id} not found in database")
                 raise ConversationNotFoundError(
                     f"Conversation with id {conversation_id} not found"
                 )
             
-            logger.info(f"DEBUG: Found conversation {conversation_id}, creator: {conversation.user_id}")
             is_creator = conversation.user_id == user_id
-            logger.info(f"DEBUG: Is creator check: {is_creator} (user_id: {user_id} vs creator: {conversation.user_id})")
             
             access_type = await self.check_conversation_access(
                 conversation_id, self.user_email, user_id
             )
-            logger.info(f"DEBUG: Access type determined: {access_type}")
 
             if access_type == ConversationAccessType.NOT_FOUND:
-                logger.error(f"DEBUG: Access denied - access type is NOT_FOUND for user {user_id} on conversation {conversation_id}")
+                logger.error(f"Access denied - access type is NOT_FOUND for user {user_id} on conversation {conversation_id}")
                 raise AccessTypeNotFoundError("Access type not found")
 
             total_messages = (
@@ -1004,7 +979,6 @@ class ConversationService:
                 .filter_by(conversation_id=conversation_id, status=MessageStatus.ACTIVE)
                 .count()
             )
-            logger.info(f"DEBUG: Total active messages: {total_messages}")
 
             agent_id = conversation.agent_ids[0] if conversation.agent_ids else None
             agent_ids = conversation.agent_ids
@@ -1036,16 +1010,15 @@ class ConversationService:
                 creator_id=conversation.user_id,
                 visibility=conversation.visibility,
             )
-            logger.info(f"DEBUG: Successfully created ConversationInfoResponse for {conversation_id}")
             return result
         except ConversationNotFoundError as e:
-            logger.warning(f"DEBUG: ConversationNotFoundError: {str(e)}")
+            logger.warning(f"ConversationNotFoundError: {str(e)}")
             raise
         except AccessTypeNotFoundError as e:
-            logger.error(f"DEBUG: AccessTypeNotFoundError: {str(e)}")
+            logger.error(f"AccessTypeNotFoundError: {str(e)}")
             raise
         except Exception as e:
-            logger.error(f"DEBUG: Error in get_conversation_info: {e}", exc_info=True)
+            logger.error(f"Error in get_conversation_info: {e}", exc_info=True)
             raise ConversationServiceError(
                 f"Failed to get conversation info for {conversation_id}"
             ) from e
@@ -1053,29 +1026,25 @@ class ConversationService:
     async def get_conversation_messages(
         self, conversation_id: str, start: int, limit: int, user_id: str
     ) -> List[MessageResponse]:
-        logger.info(f"DEBUG: get_conversation_messages service method called for conversation_id: {conversation_id}, start: {start}, limit: {limit}, user_id: {user_id}")
-        logger.info(f"DEBUG: Service user_email: {self.user_email}")
         
         try:
             access_level = await self.check_conversation_access(
                 conversation_id, self.user_email, user_id
             )
-            logger.info(f"DEBUG: Access level determined: {access_level}")
             
             if access_level == ConversationAccessType.NOT_FOUND:
-                logger.error(f"DEBUG: Access denied - access level is NOT_FOUND for user {user_id} on conversation {conversation_id}")
+                logger.error(f"Access denied - access level is NOT_FOUND for user {user_id} on conversation {conversation_id}")
                 raise AccessTypeNotFoundError("Access denied.")
                 
             conversation = (
                 self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
             )
             if not conversation:
-                logger.warning(f"DEBUG: Conversation {conversation_id} not found in database")
+                logger.warning(f"Conversation {conversation_id} not found in database")
                 raise ConversationNotFoundError(
                     f"Conversation with id {conversation_id} not found"
                 )
 
-            logger.info(f"DEBUG: Found conversation {conversation_id}, querying messages")
             messages = (
                 self.sql_db.query(Message)
                 .filter_by(conversation_id=conversation_id)
@@ -1086,7 +1055,6 @@ class ConversationService:
                 .limit(limit)
                 .all()
             )
-            logger.info(f"DEBUG: Retrieved {len(messages)} messages from database")
 
             message_responses = []
             for message in messages:
@@ -1119,13 +1087,12 @@ class ConversationService:
                         attachments=attachments,
                     )
                 )
-            logger.info(f"DEBUG: Successfully created {len(message_responses)} message responses")
             return message_responses
         except ConversationNotFoundError as e:
-            logger.warning(f"DEBUG: ConversationNotFoundError: {str(e)}")
+            logger.warning(f"ConversationNotFoundError: {str(e)}")
             raise
         except AccessTypeNotFoundError as e:
-            logger.error(f"DEBUG: AccessTypeNotFoundError: {str(e)}")
+            logger.error(f"AccessTypeNotFoundError: {str(e)}")
             raise
         except Exception as e:
             logger.error(f"DEBUG: Error in get_conversation_messages: {e}", exc_info=True)

@@ -54,7 +54,6 @@ class RedisStreamManager:
         """Synchronous Redis stream consumption for HTTP streaming"""
         key = self.stream_key(conversation_id, run_id)
         
-        logger.info(f"DEBUG: Starting stream consumption for key: {key}, cursor: {cursor}")
         
         try:
             # First replay existing events
@@ -63,20 +62,16 @@ class RedisStreamManager:
             else:
                 events = self.redis_client.xrange(key)
             
-            logger.info(f"DEBUG: Found {len(events)} existing events in stream")
             for event_id, event_data in events:
                 formatted_event = self._format_event(event_id, event_data)
-                logger.info(f"DEBUG: Yielding existing event: {formatted_event.get('type', 'unknown')}")
                 yield formatted_event
             
             # Then continue with live events
             last_id = events[-1][0] if events else '0-0'
-            logger.info(f"DEBUG: Starting live event consumption from last_id: {last_id}")
             
             while True:
                 # Check if key still exists (TTL expiry detection)
                 if not self.redis_client.exists(key):
-                    logger.info(f"DEBUG: Stream {key} expired, ending consumption")
                     yield {
                         "type": "end",
                         "status": "expired", 
@@ -85,10 +80,8 @@ class RedisStreamManager:
                     }
                     return
                     
-                logger.debug(f"DEBUG: Waiting for new events after {last_id}")
                 events = self.redis_client.xread({key: last_id}, block=5000, count=1)
                 if not events:
-                    logger.debug(f"DEBUG: No new events, continuing to wait...")
                     continue
                     
                 for stream_key, stream_events in events:
@@ -129,10 +122,10 @@ class RedisStreamManager:
                     parsed_value = json.loads(value_str)
                     formatted_key = key_str.replace('_json', '')
                     if formatted_key == 'tool_calls':
-                        logger.debug(f"DEBUG: Deserializing tool_calls_json: {value_str} -> {parsed_value}")
+                        pass  # No special handling needed for tool_calls
                     formatted[formatted_key] = parsed_value
                 except Exception as e:
-                    logger.error(f"DEBUG: Failed to parse {key_str}: {value_str}, error: {e}")
+                    logger.error(f"Failed to parse {key_str}: {value_str}, error: {e}")
                     formatted[key_str.replace('_json', '')] = []
             else:
                 formatted[key_str] = value_str

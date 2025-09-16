@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import datetime
 from typing import Any, AsyncGenerator, Generator, List, Optional
 from uuid import uuid4
 
@@ -52,8 +53,10 @@ def _normalize_run_id(conversation_id: str, session_id: str = None) -> str:
         else:
             return session_id  # Pass through any other format
     else:
-        # Generate new deterministic format
-        return f"{conversation_id}:new"
+        # Generate truly unique session ID with timestamp and UUID
+        timestamp = int(datetime.utcnow().timestamp() * 1000)
+        unique_id = str(uuid4())[:8]
+        return f"{conversation_id}:{timestamp}:{unique_id}"
 
 
 async def get_stream(data_stream: AsyncGenerator[Any, None]):
@@ -71,7 +74,6 @@ def redis_stream_generator(
     from app.modules.conversations.conversation.conversation_schema import ChatMessageResponse
     from app.modules.conversations.message.message_model import MessageType
     
-    logger.info(f"DEBUG: redis_stream_generator called for conversation {conversation_id}, run_id {run_id}, cursor {cursor}")
     
     def json_serializer(obj):
         """Custom JSON serializer to handle bytes objects"""
@@ -80,23 +82,19 @@ def redis_stream_generator(
         return str(obj)
     
     redis_manager = RedisStreamManager()
-    logger.info(f"DEBUG: Created RedisStreamManager, starting stream consumption...")
     
     try:
         for event in redis_manager.consume_stream(conversation_id, run_id, cursor):
-            logger.info(f"DEBUG: Redis event received: {event.get('type', 'unknown')} - {event}")
             # Convert to ChatMessageResponse format for compatibility
             if event.get('type') == 'chunk':
                 tool_calls = event.get('tool_calls', [])
                 content = event.get('content', '')
-                logger.info(f"DEBUG: Streaming chunk - content: '{content}', tool_calls: {tool_calls}")
                 response = ChatMessageResponse(
                     message=content,
                     citations=event.get('citations', []),
                     tool_calls=tool_calls
                 )
                 json_response = json.dumps(response.dict(), default=json_serializer)
-                logger.info(f"DEBUG: Yielding JSON response: {json_response[:200]}...")
                 yield json_response
                 
             elif event.get('type') == 'end':
@@ -140,22 +138,16 @@ class ConversationAPI:
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
-        logger.info(f"DEBUG: get_conversation_info called for conversation_id: {conversation_id}")
-        logger.info(f"DEBUG: Authenticated user: {user}")
-        
         user_id = user["user_id"]
         user_email = user["email"]
-        logger.info(f"DEBUG: Extracted user_id: {user_id}, user_email: {user_email}")
         
         controller = ConversationController(db, user_id, user_email)
-        logger.info(f"DEBUG: Created ConversationController for user {user_id}")
         
         try:
             result = await controller.get_conversation_info(conversation_id)
-            logger.info(f"DEBUG: Successfully retrieved conversation info for {conversation_id}")
             return result
         except Exception as e:
-            logger.error(f"DEBUG: Error in get_conversation_info for {conversation_id}: {str(e)}", exc_info=True)
+            logger.error(f"Error in get_conversation_info for {conversation_id}: {str(e)}", exc_info=True)
             raise
 
     @staticmethod
@@ -170,22 +162,16 @@ class ConversationAPI:
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
-        logger.info(f"DEBUG: get_conversation_messages called for conversation_id: {conversation_id}, start: {start}, limit: {limit}")
-        logger.info(f"DEBUG: Authenticated user: {user}")
-        
         user_id = user["user_id"]
         user_email = user["email"]
-        logger.info(f"DEBUG: Extracted user_id: {user_id}, user_email: {user_email}")
         
         controller = ConversationController(db, user_id, user_email)
-        logger.info(f"DEBUG: Created ConversationController for user {user_id}")
         
         try:
             result = await controller.get_conversation_messages(conversation_id, start, limit)
-            logger.info(f"DEBUG: Successfully retrieved {len(result)} messages for conversation {conversation_id}")
             return result
         except Exception as e:
-            logger.error(f"DEBUG: Error in get_conversation_messages for {conversation_id}: {str(e)}", exc_info=True)
+            logger.error(f"Error in get_conversation_messages for {conversation_id}: {str(e)}", exc_info=True)
             raise
 
     @staticmethod
@@ -219,20 +205,13 @@ class ConversationAPI:
         # Process images if present
         attachment_ids = []
         if images:
-            logger.info(f"DEBUG: Processing {len(images)} uploaded images")
             media_service = MediaService(db)
             for i, image in enumerate(images):
-                logger.info(
-                    f"DEBUG: Processing image {i}: filename={image.filename}, content_type={image.content_type}, size={getattr(image, 'size', 'unknown')}"
-                )
                 # Check if image has content by checking filename and content_type
                 if image.filename and image.content_type:
                     try:
                         # Read file data first and pass as bytes to avoid UploadFile issues
                         file_content = await image.read()
-                        logger.info(
-                            f"DEBUG: Read {len(file_content)} bytes from {image.filename}"
-                        )
                         upload_result = await media_service.upload_image(
                             file=file_content,
                             file_name=image.filename,
@@ -240,12 +219,9 @@ class ConversationAPI:
                             message_id=None,  # Will be linked after message creation
                         )
                         attachment_ids.append(upload_result.id)
-                        logger.info(
-                            f"DEBUG: Uploaded image {image.filename} with ID: {upload_result.id}"
-                        )
                     except Exception as e:
                         logger.error(
-                            f"DEBUG: Failed to upload image {image.filename}: {str(e)}"
+                            f"Failed to upload image {image.filename}: {str(e)}"
                         )
                         # Clean up any successfully uploaded attachments
                         for uploaded_id in attachment_ids:
@@ -257,14 +233,6 @@ class ConversationAPI:
                             status_code=400,
                             detail=f"Failed to upload image {image.filename}: {str(e)}",
                         )
-                else:
-                    logger.info(
-                        f"DEBUG: Skipping image {i} - no filename ({image.filename}) or content_type ({image.content_type})"
-                    )
-        else:
-            logger.info("DEBUG: No images to process. images is None or empty")
-
-        logger.info(f"DEBUG: Final attachment_ids: {attachment_ids}")
 
         # Parse node_ids if provided
         parsed_node_ids = None
@@ -279,9 +247,6 @@ class ConversationAPI:
             content=content,
             node_ids=parsed_node_ids,
             attachment_ids=attachment_ids if attachment_ids else None,
-        )
-        logger.info(
-            f"DEBUG: Created MessageRequest with attachment_ids: {message.attachment_ids}"
         )
 
         controller = ConversationController(db, user_id, user_email)
@@ -315,7 +280,6 @@ class ConversationAPI:
         )
 
         # Start background task
-        logger.info(f"DEBUG: Starting background task for conversation {conversation_id}, run_id {run_id}")
         execute_agent_background.delay(
             conversation_id=conversation_id,
             run_id=run_id,
@@ -327,7 +291,6 @@ class ConversationAPI:
         )
         
         # Return Redis stream response
-        logger.info(f"DEBUG: Returning streaming response for conversation {conversation_id}, run_id {run_id}")
         return StreamingResponse(
             redis_stream_generator(conversation_id, run_id, cursor),
             media_type="text/event-stream"

@@ -31,3 +31,4 @@ class BaseTask(Task):
     def on_retry(self, exc, task_id, args, kwargs, einfo):
         """Called on task retry."""
         logger.warning(f"Task {task_id} retrying: {exc}")
+

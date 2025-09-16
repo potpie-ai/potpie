@@ -73,7 +73,6 @@ def execute_agent_background(
                     return
                 
                 # Publish chunk event
-                logger.info(f"DEBUG: Publishing chunk with tool_calls: {chunk.tool_calls}")
                 
                 # Properly serialize tool calls before sending through Redis
                 serialized_tool_calls = []
@@ -86,7 +85,6 @@ def execute_agent_background(
                         else:
                             # Fallback for already serialized or dict objects
                             serialized_tool_calls.append(tool_call)
-                    logger.info(f"DEBUG: Serialized {len(serialized_tool_calls)} tool calls for Redis")
                 
                 redis_manager.publish_event(
                     conversation_id, run_id, "chunk",
@@ -181,7 +179,6 @@ def execute_regenerate_background(
                 # Properly serialize tool calls before sending through Redis
                 serialized_tool_calls = []
                 if chunk.tool_calls:
-                    logger.info(f"DEBUG: Regenerate publishing chunk with {len(chunk.tool_calls)} tool_calls")
                     for tool_call in chunk.tool_calls:
                         if hasattr(tool_call, 'model_dump'):
                             serialized_tool_calls.append(tool_call.model_dump())
@@ -190,7 +187,6 @@ def execute_regenerate_background(
                         else:
                             # Fallback for already serialized or dict objects
                             serialized_tool_calls.append(tool_call)
-                    logger.info(f"DEBUG: Serialized {len(serialized_tool_calls)} tool calls for Redis")
                 
                 redis_manager.publish_event(
                     conversation_id, run_id, "chunk",
