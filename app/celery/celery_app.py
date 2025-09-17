@@ -48,6 +48,13 @@ def configure_celery(queue_prefix: str):
             "app.celery.tasks.parsing_tasks.process_parsing": {
                 "queue": f"{queue_prefix}_process_repository"
             },
+            # Event bus task routes - both go to the same queue
+            "app.modules.event_bus.tasks.event_tasks.process_webhook_event": {
+                "queue": "external-event"
+            },
+            "app.modules.event_bus.tasks.event_tasks.process_custom_event": {
+                "queue": "external-event"
+            },
         },
         # Optimize task distribution
         worker_prefetch_multiplier=1,
@@ -74,3 +81,4 @@ from celery.contrib.abortable import AbortableTask  # noqa
 
 # Import tasks to ensure they are registered
 import app.celery.tasks.parsing_tasks  # noqa # Ensure the task module is imported
+import app.modules.event_bus.tasks.event_tasks  # noqa # Ensure event bus tasks are registered
