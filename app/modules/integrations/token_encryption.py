@@ -5,7 +5,6 @@ Token encryption utilities for secure storage of OAuth tokens
 import os
 import base64
 from cryptography.fernet import Fernet
-from typing import Optional
 import logging
 
 

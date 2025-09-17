@@ -14,8 +14,6 @@ from .linear_oauth import LinearOAuth
 from .integrations_service import IntegrationsService
 from .integrations_schema import (
     OAuthInitiateRequest,
-    OAuthCallbackRequest,
-    OAuthTokenResponse,
     OAuthStatusResponse,
     SentryIntegrationStatus,
     SentrySaveRequest,
@@ -23,7 +21,6 @@ from .integrations_schema import (
     LinearIntegrationStatus,
     LinearSaveRequest,
     LinearSaveResponse,
-    Integration,
     IntegrationCreateRequest,
     IntegrationUpdateRequest,
     IntegrationResponse,
@@ -542,7 +539,7 @@ async def linear_webhook(
             if form_data:
                 form_dict = {k: str(v) for k, v in form_data.items()}
                 webhook_data.update(form_dict)
-        except Exception as e:
+        except Exception:
             pass
 
         # Use the service to log the webhook data

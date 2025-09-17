@@ -6,7 +6,6 @@ Abstract interface for event bus implementations.
 
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
-from uuid import UUID
 
 
 class EventBusInterface(ABC):

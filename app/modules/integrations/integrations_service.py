@@ -1,4 +1,4 @@
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 from .sentry_oauth_v2 import SentryOAuthV2
 from .linear_oauth import LinearOAuth
@@ -337,20 +337,20 @@ class IntegrationsService:
 
             # Log the exact request that will be sent
             logging.info("=== REQUEST DETAILS ===")
-            logging.info(f"Token URL: https://sentry.io/oauth/token/")
-            logging.info(f"Request method: POST")
-            logging.info(f"Content-Type: application/x-www-form-urlencoded")
+            logging.info("Token URL: https://sentry.io/oauth/token/")
+            logging.info("Request method: POST")
+            logging.info("Content-Type: application/x-www-form-urlencoded")
             logging.info(
-                f"Request body fields: client_id, client_secret, grant_type, code, redirect_uri"
+                "Request body fields: client_id, client_secret, grant_type, code, redirect_uri"
             )
-            logging.info(f"Grant type: authorization_code")
+            logging.info("Grant type: authorization_code")
             logging.info(f"Code: {code}")
             logging.info(f"Redirect URI: {redirect_uri}")
             logging.info(f"Client ID: {client_id}")
             logging.info(
                 f"Client Secret: {'*' * len(client_secret) if client_secret else 'NOT_SET'}"
             )
-            logging.info(f"Note: Including redirect_uri in token exchange request")
+            logging.info("Note: Including redirect_uri in token exchange request")
 
             if not client_id or not client_secret or not redirect_uri:
                 missing = []
@@ -383,7 +383,7 @@ class IntegrationsService:
 
             logging.info(f"Token exchange request data: {list(token_data.keys())}")
             logging.info(f"Token URL: {token_url}")
-            logging.info(f"Note: Including redirect_uri for validation")
+            logging.info("Note: Including redirect_uri for validation")
 
             # Make the token exchange request
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -460,9 +460,9 @@ class IntegrationsService:
                             logging.error(f"Code used: {code}")
                             logging.error(f"Code length: {len(code)}")
                             logging.error(f"Client ID used: {client_id}")
-                            logging.error(f"Grant type used: authorization_code")
+                            logging.error("Grant type used: authorization_code")
                             logging.error(
-                                f"Note: redirect_uri NOT sent in token exchange (per Sentry docs)"
+                                "Note: redirect_uri NOT sent in token exchange (per Sentry docs)"
                             )
 
                     except Exception as parse_error:
@@ -621,7 +621,7 @@ class IntegrationsService:
             import time
 
             logging.info("=== Sentry Integration Save Debug ===")
-            logging.info(f"Processing Sentry integration with authorization code")
+            logging.info("Processing Sentry integration with authorization code")
             logging.info(
                 f"Request data: instance_name={request.instance_name}, integration_type={request.integration_type}"
             )

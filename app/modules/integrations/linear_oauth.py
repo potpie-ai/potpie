@@ -5,7 +5,6 @@ https://developers.linear.app/docs/oauth
 
 from typing import Dict, Optional, Any
 from starlette.config import Config
-from fastapi import HTTPException
 import httpx
 import urllib.parse
 import logging

@@ -1,6 +1,5 @@
 from sqlalchemy import TIMESTAMP, Boolean, Column, String, func
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import relationship
 
 from app.core.base_model import Base
 
