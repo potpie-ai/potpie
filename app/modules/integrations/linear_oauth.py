@@ -105,6 +105,21 @@ class LinearOAuth:
                 "redirect_uri": redirect_uri,
             }
 
+            # Log token exchange details for debugging
+            logging.info("Linear token exchange request:")
+            logging.info(f"  URL: {token_url}")
+            logging.info(
+                f"  Client ID: {self.client_id[:10]}..."
+                if self.client_id
+                else "  Client ID: None"
+            )
+            logging.info(f"  Redirect URI: {redirect_uri}")
+            logging.info(
+                f"  Code: {authorization_code[:20]}..."
+                if authorization_code
+                else "  Code: None"
+            )
+
             # Make the token exchange request
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
@@ -114,7 +129,10 @@ class LinearOAuth:
                 )
 
                 if response.status_code != 200:
-                    logging.error(f"Linear token exchange failed: {response.text}")
+                    logging.error("Linear token exchange failed:")
+                    logging.error(f"  Status: {response.status_code}")
+                    logging.error(f"  Response: {response.text}")
+                    logging.error(f"  Headers: {dict(response.headers)}")
                     raise Exception(f"Token exchange failed: {response.status_code}")
 
                 token_response = response.json()

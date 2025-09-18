@@ -215,9 +215,10 @@ async def linear_oauth_redirect(
                 status_code=400,
                 detail="This endpoint is for OAuth initiation, not callback. Linear should redirect to /api/v1/integrations/linear/callback with the authorization code.",
             )
-        # Get redirect URI from query params or use default
+        # Get redirect URI from query params or construct from current request
         redirect_uri = request.query_params.get(
-            "redirect_uri", "http://localhost:8000/api/v1/integrations/linear/callback"
+            "redirect_uri",
+            f"{request.url.scheme}://{request.url.hostname}/api/v1/integrations/linear/callback",
         )
 
         # Get state parameter if provided
@@ -280,7 +281,7 @@ async def linear_oauth_callback(
 
                 save_request = LinearSaveRequest(
                     code=code,
-                    redirect_uri=f"{request.url.scheme}://{request.url.hostname}{request.url.path}",
+                    redirect_uri=f"{request.url.scheme}://{request.url.hostname}/api/v1/integrations/linear/callback",
                     instance_name="Linear Integration",  # Will be updated with org name in service
                     integration_type="linear",
                     timestamp=datetime.utcnow().isoformat() + "Z",
@@ -296,6 +297,13 @@ async def linear_oauth_callback(
                 # Redirect to frontend with success
                 config = Config()
                 frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
+
+                # Ensure frontend_url has protocol
+                if frontend_url and not frontend_url.startswith(
+                    ("http://", "https://")
+                ):
+                    frontend_url = f"https://{frontend_url}"
+
                 redirect_url = f"{frontend_url}/integrations/linear/redirect?success=true&integration_id={save_result.get('integration_id')}&user_name={save_result.get('user_name', '')}"
 
                 return RedirectResponse(url=redirect_url)
@@ -306,6 +314,13 @@ async def linear_oauth_callback(
                 # Redirect to frontend with error
                 config = Config()
                 frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
+
+                # Ensure frontend_url has protocol
+                if frontend_url and not frontend_url.startswith(
+                    ("http://", "https://")
+                ):
+                    frontend_url = f"https://{frontend_url}"
+
                 error_message = urllib.parse.quote(str(e), safe="")
                 redirect_url = f"{frontend_url}/integrations/linear/redirect?error={error_message}&user_id={user_id}"
 
@@ -314,6 +329,11 @@ async def linear_oauth_callback(
             # No code provided, redirect to frontend with error
             config = Config()
             frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
+
+            # Ensure frontend_url has protocol
+            if frontend_url and not frontend_url.startswith(("http://", "https://")):
+                frontend_url = f"https://{frontend_url}"
+
             error_msg = "No authorization code received from Linear"
             if error:
                 error_msg = f"OAuth error: {error}"
@@ -330,6 +350,11 @@ async def linear_oauth_callback(
         # Redirect to frontend with error
         config = Config()
         frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
+
+        # Ensure frontend_url has protocol
+        if frontend_url and not frontend_url.startswith(("http://", "https://")):
+            frontend_url = f"https://{frontend_url}"
+
         error_message = urllib.parse.quote(
             f"Linear OAuth callback failed: {str(e)}", safe=""
         )
