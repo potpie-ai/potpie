@@ -218,7 +218,7 @@ async def linear_oauth_redirect(
         # Get redirect URI from query params or construct from current request
         redirect_uri = request.query_params.get(
             "redirect_uri",
-            f"{request.url.scheme}://{request.url.hostname}/api/v1/integrations/linear/callback",
+            f"https://{request.url.hostname}/api/v1/integrations/linear/callback",
         )
 
         # Get state parameter if provided
@@ -279,9 +279,10 @@ async def linear_oauth_callback(
                 from .integrations_schema import LinearSaveRequest
                 from datetime import datetime
 
+                # Always use HTTPS in production
                 save_request = LinearSaveRequest(
                     code=code,
-                    redirect_uri=f"{request.url.scheme}://{request.url.hostname}/api/v1/integrations/linear/callback",
+                    redirect_uri=f"https://{request.url.hostname}/api/v1/integrations/linear/callback",
                     instance_name="Linear Integration",  # Will be updated with org name in service
                     integration_type="linear",
                     timestamp=datetime.utcnow().isoformat() + "Z",
