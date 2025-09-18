@@ -106,7 +106,7 @@ class LinearOAuth:
             }
 
             # Log token exchange details for debugging
-            logging.info(f"Linear token exchange request:")
+            logging.info("Linear token exchange request:")
             logging.info(f"  URL: {token_url}")
             logging.info(
                 f"  Client ID: {self.client_id[:10]}..."
@@ -129,7 +129,7 @@ class LinearOAuth:
                 )
 
                 if response.status_code != 200:
-                    logging.error(f"Linear token exchange failed:")
+                    logging.error("Linear token exchange failed:")
                     logging.error(f"  Status: {response.status_code}")
                     logging.error(f"  Response: {response.text}")
                     logging.error(f"  Headers: {dict(response.headers)}")
