@@ -17,6 +17,7 @@ from .integrations_schema import (
     AuthData,
     ScopeData,
     IntegrationMetadata,
+    IntegrationSaveRequest,
 )
 from .integration_model import Integration
 from starlette.config import Config
@@ -1564,3 +1565,74 @@ class IntegrationsService:
                 )
 
             raise Exception(f"Failed to save Linear integration: {error_message}")
+
+    async def save_integration(
+        self, request: IntegrationSaveRequest, user_id: str
+    ) -> Dict[str, Any]:
+        """Save an integration with configurable and optional fields"""
+        try:
+            # Generate a unique integration ID
+            integration_id = str(uuid.uuid4())
+
+            # Generate unique identifier if not provided
+            unique_identifier = (
+                request.unique_identifier
+                or f"{request.integration_type.value}-{integration_id}"
+            )
+
+            # Ensure we have valid auth_data, scope_data, and metadata
+            auth_data = request.auth_data or AuthData()
+            scope_data = request.scope_data or ScopeData()
+            metadata = request.metadata or IntegrationMetadata(
+                instance_name=request.name
+            )
+
+            # Set default metadata instance_name if not provided
+            if not metadata.instance_name:
+                metadata.instance_name = request.name
+
+            # Create the database model
+            db_integration = Integration()
+            setattr(db_integration, "integration_id", integration_id)
+            setattr(db_integration, "name", request.name)
+            setattr(db_integration, "integration_type", request.integration_type.value)
+            setattr(db_integration, "status", request.status.value)
+            setattr(db_integration, "active", request.active)
+            setattr(db_integration, "auth_data", auth_data.model_dump(mode="json"))
+            setattr(db_integration, "scope_data", scope_data.model_dump(mode="json"))
+            setattr(
+                db_integration,
+                "integration_metadata",
+                metadata.model_dump(mode="json"),
+            )
+            setattr(db_integration, "unique_identifier", unique_identifier)
+            setattr(db_integration, "created_by", user_id)
+            setattr(db_integration, "created_at", datetime.utcnow())
+            setattr(db_integration, "updated_at", datetime.utcnow())
+
+            # Save to database
+            self.db.add(db_integration)
+            self.db.commit()
+            self.db.refresh(db_integration)
+
+            logging.info(f"Integration saved successfully: {integration_id}")
+
+            # Return the integration data
+            return {
+                "integration_id": integration_id,
+                "name": request.name,
+                "integration_type": request.integration_type.value,
+                "status": request.status.value,
+                "active": request.active,
+                "unique_identifier": unique_identifier,
+                "created_by": user_id,
+                "created_at": datetime.utcnow().isoformat(),
+                "has_auth_data": bool(auth_data.access_token),
+                "has_scope_data": bool(scope_data.org_slug or scope_data.workspace_id),
+                "metadata": metadata.model_dump(mode="json"),
+            }
+
+        except Exception as e:
+            logging.error(f"Error saving integration: {str(e)}")
+            self.db.rollback()
+            raise Exception(f"Failed to save integration: {str(e)}")
