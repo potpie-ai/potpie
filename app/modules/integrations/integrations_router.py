@@ -8,6 +8,7 @@ import time
 import urllib.parse
 
 from app.core.database import get_db
+from app.api.router import get_api_key_user
 
 from .sentry_oauth_v2 import SentryOAuthV2
 from .linear_oauth import LinearOAuth
@@ -27,6 +28,8 @@ from .integrations_schema import (
     IntegrationListResponse,
     IntegrationType,
     IntegrationStatus,
+    IntegrationSaveRequest,
+    IntegrationSaveResponse,
 )
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
@@ -677,6 +680,27 @@ async def save_sentry_integration(
             success=False,
             data=None,
             error=f"Failed to save Sentry integration: {str(e)}",
+        )
+
+
+@router.post("/save", response_model=IntegrationSaveResponse)
+async def save_integration(
+    request: IntegrationSaveRequest,
+    integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(get_api_key_user),
+) -> IntegrationSaveResponse:
+    """Save an integration with configurable and optional fields"""
+    try:
+        # Get the authenticated user's ID
+        user_id = user["user_id"]
+        result = await integrations_service.save_integration(request, user_id)
+        return IntegrationSaveResponse(success=True, data=result, error=None)
+    except Exception as e:
+        logging.error(f"Error saving integration: {str(e)}")
+        return IntegrationSaveResponse(
+            success=False,
+            data=None,
+            error=f"Failed to save integration: {str(e)}",
         )
 
 

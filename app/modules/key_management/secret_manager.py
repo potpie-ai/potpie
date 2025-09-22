@@ -938,11 +938,18 @@ class SecretManager:
             logger.info(f"API key retrieved successfully for user: {user['user_id']}")
             if api_key is None:
                 logger.info(f"No API key found for user: {user['user_id']}")
-                raise ValueError(f"No API key found for user: {user['user_id']}")
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No API key found for user: {user['user_id']}",
+                )
             return APIKeyResponse(api_key=api_key)
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error getting API key for user {user['user_id']}: {str(e)}")
-            raise
+            raise HTTPException(
+                status_code=500, detail="Internal server error while retrieving API key"
+            )
 
     # Integration key endpoints
 

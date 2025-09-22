@@ -279,3 +279,70 @@ class LinearSaveResponse(BaseModel):
         None, description="Integration data if successful"
     )
     error: Optional[str] = Field(None, description="Error message if operation failed")
+
+
+# Generic save integration schema
+class IntegrationSaveRequest(BaseModel):
+    """Request to save an integration with configurable and optional fields"""
+
+    # Required fields
+    name: str = Field(..., description="Integration name", min_length=1, max_length=255)
+    integration_type: IntegrationType = Field(..., description="Type of integration")
+
+    # Optional fields with defaults
+    status: IntegrationStatus = Field(
+        default=IntegrationStatus.ACTIVE, description="Integration status"
+    )
+    active: bool = Field(default=True, description="Whether integration is active")
+
+    # Optional auth data with defaults
+    auth_data: Optional[AuthData] = Field(
+        default_factory=lambda: AuthData(
+            access_token=None,
+            refresh_token=None,
+            token_type="Bearer",
+            expires_at=None,
+            scope=None,
+            code=None,
+        ),
+        description="Authentication data",
+    )
+
+    # Optional scope data with defaults
+    scope_data: Optional[ScopeData] = Field(
+        default_factory=lambda: ScopeData(
+            org_slug=None,
+            installation_id=None,
+            workspace_id=None,
+            project_id=None,
+        ),
+        description="Scope-specific data",
+    )
+
+    # Optional metadata with defaults
+    metadata: Optional[IntegrationMetadata] = Field(
+        default_factory=lambda: IntegrationMetadata(
+            instance_name="",
+            created_via="manual",
+            description=None,
+            version=None,
+            tags=[],
+        ),
+        description="Integration metadata",
+    )
+
+    # Optional unique identifier (will be generated if not provided)
+    unique_identifier: Optional[str] = Field(
+        None,
+        description="Unique identifier for the integration (auto-generated if not provided)",
+    )
+
+
+class IntegrationSaveResponse(BaseModel):
+    """Response after successfully saving an integration"""
+
+    success: bool = Field(..., description="Whether the operation was successful")
+    data: Optional[Dict[str, Any]] = Field(
+        None, description="Integration data if successful"
+    )
+    error: Optional[str] = Field(None, description="Error message if operation failed")
