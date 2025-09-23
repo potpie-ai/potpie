@@ -53,21 +53,47 @@ class RedisStreamManager:
     def consume_stream(self, conversation_id: str, run_id: str, cursor: Optional[str] = None) -> Generator[dict, None, None]:
         """Synchronous Redis stream consumption for HTTP streaming"""
         key = self.stream_key(conversation_id, run_id)
-        
-        
+
         try:
-            # First replay existing events
+            # Only replay existing events if cursor is explicitly provided (for reconnection)
+            events = []
             if cursor:
                 events = self.redis_client.xrange(key, min=cursor, max='+')
+
+                for event_id, event_data in events:
+                    formatted_event = self._format_event(event_id, event_data)
+                    yield formatted_event
+
+            # Set starting point for live events
+            if cursor and events:
+                last_id = events[-1][0]
+            elif self.redis_client.exists(key):
+                # For fresh requests, start from the latest event in the stream
+                # to avoid replaying old messages
+                latest_events = self.redis_client.xrevrange(key, count=1)
+                last_id = latest_events[0][0] if latest_events else '0-0'
             else:
-                events = self.redis_client.xrange(key)
-            
-            for event_id, event_data in events:
-                formatted_event = self._format_event(event_id, event_data)
-                yield formatted_event
-            
-            # Then continue with live events
-            last_id = events[-1][0] if events else '0-0'
+                last_id = '0-0'
+
+            # If no cursor provided (fresh request), wait for stream to be created
+            if not cursor and not self.redis_client.exists(key):
+                # Wait for the stream to be created (with timeout)
+                wait_timeout = 30  # 30 seconds
+                wait_start = datetime.now()
+
+                while not self.redis_client.exists(key):
+                    if (datetime.now() - wait_start).total_seconds() > wait_timeout:
+                        yield {
+                            "type": "end",
+                            "status": "timeout",
+                            "message": "Stream creation timeout",
+                            "stream_id": "0-0"
+                        }
+                        return
+
+                    # Check every 500ms
+                    import time
+                    time.sleep(0.5)
             
             while True:
                 # Check if key still exists (TTL expiry detection)
@@ -135,9 +161,32 @@ class RedisStreamManager:
         """Check if cancellation signal exists for this conversation/run"""
         cancel_key = f"cancel:{conversation_id}:{run_id}"
         return bool(self.redis_client.get(cancel_key))
-    
+
     def set_cancellation(self, conversation_id: str, run_id: str) -> None:
         """Set cancellation signal for this conversation/run"""
         cancel_key = f"cancel:{conversation_id}:{run_id}"
         self.redis_client.set(cancel_key, "true", ex=300)  # 5 minute expiry
         logger.info(f"Set cancellation signal for {conversation_id}:{run_id}")
+
+    def set_task_status(self, conversation_id: str, run_id: str, status: str) -> None:
+        """Set task status for health checking"""
+        status_key = f"task:status:{conversation_id}:{run_id}"
+        self.redis_client.set(status_key, status, ex=600)  # 10 minute expiry
+        logger.debug(f"Set task status {status} for {conversation_id}:{run_id}")
+
+    def get_task_status(self, conversation_id: str, run_id: str) -> Optional[str]:
+        """Get task status for health checking"""
+        status_key = f"task:status:{conversation_id}:{run_id}"
+        status = self.redis_client.get(status_key)
+        return status.decode() if status else None
+
+    def wait_for_task_start(self, conversation_id: str, run_id: str, timeout: int = 10) -> bool:
+        """Wait for background task to signal it has started"""
+        start_time = datetime.now()
+        while (datetime.now() - start_time).total_seconds() < timeout:
+            status = self.get_task_status(conversation_id, run_id)
+            if status in ['running', 'completed', 'error']:
+                return True
+            import time
+            time.sleep(0.5)
+        return False

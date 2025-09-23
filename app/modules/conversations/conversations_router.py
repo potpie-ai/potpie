@@ -1,8 +1,6 @@
 import json
 import logging
-from datetime import datetime
-from typing import Any, AsyncGenerator, Generator, List, Optional
-from uuid import uuid4
+from typing import Any, AsyncGenerator, Generator, List, Optional, Union
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -31,32 +29,30 @@ from .conversation.conversation_schema import (
     CreateConversationRequest,
     CreateConversationResponse,
     RenameConversationRequest,
+    ActiveSessionResponse,
+    ActiveSessionErrorResponse,
+    TaskStatusResponse,
+    TaskStatusErrorResponse,
 )
 from .message.message_schema import MessageRequest, MessageResponse, RegenerateRequest
+from .session.session_service import SessionService
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-def _normalize_run_id(conversation_id: str, session_id: str = None) -> str:
+def _normalize_run_id(conversation_id: str, user_id: str, session_id: str = None, prev_human_message_id: str = None) -> str:
     """
-    Normalize run_id handling both old UUID and new deterministic formats.
-    Maintains backward compatibility while supporting new pattern.
+    Generate user-scoped deterministic session IDs.
+    Format: conversation:{user_id}:{prev_human_message_id}
+    If no prev_human_message_id provided, defaults to 'new'
     """
     if session_id:
-        # Check if session_id is already in new format
-        if ":" in session_id and session_id.startswith(f"{conversation_id}:"):
-            return session_id
-        # Check if it's an old UUID format
-        elif len(session_id) == 36 and "-" in session_id:
-            return session_id  # Keep old UUID format as-is
-        else:
-            return session_id  # Pass through any other format
-    else:
-        # Generate truly unique session ID with timestamp and UUID
-        timestamp = int(datetime.utcnow().timestamp() * 1000)
-        unique_id = str(uuid4())[:8]
-        return f"{conversation_id}:{timestamp}:{unique_id}"
+        return session_id
+
+    # Use provided prev_human_message_id or default to 'new'
+    message_id = prev_human_message_id if prev_human_message_id else "new"
+    return f"conversation:{user_id}:{message_id}"
 
 
 async def get_stream(data_stream: AsyncGenerator[Any, None]):
@@ -183,6 +179,7 @@ class ConversationAPI:
         images: Optional[List[UploadFile]] = File(None),
         stream: bool = Query(True, description="Whether to stream the response"),
         session_id: Optional[str] = Query(None, description="Session ID for reconnection"),
+        prev_human_message_id: Optional[str] = Query(None, description="Previous human message ID for deterministic session ID"),
         cursor: Optional[str] = Query(None, description="Stream cursor for replay"),
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
@@ -258,26 +255,29 @@ class ConversationAPI:
                 return chunk
         
         # Streaming with session management
-        run_id = _normalize_run_id(conversation_id, session_id)
+        run_id = _normalize_run_id(conversation_id, user_id, session_id, prev_human_message_id)
+
+        # For fresh requests without cursor, ensure we get a unique stream
+        # by checking if the stream already exists and modifying run_id if needed
+        if not cursor:
+            from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+            redis_manager = RedisStreamManager()
+            original_run_id = run_id
+            counter = 1
+
+            # Find a unique run_id if the original already has an active stream
+            while redis_manager.redis_client.exists(redis_manager.stream_key(conversation_id, run_id)):
+                run_id = f"{original_run_id}-{counter}"
+                counter += 1
         
         # Start background agent execution (non-blocking)
         from app.celery.tasks.agent_tasks import execute_agent_background
         
         # Extract agent_id from conversation (will be handled in background task)
         agent_id = message.agent_id if hasattr(message, 'agent_id') else None
-        
+
         # Use parsed node_ids
         node_ids_list = parsed_node_ids or []
-        
-        # Initialize Redis stream immediately to prevent "expired" error
-        from app.modules.conversations.utils.redis_streaming import RedisStreamManager
-        redis_manager = RedisStreamManager()
-        redis_manager.publish_event(
-            conversation_id=conversation_id,
-            run_id=run_id,
-            event_type="start",
-            payload={"message": "Message processing started", "status": "initializing"}
-        )
 
         # Start background task
         execute_agent_background.delay(
@@ -289,7 +289,16 @@ class ConversationAPI:
             node_ids=node_ids_list,
             attachment_ids=attachment_ids or []
         )
-        
+
+        # Wait for background task to start (with health check)
+        from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+        redis_manager = RedisStreamManager()
+        task_started = redis_manager.wait_for_task_start(conversation_id, run_id, timeout=10)
+
+        if not task_started:
+            logger.warning(f"Background task failed to start for {conversation_id}:{run_id}")
+            # Could add fallback logic here if needed
+
         # Return Redis stream response
         return StreamingResponse(
             redis_stream_generator(conversation_id, run_id, cursor),
@@ -305,6 +314,7 @@ class ConversationAPI:
         request: RegenerateRequest,
         stream: bool = Query(True, description="Whether to stream the response"),
         session_id: Optional[str] = Query(None, description="Session ID for reconnection"),
+        prev_human_message_id: Optional[str] = Query(None, description="Previous human message ID for deterministic session ID"),
         cursor: Optional[str] = Query(None, description="Stream cursor for replay"),
         background: bool = Query(True, description="Use background execution (recommended)"),
         db: Session = Depends(get_db),
@@ -335,17 +345,22 @@ class ConversationAPI:
 
         # NEW: Background execution with session management
         controller = ConversationController(db, user_id, user_email)
-        
-        if session_id:
-            run_id = _normalize_run_id(conversation_id, session_id)
-        else:
-            # Generate deterministic run_id for regeneration
-            try:
-                last_human_message = await controller.get_last_human_message(conversation_id)
-                run_id = f"{conversation_id}:{last_human_message.id}" if last_human_message else f"{conversation_id}:initial"
-            except Exception as e:
-                logger.error(f"Failed to get last human message: {str(e)}")
-                run_id = f"{conversation_id}:fallback-{str(uuid4())[:8]}"
+
+        # Generate deterministic run_id
+        run_id = _normalize_run_id(conversation_id, user_id, session_id, prev_human_message_id)
+
+        # For fresh requests without cursor, ensure we get a unique stream
+        # by checking if the stream already exists and modifying run_id if needed
+        if not cursor:
+            from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+            redis_manager = RedisStreamManager()
+            original_run_id = run_id
+            counter = 1
+
+            # Find a unique run_id if the original already has an active stream
+            while redis_manager.redis_client.exists(redis_manager.stream_key(conversation_id, run_id)):
+                run_id = f"{original_run_id}-{counter}"
+                counter += 1
 
         # Extract attachment IDs from last human message
         try:
@@ -358,16 +373,6 @@ class ConversationAPI:
             logger.error(f"Failed to get last human message for regenerate: {str(e)}")
             attachment_ids = []
 
-        # Initialize Redis stream immediately to prevent "expired" error
-        from app.modules.conversations.utils.redis_streaming import RedisStreamManager
-        redis_manager = RedisStreamManager()
-        redis_manager.publish_event(
-            conversation_id=conversation_id,
-            run_id=run_id,
-            event_type="start",
-            payload={"message": "Regeneration started", "status": "initializing"}
-        )
-
         # Start background regenerate task
         from app.celery.tasks.agent_tasks import execute_regenerate_background
 
@@ -378,6 +383,15 @@ class ConversationAPI:
             node_ids=request.node_ids or [],
             attachment_ids=attachment_ids
         )
+
+        # Wait for background task to start (with health check)
+        from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+        redis_manager = RedisStreamManager()
+        task_started = redis_manager.wait_for_task_start(conversation_id, run_id, timeout=10)
+
+        if not task_started:
+            logger.warning(f"Background regenerate task failed to start for {conversation_id}:{run_id}")
+            # Could add fallback logic here if needed
 
         # Return Redis stream response
         return StreamingResponse(
@@ -422,6 +436,107 @@ class ConversationAPI:
         user_email = user["email"]
         controller = ConversationController(db, user_id, user_email)
         return await controller.rename_conversation(conversation_id, request.title)
+
+    @staticmethod
+    @router.get("/conversations/{conversation_id}/active-session")
+    async def get_active_session(
+        conversation_id: str,
+        db: Session = Depends(get_db),
+        user=Depends(AuthService.check_auth),
+    ) -> Union[ActiveSessionResponse, ActiveSessionErrorResponse]:
+        """Get active session information for a conversation"""
+        user_id = user["user_id"]
+        user_email = user["email"]
+
+        # Verify user has access to conversation
+        controller = ConversationController(db, user_id, user_email)
+        try:
+            await controller.get_conversation_info(conversation_id)
+        except Exception as e:
+            logger.error(f"Access denied for conversation {conversation_id}: {str(e)}")
+            raise HTTPException(status_code=403, detail="Access denied to conversation")
+
+        # Get session information
+        session_service = SessionService()
+        result = session_service.get_active_session(conversation_id)
+
+        # Return appropriate HTTP status based on result type
+        if isinstance(result, ActiveSessionErrorResponse):
+            raise HTTPException(status_code=404, detail=result.dict())
+
+        return result
+
+    @staticmethod
+    @router.get("/conversations/{conversation_id}/task-status")
+    async def get_task_status(
+        conversation_id: str,
+        db: Session = Depends(get_db),
+        user=Depends(AuthService.check_auth),
+    ) -> Union[TaskStatusResponse, TaskStatusErrorResponse]:
+        """Get background task status for a conversation"""
+        user_id = user["user_id"]
+        user_email = user["email"]
+
+        # Verify user has access to conversation
+        controller = ConversationController(db, user_id, user_email)
+        try:
+            await controller.get_conversation_info(conversation_id)
+        except Exception as e:
+            logger.error(f"Access denied for conversation {conversation_id}: {str(e)}")
+            raise HTTPException(status_code=403, detail="Access denied to conversation")
+
+        # Get task status information
+        session_service = SessionService()
+        result = session_service.get_task_status(conversation_id)
+
+        # Return appropriate HTTP status based on result type
+        if isinstance(result, TaskStatusErrorResponse):
+            raise HTTPException(status_code=404, detail=result.dict())
+
+        return result
+
+    @staticmethod
+    @router.post("/conversations/{conversation_id}/resume/{session_id}")
+    async def resume_session(
+        conversation_id: str,
+        session_id: str,
+        cursor: Optional[str] = Query("0-0", description="Stream cursor position to resume from"),
+        db: Session = Depends(get_db),
+        user=Depends(AuthService.check_auth),
+    ):
+        """Resume streaming from an existing session"""
+        user_id = user["user_id"]
+        user_email = user["email"]
+
+        # Verify user has access to conversation
+        controller = ConversationController(db, user_id, user_email)
+        try:
+            await controller.get_conversation_info(conversation_id)
+        except Exception as e:
+            logger.error(f"Access denied for conversation {conversation_id}: {str(e)}")
+            raise HTTPException(status_code=403, detail="Access denied to conversation")
+
+        # Verify the session exists in Redis
+        from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+        redis_manager = RedisStreamManager()
+
+        # Check if the session stream exists
+        stream_key = redis_manager.stream_key(conversation_id, session_id)
+        if not redis_manager.redis_client.exists(stream_key):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Session {session_id} not found or expired"
+            )
+
+        # Check if there's a task status for this session
+        task_status = redis_manager.get_task_status(conversation_id, session_id)
+        logger.info(f"Resuming session {session_id} with status: {task_status}, cursor: {cursor}")
+
+        # Return Redis stream response starting from cursor
+        return StreamingResponse(
+            redis_stream_generator(conversation_id, session_id, cursor),
+            media_type="text/event-stream"
+        )
 
 
 @router.post("/conversations/share", response_model=ShareChatResponse, status_code=201)

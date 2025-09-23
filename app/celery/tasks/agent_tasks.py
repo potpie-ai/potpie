@@ -28,14 +28,11 @@ def execute_agent_background(
     redis_manager = RedisStreamManager()
     
     logger.info(f"Starting background agent execution: {conversation_id}:{run_id}")
-    
+
+    # Set task status to indicate task has started
+    redis_manager.set_task_status(conversation_id, run_id, "running")
+
     try:
-        # Publish start event
-        redis_manager.publish_event(
-            conversation_id, run_id, "start", 
-            {"agent_id": agent_id or "default", "status": "started"}
-        )
-        
         # Execute agent with Redis publishing
         async def run_agent():
             from app.modules.conversations.conversation.conversation_service import ConversationService
@@ -59,6 +56,12 @@ def execute_agent_background(
                 attachment_ids=attachment_ids if attachment_ids else None
             )
             
+            # Publish start event when actual processing begins
+            redis_manager.publish_event(
+                conversation_id, run_id, "start",
+                {"agent_id": agent_id or "default", "status": "processing", "message": "Starting message processing"}
+            )
+
             # Store the user message and generate AI response
             async for chunk in service.store_message(
                 conversation_id, message_request, MessageType.HUMAN, user_id, stream=True
@@ -103,11 +106,21 @@ def execute_agent_background(
             conversation_id, run_id, "end",
             {"status": "completed", "message": "Agent execution completed"}
         )
-        
+
+        # Set task status to completed
+        redis_manager.set_task_status(conversation_id, run_id, "completed")
+
         logger.info(f"Background agent execution completed: {conversation_id}:{run_id}")
         
     except Exception as e:
         logger.error(f"Background agent execution failed: {conversation_id}:{run_id}: {str(e)}", exc_info=True)
+
+        # Set task status to error
+        try:
+            redis_manager.set_task_status(conversation_id, run_id, "error")
+        except Exception as status_error:
+            logger.error(f"Failed to set task status to error: {str(status_error)}")
+
         # Ensure end event is always published
         try:
             redis_manager.publish_event(
@@ -137,13 +150,10 @@ def execute_regenerate_background(
 
     logger.info(f"Starting background regenerate execution: {conversation_id}:{run_id}")
 
-    try:
-        # Publish start event
-        redis_manager.publish_event(
-            conversation_id, run_id, "start",
-            {"agent_id": "regenerate", "status": "started"}
-        )
+    # Set task status to indicate task has started
+    redis_manager.set_task_status(conversation_id, run_id, "running")
 
+    try:
         # Execute regeneration with Redis publishing
         async def run_regeneration():
             from app.modules.conversations.conversation.conversation_service import ConversationService
@@ -158,9 +168,15 @@ def execute_regenerate_background(
 
             service = ConversationService.create(self.db, user_id, user_email)
 
+            # Publish start event when actual processing begins
+            redis_manager.publish_event(
+                conversation_id, run_id, "start",
+                {"agent_id": "regenerate", "status": "processing", "message": "Starting regeneration processing"}
+            )
+
             # Track if we've received any chunks
             has_chunks = False
-            
+
             async for chunk in service.regenerate_last_message_background(
                 conversation_id, node_ids, attachment_ids
             ):
@@ -221,10 +237,20 @@ def execute_regenerate_background(
             {"status": "completed", "message": "Regeneration completed"}
         )
 
+        # Set task status to completed
+        redis_manager.set_task_status(conversation_id, run_id, "completed")
+
         logger.info(f"Background regenerate execution completed: {conversation_id}:{run_id}")
 
     except Exception as e:
         logger.error(f"Background regenerate execution failed: {conversation_id}:{run_id}: {str(e)}", exc_info=True)
+
+        # Set task status to error
+        try:
+            redis_manager.set_task_status(conversation_id, run_id, "error")
+        except Exception as status_error:
+            logger.error(f"Failed to set task status to error: {str(status_error)}")
+
         try:
             redis_manager.publish_event(
                 conversation_id, run_id, "end",

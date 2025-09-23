@@ -110,18 +110,6 @@ class ToolService:
                 self.db, self.provider_service, self.user_id
             ),
             "think": think_tool(self.db, self.user_id),
-            "github_create_branch": github_create_branch.github_create_branch_tool(
-                self.db, self.user_id
-            ),
-            "github_update_branch": github_update_branch.github_update_branch_tool(
-                self.db, self.user_id
-            ),
-            "github_create_pull_request": github_create_pr.github_create_pull_request_tool(
-                self.db, self.user_id
-            ),
-            "github_add_pr_comments": github_add_pr_comment.git_add_pr_comments_tool(
-                self.db, self.user_id
-            ),
             "fetch_file": fetch_file_tool(self.db, self.user_id),
             "analyze_code_structure": universal_analyze_code_tool(
                 self.db, self.user_id
