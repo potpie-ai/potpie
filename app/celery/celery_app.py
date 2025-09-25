@@ -53,7 +53,7 @@ def configure_celery(queue_prefix: str):
             },
             "app.celery.tasks.agent_tasks.execute_regenerate_background": {
                 "queue": f"{queue_prefix}_agent_tasks"  # Same queue as other agent tasks
-
+            },
             # Event bus task routes - both go to the same queue
             "app.modules.event_bus.tasks.event_tasks.process_webhook_event": {
                 "queue": "external-event"
