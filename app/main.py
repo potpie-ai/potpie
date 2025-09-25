@@ -23,6 +23,7 @@ from app.modules.intelligence.provider.provider_router import router as provider
 from app.modules.intelligence.tools.tool_router import router as tool_router
 from app.modules.key_management.secret_manager import router as secret_manager_router
 from app.modules.media.media_router import router as media_router
+from app.modules.integrations.integrations_router import router as integrations_router
 from app.modules.parsing.graph_construction.parsing_router import (
     router as parsing_router,
 )
@@ -112,6 +113,9 @@ class MainApp:
             secret_manager_router, prefix="/api/v1", tags=["Secret Manager"]
         )
         self.app.include_router(media_router, prefix="/api/v1", tags=["Media"])
+        self.app.include_router(
+            integrations_router, prefix="/api/v1", tags=["Integrations"]
+        )
 
     def add_health_check(self):
         @self.app.get("/health", tags=["Health"])

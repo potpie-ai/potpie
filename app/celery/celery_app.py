@@ -53,6 +53,13 @@ def configure_celery(queue_prefix: str):
             },
             "app.celery.tasks.agent_tasks.execute_regenerate_background": {
                 "queue": f"{queue_prefix}_agent_tasks"  # Same queue as other agent tasks
+
+            # Event bus task routes - both go to the same queue
+            "app.modules.event_bus.tasks.event_tasks.process_webhook_event": {
+                "queue": "external-event"
+            },
+            "app.modules.event_bus.tasks.event_tasks.process_custom_event": {
+                "queue": "external-event"
             },
         },
         # Optimize task distribution
@@ -81,3 +88,4 @@ from celery.contrib.abortable import AbortableTask  # noqa
 # Import tasks to ensure they are registered
 import app.celery.tasks.parsing_tasks  # noqa # Ensure the task module is imported
 import app.celery.tasks.agent_tasks  # noqa # Ensure the agent task module is imported
+import app.modules.event_bus.tasks.event_tasks  # noqa # Ensure event bus tasks are registered

@@ -6,6 +6,9 @@ from app.celery.tasks.parsing_tasks import (
 from app.celery.tasks.agent_tasks import (
     execute_agent_background,  # Import agent task
     execute_regenerate_background,  # Import regenerate task
+from app.modules.event_bus.tasks.event_tasks import (
+    process_webhook_event,
+    process_custom_event,
 )
 
 
@@ -19,6 +22,10 @@ def register_tasks():
     # Register agent tasks
     celery_app.tasks.register(execute_agent_background)
     celery_app.tasks.register(execute_regenerate_background)
+
+    # Register event bus tasks
+    celery_app.tasks.register(process_webhook_event)
+    celery_app.tasks.register(process_custom_event)
     logger.info("Tasks registered successfully")
 
 
