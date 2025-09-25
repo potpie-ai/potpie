@@ -18,7 +18,7 @@ def register_tasks():
 
     # Register parsing tasks
     celery_app.tasks.register(process_parsing)
-    
+
     # Register agent tasks
     celery_app.tasks.register(execute_agent_background)
     celery_app.tasks.register(execute_regenerate_background)

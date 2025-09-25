@@ -178,7 +178,9 @@ class UserService:
         try:
             user = self.db.query(User).filter(User.email == email).first()
             if user:
-                logger.info(f"DEBUG: Found user with uid: {user.uid} for email: {email}")
+                logger.info(
+                    f"DEBUG: Found user with uid: {user.uid} for email: {email}"
+                )
                 return user.uid
             else:
                 logger.warning(f"DEBUG: No user found for email: {email}")

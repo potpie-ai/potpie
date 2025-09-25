@@ -116,9 +116,13 @@ class ConversationController:
         except ConversationServiceError as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    async def stop_generation(self, conversation_id: str, session_id: str = None) -> dict:
+    async def stop_generation(
+        self, conversation_id: str, session_id: str = None
+    ) -> dict:
         try:
-            return await self.service.stop_generation(conversation_id, self.user_id, session_id)
+            return await self.service.stop_generation(
+                conversation_id, self.user_id, session_id
+            )
         except ConversationNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e))
         except ConversationServiceError as e:

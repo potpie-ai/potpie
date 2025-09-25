@@ -128,10 +128,10 @@ class ConversationService:
     async def check_conversation_access(
         self, conversation_id: str, user_email: str, firebase_user_id: str = None
     ) -> str:
-        
+
         if not user_email:
             return ConversationAccessType.WRITE
-            
+
         # Use Firebase user ID directly if available, otherwise fall back to email lookup
         if firebase_user_id:
             user_id = firebase_user_id
@@ -149,7 +149,6 @@ class ConversationService:
                 ConversationAccessType.NOT_FOUND
             )  # Return 'not found' if conversation doesn't exist
 
-
         if not conversation.visibility:
             conversation.visibility = Visibility.PRIVATE
 
@@ -166,7 +165,9 @@ class ConversationService:
                 conversation.shared_with_emails
             )
             if shared_user_ids is None:
-                logger.warning(f"Failed to get user IDs for shared emails, returning NOT_FOUND")
+                logger.warning(
+                    "Failed to get user IDs for shared emails, returning NOT_FOUND"
+                )
                 return ConversationAccessType.NOT_FOUND
             # Check if the current user ID is in the shared user IDs
             if user_id in shared_user_ids:
@@ -175,7 +176,7 @@ class ConversationService:
                 return ConversationAccessType.NOT_FOUND
         else:
             return ConversationAccessType.NOT_FOUND
-            
+
         return ConversationAccessType.NOT_FOUND
 
     async def create_conversation(
@@ -531,7 +532,7 @@ class ConversationService:
         self,
         conversation_id: str,
         node_ids: Optional[List[str]] = None,
-        attachment_ids: List[str] = []
+        attachment_ids: List[str] = [],
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         """Background version of regenerate_last_message for Celery task execution"""
         try:
@@ -550,7 +551,9 @@ class ConversationService:
                 raise MessageNotFoundError("No human message found to regenerate from")
 
             # Archive subsequent messages
-            await self._archive_subsequent_messages(conversation_id, last_human_message.created_at)
+            await self._archive_subsequent_messages(
+                conversation_id, last_human_message.created_at
+            )
 
             # PostHog analytics
             PostHogClient().send_event(
@@ -563,22 +566,27 @@ class ConversationService:
             node_contexts = []
             if node_ids:
                 node_contexts = [NodeContext(node_id=node_id) for node_id in node_ids]
-            
+
             # Execute AI response generation with existing logic
             async for chunk in self._generate_and_stream_ai_response(
                 last_human_message.content,
                 conversation_id,
                 self.user_id,
                 node_contexts,
-                attachment_ids
+                attachment_ids,
             ):
                 yield chunk
 
         except (AccessTypeReadError, MessageNotFoundError) as e:
-            logger.error(f"Background regeneration error for {conversation_id}: {str(e)}")
+            logger.error(
+                f"Background regeneration error for {conversation_id}: {str(e)}"
+            )
             raise
         except Exception as e:
-            logger.error(f"Background regeneration failed for {conversation_id}: {str(e)}", exc_info=True)
+            logger.error(
+                f"Background regeneration failed for {conversation_id}: {str(e)}",
+                exc_info=True,
+            )
             raise ConversationServiceError(f"Failed to regenerate message: {str(e)}")
 
     async def _get_last_human_message(self, conversation_id: str):
@@ -778,10 +786,10 @@ class ConversationService:
         user_id: str,
         node_ids: List[NodeContext],
         attachment_ids: Optional[List[str]] = None,
-        run_id: str = None
+        run_id: str = None,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         """Background version for Celery tasks - reuses existing streaming logic"""
-        
+
         async for chunk in self._generate_and_stream_ai_response(
             query, conversation_id, user_id, node_ids, attachment_ids
         ):
@@ -953,7 +961,7 @@ class ConversationService:
     async def get_conversation_info(
         self, conversation_id: str, user_id: str
     ) -> ConversationInfoResponse:
-        
+
         try:
             conversation = (
                 self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
@@ -963,15 +971,17 @@ class ConversationService:
                 raise ConversationNotFoundError(
                     f"Conversation with id {conversation_id} not found"
                 )
-            
+
             is_creator = conversation.user_id == user_id
-            
+
             access_type = await self.check_conversation_access(
                 conversation_id, self.user_email, user_id
             )
 
             if access_type == ConversationAccessType.NOT_FOUND:
-                logger.error(f"Access denied - access type is NOT_FOUND for user {user_id} on conversation {conversation_id}")
+                logger.error(
+                    f"Access denied - access type is NOT_FOUND for user {user_id} on conversation {conversation_id}"
+                )
                 raise AccessTypeNotFoundError("Access type not found")
 
             total_messages = (
@@ -1026,16 +1036,18 @@ class ConversationService:
     async def get_conversation_messages(
         self, conversation_id: str, start: int, limit: int, user_id: str
     ) -> List[MessageResponse]:
-        
+
         try:
             access_level = await self.check_conversation_access(
                 conversation_id, self.user_email, user_id
             )
-            
+
             if access_level == ConversationAccessType.NOT_FOUND:
-                logger.error(f"Access denied - access level is NOT_FOUND for user {user_id} on conversation {conversation_id}")
+                logger.error(
+                    f"Access denied - access level is NOT_FOUND for user {user_id} on conversation {conversation_id}"
+                )
                 raise AccessTypeNotFoundError("Access denied.")
-                
+
             conversation = (
                 self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
             )
@@ -1095,25 +1107,36 @@ class ConversationService:
             logger.error(f"AccessTypeNotFoundError: {str(e)}")
             raise
         except Exception as e:
-            logger.error(f"DEBUG: Error in get_conversation_messages: {e}", exc_info=True)
+            logger.error(
+                f"DEBUG: Error in get_conversation_messages: {e}", exc_info=True
+            )
             raise ConversationServiceError(
                 f"Failed to get messages for conversation {conversation_id}"
             ) from e
 
-    async def stop_generation(self, conversation_id: str, user_id: str, run_id: str = None) -> dict:
-        logger.info(f"Attempting to stop generation for conversation {conversation_id}, run_id: {run_id}")
-        
+    async def stop_generation(
+        self, conversation_id: str, user_id: str, run_id: str = None
+    ) -> dict:
+        logger.info(
+            f"Attempting to stop generation for conversation {conversation_id}, run_id: {run_id}"
+        )
+
         if not run_id:
-            return {"status": "error", "message": "run_id required for stopping background generation"}
-        
+            return {
+                "status": "error",
+                "message": "run_id required for stopping background generation",
+            }
+
         # Set cancellation flag in Redis for background task to check
-        from app.core.config_provider import ConfigProvider
         from app.modules.conversations.utils.redis_streaming import RedisStreamManager
-        
+
         redis_manager = RedisStreamManager()
         redis_manager.set_cancellation(conversation_id, run_id)
-        
-        return {"status": "success", "message": "Cancellation signal sent to background task"}
+
+        return {
+            "status": "success",
+            "message": "Cancellation signal sent to background task",
+        }
 
     async def rename_conversation(
         self, conversation_id: str, new_title: str, user_id: str

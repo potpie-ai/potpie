@@ -100,7 +100,7 @@ class ConfigProvider:
     def get_stream_ttl_secs() -> int:
         return int(os.getenv("REDIS_STREAM_TTL_SECS", "900"))  # 15 minutes
 
-    @staticmethod  
+    @staticmethod
     def get_stream_maxlen() -> int:
         return int(os.getenv("REDIS_STREAM_MAX_LEN", "1000"))
 

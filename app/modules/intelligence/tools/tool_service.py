@@ -43,12 +43,6 @@ from app.modules.intelligence.tools.code_query_tools.get_file_content_by_path im
 )
 from app.modules.intelligence.tools.tool_schema import ToolInfo, ToolInfoWithParameters
 from app.modules.intelligence.tools.web_tools.github_tool import github_tool
-from app.modules.intelligence.tools.web_tools import (
-    github_create_branch,
-    github_update_branch,
-    github_create_pr,
-    github_add_pr_comment,
-)
 from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import (
     webpage_extractor_tool,
 )
