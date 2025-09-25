@@ -5,6 +5,7 @@ from app.celery.tasks.parsing_tasks import (
 )
 from app.celery.tasks.agent_tasks import (
     execute_agent_background,  # Import agent task
+    execute_regenerate_background,  # Import regenerate task
 )
 
 
@@ -17,6 +18,7 @@ def register_tasks():
     
     # Register agent tasks
     celery_app.tasks.register(execute_agent_background)
+    celery_app.tasks.register(execute_regenerate_background)
     logger.info("Tasks registered successfully")
 
 
