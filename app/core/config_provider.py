@@ -14,6 +14,10 @@ class ConfigProvider:
         }
         self.github_key = os.getenv("GITHUB_PRIVATE_KEY")
         self.is_development_mode = os.getenv("isDevelopmentMode", "disabled")
+        self.is_multimodal_enabled = os.getenv("isMultimodalEnabled", "auto")
+        self.gcp_project_id = os.getenv("GCS_PROJECT_ID")
+        self.gcp_bucket_name = os.getenv("GCS_BUCKET_NAME")
+        self.google_application_credentials = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 
     def get_neo4j_config(self):
         return self.neo4j_config
@@ -99,6 +103,30 @@ class ConfigProvider:
 
     def get_is_development_mode(self):
         return self.is_development_mode == "enabled"
+
+    def get_is_multimodal_enabled(self) -> bool:
+        """
+        Determine if multimodal functionality is enabled.
+
+        Logic:
+        - "disabled": Always disabled regardless of GCP vars
+        - "enabled": Force enabled (requires GCP vars, will fail if missing)
+        - "auto": Automatic detection based on GCP variable presence (default)
+        """
+        if self.is_multimodal_enabled.lower() == "disabled":
+            return False
+        elif self.is_multimodal_enabled.lower() == "enabled":
+            return True
+        else:  # "auto" mode
+            return self._detect_gcp_dependencies()
+
+    def _detect_gcp_dependencies(self) -> bool:
+        """Detect if all required GCP dependencies are available"""
+        return all([
+            self.gcp_project_id,
+            self.gcp_bucket_name,  # Can use default but check if set
+            self.google_application_credentials and os.path.exists(self.google_application_credentials)
+        ])
 
     @staticmethod
     def get_stream_ttl_secs() -> int:
