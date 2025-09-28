@@ -15,6 +15,7 @@ class ParsingRequest(BaseModel):
             return None
         return v
 
+
     def __init__(self, **data):
         super().__init__(**data)
         # Only validate if both fields are None or empty

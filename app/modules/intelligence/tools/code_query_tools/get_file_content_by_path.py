@@ -163,6 +163,8 @@ class FetchFileTool:
                     "success": True,
                     "content": content,
                 }
+
+
             content = self.cp_service.get_file_content(
                 repo_name=details["project_name"],
                 file_path=file_path,

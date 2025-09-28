@@ -50,13 +50,13 @@ from app.modules.intelligence.tools.misc_tools.verify_diff_tool import (
     verify_patch_diff_tool,
 )
 from app.modules.intelligence.tools.tool_schema import ToolInfo, ToolInfoWithParameters
-from app.modules.intelligence.tools.web_tools.github_tool import github_tool
 from app.modules.intelligence.tools.web_tools import (
     github_create_branch,
     github_update_branch,
     github_create_pr,
     github_add_pr_comment,
 )
+from app.modules.intelligence.tools.web_tools.github_tool import github_tool
 from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import (
     webpage_extractor_tool,
 )
@@ -143,6 +143,7 @@ class ToolService:
             ),
             "get_patch_tool": get_patch_extraction_tool(self.user_id),
             "process_large_pr_tool": get_process_large_pr_tool(self.user_id, self.db),
+
             "fetch_file": fetch_file_tool(self.db, self.user_id),
             "analyze_code_structure": universal_analyze_code_tool(
                 self.db, self.user_id

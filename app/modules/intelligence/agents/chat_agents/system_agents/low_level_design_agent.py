@@ -54,6 +54,7 @@ class LowLevelDesignAgent(ChatAgent):
                 "github_tool",
                 "think",
                 "get_linear_issue",
+                "fetch_file",
                 "analyze_code_structure",
             ]
         )

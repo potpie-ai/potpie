@@ -32,6 +32,11 @@ from app.modules.utils.APIRouter import APIRouter
 from app.modules.usage.usage_service import UsageService
 from app.modules.search.search_service import SearchService
 from app.modules.search.search_schema import SearchRequest, SearchResponse
+from app.modules.integrations.integrations_service import IntegrationsService
+from app.modules.integrations.integrations_schema import (
+    IntegrationSaveRequest,
+    IntegrationSaveResponse,
+)
 
 router = APIRouter()
 
@@ -168,7 +173,7 @@ async def create_conversation_and_message(
     res = await controller.create_conversation(
         CreateConversationRequest(
             user_id=user_id,
-            title=message.content,
+            title=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             project_ids=[project_id],
             agent_ids=[message.agent_id],
             status=ConversationStatus.ACTIVE,  # Let hidden parameter control the final status
@@ -219,3 +224,24 @@ async def search_codebase(
         search_request.project_id, search_request.query
     )
     return SearchResponse(results=results)
+
+
+@router.post("/integrations/save", response_model=IntegrationSaveResponse)
+async def save_integration(
+    request: IntegrationSaveRequest,
+    db: Session = Depends(get_db),
+    user=Depends(get_api_key_user),
+):
+    """Save an integration with configurable and optional fields"""
+    try:
+        # Get the authenticated user's ID
+        user_id = user["user_id"]
+        integrations_service = IntegrationsService(db)
+        result = await integrations_service.save_integration(request, user_id)
+        return IntegrationSaveResponse(success=True, data=result, error=None)
+    except Exception as e:
+        return IntegrationSaveResponse(
+            success=False,
+            data=None,
+            error=f"Failed to save integration: {str(e)}",
+        )

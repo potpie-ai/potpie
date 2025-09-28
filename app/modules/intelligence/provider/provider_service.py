@@ -15,6 +15,8 @@ from app.modules.key_management.secret_manager import SecretManager
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.posthog_helper import PostHogClient
 
+logger = logging.getLogger(__name__)
+
 from .provider_schema import (
     ProviderInfo,
     GetProviderResponse,
@@ -55,6 +57,12 @@ def load_simplismart_id_map() -> dict:
 
 SIMPLISMART_ID_MAP = load_simplismart_id_map()
 
+
+
+import random
+import time
+import asyncio
+from functools import wraps
 
 
 import random
@@ -288,7 +296,7 @@ AVAILABLE_MODELS = [
         provider="simplismart",
         is_chat_model=True,
         is_inference_model=True,
-    ),
+    )
 ]
 
 # Extract unique platform providers from the available models
@@ -507,6 +515,7 @@ class ProviderService:
         config = self.chat_config if config_type == "chat" else self.inference_config
         return config.provider in ["openai", "anthropic", "openrouter", "simplismart"]
 
+
     @robust_llm_call()  # Apply the robust_llm_call decorator
     async def call_llm(
         self, messages: list, stream: bool = False, config_type: str = "chat"
@@ -607,6 +616,284 @@ class ProviderService:
         except Exception as e:
             logging.error(f"LLM call with structured output failed: {e}")
             raise e
+
+    @robust_llm_call()
+    async def call_llm_multimodal(
+        self,
+        messages: List[Dict[str, Any]],
+        images: Optional[Dict[str, Dict[str, Union[str, int]]]] = None,
+        stream: bool = False,
+        config_type: str = "chat",
+    ) -> Union[str, AsyncGenerator[str, None]]:
+        """Call LLM with multimodal support (text + images)"""
+        # Select the appropriate config based on config_type
+        config = self.chat_config if config_type == "chat" else self.inference_config
+
+        # Build parameters using the config object
+        params = self._build_llm_params(config)
+        routing_provider = config.model.split("/")[0]
+
+        # Get extra parameters and headers for API calls
+        extra_params, _ = self.get_extra_params_and_headers(routing_provider)
+        params.update(extra_params)
+
+        # Validate and filter images before processing
+        if images:
+            validated_images = self._validate_images_for_multimodal(images)
+            if validated_images:
+                messages = self._format_multimodal_messages(
+                    messages, validated_images, routing_provider
+                )
+                logger.info(
+                    f"Using {len(validated_images)} validated images out of {len(images)} provided for provider {routing_provider}"
+                )
+            else:
+                logger.warning(
+                    "No valid images after validation, proceeding with text-only"
+                )
+                images = None
+
+        # Handle streaming response if requested
+        try:
+            if stream:
+
+                async def generator() -> AsyncGenerator[str, None]:
+                    response = await acompletion(
+                        messages=messages, stream=True, **params
+                    )
+                    async for chunk in response:
+                        yield chunk.choices[0].delta.content or ""
+
+                return generator()
+            else:
+                response = await acompletion(messages=messages, **params)
+                return response.choices[0].message.content
+        except Exception as e:
+            logging.error(
+                f"Error calling multimodal LLM: {e}, provider: {routing_provider}"
+            )
+            raise e
+
+    def _format_multimodal_messages(
+        self,
+        messages: List[Dict[str, Any]],
+        images: Dict[str, Dict[str, Union[str, int]]],
+        provider: str,
+    ) -> List[Dict[str, Any]]:
+        """Format messages for provider-specific multimodal format"""
+        if not images:
+            return messages
+
+        formatted_messages = []
+
+        for message in messages:
+            if (
+                message.get("role") == "user"
+                and len(formatted_messages) == len(messages) - 1
+            ):
+                # This is the last user message - add images to it
+                formatted_message = self._format_multimodal_message(
+                    message, images, provider
+                )
+                formatted_messages.append(formatted_message)
+            else:
+                formatted_messages.append(message)
+
+        return formatted_messages
+
+    def _format_multimodal_message(
+        self,
+        message: Dict[str, Any],
+        images: Dict[str, Dict[str, Union[str, int]]],
+        provider: str,
+    ) -> Dict[str, Any]:
+        """Format a single message for provider-specific multimodal format"""
+        text_content = message.get("content", "")
+
+        if provider == "openai":
+            return self._format_openai_multimodal_message(text_content, images)
+        elif provider == "anthropic":
+            return self._format_anthropic_multimodal_message(text_content, images)
+        elif provider == "gemini":
+            return self._format_gemini_multimodal_message(text_content, images)
+        else:
+            # Fallback to OpenAI format for unknown providers
+            logger.warning(
+                f"Unknown provider {provider}, using OpenAI format for multimodal"
+            )
+            return self._format_openai_multimodal_message(text_content, images)
+
+    def _format_openai_multimodal_message(
+        self, text: str, images: Dict[str, Dict[str, Union[str, int]]]
+    ) -> Dict[str, Any]:
+        """Format message for OpenAI GPT-4V format"""
+        content = [{"type": "text", "text": text}]
+
+        for attachment_id, image_data in images.items():
+            mime_type = image_data.get("mime_type", "image/jpeg")
+            base64_data = image_data["base64"]
+
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{mime_type};base64,{base64_data}",
+                        "detail": "high",  # Use high detail for better analysis
+                    },
+                }
+            )
+
+        return {"role": "user", "content": content}
+
+    def _format_anthropic_multimodal_message(
+        self, text: str, images: Dict[str, Dict[str, Union[str, int]]]
+    ) -> Dict[str, Any]:
+        """Format message for Anthropic Claude Vision format"""
+        content = []
+
+        # Add images first for Claude
+        for attachment_id, image_data in images.items():
+            mime_type = image_data.get("mime_type", "image/jpeg")
+            base64_data = image_data["base64"]
+
+            content.append(
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": mime_type,
+                        "data": base64_data,
+                    },
+                }
+            )
+
+        # Add text content
+        content.append({"type": "text", "text": text})
+
+        return {"role": "user", "content": content}
+
+    def _format_gemini_multimodal_message(
+        self, text: str, images: Dict[str, Dict[str, Union[str, int]]]
+    ) -> Dict[str, Any]:
+        """Format message for Google Gemini Vision format (uses OpenAI-compatible format via OpenRouter)"""
+        return self._format_openai_multimodal_message(text, images)
+
+    def _validate_images_for_multimodal(
+        self, images: Dict[str, Dict[str, Union[str, int]]]
+    ) -> Dict[str, Dict[str, Union[str, int]]]:
+        """Validate images before sending to multimodal LLM to reduce hallucinations"""
+        validated_images = {}
+
+        for img_id, img_data in images.items():
+            try:
+                # Check required fields
+                if "base64" not in img_data or not img_data["base64"]:
+                    logger.warning(
+                        f"Skipping image {img_id}: missing or empty base64 data"
+                    )
+                    continue
+
+                base64_data = str(img_data["base64"])
+
+                # Check base64 data length (reasonable bounds)
+                if len(base64_data) < 100:  # Too small to be a valid image
+                    logger.warning(
+                        f"Skipping image {img_id}: base64 data too small ({len(base64_data)} chars)"
+                    )
+                    continue
+
+                if (
+                    len(base64_data) > 10_000_000
+                ):  # Over ~7MB base64 (too large for most APIs)
+                    logger.warning(
+                        f"Skipping image {img_id}: base64 data too large ({len(base64_data)} chars)"
+                    )
+                    continue
+
+                # Check MIME type
+                mime_type = img_data.get("mime_type", "")
+                supported_types = ["image/jpeg", "image/png", "image/webp", "image/gif"]
+                if mime_type not in supported_types:
+                    logger.warning(
+                        f"Skipping image {img_id}: unsupported MIME type {mime_type}"
+                    )
+                    continue
+
+                # Basic base64 validation (should start with valid characters)
+                if (
+                    not base64_data.replace("+", "")
+                    .replace("/", "")
+                    .replace("=", "")
+                    .isalnum()
+                ):
+                    logger.warning(f"Skipping image {img_id}: invalid base64 encoding")
+                    continue
+
+                # Image passed validation
+                validated_images[img_id] = img_data
+                logger.debug(
+                    f"Image {img_id} passed validation ({len(base64_data)} chars, {mime_type})"
+                )
+
+            except Exception as e:
+                logger.error(f"Error validating image {img_id}: {str(e)}")
+                continue
+
+        logger.info(
+            f"Validated {len(validated_images)} out of {len(images)} images for multimodal processing"
+        )
+        return validated_images
+
+    def is_vision_model(self, config_type: str = "chat") -> bool:
+        """Check if the current model supports vision/multimodal inputs"""
+        config = self.chat_config if config_type == "chat" else self.inference_config
+        model_name = config.model.lower()
+
+        logger.info(f"Checking if model '{config.model}' supports vision capabilities")
+
+        # Known vision models - expanded list
+        vision_models = [
+            # OpenAI models
+            "gpt-4-vision",
+            "gpt-4v",
+            "gpt-4-turbo",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4.1",
+            "gpt-4.1-mini",
+            "o4-mini",
+            # Anthropic models
+            "claude-3",
+            "claude-3-sonnet",
+            "claude-3-opus",
+            "claude-3-haiku",
+            "claude-sonnet-4",
+            # Google models
+            "gemini-pro-vision",
+            "gemini-1.5",
+            "gemini-1.5-pro",
+            "gemini-1.5-flash",
+            "gemini-2.0",
+            "gemini-2.0-flash",
+            "gemini-2.5",
+            "gemini-2.5-pro",
+            "gemini-ultra",
+            # Other models that might support vision
+            "deepseek-chat",
+            "llama-3.3",
+            "llama-3.3-70b",
+            "llama-3.3-8b",
+        ]
+
+        is_vision = any(vision_model in model_name for vision_model in vision_models)
+        logger.info(f"Model '{config.model}' vision support: {is_vision}")
+
+        if not is_vision:
+            logger.warning(
+                f"Model '{config.model}' may not support vision. Known vision models: {vision_models}"
+            )
+
+        return is_vision
 
     def _initialize_llm(self, config: LLMProviderConfig, agent_type: AgentProvider):
         """Initialize LLM for the specified agent type."""

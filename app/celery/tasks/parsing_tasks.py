@@ -4,6 +4,7 @@ import os
 from typing import Any, Dict
 
 from app.celery.celery_app import celery_app
+from app.celery.tasks.base_task import BaseTask
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
 from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
@@ -17,19 +18,25 @@ from app.core.config_provider import config_provider
 logger = logging.getLogger(__name__)
 
 
-@celery_app.task
-def process_parsing(repo_details: Dict[str, Any], user_id: str, user_email: str, project_id: str, cleanup_graph: bool = False):
-    """
-    Celery task to process parsing of a repository
-    """
-    logger.info(f"Starting parsing task for project {project_id}")
-    logger.info(f"Received repo_details: {repo_details}")
-    logger.info(f"User ID: {user_id}, User Email: {user_email}")
-    
+
+@celery_app.task(
+    bind=True,
+    base=BaseTask,
+    name="app.celery.tasks.parsing_tasks.process_parsing",
+)
+def process_parsing(
+    self,
+    repo_details: Dict[str, Any],
+    user_id: str,
+    user_email: str,
+    project_id: str,
+    cleanup_graph: bool = True,
+) -> None:
+    logger.info(f"Task received: Starting parsing process for project {project_id}")
+        
     # Clean the input dictionary by removing None and empty values
     cleaned_repo_details = {k: v for k, v in repo_details.items() if v is not None and v != ""}
     logger.info(f"Cleaned repo_details: {cleaned_repo_details}")
-    
     try:
         # Create ParsingRequest object from cleaned data
         parsing_request = ParsingRequest(**cleaned_repo_details)

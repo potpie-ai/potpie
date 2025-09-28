@@ -518,6 +518,12 @@ class ParseHelper:
         try:
             github, repo = self.github_service.get_repo(repo_name)
 
+
+            # If current_commit_id is None, we should reparse
+            if current_commit_id is None:
+                logger.info(f"Project {project_id} has no commit_id, will reparse")
+                return False
+
             # If current_commit_id is a specific commit (not a branch head),
             # then we can assume it's not "latest" and should be reparsed
             # This is because when using specific commits, we don't want to check branch head
