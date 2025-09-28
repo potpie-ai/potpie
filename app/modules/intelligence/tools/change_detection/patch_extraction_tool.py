@@ -84,6 +84,9 @@ class PatchExtractionTool:
                     repo = github.get_repo(repo_name)
                     base_branch = base_branch if base_branch else repo.default_branch
                     git_diff = repo.compare(base_branch, branch_name)
+                    if git_diff.files == []:
+                        git_diff = repo.compare(branch_name, base_branch)
+
                     patches_dict = {
                         file.filename: file.patch for file in git_diff.files if file.patch
                     }

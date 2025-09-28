@@ -1179,7 +1179,7 @@ class PydanticMultiAgent(ChatAgent):
 
         logger.info("Running pydantic-ai multi-agent stream")
         context = await self.tool_service.process_large_pr_tool.arun(
-            {"project_id": ctx.project_id, "base_branch": "main"}
+            {"project_id": ctx.project_id, "base_branch": "master"}
         )
         prompt = f"""    
         Based on a provided PR change summary, you will create or update functional tests that verify new features and changes work correctly across service boundaries.
