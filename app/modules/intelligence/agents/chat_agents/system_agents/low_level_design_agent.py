@@ -48,7 +48,6 @@ class LowLevelDesignAgent(ChatAgent):
                 "get_code_from_probable_node_names",
                 "ask_knowledge_graph_queries",
                 "get_nodes_from_tags",
-                "fetch_file",
                 "webpage_extractor",
                 "web_search_tool",
                 "github_tool",

@@ -547,6 +547,7 @@ class PydanticRagAgent(ChatAgent):
             # Stream the response
             async with agent.iter(
                 user_prompt=multimodal_content,
+                model=self.llm_provider.get_pydantic_model(),
                 message_history=message_history,
             ) as run:
                 async for node in run:
@@ -642,6 +643,7 @@ class PydanticRagAgent(ChatAgent):
                 async with agent.run_mcp_servers():
                     async with agent.iter(
                         user_prompt=ctx.query,
+                        model=self.llm_provider.get_pydantic_model(),
                         message_history=[
                             ModelResponse([TextPart(content=msg)])
                             for msg in ctx.history
@@ -795,6 +797,7 @@ class PydanticRagAgent(ChatAgent):
                 try:
                     async with agent.iter(
                         user_prompt=ctx.query,
+                        model=self.llm_provider.get_pydantic_model(),
                         message_history=[
                             ModelResponse([TextPart(content=msg)])
                             for msg in ctx.history

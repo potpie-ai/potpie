@@ -47,7 +47,6 @@ class BlastRadiusAgent(ChatAgent):
                 "fetch_file",
                 "web_search_tool",
                 "github_tool",
-                "fetch_file",
                 "analyze_code_structure",
             ]
         )

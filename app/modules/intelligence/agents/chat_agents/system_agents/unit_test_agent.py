@@ -45,7 +45,6 @@ class UnitTestAgent(ChatAgent):
                 "get_code_from_node_id",
                 "get_code_from_probable_node_names",
                 "webpage_extractor",
-                "fetch_file",
                 "web_search_tool",
                 "github_tool",
                 "fetch_file",

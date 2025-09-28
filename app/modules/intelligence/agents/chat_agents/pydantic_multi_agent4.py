@@ -1053,6 +1053,7 @@ class PydanticMultiAgent(ChatAgent):
         prompt = create_prompt_for_role(role, self.state, ctx.query)
         resp = await agent.run(
             user_prompt=prompt,
+            model=self.model,
             message_history=[
                 ModelResponse([TextPart(content=msg)]) for msg in ctx.history
             ],
@@ -1178,7 +1179,7 @@ class PydanticMultiAgent(ChatAgent):
 
         logger.info("Running pydantic-ai multi-agent stream")
         context = await self.tool_service.process_large_pr_tool.arun(
-            {"project_id": ctx.project_id, "base_branch": "master"}
+            {"project_id": ctx.project_id, "base_branch": "main"}
         )
         prompt = f"""    
         Based on a provided PR change summary, you will create or update functional tests that verify new features and changes work correctly across service boundaries.
@@ -1342,6 +1343,7 @@ class PydanticMultiAgent(ChatAgent):
                 result = ""
                 async with current_agent.iter(
                     user_prompt=current_prompt,
+                    model=self.model,
                     usage_limits=UsageLimits(
                         response_tokens_limit=14000,
                     ),
