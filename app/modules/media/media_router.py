@@ -1,8 +1,9 @@
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Query, UploadFile, HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.config_provider import config_provider
 from app.core.database import get_db
 from app.modules.auth.auth_service import AuthService
 from app.modules.media.media_controller import MediaController
@@ -28,19 +29,19 @@ class MediaAPI:
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
-        """
-        Upload an image file.
+        """Upload an image file with multimodal feature flag check"""
 
-        - **file**: Image file (JPEG, PNG, WebP, GIF)
-        - **message_id**: Optional message ID to immediately link the attachment
-        - Returns attachment info with unique ID
+        # Check if multimodal functionality is enabled
+        if not config_provider.get_is_multimodal_enabled():
+            raise HTTPException(
+                status_code=501,  # Not Implemented
+                detail={
+                    "error": "Multimodal functionality is currently disabled",
+                    "code": "MULTIMODAL_DISABLED",
+                    "message": "Image upload is not available in this deployment configuration"
+                }
+            )
 
-        The uploaded file will be:
-        1. Validated for type and size
-        2. Processed (resized if needed)
-        3. Stored in Google Cloud Storage
-        4. Linked to message if message_id provided
-        """
         user_id = user["user_id"]
         user_email = user["email"]
 
@@ -175,17 +176,19 @@ class MediaAPI:
         db: Session = Depends(get_db),
         user=Depends(AuthService.check_auth),
     ):
-        """
-        Test multimodal functionality for an attachment.
+        """Test multimodal functionality for an attachment with feature flag check"""
 
-        - **attachment_id**: Unique attachment identifier
-        - Returns test results showing if the attachment can be used for multimodal AI
+        # Check if multimodal functionality is enabled
+        if not config_provider.get_is_multimodal_enabled():
+            raise HTTPException(
+                status_code=501,  # Not Implemented
+                detail={
+                    "error": "Multimodal functionality is currently disabled",
+                    "code": "MULTIMODAL_DISABLED",
+                    "message": "Multimodal testing is not available in this deployment configuration"
+                }
+            )
 
-        This endpoint tests:
-        1. Image retrieval from storage
-        2. Base64 conversion for LLM processing
-        3. Multimodal readiness status
-        """
         user_id = user["user_id"]
         user_email = user["email"]
 

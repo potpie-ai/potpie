@@ -12,6 +12,7 @@ import instructor
 import httpx
 from portkey_ai import createHeaders, PORTKEY_GATEWAY_URL
 
+from app.core.config_provider import config_provider
 from app.modules.key_management.secret_manager import SecretManager
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.posthog_helper import PostHogClient
@@ -641,6 +642,17 @@ class ProviderService:
         config_type: str = "chat",
     ) -> Union[str, AsyncGenerator[str, None]]:
         """Call LLM with multimodal support (text + images)"""
+
+        # Check if multimodal is enabled
+        if not config_provider.get_is_multimodal_enabled():
+            logger.info("Multimodal disabled - falling back to text-only processing")
+            return await self.call_llm(messages, stream=stream, config_type=config_type)
+
+        # If no images provided, use standard text-only call
+        if not images:
+            return await self.call_llm(messages, stream=stream, config_type=config_type)
+
+        # Original multimodal logic continues...
         # Select the appropriate config based on config_type
         config = self.chat_config if config_type == "chat" else self.inference_config
 
@@ -861,6 +873,12 @@ class ProviderService:
 
     def is_vision_model(self, config_type: str = "chat") -> bool:
         """Check if the current model supports vision/multimodal inputs"""
+
+        # If multimodal is disabled globally, no models support vision
+        if not config_provider.get_is_multimodal_enabled():
+            return False
+
+        # Original vision detection logic continues...
         config = self.chat_config if config_type == "chat" else self.inference_config
         model_name = config.model.lower()
 
