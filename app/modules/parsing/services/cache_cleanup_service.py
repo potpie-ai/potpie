@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, delete, func
+from sqlalchemy import delete
 from app.modules.parsing.models.inference_cache_model import InferenceCache
 from datetime import datetime, timedelta
 import logging
@@ -7,11 +7,12 @@ import os
 
 logger = logging.getLogger(__name__)
 
+
 class CacheCleanupService:
     def __init__(self, db: Session):
         self.db = db
         # Default TTL: 30 days, configurable via environment
-        self.cache_ttl_days = int(os.getenv('INFERENCE_CACHE_TTL_DAYS', '30'))
+        self.cache_ttl_days = int(os.getenv("INFERENCE_CACHE_TTL_DAYS", "30"))
 
     def cleanup_expired_entries(self) -> int:
         """Remove cache entries older than TTL"""
@@ -39,7 +40,9 @@ class CacheCleanupService:
         # Get least accessed entries
         least_accessed = (
             self.db.query(InferenceCache)
-            .order_by(InferenceCache.access_count.asc(), InferenceCache.last_accessed.asc())
+            .order_by(
+                InferenceCache.access_count.asc(), InferenceCache.last_accessed.asc()
+            )
             .limit(entries_to_remove)
             .all()
         )
@@ -57,15 +60,17 @@ class CacheCleanupService:
         """Get statistics about cache that would be cleaned up"""
         cutoff_date = datetime.utcnow() - timedelta(days=self.cache_ttl_days)
 
-        expired_count = self.db.query(InferenceCache).filter(
-            InferenceCache.created_at < cutoff_date
-        ).count()
+        expired_count = (
+            self.db.query(InferenceCache)
+            .filter(InferenceCache.created_at < cutoff_date)
+            .count()
+        )
 
         total_entries = self.db.query(InferenceCache).count()
 
         return {
-            'total_entries': total_entries,
-            'expired_entries': expired_count,
-            'cutoff_date': cutoff_date.isoformat(),
-            'cache_ttl_days': self.cache_ttl_days
+            "total_entries": total_entries,
+            "expired_entries": expired_count,
+            "cutoff_date": cutoff_date.isoformat(),
+            "cache_ttl_days": self.cache_ttl_days,
         }

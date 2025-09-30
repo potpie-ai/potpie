@@ -2,6 +2,7 @@ import hashlib
 import re
 from typing import Optional
 
+
 def generate_content_hash(node_text: str, node_type: Optional[str] = None) -> str:
     """
     Generate SHA256 hash of normalized node content.
@@ -14,7 +15,7 @@ def generate_content_hash(node_text: str, node_type: Optional[str] = None) -> st
         SHA256 hash as hexadecimal string
     """
     # Normalize content: collapse whitespace, strip leading/trailing space
-    normalized_content = re.sub(r'\s+', ' ', node_text.strip())
+    normalized_content = re.sub(r"\s+", " ", node_text.strip())
 
     # Include node type for differentiation if provided
     if node_type:
@@ -22,7 +23,8 @@ def generate_content_hash(node_text: str, node_type: Optional[str] = None) -> st
     else:
         hash_input = normalized_content
 
-    return hashlib.sha256(hash_input.encode('utf-8')).hexdigest()
+    return hashlib.sha256(hash_input.encode("utf-8")).hexdigest()
+
 
 def is_content_cacheable(node_text: str, min_length: int = 100) -> bool:
     """
@@ -40,7 +42,7 @@ def is_content_cacheable(node_text: str, min_length: int = 100) -> bool:
         return False
 
     # Skip very repetitive content (likely generated code)
-    lines = node_text.strip().split('\n')
+    lines = node_text.strip().split("\n")
     if len(set(lines)) < len(lines) * 0.3:  # <30% unique lines
         return False
 

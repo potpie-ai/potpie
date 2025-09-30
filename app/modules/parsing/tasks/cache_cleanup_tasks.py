@@ -6,6 +6,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 @celery_app.task(bind=True, name="cache_cleanup.cleanup_expired")
 def cleanup_expired_cache_entries(self: Task):
     """Periodic task to clean up expired cache entries"""
@@ -22,6 +23,7 @@ def cleanup_expired_cache_entries(self: Task):
         logger.error(f"Cache cleanup failed: {e}")
         raise self.retry(exc=e, countdown=60, max_retries=3)
 
+
 @celery_app.task(bind=True, name="cache_cleanup.cleanup_least_accessed")
 def cleanup_least_accessed_cache_entries(self: Task, max_entries: int = 100000):
     """Periodic task to clean up least accessed cache entries if cache grows too large"""
@@ -32,13 +34,16 @@ def cleanup_least_accessed_cache_entries(self: Task, max_entries: int = 100000):
         deleted_count = cleanup_service.cleanup_least_accessed(max_entries)
 
         if deleted_count > 0:
-            logger.info(f"Cache size cleanup completed: {deleted_count} entries removed")
+            logger.info(
+                f"Cache size cleanup completed: {deleted_count} entries removed"
+            )
 
         return {"deleted_count": deleted_count, "status": "success"}
 
     except Exception as e:
         logger.error(f"Cache size cleanup failed: {e}")
         raise self.retry(exc=e, countdown=60, max_retries=3)
+
 
 @celery_app.task(bind=True, name="cache_cleanup.get_stats")
 def get_cache_cleanup_stats(self: Task):
