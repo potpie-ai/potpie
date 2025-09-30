@@ -346,11 +346,20 @@ class InferenceService:
             pattern = r"Code replaced for brevity\. See node_id ([a-f0-9]+)"
             regex = re.compile(pattern)
 
+            resolved_refs = 0
+            failed_refs = 0
+
             def replace_match(match):
+                nonlocal resolved_refs, failed_refs
                 node_id = match.group(1)
                 if node_id in node_dict and node_dict[node_id].get("text"):
-                    return "\n" + node_dict[node_id]["text"].split("\n", 1)[-1]
-                return match.group(0)
+                    resolved_refs += 1
+                    # Return full text of referenced node for consistent cache hashing
+                    return node_dict[node_id]["text"]
+                else:
+                    failed_refs += 1
+                    logger.debug(f"Failed to resolve reference to node_id: {node_id}")
+                    return match.group(0)
 
             previous_text = None
             current_text = text
@@ -358,6 +367,13 @@ class InferenceService:
             while previous_text != current_text:
                 previous_text = current_text
                 current_text = regex.sub(replace_match, current_text)
+
+            # Log reference resolution stats if any references were found
+            if resolved_refs > 0 or failed_refs > 0:
+                logger.debug(
+                    f"Reference resolution: {resolved_refs} resolved, {failed_refs} failed"
+                )
+
             return current_text
 
         for node in nodes:
@@ -381,9 +397,35 @@ class InferenceService:
                     node['cached_inference'] = cached_inference
                     node['content_hash'] = content_hash
                     cache_hits += 1
+
+                    # Detailed logging for cache hits
+                    logger.debug(
+                        f"✅ CACHE HIT | "
+                        f"node={node['node_id'][:8]} | "
+                        f"hash={content_hash[:12]} | "
+                        f"type={node.get('node_type', 'MISSING')}"
+                    )
                     continue  # Skip adding to LLM batch
                 else:
                     cache_misses += 1
+
+                    # Detailed logging for cache misses
+                    logger.debug(
+                        f"❌ CACHE MISS | "
+                        f"node={node['node_id'][:8]} | "
+                        f"hash={content_hash[:12]} | "
+                        f"type={node.get('node_type', 'MISSING')} | "
+                        f"preview={updated_text[:80].replace(chr(10), ' ')}"
+                    )
+
+                    # Check for unresolved references
+                    if 'Code replaced for brevity' in updated_text:
+                        logger.warning(
+                            f"⚠️  UNRESOLVED REFERENCE | "
+                            f"node={node['node_id'][:8]} | "
+                            f"text contains unreplaced placeholder"
+                        )
+
                     # Mark for caching after inference
                     node['content_hash'] = content_hash
                     node['should_cache'] = True
@@ -452,6 +494,20 @@ class InferenceService:
             logger.info(f"Cache stats - Hits: {cache_hits}, Misses: {cache_misses}, Uncacheable: {uncacheable_nodes}")
             cache_hit_rate = cache_hits / total_nodes * 100 if total_nodes > 0 else 0
             logger.info(f"Cache hit rate: {cache_hit_rate:.1f}%")
+
+            # Run diagnostics on nodes if DEBUG logging is enabled
+            if True:
+                try:
+                    from app.modules.parsing.utils.cache_diagnostics import (
+                        analyze_cache_misses,
+                        log_diagnostics_summary
+                    )
+
+                    # Run diagnostics on the nodes we just processed
+                    diagnostics = analyze_cache_misses(nodes, cache_service.db)
+                    log_diagnostics_summary(diagnostics)
+                except Exception as e:
+                    logger.warning(f"Failed to run cache diagnostics: {e}")
 
         logger.info(f"Batched {batched_nodes} nodes into {len(batches)} batches")
         logger.info(f"Large nodes split: {large_nodes_split}")

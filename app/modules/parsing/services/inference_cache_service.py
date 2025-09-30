@@ -52,6 +52,7 @@ class InferenceCacheService:
     ) -> InferenceCache:
         """
         Store inference in global cache with project_id as metadata only.
+        Uses upsert logic to handle duplicate content_hash gracefully.
 
         Args:
             content_hash: SHA256 hash of the content
@@ -63,8 +64,22 @@ class InferenceCacheService:
             tags: Optional tags for categorization
 
         Returns:
-            Created cache entry
+            Created or existing cache entry
         """
+        # Check if entry already exists
+        existing_entry = self.db.query(InferenceCache).filter(
+            InferenceCache.content_hash == content_hash
+        ).first()
+
+        if existing_entry:
+            # Entry already exists - update access tracking and return
+            existing_entry.access_count += 1
+            existing_entry.last_accessed = func.now()
+            self.db.commit()
+            logger.debug(f"Cache entry already exists for content_hash: {content_hash[:12]}... (updated access tracking)")
+            return existing_entry
+
+        # Create new cache entry
         cache_entry = InferenceCache(
             content_hash=content_hash,
             project_id=project_id,  # Stored for tracing, not lookup
@@ -76,10 +91,21 @@ class InferenceCacheService:
         )
 
         self.db.add(cache_entry)
-        self.db.commit()
-        self.db.refresh(cache_entry)
+        try:
+            self.db.commit()
+            self.db.refresh(cache_entry)
+            logger.debug(f"Stored new cache entry for content_hash: {content_hash[:12]}...")
+        except Exception as e:
+            # Handle race condition where another process inserted the same hash
+            self.db.rollback()
+            logger.debug(f"Race condition detected for content_hash: {content_hash[:12]}..., fetching existing entry")
+            cache_entry = self.db.query(InferenceCache).filter(
+                InferenceCache.content_hash == content_hash
+            ).first()
+            if not cache_entry:
+                # This shouldn't happen, but re-raise if it does
+                raise e
 
-        logger.debug(f"Stored global cache for content_hash: {content_hash}")
         return cache_entry
 
     def get_cache_stats(self, project_id: Optional[str] = None) -> Dict[str, Any]:
