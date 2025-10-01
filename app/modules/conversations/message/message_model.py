@@ -32,9 +32,14 @@ class Message(Base):
     )
     content = Column(Text, nullable=False)
     sender_id = Column(String(255), nullable=True)
-    type = Column(SQLAEnum(MessageType), nullable=False)
+    type = Column(
+        SQLAEnum(MessageType, name='message_type_enum', create_type=False, native_enum=False),
+        nullable=False
+    )
     status = Column(
-        SQLAEnum(MessageStatus), default=MessageStatus.ACTIVE, nullable=False
+        SQLAEnum(MessageStatus, name='message_status_enum', create_type=False, native_enum=False),
+        default=MessageStatus.ACTIVE,
+        nullable=False
     )
     created_at = Column(TIMESTAMP(timezone=True), default=func.now(), nullable=False)
     citations = Column(Text, nullable=True)
