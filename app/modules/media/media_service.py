@@ -57,7 +57,9 @@ class MediaService:
             # Multimodal disabled - set None values
             self.gcs_client = None
             self.bucket = None
-            logger.info("Multimodal functionality disabled - GCS client not initialized")
+            logger.info(
+                "Multimodal functionality disabled - GCS client not initialized"
+            )
 
     def _initialize_gcs_client(self):
         """Initialize GCS client with existing logic"""

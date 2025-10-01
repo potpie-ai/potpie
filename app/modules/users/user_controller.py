@@ -4,7 +4,6 @@ from app.modules.users.user_schema import (
     UserProfileResponse,
 )
 from app.modules.users.user_service import UserService
-from app.modules.intelligence.agents.custom_agents.custom_agent_model import CustomAgent
 
 
 class UserController:

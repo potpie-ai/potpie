@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
 from .conversation_store import ConversationStore
-from ..message.message_store import MessageStore 
+from ..message.message_store import MessageStore
 
 from app.modules.conversations.conversation.conversation_schema import (
     ChatMessageResponse,
@@ -30,21 +30,23 @@ from app.modules.intelligence.agents.custom_agents.custom_agent_model import Cus
 
 
 class ConversationController:
-    def __init__(self, db: Session, async_db: AsyncSession, user_id: str, user_email: str):
+    def __init__(
+        self, db: Session, async_db: AsyncSession, user_id: str, user_email: str
+    ):
         self.user_email = user_email
         self.user_id = user_id
         self.db = db
         self.async_db = async_db
-        
+
         conversation_store = ConversationStore(db, async_db)
         message_store = MessageStore(db, async_db)
-        
+
         self.service = ConversationService.create(
             conversation_store=conversation_store,
             message_store=message_store,
-            db=self.db,             
+            db=self.db,
             user_id=self.user_id,
-            user_email=self.user_email
+            user_email=self.user_email,
         )
 
     async def create_conversation(
