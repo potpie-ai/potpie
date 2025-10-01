@@ -105,6 +105,13 @@ class ShareChatService:
                 detail="Chat does not exist or you are not authorized to access it.",
             )
 
+        # Validate all emails first
+        for email in emails_to_remove:
+            if not is_valid_email(email):
+                raise HTTPException(
+                    status_code=400, detail=f"Invalid email address: {email}"
+                )
+
         if not chat.shared_with_emails:
             raise ShareChatServiceError("Chat has no shared access to remove.")
 
