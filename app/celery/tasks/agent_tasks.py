@@ -41,18 +41,20 @@ def execute_agent_background(
             from app.modules.users.user_service import UserService
             from app.modules.conversations.message.message_model import MessageType
             from app.modules.conversations.message.message_schema import MessageRequest
-            from app.modules.conversations.conversation.conversation_store import ConversationStore
+            from app.modules.conversations.conversation.conversation_store import (
+                ConversationStore,
+            )
             from app.modules.conversations.message.message_store import MessageStore
-            
+
             async with self.async_db() as async_db:
 
                 # Get user email for service creation
                 user_service = UserService(self.db)
                 user = user_service.get_user_by_uid(user_id)
-                
+
                 conversation_store = ConversationStore(self.db, async_db)
                 message_store = MessageStore(self.db, async_db)
-                
+
                 if not user or not user.email:
                     raise Exception(f"User email not found for user_id: {user_id}")
                 user_email = user.email
@@ -62,7 +64,7 @@ def execute_agent_background(
                     message_store=message_store,
                     db=self.db,
                     user_id=user_id,
-                    user_email=user_email
+                    user_email=user_email,
                 )
 
                 # First, store the user message in history
@@ -199,9 +201,9 @@ def execute_regenerate_background(
                 ConversationService,
             )
             from app.modules.users.user_service import UserService
-            from app.modules.conversations.conversation.conversation_store import ConversationStore
-            from app.modules.conversations.message.message_store import MessageStore
-            from app.modules.conversations.conversation.conversation_store import ConversationStore
+            from app.modules.conversations.conversation.conversation_store import (
+                ConversationStore,
+            )
             from app.modules.conversations.message.message_store import MessageStore
 
             async with self.async_db() as async_db:
@@ -214,13 +216,13 @@ def execute_regenerate_background(
 
                 conversation_store = ConversationStore(self.db, async_db)
                 message_store = MessageStore(self.db, async_db)
-                
+
                 service = ConversationService.create(
                     conversation_store=conversation_store,
                     message_store=message_store,
                     db=self.db,
                     user_id=user_id,
-                    user_email=user_email
+                    user_email=user_email,
                 )
                 # Publish start event when actual processing begins
                 redis_manager.publish_event(

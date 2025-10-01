@@ -9,8 +9,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 class StoreError(Exception):
     pass
+
 
 class ConversationStore(BaseStore):
     """Handles all database operations for the Conversation model."""
@@ -19,7 +21,7 @@ class ConversationStore(BaseStore):
         stmt = select(Conversation).where(Conversation.id == conversation_id)
         result = await self.async_db.execute(stmt)
         return result.scalar_one_or_none()
-        
+
     async def create(self, new_conversation: Conversation) -> None:
         self.async_db.add(new_conversation)
         await self.async_db.commit()
@@ -30,13 +32,13 @@ class ConversationStore(BaseStore):
                 Conversation,
                 func.count(Message.id)
                 .filter(Message.type == MessageType.HUMAN)
-                .label("human_message_count")
+                .label("human_message_count"),
             )
             .outerjoin(Message, Conversation.id == Message.conversation_id)
             .where(Conversation.id == conversation_id)
             .group_by(Conversation.id)
         )
-    
+
         result = await self.async_db.execute(stmt)
         row = result.first()
         if row:
@@ -58,7 +60,7 @@ class ConversationStore(BaseStore):
         stmt = delete(Conversation).where(Conversation.id == conversation_id)
         result = await self.async_db.execute(stmt)
         return result.rowcount
-    
+
     async def get_for_user(
         self,
         user_id: str,
@@ -104,4 +106,6 @@ class ConversationStore(BaseStore):
                 exc_info=True,
             )
             # Re-raise with a generic store error to not leak details
-            raise StoreError(f"Failed to retrieve conversations for user {user_id}") from e
+            raise StoreError(
+                f"Failed to retrieve conversations for user {user_id}"
+            ) from e

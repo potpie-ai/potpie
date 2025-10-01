@@ -20,11 +20,8 @@ from app.modules.conversations.conversation.conversation_schema import (
     CreateConversationRequest,
 )
 from app.modules.conversations.message.message_model import (
-    Message,
-    MessageStatus,
     MessageType,
 )
-from app.modules.intelligence.agents.custom_agents.custom_agent_model import CustomAgent
 from app.modules.conversations.message.message_schema import (
     MessageRequest,
     MessageResponse,
@@ -84,17 +81,17 @@ class ConversationService:
         project_service: ProjectService,
         history_manager: ChatHistoryService,
         provider_service: ProviderService,
-        tools_service: ToolService,  
+        tools_service: ToolService,
         promt_service: PromptService,
         agent_service: AgentsService,
         custom_agent_service: CustomAgentService,
-        media_service: MediaService
+        media_service: MediaService,
     ):
         self.db = db
         self.user_id = user_id
         self.user_email = user_email
         self.conversation_store = conversation_store
-        self.message_store = message_store    
+        self.message_store = message_store
         self.project_service = project_service
         self.history_manager = history_manager
         self.provider_service = provider_service
@@ -103,10 +100,16 @@ class ConversationService:
         self.agent_service = agent_service
         self.custom_agent_service = custom_agent_service
         self.media_service = media_service
-        
 
     @classmethod
-    def create(cls, conversation_store: ConversationStore, message_store: MessageStore, db: Session, user_id: str, user_email: str):
+    def create(
+        cls,
+        conversation_store: ConversationStore,
+        message_store: MessageStore,
+        db: Session,
+        user_id: str,
+        user_email: str,
+    ):
         project_service = ProjectService(db)
         history_manager = ChatHistoryService(db)
         provider_service = ProviderService(db, user_id)
@@ -117,7 +120,7 @@ class ConversationService:
         )
         custom_agent_service = CustomAgentService(db, provider_service, tool_service)
         media_service = MediaService(db)
-        
+
         return cls(
             db,
             user_id,
@@ -150,7 +153,7 @@ class ConversationService:
 
         # Retrieve the conversation
         conversation = await self.conversation_store.get_by_id(conversation_id)
-        
+
         if not conversation:
             logger.warning(f"Conversation {conversation_id} not found in database")
             return (
@@ -182,7 +185,6 @@ class ConversationService:
                 return ConversationAccessType.READ  # Shared users can only read
             else:
                 return ConversationAccessType.NOT_FOUND
-      
 
         return ConversationAccessType.NOT_FOUND
 
@@ -255,7 +257,7 @@ class ConversationService:
             updated_at=datetime.now(timezone.utc),
         )
         await self.conversation_store.create(new_conversation)
-        
+
         logger.info(
             f"Project id : {conversation.project_ids[0]} Created new conversation with ID: {conversation_id}, title: {title}, user_id: {user_id}, agent_id: {conversation.agent_ids[0]}, hidden: {hidden}"
         )
@@ -578,7 +580,7 @@ class ConversationService:
 
     async def _get_last_human_message(self, conversation_id: str):
         message = await self.message_store.get_last_human_message(conversation_id)
-        
+
         if not message:
             logger.warning(f"No human message found in conversation {conversation_id}")
         return message
@@ -588,7 +590,7 @@ class ConversationService:
     ):
         try:
             await self.message_store.archive_messages_after(conversation_id, timestamp)
-            
+
             logger.info(
                 f"Archived subsequent messages in conversation {conversation_id}"
             )
@@ -827,7 +829,11 @@ class ConversationService:
         """Get images from the most recent human message in the conversation"""
         try:
             # Get the most recent human message with attachments
-            latest_human_message = await self.message_store.get_latest_human_message_with_attachments(conversation_id)
+            latest_human_message = (
+                await self.message_store.get_latest_human_message_with_attachments(
+                    conversation_id
+                )
+            )
 
             if not latest_human_message:
                 return None
@@ -864,9 +870,11 @@ class ConversationService:
             )
             if access_level == ConversationAccessType.READ:
                 raise AccessTypeReadError("Access denied.")
-            
+
             # Delete related messages first
-            deleted_messages = await self.message_store.delete_for_conversation(conversation_id)
+            deleted_messages = await self.message_store.delete_for_conversation(
+                conversation_id
+            )
 
             # Delete the conversation
             deleted_conversation = await self.conversation_store.delete(conversation_id)
@@ -912,7 +920,9 @@ class ConversationService:
     ) -> ConversationInfoResponse:
 
         try:
-            print("[conversation_service] Getting info for conversation:", conversation_id)
+            print(
+                "[conversation_service] Getting info for conversation:", conversation_id
+            )
             conversation = await self.conversation_store.get_by_id(conversation_id)
 
             if not conversation:
@@ -933,7 +943,9 @@ class ConversationService:
                 )
                 raise AccessTypeNotFoundError("Access type not found")
 
-            total_messages = await self.message_store.count_active_for_conversation(conversation_id)
+            total_messages = await self.message_store.count_active_for_conversation(
+                conversation_id
+            )
 
             agent_id = conversation.agent_ids[0] if conversation.agent_ids else None
             agent_ids = conversation.agent_ids
@@ -948,9 +960,14 @@ class ConversationService:
                     # result = await self.sql_db.execute(
                     #     select(CustomAgent).where(CustomAgent.id == agent_id)
                     # )
-                    custom_agent = await self.custom_agent_service.get_agent_model(agent_id)
-                    print("[conversation_service] Custom agent query result:", custom_agent.role)
-                    
+                    custom_agent = await self.custom_agent_service.get_agent_model(
+                        agent_id
+                    )
+                    print(
+                        "[conversation_service] Custom agent query result:",
+                        custom_agent.role,
+                    )
+
                     if custom_agent:
                         agent_ids = [custom_agent.role]
 
@@ -1086,9 +1103,9 @@ class ConversationService:
             )
             if access_level == ConversationAccessType.READ:
                 raise AccessTypeReadError("Access denied.")
-            
+
             conversation = await self.conversation_store.get_by_id(conversation_id)
-            
+
             if not conversation or conversation.user_id != user_id:
                 raise ConversationNotFoundError(
                     f"Conversation with id {conversation_id} not found"
@@ -1116,7 +1133,7 @@ class ConversationService:
             raise ConversationServiceError(
                 "Failed to rename conversation due to an unexpected error"
             ) from e
-            
+
     async def get_conversations_with_projects_for_user(
         self,
         user_id: str,
@@ -1141,7 +1158,9 @@ class ConversationService:
         except StoreError as e:
             # Catch the specific error from the store and wrap it in a
             # service-level exception, which is a good practice.
-            logger.error(f"Store layer failed to get conversations for user {user_id}: {e}")
+            logger.error(
+                f"Store layer failed to get conversations for user {user_id}: {e}"
+            )
             raise ConversationServiceError(
                 f"Failed to retrieve conversations for user {user_id}"
             ) from e

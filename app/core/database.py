@@ -42,7 +42,7 @@ AsyncSessionLocal = sessionmaker(
     class_=AsyncSession,
     autocommit=False,
     autoflush=False,
-    expire_on_commit=False, # Good practice for async sessions
+    expire_on_commit=False,  # Good practice for async sessions
 )
 
 # Base class for all ORM models
@@ -56,7 +56,8 @@ def get_db():
         yield db
     finally:
         db.close()
-        
+
+
 # Dependency to be used in asynchronous routes
 async def get_async_db():
     async with AsyncSessionLocal() as db:
@@ -65,4 +66,4 @@ async def get_async_db():
         finally:
             # The 'async with' context manager handles closing automatically.
             # You could also do 'await db.close()' in a more manual setup.
-            pass   
+            pass

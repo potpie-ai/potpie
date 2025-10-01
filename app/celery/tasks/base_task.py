@@ -15,7 +15,7 @@ class BaseTask(Task):
         if self._db is None:
             self._db = SessionLocal()
         return self._db
-    
+
     @asynccontextmanager
     async def async_db(self):
         """
@@ -23,7 +23,7 @@ class BaseTask(Task):
         """
         if self._async_db is None:
             self._async_db = AsyncSessionLocal()
-        
+
         try:
             # Yield the session to the `async with` block in the task
             yield self._async_db

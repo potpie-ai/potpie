@@ -128,9 +128,7 @@ class ConversationAPI:
         user_id = user["user_id"]
         user_email = user["email"]
         controller = ConversationController(db, async_db, user_id, user_email)
-        return await controller.get_conversations_for_user(
-            start, limit, sort, order
-        )
+        return await controller.get_conversations_for_user(start, limit, sort, order)
 
     @staticmethod
     @router.post("/conversations/", response_model=CreateConversationResponse)
