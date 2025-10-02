@@ -19,7 +19,10 @@ from app.modules.parsing.knowledge_graph.inference_schema import (
     DocstringResponse,
 )
 from app.modules.parsing.services.inference_cache_service import InferenceCacheService
-from app.modules.parsing.utils.content_hash import generate_content_hash, is_content_cacheable
+from app.modules.parsing.utils.content_hash import (
+    generate_content_hash,
+    is_content_cacheable,
+)
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
 
@@ -81,7 +84,9 @@ class InferenceService:
         if string is None:
             return 0
         if not isinstance(string, str):
-            logger.warning(f"Expected string, got {type(string)}. Converting to string.")
+            logger.warning(
+                f"Expected string, got {type(string)}. Converting to string."
+            )
             string = str(string)
 
         try:
@@ -200,30 +205,34 @@ class InferenceService:
                 for record in result
             }
 
-    def split_large_node(self, node_text: str, node_id: str, max_tokens: int) -> List[Dict[str, Any]]:
+    def split_large_node(
+        self, node_text: str, node_id: str, max_tokens: int
+    ) -> List[Dict[str, Any]]:
         """Split large nodes into processable chunks with context preservation"""
         model = "gpt-4"  # Should be configurable
         max_chunk_tokens = max_tokens // 2  # Reserve space for prompt
 
         # Try to split by logical boundaries (functions, classes, etc.)
-        lines = node_text.split('\n')
+        lines = node_text.split("\n")
         chunks = []
         current_chunk_lines = []
         current_tokens = 0
 
         for line in lines:
-            test_chunk = '\n'.join(current_chunk_lines + [line])
+            test_chunk = "\n".join(current_chunk_lines + [line])
             test_tokens = self.num_tokens_from_string(test_chunk, model)
 
             if test_tokens > max_chunk_tokens and current_chunk_lines:
                 # Save current chunk and start new one
-                chunks.append({
-                    'text': '\n'.join(current_chunk_lines),
-                    'node_id': f"{node_id}_chunk_{len(chunks)}",
-                    'is_chunk': True,
-                    'parent_node_id': node_id,
-                    'chunk_index': len(chunks)
-                })
+                chunks.append(
+                    {
+                        "text": "\n".join(current_chunk_lines),
+                        "node_id": f"{node_id}_chunk_{len(chunks)}",
+                        "is_chunk": True,
+                        "parent_node_id": node_id,
+                        "chunk_index": len(chunks),
+                    }
+                )
                 current_chunk_lines = [line]
                 current_tokens = self.num_tokens_from_string(line, model)
             else:
@@ -232,17 +241,21 @@ class InferenceService:
 
         # Add final chunk
         if current_chunk_lines:
-            chunks.append({
-                'text': '\n'.join(current_chunk_lines),
-                'node_id': f"{node_id}_chunk_{len(chunks)}",
-                'is_chunk': True,
-                'parent_node_id': node_id,
-                'chunk_index': len(chunks)
-            })
+            chunks.append(
+                {
+                    "text": "\n".join(current_chunk_lines),
+                    "node_id": f"{node_id}_chunk_{len(chunks)}",
+                    "is_chunk": True,
+                    "parent_node_id": node_id,
+                    "chunk_index": len(chunks),
+                }
+            )
 
         return chunks
 
-    def consolidate_chunk_responses(self, chunk_responses: List[DocstringResponse], parent_node_id: str) -> DocstringResponse:
+    def consolidate_chunk_responses(
+        self, chunk_responses: List[DocstringResponse], parent_node_id: str
+    ) -> DocstringResponse:
         """Consolidate multiple chunk docstring responses into a single parent node response"""
         if not chunk_responses:
             return DocstringResponse(docstrings=[])
@@ -262,19 +275,22 @@ class InferenceService:
         else:
             # Combine multiple chunk descriptions intelligently
             consolidated_text = f"This is a large code component split across {len(all_docstrings)} sections: "
-            consolidated_text += " | ".join([f"Section {i+1}: {doc}" for i, doc in enumerate(all_docstrings)])
+            consolidated_text += " | ".join(
+                [f"Section {i+1}: {doc}" for i, doc in enumerate(all_docstrings)]
+            )
 
         # Create single consolidated docstring for parent node
         from app.modules.parsing.knowledge_graph.inference_schema import DocstringNode
+
         consolidated_docstring = DocstringNode(
-            node_id=parent_node_id,
-            docstring=consolidated_text,
-            tags=list(all_tags)
+            node_id=parent_node_id, docstring=consolidated_text, tags=list(all_tags)
         )
 
         return DocstringResponse(docstrings=[consolidated_docstring])
 
-    def process_chunk_responses(self, response: DocstringResponse, batch: List[DocstringRequest]) -> Optional[DocstringResponse]:
+    def process_chunk_responses(
+        self, response: DocstringResponse, batch: List[DocstringRequest]
+    ) -> Optional[DocstringResponse]:
         """Process chunk responses and consolidate them by parent node"""
         # Separate chunk responses from regular responses
         chunk_responses = {}
@@ -282,9 +298,11 @@ class InferenceService:
 
         for docstring in response.docstrings:
             # Find the corresponding request to get metadata
-            request = next((req for req in batch if req.node_id == docstring.node_id), None)
-            if request and request.metadata and request.metadata.get('is_chunk'):
-                parent_id = request.metadata.get('parent_node_id')
+            request = next(
+                (req for req in batch if req.node_id == docstring.node_id), None
+            )
+            if request and request.metadata and request.metadata.get("is_chunk"):
+                parent_id = request.metadata.get("parent_node_id")
                 if parent_id:
                     if parent_id not in chunk_responses:
                         chunk_responses[parent_id] = []
@@ -303,7 +321,10 @@ class InferenceService:
             # Create a mock response list for consolidation
             mock_responses = []
             for chunk_doc in chunk_docstrings:
-                from app.modules.parsing.knowledge_graph.inference_schema import DocstringResponse
+                from app.modules.parsing.knowledge_graph.inference_schema import (
+                    DocstringResponse,
+                )
+
                 mock_responses.append(DocstringResponse(docstrings=[chunk_doc]))
 
             consolidated = self.consolidate_chunk_responses(mock_responses, parent_id)
@@ -315,7 +336,11 @@ class InferenceService:
         return DocstringResponse(docstrings=consolidated_responses)
 
     def batch_nodes(
-        self, nodes: List[Dict], max_tokens: int = 16000, model: str = "gpt-4", project_id: Optional[str] = None
+        self,
+        nodes: List[Dict],
+        max_tokens: int = 16000,
+        model: str = "gpt-4",
+        project_id: Optional[str] = None,
     ) -> List[List[DocstringRequest]]:
         """Enhanced batching with cache-aware processing"""
         batches = []
@@ -335,7 +360,9 @@ class InferenceService:
             db = next(get_db())
             cache_service = InferenceCacheService(db)
         except Exception as e:
-            logger.warning(f"Failed to initialize cache service: {e}. Continuing without cache.")
+            logger.warning(
+                f"Failed to initialize cache service: {e}. Continuing without cache."
+            )
             if db:
                 db.close()
             cache_service = None
@@ -390,7 +417,9 @@ class InferenceService:
 
             # Check if content is cacheable and look for cached inference
             if cache_service and is_content_cacheable(updated_text):
-                content_hash = generate_content_hash(updated_text, node.get('node_type'))
+                content_hash = generate_content_hash(
+                    updated_text, node.get("node_type")
+                )
 
                 # Check cache for existing inference
                 # Simplified - project_id parameter ignored by cache service
@@ -398,8 +427,8 @@ class InferenceService:
 
                 if cached_inference:
                     # Cache hit - store inference directly in node
-                    node['cached_inference'] = cached_inference
-                    node['content_hash'] = content_hash
+                    node["cached_inference"] = cached_inference
+                    node["content_hash"] = content_hash
                     cache_hits += 1
 
                     # Detailed logging for cache hits
@@ -423,7 +452,7 @@ class InferenceService:
                     )
 
                     # Check for unresolved references
-                    if 'Code replaced for brevity' in updated_text:
+                    if "Code replaced for brevity" in updated_text:
                         logger.warning(
                             f"⚠️  UNRESOLVED REFERENCE | "
                             f"node={node['node_id'][:8]} | "
@@ -431,19 +460,23 @@ class InferenceService:
                         )
 
                     # Mark for caching after inference
-                    node['content_hash'] = content_hash
-                    node['should_cache'] = True
+                    node["content_hash"] = content_hash
+                    node["should_cache"] = True
             else:
                 uncacheable_nodes += 1
 
             # Handle large nodes (existing logic from Phase 1)
             if node_tokens > max_tokens:
-                logger.info(f"Node {node['node_id']} exceeds token limit ({node_tokens} tokens). Splitting into chunks...")
-                node_chunks = self.split_large_node(updated_text, node["node_id"], max_tokens)
+                logger.info(
+                    f"Node {node['node_id']} exceeds token limit ({node_tokens} tokens). Splitting into chunks..."
+                )
+                node_chunks = self.split_large_node(
+                    updated_text, node["node_id"], max_tokens
+                )
 
                 # Process each chunk as a separate node
                 for chunk in node_chunks:
-                    chunk_tokens = self.num_tokens_from_string(chunk['text'], model)
+                    chunk_tokens = self.num_tokens_from_string(chunk["text"], model)
 
                     if current_tokens + chunk_tokens > max_tokens:
                         if current_batch:
@@ -451,17 +484,21 @@ class InferenceService:
                         current_batch = []
                         current_tokens = 0
 
-                    current_batch.append(DocstringRequest(
-                        node_id=chunk["node_id"],
-                        text=chunk["text"],
-                        metadata={
-                            'is_chunk': True,
-                            'parent_node_id': chunk['parent_node_id'],
-                            'chunk_index': chunk.get('chunk_index', 0),
-                            'should_cache': True,
-                            'content_hash': generate_content_hash(chunk['text'], 'chunk')
-                        }
-                    ))
+                    current_batch.append(
+                        DocstringRequest(
+                            node_id=chunk["node_id"],
+                            text=chunk["text"],
+                            metadata={
+                                "is_chunk": True,
+                                "parent_node_id": chunk["parent_node_id"],
+                                "chunk_index": chunk.get("chunk_index", 0),
+                                "should_cache": True,
+                                "content_hash": generate_content_hash(
+                                    chunk["text"], "chunk"
+                                ),
+                            },
+                        )
+                    )
                     current_tokens += chunk_tokens
                 continue  # Skip normal processing for large nodes
 
@@ -471,19 +508,19 @@ class InferenceService:
                     batches.append(current_batch)
 
                 # Start new batch with current node
-                current_batch = [DocstringRequest(
-                    node_id=node["node_id"],
-                    text=updated_text,
-                    metadata=node
-                )]
+                current_batch = [
+                    DocstringRequest(
+                        node_id=node["node_id"], text=updated_text, metadata=node
+                    )
+                ]
                 current_tokens = node_tokens
             else:
                 # Add to current batch
-                current_batch.append(DocstringRequest(
-                    node_id=node["node_id"],
-                    text=updated_text,
-                    metadata=node
-                ))
+                current_batch.append(
+                    DocstringRequest(
+                        node_id=node["node_id"], text=updated_text, metadata=node
+                    )
+                )
                 current_tokens += node_tokens
 
         if current_batch:
@@ -492,19 +529,31 @@ class InferenceService:
         # Enhanced logging with cache metrics
         total_nodes = len(nodes)
         batched_nodes = sum(len(batch) for batch in batches)
-        large_nodes_split = len([n for n in nodes if n.get('text') and self.num_tokens_from_string(replace_referenced_text(n.get('text', ''), node_dict) or '', model) > max_tokens])
+        large_nodes_split = len(
+            [
+                n
+                for n in nodes
+                if n.get("text")
+                and self.num_tokens_from_string(
+                    replace_referenced_text(n.get("text", ""), node_dict) or "", model
+                )
+                > max_tokens
+            ]
+        )
 
         if cache_service:
-            logger.info(f"Cache stats - Hits: {cache_hits}, Misses: {cache_misses}, Uncacheable: {uncacheable_nodes}")
+            logger.info(
+                f"Cache stats - Hits: {cache_hits}, Misses: {cache_misses}, Uncacheable: {uncacheable_nodes}"
+            )
             cache_hit_rate = cache_hits / total_nodes * 100 if total_nodes > 0 else 0
             logger.info(f"Cache hit rate: {cache_hit_rate:.1f}%")
 
             # Run diagnostics on nodes if DEBUG logging is enabled
-            
+
             try:
                 from app.modules.parsing.utils.cache_diagnostics import (
                     analyze_cache_misses,
-                    log_diagnostics_summary
+                    log_diagnostics_summary,
                 )
 
                 # Run diagnostics on the nodes we just processed
@@ -743,7 +792,9 @@ class InferenceService:
             result_db = next(get_db())
             cache_service = InferenceCacheService(result_db)
         except Exception as e:
-            logger.warning(f"Failed to initialize cache service for result storage: {e}")
+            logger.warning(
+                f"Failed to initialize cache service for result storage: {e}"
+            )
             if result_db:
                 result_db.close()
             cache_service = None
@@ -764,35 +815,47 @@ class InferenceService:
 
                     if isinstance(response, DocstringResponse):
                         # Store results in cache and Neo4j
-                        for request, docstring_result in zip(batch, response.docstrings):
+                        for request, docstring_result in zip(
+                            batch, response.docstrings
+                        ):
                             metadata = request.metadata or {}
 
                             # Store in cache if eligible
-                            if cache_service and metadata.get('should_cache') and metadata.get('content_hash'):
+                            if (
+                                cache_service
+                                and metadata.get("should_cache")
+                                and metadata.get("content_hash")
+                            ):
                                 try:
                                     # Convert DocstringResult to dictionary for caching
                                     inference_data = {
-                                        'node_id': docstring_result.node_id,
-                                        'docstring': docstring_result.docstring,
-                                        'tags': docstring_result.tags
+                                        "node_id": docstring_result.node_id,
+                                        "docstring": docstring_result.docstring,
+                                        "tags": docstring_result.tags,
                                     }
 
                                     # project_id stored for metadata/tracing only
                                     cache_service.store_inference(
-                                        content_hash=metadata['content_hash'],
+                                        content_hash=metadata["content_hash"],
                                         inference_data=inference_data,
                                         project_id=repo_id,  # Metadata only
-                                        node_type=metadata.get('node_type'),
+                                        node_type=metadata.get("node_type"),
                                         content_length=len(request.text),
-                                        tags=docstring_result.tags
+                                        tags=docstring_result.tags,
                                     )
                                 except Exception as cache_error:
-                                    logger.warning(f"Failed to cache inference for node {request.node_id}: {cache_error}")
+                                    logger.warning(
+                                        f"Failed to cache inference for node {request.node_id}: {cache_error}"
+                                    )
 
                         # Handle chunk consolidation before Neo4j update
-                        processed_response = self.process_chunk_responses(response, batch)
+                        processed_response = self.process_chunk_responses(
+                            response, batch
+                        )
                         if processed_response:
-                            self.update_neo4j_with_docstrings(repo_id, processed_response)
+                            self.update_neo4j_with_docstrings(
+                                repo_id, processed_response
+                            )
 
                     return response
 
@@ -817,7 +880,7 @@ class InferenceService:
 
         if cache_service:
             cache_service.db.close()
-        
+
         return updated_docstrings
 
     async def generate_response(
@@ -930,24 +993,30 @@ class InferenceService:
 
     async def update_neo4j_with_cached_inference(self, node: Dict[str, Any]) -> None:
         """Update Neo4j with cached inference data for a single node"""
-        cached_inference = node.get('cached_inference', {})
+        cached_inference = node.get("cached_inference", {})
         if not cached_inference:
             return
 
         # Extract inference data
-        docstring = cached_inference.get('docstring', '')
-        tags = cached_inference.get('tags', [])
-        
+        docstring = cached_inference.get("docstring", "")
+        tags = cached_inference.get("tags", [])
+
         # Reuse cached embedding if available, otherwise generate new one
-        embedding = cached_inference.get('embedding_vector')
+        embedding = cached_inference.get("embedding_vector")
         if embedding is None:
-            logger.debug(f"Generating new embedding for cached inference node {node.get('node_id', 'unknown')}")
+            logger.debug(
+                f"Generating new embedding for cached inference node {node.get('node_id', 'unknown')}"
+            )
             embedding = self.generate_embedding(docstring)
         else:
-            logger.debug(f"Reusing cached embedding for node {node.get('node_id', 'unknown')}")
+            logger.debug(
+                f"Reusing cached embedding for node {node.get('node_id', 'unknown')}"
+            )
 
         with self.driver.session() as session:
-            project = self.project_manager.get_project_from_db_by_id_sync(node.get('project_id', ''))
+            project = self.project_manager.get_project_from_db_by_id_sync(
+                node.get("project_id", "")
+            )
             repo_path = project.get("repo_path") if project else None
             is_local_repo = True if repo_path else False
 
@@ -959,11 +1028,11 @@ class InferenceService:
                     n.tags = $tags
                 """
                 + ("" if is_local_repo else ", n.text = null, n.signature = null"),
-                repo_id=node.get('project_id', ''),
-                node_id=node['node_id'],
+                repo_id=node.get("project_id", ""),
+                node_id=node["node_id"],
                 docstring=docstring,
                 embedding=embedding,
-                tags=tags
+                tags=tags,
             )
 
         logger.debug(f"Updated Neo4j with cached inference for node {node['node_id']}")
