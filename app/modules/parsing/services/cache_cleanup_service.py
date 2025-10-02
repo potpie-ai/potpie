@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, delete, func
 from app.modules.parsing.models.inference_cache_model import InferenceCache
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 import os
 
@@ -11,11 +11,19 @@ class CacheCleanupService:
     def __init__(self, db: Session):
         self.db = db
         # Default TTL: 30 days, configurable via environment
-        self.cache_ttl_days = int(os.getenv('INFERENCE_CACHE_TTL_DAYS', '30'))
+        raw_ttl = os.getenv('INFERENCE_CACHE_TTL_DAYS')
+        try:
+            self.cache_ttl_days = int(raw_ttl) if raw_ttl is not None else 30
+        except (TypeError, ValueError):
+            logger.warning("Invalid INFERENCE_CACHE_TTL_DAYS=%r; falling back to default of 30 days", raw_ttl)
+            self.cache_ttl_days = 30
+        if self.cache_ttl_days <= 0:
+            logger.warning("INFERENCE_CACHE_TTL_DAYS=%s <= 0; defaulting to 30 days to avoid purging the entire cache", self.cache_ttl_days)
+            self.cache_ttl_days = 30
 
     def cleanup_expired_entries(self) -> int:
         """Remove cache entries older than TTL"""
-        cutoff_date = datetime.utcnow() - timedelta(days=self.cache_ttl_days)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=self.cache_ttl_days)
 
         result = self.db.execute(
             delete(InferenceCache).where(InferenceCache.created_at < cutoff_date)
@@ -55,7 +63,7 @@ class CacheCleanupService:
 
     def get_cleanup_stats(self) -> dict:
         """Get statistics about cache that would be cleaned up"""
-        cutoff_date = datetime.utcnow() - timedelta(days=self.cache_ttl_days)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=self.cache_ttl_days)
 
         expired_count = self.db.query(InferenceCache).filter(
             InferenceCache.created_at < cutoff_date

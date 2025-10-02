@@ -329,11 +329,15 @@ class InferenceService:
         uncacheable_nodes = 0
 
         # Get database session for cache operations
+        cache_service = None
+        db = None
         try:
             db = next(get_db())
             cache_service = InferenceCacheService(db)
         except Exception as e:
             logger.warning(f"Failed to initialize cache service: {e}. Continuing without cache.")
+            if db:
+                db.close()
             cache_service = None
 
         def replace_referenced_text(
@@ -496,22 +500,25 @@ class InferenceService:
             logger.info(f"Cache hit rate: {cache_hit_rate:.1f}%")
 
             # Run diagnostics on nodes if DEBUG logging is enabled
-            if True:
-                try:
-                    from app.modules.parsing.utils.cache_diagnostics import (
-                        analyze_cache_misses,
-                        log_diagnostics_summary
-                    )
+            
+            try:
+                from app.modules.parsing.utils.cache_diagnostics import (
+                    analyze_cache_misses,
+                    log_diagnostics_summary
+                )
 
-                    # Run diagnostics on the nodes we just processed
-                    diagnostics = analyze_cache_misses(nodes, cache_service.db)
-                    log_diagnostics_summary(diagnostics)
-                except Exception as e:
-                    logger.warning(f"Failed to run cache diagnostics: {e}")
+                # Run diagnostics on the nodes we just processed
+                diagnostics = analyze_cache_misses(nodes, cache_service.db)
+                log_diagnostics_summary(diagnostics)
+            except Exception as e:
+                logger.warning(f"Failed to run cache diagnostics: {e}")
 
         logger.info(f"Batched {batched_nodes} nodes into {len(batches)} batches")
         logger.info(f"Large nodes split: {large_nodes_split}")
         logger.info(f"Batch sizes: {[len(batch) for batch in batches]}")
+
+        if cache_service:
+            cache_service.db.close()
 
         return batches
 
@@ -717,25 +724,28 @@ class InferenceService:
         #     f"DEBUGNEO4J: After get neighbours, Repo ID: {repo_id}, Entry points neighbors: {len(entry_points_neighbors)}"
         # )
         # self.log_graph_stats(repo_id)
-        # Process cached nodes first
-        cached_nodes = [node for node in nodes if node.get('cached_inference')]
+        # Batch nodes (this mutates each node dict with cache-hit metadata)
+        batches = self.batch_nodes(nodes, project_id=repo_id)
+
+        # Process cached nodes after batching so hits are populated
+        cached_nodes = [node for node in nodes if node.get("cached_inference")]
         for node in cached_nodes:
-            # Update Neo4j with cached inference
+            node["project_id"] = repo_id
             await self.update_neo4j_with_cached_inference(node)
 
         logger.info(f"Processed {len(cached_nodes)} cached nodes for project {repo_id}")
-
-        # Batch remaining nodes for LLM processing
-        non_cached_nodes = [node for node in nodes if not node.get('cached_inference')]
-        batches = self.batch_nodes(non_cached_nodes, project_id=repo_id)
         all_docstrings = {"docstrings": []}
 
         # Process LLM batches and cache results
+        cache_service = None
+        result_db = None
         try:
-            db = next(get_db())
-            cache_service = InferenceCacheService(db)
+            result_db = next(get_db())
+            cache_service = InferenceCacheService(result_db)
         except Exception as e:
             logger.warning(f"Failed to initialize cache service for result storage: {e}")
+            if result_db:
+                result_db.close()
             cache_service = None
 
         semaphore = asyncio.Semaphore(self.parallel_requests)
@@ -804,6 +814,10 @@ class InferenceService:
         #     all_docstrings, entry_points_neighbors
         # )
         updated_docstrings = all_docstrings
+
+        if cache_service:
+            cache_service.db.close()
+        
         return updated_docstrings
 
     async def generate_response(
@@ -923,7 +937,14 @@ class InferenceService:
         # Extract inference data
         docstring = cached_inference.get('docstring', '')
         tags = cached_inference.get('tags', [])
-        embedding = self.generate_embedding(docstring)
+        
+        # Reuse cached embedding if available, otherwise generate new one
+        embedding = cached_inference.get('embedding_vector')
+        if embedding is None:
+            logger.debug(f"Generating new embedding for cached inference node {node.get('node_id', 'unknown')}")
+            embedding = self.generate_embedding(docstring)
+        else:
+            logger.debug(f"Reusing cached embedding for node {node.get('node_id', 'unknown')}")
 
         with self.driver.session() as session:
             project = self.project_manager.get_project_from_db_by_id_sync(node.get('project_id', ''))

@@ -22,7 +22,7 @@ def analyze_cache_misses(
         Dictionary with diagnostic information
     """
     diagnostics = {
-        'total_nodes': len(nodes),
+        'total_nodes': 0,
         'missing_node_type': 0,
         'unresolved_references': 0,
         'cache_hits': 0,
@@ -46,6 +46,8 @@ def analyze_cache_misses(
         # Skip nodes with no text
         if not node_text:
             continue
+        
+        diagnostics['total_nodes'] += 1
 
         # Check for missing node_type
         if not node_type:

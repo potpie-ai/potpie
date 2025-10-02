@@ -21,6 +21,18 @@ def upgrade():
     # Existing indexes remain optimal for hash-only lookups
 
 def downgrade():
+    # Pre-cleanup: remove orphaned references so FK creation doesn't fail
+    # If you prefer to retain rows, replace DELETE with UPDATE to set project_id=NULL
+    op.execute(
+        """
+        DELETE FROM inference_cache ic
+        WHERE ic.project_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM projects p WHERE p.id = ic.project_id
+          )
+        """
+    )
+
     # Restore foreign key if needed (for rollback)
     op.create_foreign_key(
         'inference_cache_project_id_fkey',

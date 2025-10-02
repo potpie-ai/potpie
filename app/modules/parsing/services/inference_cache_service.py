@@ -35,7 +35,11 @@ class InferenceCacheService:
             self.db.commit()
 
             logger.debug(f"Cache hit for content_hash: {content_hash}")
-            return cache_entry.inference_data
+            # Include embedding_vector in the returned data for reuse
+            result = cache_entry.inference_data.copy() if cache_entry.inference_data else {}
+            if cache_entry.embedding_vector:
+                result['embedding_vector'] = cache_entry.embedding_vector
+            return result
 
         logger.debug(f"Cache miss for content_hash: {content_hash}")
         return None
