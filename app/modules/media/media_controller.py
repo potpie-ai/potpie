@@ -6,6 +6,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 import io
 
+from app.core.config_provider import config_provider
 from app.modules.media.media_service import MediaService, MediaServiceError
 from app.modules.media.media_schema import (
     AttachmentUploadResponse,
@@ -28,10 +29,22 @@ class MediaController:
         self.media_service = MediaService(db)
         self.share_chat_service = ShareChatService(db)
 
+    def _check_multimodal_enabled(self):
+        """Check if multimodal functionality is enabled"""
+        if not config_provider.get_is_multimodal_enabled():
+            raise HTTPException(
+                status_code=501,
+                detail={
+                    "error": "Multimodal functionality is currently disabled",
+                    "code": "MULTIMODAL_DISABLED",
+                },
+            )
+
     async def upload_image(
         self, file: UploadFile, message_id: Optional[str] = None
     ) -> AttachmentUploadResponse:
-        """Upload an image file"""
+        """Upload image with feature flag check"""
+        self._check_multimodal_enabled()
         try:
             # Validate file
             if not file.filename:
@@ -242,7 +255,8 @@ class MediaController:
             return False
 
     async def test_multimodal_functionality(self, attachment_id: str) -> dict:
-        """Test multimodal functionality for an attachment"""
+        """Test multimodal with feature flag check"""
+        self._check_multimodal_enabled()
         try:
             attachment = await self.media_service.get_attachment(attachment_id)
             if not attachment:

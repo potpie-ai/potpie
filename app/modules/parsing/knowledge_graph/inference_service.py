@@ -549,7 +549,6 @@ class InferenceService:
             logger.info(f"Cache hit rate: {cache_hit_rate:.1f}%")
 
             # Run diagnostics on nodes if DEBUG logging is enabled
-
             try:
                 from app.modules.parsing.utils.cache_diagnostics import (
                     analyze_cache_misses,

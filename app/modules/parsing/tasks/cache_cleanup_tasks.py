@@ -28,6 +28,7 @@ def cleanup_expired_cache_entries(self: Task):
             db.close()
 
 
+
 @celery_app.task(bind=True, name="cache_cleanup.cleanup_least_accessed")
 def cleanup_least_accessed_cache_entries(self: Task, max_entries: int = 100000):
     """Periodic task to clean up least accessed cache entries if cache grows too large"""
@@ -51,6 +52,7 @@ def cleanup_least_accessed_cache_entries(self: Task, max_entries: int = 100000):
     finally:
         if db is not None:
             db.close()
+
 
 
 @celery_app.task(bind=True, name="cache_cleanup.get_stats")

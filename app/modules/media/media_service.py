@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException, UploadFile
 from uuid6 import uuid7
 
+from app.core.config_provider import config_provider
 from app.modules.media.media_model import (
     MessageAttachment,
     AttachmentType,
@@ -47,8 +48,21 @@ class MediaService:
         self.db = db
         self.bucket_name = os.getenv("GCS_BUCKET_NAME", "potpie-media-attachments")
         self.gcs_project_id = os.getenv("GCS_PROJECT_ID")
+        self.is_multimodal_enabled = config_provider.get_is_multimodal_enabled()
 
-        # Initialize GCS client with service account credentials for signed URLs
+        if self.is_multimodal_enabled:
+            # Original GCS initialization logic
+            self._initialize_gcs_client()
+        else:
+            # Multimodal disabled - set None values
+            self.gcs_client = None
+            self.bucket = None
+            logger.info(
+                "Multimodal functionality disabled - GCS client not initialized"
+            )
+
+    def _initialize_gcs_client(self):
+        """Initialize GCS client with existing logic"""
         try:
             service_account_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 
@@ -77,6 +91,15 @@ class MediaService:
             logger.error(f"Failed to initialize GCS client: {str(e)}")
             raise MediaServiceError(f"Failed to initialize cloud storage: {str(e)}")
 
+    def _check_multimodal_enabled(self):
+        """Raise appropriate error if multimodal functionality is disabled"""
+        if not self.is_multimodal_enabled:
+            raise MediaServiceError("Multimodal functionality is disabled")
+
+    def is_multimodal_available(self) -> bool:
+        """Check if multimodal functionality is available"""
+        return self.is_multimodal_enabled
+
     async def upload_image(
         self,
         file: Union[UploadFile, bytes],
@@ -85,6 +108,7 @@ class MediaService:
         message_id: Optional[str] = None,
     ) -> AttachmentUploadResponse:
         """Upload and process an image file"""
+        self._check_multimodal_enabled()
         try:
             # Read file data
             if isinstance(file, UploadFile):
@@ -481,6 +505,7 @@ class MediaService:
 
     async def get_image_as_base64(self, attachment_id: str) -> str:
         """Get image as base64 string for LLM processing"""
+        self._check_multimodal_enabled()
         try:
             attachment = await self.get_attachment(attachment_id)
             if not attachment:
