@@ -36,8 +36,8 @@ class MediaController:
                 status_code=501,
                 detail={
                     "error": "Multimodal functionality is currently disabled",
-                    "code": "MULTIMODAL_DISABLED"
-                }
+                    "code": "MULTIMODAL_DISABLED",
+                },
             )
 
     async def upload_image(
