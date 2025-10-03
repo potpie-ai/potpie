@@ -23,7 +23,12 @@ engine = create_engine(
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Async engine
-ASYNC_DATABASE_URL = os.getenv("POSTGRES_SERVER").replace(
+ASYNC_DATABASE_URL = os.getenv("POSTGRES_SERVER")
+
+if ASYNC_DATABASE_URL is None:
+    raise ValueError("POSTGRES_SERVER environment variable is not set")
+
+ASYNC_DATABASE_URL = ASYNC_DATABASE_URL.replace(
     "postgresql://", "postgresql+asyncpg://"
 )
 

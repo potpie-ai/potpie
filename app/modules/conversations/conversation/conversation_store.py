@@ -2,6 +2,7 @@ from typing import List
 from datetime import datetime, timezone
 from sqlalchemy import select, func, update, delete
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import selectinload
 from app.core.base_store import BaseStore
 from .conversation_model import Conversation
 from ..message.message_model import Message, MessageType
@@ -59,6 +60,8 @@ class ConversationStore(BaseStore):
     async def delete(self, conversation_id: str) -> int:
         stmt = delete(Conversation).where(Conversation.id == conversation_id)
         result = await self.async_db.execute(stmt)
+        await self.async_db.commit()
+        
         return result.rowcount
 
     async def get_for_user(
@@ -74,8 +77,12 @@ class ConversationStore(BaseStore):
         """
         try:
             # Build the base query using the async `select` statement
-            stmt = select(Conversation).where(Conversation.user_id == user_id)
-
+            stmt = (
+                select(Conversation)
+                .where(Conversation.user_id == user_id)
+                # Eagerly load the 'projects' relationship using selectinload
+                .options(selectinload(Conversation.projects))
+            )
             # Validate sort field to prevent errors or injection
             if sort not in ["updated_at", "created_at"]:
                 sort = "updated_at"  # Default to updated_at if invalid
@@ -93,7 +100,7 @@ class ConversationStore(BaseStore):
 
             # Execute the query asynchronously
             result = await self.async_db.execute(stmt)
-            conversations = result.scalars().all()
+            conversations = result.scalars().unique().all()
 
             logger.info(
                 f"Retrieved {len(conversations)} conversations for user {user_id}"
