@@ -61,7 +61,7 @@ class ConversationStore(BaseStore):
         stmt = delete(Conversation).where(Conversation.id == conversation_id)
         result = await self.async_db.execute(stmt)
         await self.async_db.commit()
-        
+
         return result.rowcount
 
     async def get_for_user(
@@ -78,8 +78,7 @@ class ConversationStore(BaseStore):
         try:
             # Build the base query using the async `select` statement
             stmt = (
-                select(Conversation)
-                .where(Conversation.user_id == user_id)
+                select(Conversation).where(Conversation.user_id == user_id)
                 # Eagerly load the 'projects' relationship using selectinload
                 .options(selectinload(Conversation.projects))
             )
