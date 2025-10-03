@@ -957,8 +957,10 @@ class ConversationService:
                 if agent_id in system_agents.keys():
                     agent_ids = conversation.agent_ids
                 else:
-                    custom_agent = await self.custom_agent_service.get_agent_model(agent_id)
-                    
+                    custom_agent = await self.custom_agent_service.get_agent_model(
+                        agent_id
+                    )
+
                     if custom_agent:
                         agent_ids = [custom_agent.role]
 
