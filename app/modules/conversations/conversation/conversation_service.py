@@ -227,13 +227,13 @@ class ConversationService:
             return conversation_id, "Conversation created successfully."
         except IntegrityError as e:
             logger.error(f"IntegrityError in create_conversation: {e}", exc_info=True)
-            await self.sql_db.rollback()
+            self.sql_db.rollback()
             raise ConversationServiceError(
                 "Failed to create conversation due to a database integrity error."
             ) from e
         except Exception as e:
             logger.error(f"Unexpected error in create_conversation: {e}", exc_info=True)
-            await self.sql_db.rollback()
+            self.sql_db.rollback()
             raise ConversationServiceError(
                 "An unexpected error occurred while creating the conversation."
             ) from e
@@ -957,17 +957,8 @@ class ConversationService:
                 if agent_id in system_agents.keys():
                     agent_ids = conversation.agent_ids
                 else:
-                    # result = await self.sql_db.execute(
-                    #     select(CustomAgent).where(CustomAgent.id == agent_id)
-                    # )
-                    custom_agent = await self.custom_agent_service.get_agent_model(
-                        agent_id
-                    )
-                    print(
-                        "[conversation_service] Custom agent query result:",
-                        custom_agent.role,
-                    )
-
+                    custom_agent = await self.custom_agent_service.get_agent_model(agent_id)
+                    
                     if custom_agent:
                         agent_ids = [custom_agent.role]
 
