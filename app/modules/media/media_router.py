@@ -38,8 +38,8 @@ class MediaAPI:
                 detail={
                     "error": "Multimodal functionality is currently disabled",
                     "code": "MULTIMODAL_DISABLED",
-                    "message": "Image upload is not available in this deployment configuration"
-                }
+                    "message": "Image upload is not available in this deployment configuration",
+                },
             )
 
         user_id = user["user_id"]
@@ -185,8 +185,8 @@ class MediaAPI:
                 detail={
                     "error": "Multimodal functionality is currently disabled",
                     "code": "MULTIMODAL_DISABLED",
-                    "message": "Multimodal testing is not available in this deployment configuration"
-                }
+                    "message": "Multimodal testing is not available in this deployment configuration",
+                },
             )
 
         user_id = user["user_id"]
