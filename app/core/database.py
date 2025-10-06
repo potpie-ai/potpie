@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 
 load_dotenv(override=True)
 
+print("Database URL:", os.getenv("POSTGRES_SERVER"))
+
 # Create engine with connection pooling and best practices
 engine = create_engine(
     os.getenv("POSTGRES_SERVER"),
