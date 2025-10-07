@@ -227,13 +227,11 @@ class ConversationService:
             return conversation_id, "Conversation created successfully."
         except IntegrityError as e:
             logger.error(f"IntegrityError in create_conversation: {e}", exc_info=True)
-            self.sql_db.rollback()
             raise ConversationServiceError(
                 "Failed to create conversation due to a database integrity error."
             ) from e
         except Exception as e:
             logger.error(f"Unexpected error in create_conversation: {e}", exc_info=True)
-            self.sql_db.rollback()
             raise ConversationServiceError(
                 "An unexpected error occurred while creating the conversation."
             ) from e
