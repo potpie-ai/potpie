@@ -71,4 +71,5 @@ package-lock.json
 .claude/
 .cursor/
 .taskmaster/
-.thoughts/
+thoughts/
+
