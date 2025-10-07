@@ -1,105 +1,179 @@
+# In tests/conftest.py
+
 import os
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
+from unittest.mock import MagicMock
 
-# Add the project root directory to Python path
 load_dotenv(dotenv_path=".env.test")
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-# Set development mode for testing
 os.environ["isDevelopmentMode"] = "enabled"
 os.environ["defaultUsername"] = "test-user"
 
 import pytest
+import pytest_asyncio
 import httpx
 from httpx import AsyncClient
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+
 from app.main import app
 from app.core.base_model import Base
-from app.core.database import get_db
+from app.core.database import get_db, get_async_db
 from app.modules.auth.auth_service import AuthService
 from app.modules.usage.usage_service import UsageService
-import pytest_asyncio
+from app.modules.users.user_model import User
+from app.modules.projects.projects_model import Project
+from app.modules.conversations.conversation.conversation_model import Conversation, ConversationStatus
+from app.modules.conversations.utils.redis_streaming import RedisStreamManager
 
-# Database setup (remains the same)
-TEST_DATABASE_URL = "postgresql://postgres:mysecretpassword@localhost:5432/momentum_test"
-engine = create_engine(TEST_DATABASE_URL)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# =================================================================
+# 1. DATABASE SETUP FIXTURE
+# =================================================================
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_database():
-    """
-    Handles the safe creation and teardown of a dedicated test database
-    for the entire test session. Includes safety checks to prevent deleting
-    the development database.
-    """
+    """ Handles the safe creation and teardown of the test database for the entire session. """
     TEST_DATABASE_URL = os.getenv("DATABASE_URL")
-    if not TEST_DATABASE_URL:
-        raise ValueError("DATABASE_URL for tests is not set in .env.test")
-
-    db_name = TEST_DATABASE_URL.split('/')[-1]
+    if not TEST_DATABASE_URL or not TEST_DATABASE_URL.endswith("_test"):
+        raise ValueError("FATAL: DATABASE_URL must be set in .env.test and end with '_test'.")
     
-    # --- SAFETY CHECKS ---
-    # 1. Ensure the test database name is not the main database.
-    if db_name == "momentum": # <-- IMPORTANT: Put your main DB name here
-        raise ValueError(
-            "FATAL: Test database name cannot be the same as the development database ('momentum')."
-        )
-    # 2. Enforce that the test database name must end with '_test'.
-    if not db_name.endswith("_test"):
-        raise ValueError(
-            f"FATAL: To prevent accidental data loss, the test database name must end with '_test'. Got: '{db_name}'"
-        )
-
-    # Connect to the default 'postgres' database to create/drop the test DB
+    db_name = TEST_DATABASE_URL.split('/')[-1]
     default_db_url = TEST_DATABASE_URL.replace(f'/{db_name}', '/postgres')
-    default_engine = create_engine(default_db_url, isolation_level="AUTOCOMMIT")
-
-    # --- Teardown and Create ---
-    with default_engine.connect() as conn:
-        print(f"\n--- Dropping test database '{db_name}' (if it exists) ---")
+    
+    with create_engine(default_db_url, isolation_level="AUTOCOMMIT").connect() as conn:
         conn.execute(text(f"DROP DATABASE IF EXISTS {db_name} WITH (FORCE)"))
-        print(f"--- Creating test database '{db_name}' ---")
         conn.execute(text(f"CREATE DATABASE {db_name}"))
     
-    # --- Connect to the new test database to create tables ---
     engine = create_engine(TEST_DATABASE_URL)
-    print(f"--- Creating tables in '{db_name}' ---")
     Base.metadata.create_all(bind=engine)
-
-    # Yield control to the test session
     yield
-
-    # --- Teardown: Drop the test database ---
-    with default_engine.connect() as conn:
-        print(f"\n--- Dropping test database '{db_name}' ---")
+    with create_engine(default_db_url, isolation_level="AUTOCOMMIT").connect() as conn:
         conn.execute(text(f"DROP DATABASE {db_name} WITH (FORCE)"))
 
+# =================================================================
+# 2. SESSION FIXTURES (SYNC & ASYNC)
+# =================================================================
+
+@pytest.fixture(scope="function")
+def db_session() -> Session:
+    """ Provides a standard synchronous SQLAlchemy session for tests. """
+    TEST_DATABASE_URL = os.getenv("DATABASE_URL")
+    engine = create_engine(TEST_DATABASE_URL)
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    session = TestingSessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+
+@pytest_asyncio.fixture(scope="function")
+async def async_db_session() -> AsyncSession:
+    """ Provides an async SQLAlchemy session for tests. """
+    ASYNC_TEST_DATABASE_URL = os.getenv("DATABASE_URL").replace("postgresql://", "postgresql+asyncpg://")
+    engine = create_async_engine(ASYNC_TEST_DATABASE_URL)
+    AsyncTestingSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with AsyncTestingSessionLocal() as session:
+        yield session
+    await engine.dispose()
+
+# =================================================================
+# 3. MOCK FIXTURES (CELERY & REDIS) - RESTORED
+# =================================================================
+
 @pytest.fixture
-def db_session():
-    connection = engine.connect()
-    transaction = connection.begin()
-    session = TestingSessionLocal(bind=connection)
-    yield session
-    session.close()
-    transaction.rollback()
-    connection.close()
+def mock_celery_tasks(monkeypatch):
+    """ Mocks the .delay() method of our Celery tasks. """
+    mock_execute = MagicMock()
+    mock_regenerate = MagicMock()
+    
+    monkeypatch.setattr("app.celery.tasks.agent_tasks.execute_agent_background.delay", mock_execute)
+    monkeypatch.setattr("app.celery.tasks.agent_tasks.execute_regenerate_background.delay", mock_regenerate)
+    
+    return {"execute": mock_execute, "regenerate": mock_regenerate}
+
+@pytest.fixture
+def mock_redis_stream_manager(monkeypatch):
+    """ Mocks the RedisStreamManager to prevent actual Redis connections. """
+    mock_manager = MagicMock(spec=RedisStreamManager)
+    mock_manager.wait_for_task_start.return_value = True
+    mock_manager.redis_client = MagicMock()
+    mock_manager.redis_client.exists.return_value = False
+    
+    monkeypatch.setattr(
+        "app.modules.conversations.utils.redis_streaming.RedisStreamManager", 
+        lambda: mock_manager
+    )
+    return mock_manager
+
+# =================================================================
+# 4. PREREQUISITE DATA FIXTURES
+# =================================================================
+
+@pytest.fixture(scope="function")
+def setup_test_user_committed(db_session: Session):
+    """ Creates a test user and commits it so it's visible to all transactions. """
+    user = db_session.query(User).filter_by(uid="test-user").one_or_none()
+    if not user:
+        user = User(uid="test-user", email="test@example.com")
+        db_session.add(user)
+        db_session.commit()
+    return user
+
+@pytest.fixture(scope="function")
+def setup_test_project_committed(db_session: Session, setup_test_user_committed: User):
+    """ Creates a prerequisite Project record with a valid status. """
+    project = db_session.query(Project).filter_by(id="project-id-123").one_or_none()
+    if not project:
+        project = Project(
+            id="project-id-123",
+            user_id=setup_test_user_committed.uid,
+            repo_name="Test Project Repo",
+            status="ready" # Valid status from your model's CheckConstraint
+        )
+        db_session.add(project)
+        db_session.commit()
+    return project
+
+@pytest.fixture(scope="function")
+def setup_test_conversation_committed(db_session: Session, setup_test_project_committed: Project):
+    """ Creates a prerequisite Conversation record. """
+    conversation = db_session.query(Conversation).filter_by(id="test-convo-123").one_or_none()
+    if not conversation:
+        conversation = Conversation(
+            id="test-convo-123",
+            user_id="test-user",
+            project_ids=["project-id-123"],
+            agent_ids=["default-chat-agent"],
+            title="Initial Test Conversation",
+            status=ConversationStatus.ACTIVE 
+        )
+        db_session.add(conversation)
+        db_session.commit()
+    return conversation
+
+# =================================================================
+# 5. HTTP TEST CLIENT FIXTURE
+# =================================================================
 
 @pytest_asyncio.fixture
-async def client(db_session):
+async def client(db_session: Session, async_db_session: AsyncSession):
+    """ The main test client, correctly overriding both sync and async DB dependencies. """
     def override_get_db():
         yield db_session
+    async def override_get_async_db():
+        yield async_db_session
 
-    # Override only the properly injected services.
-    # The test function will handle MediaService directly.
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_async_db] = override_get_async_db
     app.dependency_overrides[AuthService.check_auth] = lambda: {"user_id": "test-user", "email": "test@example.com"}
     app.dependency_overrides[UsageService.check_usage_limit] = lambda: True
     
-    async with AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-        yield client
+    async with AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+        yield c
     
     app.dependency_overrides.clear()
