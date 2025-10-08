@@ -48,7 +48,7 @@ def setup_test_database():
     """
     # 1. Load the main .env file to get the development DB URL
     # This ensures we have a single source of truth for the DB configuration.
-    load_dotenv() 
+    load_dotenv()
     main_db_url = os.getenv("POSTGRES_SERVER")
 
     if not main_db_url:
@@ -58,7 +58,7 @@ def setup_test_database():
 
     # 2. Programmatically derive the test database URL
     parsed_url = urllib.parse.urlparse(main_db_url)
-    main_db_name = parsed_url.path.lstrip('/')
+    main_db_name = parsed_url.path.lstrip("/")
 
     # 3. --- CRITICAL SAFETY CHECKS ---
     if not main_db_name or "test" in main_db_name:
@@ -72,7 +72,7 @@ def setup_test_database():
     # 4. Build the new URLs for the test database and the admin connection
     # This replaces the path part of the URL with our new test database name.
     test_db_url = parsed_url._replace(path=f"/{test_db_name}").geturl()
-    
+
     # The default/admin URL is used to create/drop the test database itself.
     default_db_url = parsed_url._replace(path="/postgres").geturl()
 
@@ -86,12 +86,12 @@ def setup_test_database():
     # 6. Connect to the new test database to create all tables
     engine = create_engine(test_db_url)
     Base.metadata.create_all(bind=engine)
-    
+
     # Set the derived URL in the environment; this helps other fixtures use the correct URL.
     os.environ["DATABASE_URL"] = test_db_url
-    
-    yield # Run all tests in the session
-    
+
+    yield  # Run all tests in the session
+
     # 7. Teardown: Drop the test database after the session is complete
     with create_engine(default_db_url, isolation_level="AUTOCOMMIT").connect() as conn:
         print(f"\n--- Dropping test database '{test_db_name}' ---")
