@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 from unittest.mock import MagicMock
+import urllib.parse
 
 load_dotenv(dotenv_path=".env.test")
 project_root = Path(__file__).parent.parent
@@ -41,25 +42,60 @@ from app.modules.conversations.utils.redis_streaming import RedisStreamManager
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_database():
-    """Handles the safe creation and teardown of the test database for the entire session."""
-    TEST_DATABASE_URL = os.getenv("DATABASE_URL")
-    if not TEST_DATABASE_URL or not TEST_DATABASE_URL.endswith("_test"):
+    """
+    Handles the safe, automatic creation and teardown of a dedicated test database
+    for the entire test session by deriving the name from the main DATABASE_URL.
+    """
+    # 1. Load the main .env file to get the development DB URL
+    # This ensures we have a single source of truth for the DB configuration.
+    load_dotenv() 
+    main_db_url = os.getenv("POSTGRES_SERVER")
+
+    if not main_db_url:
         raise ValueError(
-            "FATAL: DATABASE_URL must be set in .env.test and end with '_test'."
+            "FATAL: DATABASE_URL not found in your .env file. Cannot derive test database URL."
         )
 
-    db_name = TEST_DATABASE_URL.split("/")[-1]
-    default_db_url = TEST_DATABASE_URL.replace(f"/{db_name}", "/postgres")
+    # 2. Programmatically derive the test database URL
+    parsed_url = urllib.parse.urlparse(main_db_url)
+    main_db_name = parsed_url.path.lstrip('/')
 
+    # 3. --- CRITICAL SAFETY CHECKS ---
+    if not main_db_name or "test" in main_db_name:
+        raise ValueError(
+            f"FATAL: The main database '{main_db_name}' looks like a test database. "
+            "Refusing to proceed to prevent data loss."
+        )
+
+    test_db_name = f"{main_db_name}_test"
+
+    # 4. Build the new URLs for the test database and the admin connection
+    # This replaces the path part of the URL with our new test database name.
+    test_db_url = parsed_url._replace(path=f"/{test_db_name}").geturl()
+    
+    # The default/admin URL is used to create/drop the test database itself.
+    default_db_url = parsed_url._replace(path="/postgres").geturl()
+
+    # 5. Connect, Drop (if exists), and Create the Test Database
     with create_engine(default_db_url, isolation_level="AUTOCOMMIT").connect() as conn:
-        conn.execute(text(f"DROP DATABASE IF EXISTS {db_name} WITH (FORCE)"))
-        conn.execute(text(f"CREATE DATABASE {db_name}"))
+        print(f"\n--- Dropping test database '{test_db_name}' (if it exists) ---")
+        conn.execute(text(f"DROP DATABASE IF EXISTS {test_db_name} WITH (FORCE)"))
+        print(f"--- Creating test database '{test_db_name}' ---")
+        conn.execute(text(f"CREATE DATABASE {test_db_name}"))
 
-    engine = create_engine(TEST_DATABASE_URL)
+    # 6. Connect to the new test database to create all tables
+    engine = create_engine(test_db_url)
     Base.metadata.create_all(bind=engine)
-    yield
+    
+    # Set the derived URL in the environment; this helps other fixtures use the correct URL.
+    os.environ["DATABASE_URL"] = test_db_url
+    
+    yield # Run all tests in the session
+    
+    # 7. Teardown: Drop the test database after the session is complete
     with create_engine(default_db_url, isolation_level="AUTOCOMMIT").connect() as conn:
-        conn.execute(text(f"DROP DATABASE {db_name} WITH (FORCE)"))
+        print(f"\n--- Dropping test database '{test_db_name}' ---")
+        conn.execute(text(f"DROP DATABASE {test_db_name} WITH (FORCE)"))
 
 
 # =================================================================
