@@ -155,11 +155,6 @@ class MainApp:
         self.app.add_event_handler("startup", self.startup_event)
         return self.app
 
-    def run(self):
-        self.add_health_check()
-        self.app.add_event_handler("startup", self.startup_event)
-        return self.app
-
 
 # Create an instance of MainApp and run it
 main_app = MainApp()
