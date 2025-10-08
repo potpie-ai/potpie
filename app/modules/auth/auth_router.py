@@ -54,36 +54,65 @@ class AuthAPI:
     async def signup(request: Request, db: Session = Depends(get_db)):
         body = json.loads(await request.body())
         uid = body["uid"]
-        oauth_token = body["accessToken"]
         user_service = UserService(db)
+
+        # Detect provider type from request body
+        provider = body.get("provider", "github")  # Default to github for backward compatibility
+
+        # Get optional fields with defaults
+        oauth_token = body.get("accessToken")  # None for email/password sign-in
+        provider_username = body.get("providerUsername")  # None for email/password
+
         user = user_service.get_user_by_uid(uid)
         if user:
-            message, error = user_service.update_last_login(uid, oauth_token)
-            if error:
-                return Response(content=message, status_code=400)
+            # Existing user - update last login
+            if oauth_token:
+                # Only update OAuth token if provided (GitHub OAuth login)
+                message, error = user_service.update_last_login(uid, oauth_token)
+                if error:
+                    return Response(content=message, status_code=400)
             else:
-                return Response(
-                    content=json.dumps({"uid": uid, "exists": True}),
-                    status_code=200,
-                )
+                # Email/password login - just update timestamp
+                user.last_login_at = datetime.utcnow()
+                db.commit()
+
+            return Response(
+                content=json.dumps({"uid": uid, "exists": True}),
+                status_code=200,
+            )
         else:
+            # New user - create account
             first_login = datetime.utcnow()
-            provider_info = body["providerData"][0]
-            provider_info["access_token"] = oauth_token
+
+            # Build provider_info based on provider type
+            if provider == "email":
+                # Email/password sign-in: minimal provider_info
+                provider_info = {
+                    "providerId": "email",
+                    "uid": uid,
+                    "displayName": body.get("displayName", body["email"].split("@")[0]),
+                    "email": body["email"],
+                }
+            else:
+                # GitHub OAuth: use providerData and accessToken
+                provider_info = body.get("providerData", [{}])[0]
+                if oauth_token:
+                    provider_info["access_token"] = oauth_token
+
             user = CreateUser(
                 uid=uid,
                 email=body["email"],
-                display_name=body["displayName"],
-                email_verified=body["emailVerified"],
+                display_name=body.get("displayName", body["email"].split("@")[0]),
+                email_verified=body.get("emailVerified", False),
                 created_at=first_login,
                 last_login_at=first_login,
                 provider_info=provider_info,
-                provider_username=body["providerUsername"],
+                provider_username=provider_username or "email_user",  # Default for email sign-in
             )
             uid, message, error = user_service.create_user(user)
 
             await send_slack_message(
-                f"New signup: {body['email']} ({body['displayName']})"
+                f"New signup: {body['email']} ({body.get('displayName', 'N/A')}) via {provider}"
             )
 
             PostHogClient().send_event(
@@ -91,8 +120,9 @@ class AuthAPI:
                 "signup_event",
                 {
                     "email": body["email"],
-                    "display_name": body["displayName"],
-                    "github_username": body["providerUsername"],
+                    "display_name": body.get("displayName", "N/A"),
+                    "provider": provider,
+                    "github_username": provider_username,
                 },
             )
             if error:
