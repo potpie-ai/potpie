@@ -23,8 +23,7 @@ github_app_auth_router = APIRouter()
 class GitHubAppAuthAPI:
     @github_app_auth_router.post("/github-app/generate-token")
     async def generate_github_app_token(
-        request: Request,
-        db: Session = Depends(get_db)
+        request: Request, db: Session = Depends(get_db)
     ):
         """
         Generate a GitHub App user token for the authenticated user.
@@ -56,22 +55,26 @@ class GitHubAppAuthAPI:
             )
 
         except HTTPException as he:
-            logger.error(f"HTTP error generating GitHub App token for user: {he.detail}")
+            logger.error(
+                f"HTTP error generating GitHub App token for user: {he.detail}"
+            )
             return JSONResponse(
                 content={"success": False, "error": he.detail},
-                status_code=he.status_code
+                status_code=he.status_code,
             )
         except Exception as e:
             logger.error(f"Unexpected error generating GitHub App token: {str(e)}")
             return JSONResponse(
-                content={"success": False, "error": "Failed to generate GitHub App token"},
-                status_code=500
+                content={
+                    "success": False,
+                    "error": "Failed to generate GitHub App token",
+                },
+                status_code=500,
             )
 
     @github_app_auth_router.get("/github-app/status")
     async def get_github_app_token_status(
-        request: Request,
-        db: Session = Depends(get_db)
+        request: Request, db: Session = Depends(get_db)
     ):
         """
         Get the GitHub App token status for the authenticated user.
@@ -101,21 +104,16 @@ class GitHubAppAuthAPI:
         except HTTPException as he:
             logger.error(f"HTTP error getting token status: {he.detail}")
             return JSONResponse(
-                content={"error": he.detail},
-                status_code=he.status_code
+                content={"error": he.detail}, status_code=he.status_code
             )
         except Exception as e:
             logger.error(f"Unexpected error getting token status: {str(e)}")
             return JSONResponse(
-                content={"error": "Failed to get token status"},
-                status_code=500
+                content={"error": "Failed to get token status"}, status_code=500
             )
 
     @github_app_auth_router.post("/github-app/refresh")
-    async def refresh_github_app_token(
-        request: Request,
-        db: Session = Depends(get_db)
-    ):
+    async def refresh_github_app_token(request: Request, db: Session = Depends(get_db)):
         """
         Refresh the GitHub App user token for the authenticated user.
 
@@ -154,11 +152,11 @@ class GitHubAppAuthAPI:
             logger.error(f"HTTP error refreshing token: {he.detail}")
             return JSONResponse(
                 content={"success": False, "error": he.detail},
-                status_code=he.status_code
+                status_code=he.status_code,
             )
         except Exception as e:
             logger.error(f"Unexpected error refreshing token: {str(e)}")
             return JSONResponse(
                 content={"success": False, "error": "Failed to refresh token"},
-                status_code=500
+                status_code=500,
             )
