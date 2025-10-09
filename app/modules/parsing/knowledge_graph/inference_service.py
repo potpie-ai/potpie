@@ -42,6 +42,29 @@ class InferenceService:
         self.search_service = SearchService(db)
         self.project_manager = ProjectService(db)
         self.parallel_requests = int(os.getenv("PARALLEL_REQUESTS", 50))
+        self._token_encodings: Dict[str, Any] = {}
+        self._disallowed_special = frozenset()
+        self._fallback_encoding_name = "cl100k_base"
+
+    def _get_encoding(self, model: str):
+        """Return a cached encoding for the requested model."""
+        cache = getattr(self, "_token_encodings", None)
+        if cache is None:
+            cache = {}
+            self._token_encodings = cache
+
+        if model not in cache:
+            try:
+                cache[model] = tiktoken.encoding_for_model(model)
+            except KeyError:
+                fallback_name = getattr(self, "_fallback_encoding_name", "cl100k_base")
+                logger.warning(
+                    "Warning: model %s not found. Using %s encoding.",
+                    model,
+                    fallback_name,
+                )
+                cache[model] = tiktoken.get_encoding(fallback_name)
+        return cache[model]
 
     def close(self):
         self.driver.close()
@@ -89,12 +112,9 @@ class InferenceService:
             )
             string = str(string)
 
-        try:
-            encoding = tiktoken.encoding_for_model(model)
-        except KeyError:
-            logger.warning("Warning: model not found. Using cl100k_base encoding.")
-            encoding = tiktoken.get_encoding("cl100k_base")
-        return len(encoding.encode(string, disallowed_special=set()))
+        encoding = self._get_encoding(model)
+        disallowed = getattr(self, "_disallowed_special", frozenset())
+        return len(encoding.encode(string, disallowed_special=disallowed))
 
     def fetch_graph(self, repo_id: str) -> List[Dict]:
         batch_size = 500
@@ -212,44 +232,57 @@ class InferenceService:
         model = "gpt-4"  # Should be configurable
         max_chunk_tokens = max_tokens // 2  # Reserve space for prompt
 
-        # Try to split by logical boundaries (functions, classes, etc.)
+        if not node_text:
+            return []
+
         lines = node_text.split("\n")
-        chunks = []
-        current_chunk_lines = []
-        current_tokens = 0
+        encoding = self._get_encoding(model)
+        disallowed = getattr(self, "_disallowed_special", frozenset())
 
+        first_line_tokens = []
+        subsequent_line_tokens = []
         for line in lines:
-            test_chunk = "\n".join(current_chunk_lines + [line])
-            test_tokens = self.num_tokens_from_string(test_chunk, model)
+            first_line_tokens.append(
+                len(encoding.encode(line, disallowed_special=disallowed))
+            )
+            subsequent_line_tokens.append(
+                len(encoding.encode(f"\n{line}", disallowed_special=disallowed))
+            )
 
-            if test_tokens > max_chunk_tokens and current_chunk_lines:
-                # Save current chunk and start new one
-                chunks.append(
-                    {
-                        "text": "\n".join(current_chunk_lines),
-                        "node_id": f"{node_id}_chunk_{len(chunks)}",
-                        "is_chunk": True,
-                        "parent_node_id": node_id,
-                        "chunk_index": len(chunks),
-                    }
-                )
-                current_chunk_lines = [line]
-                current_tokens = self.num_tokens_from_string(line, model)
-            else:
-                current_chunk_lines.append(line)
-                current_tokens = test_tokens
+        chunks: List[Dict[str, Any]] = []
+        current_chunk_lines: List[str] = []
+        current_chunk_tokens = 0
 
-        # Add final chunk
-        if current_chunk_lines:
+        def append_chunk() -> None:
+            chunk_text = "\n".join(current_chunk_lines)
             chunks.append(
                 {
-                    "text": "\n".join(current_chunk_lines),
+                    "text": chunk_text,
                     "node_id": f"{node_id}_chunk_{len(chunks)}",
                     "is_chunk": True,
                     "parent_node_id": node_id,
                     "chunk_index": len(chunks),
+                    "token_count": current_chunk_tokens,
                 }
             )
+
+        for index, line in enumerate(lines):
+            line_tokens = (
+                first_line_tokens[index]
+                if not current_chunk_lines
+                else subsequent_line_tokens[index]
+            )
+
+            if current_chunk_lines and current_chunk_tokens + line_tokens > max_chunk_tokens:
+                append_chunk()
+                current_chunk_lines = [line]
+                current_chunk_tokens = first_line_tokens[index]
+            else:
+                current_chunk_lines.append(line)
+                current_chunk_tokens += line_tokens
+
+        if current_chunk_lines:
+            append_chunk()
 
         return chunks
 
@@ -367,12 +400,16 @@ class InferenceService:
                 db.close()
             cache_service = None
 
+        placeholder_prefix = "Code replaced for brevity. See node_id "
+
         def replace_referenced_text(
             text: str, node_dict: Dict[str, Dict[str, str]]
         ) -> str:
             # Handle None input gracefully
             if text is None:
                 return ""
+            if placeholder_prefix not in text:
+                return text
 
             pattern = r"Code replaced for brevity\. See node_id ([a-f0-9]+)"
             regex = re.compile(pattern)
@@ -415,6 +452,7 @@ class InferenceService:
             updated_text = replace_referenced_text(node.get("text"), node_dict)
             node["content_length"] = len(updated_text)
             node_tokens = self.num_tokens_from_string(updated_text, model)
+            node["token_count"] = node_tokens
 
             # Check if content is cacheable and look for cached inference
             if cache_service and is_content_cacheable(updated_text):
@@ -496,7 +534,11 @@ class InferenceService:
 
                 # Process each chunk as a separate node
                 for chunk in node_chunks:
-                    chunk_tokens = self.num_tokens_from_string(chunk["text"], model)
+                    chunk_tokens = chunk.pop("token_count", None)
+                    if chunk_tokens is None:
+                        chunk_tokens = self.num_tokens_from_string(
+                            chunk["text"], model
+                        )
 
                     if current_tokens + chunk_tokens > max_tokens:
                         if current_batch:
@@ -548,16 +590,8 @@ class InferenceService:
         # Enhanced logging with cache metrics
         total_nodes = len(nodes)
         batched_nodes = sum(len(batch) for batch in batches)
-        large_nodes_split = len(
-            [
-                n
-                for n in nodes
-                if n.get("text")
-                and self.num_tokens_from_string(
-                    replace_referenced_text(n.get("text", ""), node_dict) or "", model
-                )
-                > max_tokens
-            ]
+        large_nodes_split = sum(
+            1 for n in nodes if n.get("token_count", 0) > max_tokens
         )
 
         if cache_service:
