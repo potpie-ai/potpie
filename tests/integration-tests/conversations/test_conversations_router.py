@@ -69,7 +69,7 @@ async def test_create_conversation_creates_record_and_system_message(
     client,
     db_session: Session,
     setup_test_user_committed: User,
-    setup_test_project_committed: Project,  # Depend on both fixtures
+    conversation_project: Project,  # Depend on both fixtures
 ):
     """
     Integration Test for POST /conversations/
