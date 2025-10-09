@@ -413,6 +413,7 @@ class InferenceService:
                 continue
 
             updated_text = replace_referenced_text(node.get("text"), node_dict)
+            node["content_length"] = len(updated_text)
             node_tokens = self.num_tokens_from_string(updated_text, model)
 
             # Check if content is cacheable and look for cached inference
@@ -470,6 +471,25 @@ class InferenceService:
                 logger.info(
                     f"Node {node['node_id']} exceeds token limit ({node_tokens} tokens). Splitting into chunks..."
                 )
+
+                parent_cache_metadata = {
+                    "parent_node_id": node["node_id"],
+                    "parent_content_hash": None,
+                    "parent_should_cache": False,
+                    "content_length": len(updated_text),
+                    "node_type": node.get("node_type"),
+                }
+
+                if cache_service and is_content_cacheable(updated_text):
+                    parent_content_hash = generate_content_hash(
+                        updated_text, node.get("node_type")
+                    )
+                    parent_cache_metadata["parent_content_hash"] = parent_content_hash
+                    parent_cache_metadata["parent_should_cache"] = True
+                    logger.debug(
+                        f"Parent node {node['node_id'][:8]} will cache with hash {parent_content_hash[:12]}"
+                    )
+
                 node_chunks = self.split_large_node(
                     updated_text, node["node_id"], max_tokens
                 )
@@ -484,19 +504,18 @@ class InferenceService:
                         current_batch = []
                         current_tokens = 0
 
+                    chunk_metadata = {
+                        "is_chunk": True,
+                        "parent_node_id": chunk["parent_node_id"],
+                        "chunk_index": chunk.get("chunk_index", 0),
+                        **parent_cache_metadata,
+                    }
+
                     current_batch.append(
                         DocstringRequest(
                             node_id=chunk["node_id"],
                             text=chunk["text"],
-                            metadata={
-                                "is_chunk": True,
-                                "parent_node_id": chunk["parent_node_id"],
-                                "chunk_index": chunk.get("chunk_index", 0),
-                                "should_cache": True,
-                                "content_hash": generate_content_hash(
-                                    chunk["text"], "chunk"
-                                ),
-                            },
+                            metadata=chunk_metadata,
                         )
                     )
                     current_tokens += chunk_tokens
@@ -562,7 +581,9 @@ class InferenceService:
                 logger.warning(f"Failed to run cache diagnostics: {e}")
 
         logger.info(f"Batched {batched_nodes} nodes into {len(batches)} batches")
-        logger.info(f"Large nodes split: {large_nodes_split}")
+        logger.info(
+            f"Large nodes: {large_nodes_split} will be split and cached as parent nodes"
+        )
         logger.info(f"Batch sizes: {[len(batch) for batch in batches]}")
 
         if cache_service:
@@ -814,33 +835,57 @@ class InferenceService:
 
                     if isinstance(response, DocstringResponse):
                         # Store results in cache and Neo4j
+                        parent_metadata_map = {}
+                        for original_request in batch:
+                            original_metadata = original_request.metadata or {}
+                            if (
+                                original_metadata.get("is_chunk")
+                                and original_metadata.get("parent_node_id")
+                            ):
+                                parent_id = original_metadata.get("parent_node_id")
+                                parent_metadata_map.setdefault(parent_id, original_metadata)
+
                         for request, docstring_result in zip(
                             batch, response.docstrings
                         ):
                             metadata = request.metadata or {}
 
-                            # Store in cache if eligible
+                            if metadata.get("is_chunk"):
+                                logger.debug(
+                                    f"Skipping cache storage for chunk {request.node_id} - parent will be cached after consolidation"
+                                )
+                                continue
+
                             if (
                                 cache_service
                                 and metadata.get("should_cache")
                                 and metadata.get("content_hash")
                             ):
                                 try:
-                                    # Convert DocstringResult to dictionary for caching
+                                    embedding = self.generate_embedding(
+                                        docstring_result.docstring or ""
+                                    )
+
                                     inference_data = {
                                         "node_id": docstring_result.node_id,
                                         "docstring": docstring_result.docstring,
                                         "tags": docstring_result.tags,
                                     }
 
-                                    # project_id stored for metadata/tracing only
                                     cache_service.store_inference(
                                         content_hash=metadata["content_hash"],
                                         inference_data=inference_data,
+                                        embedding_vector=embedding,
                                         project_id=repo_id,  # Metadata only
                                         node_type=metadata.get("node_type"),
-                                        content_length=len(request.text),
+                                        content_length=metadata.get(
+                                            "content_length", len(request.text)
+                                        ),
                                         tags=docstring_result.tags,
+                                    )
+
+                                    logger.debug(
+                                        f"✅ Cached node {request.node_id[:8]} with embedding"
                                     )
                                 except Exception as cache_error:
                                     logger.warning(
@@ -851,6 +896,56 @@ class InferenceService:
                         processed_response = self.process_chunk_responses(
                             response, batch
                         )
+                        if processed_response and cache_service:
+                            stored_parent_hashes = set()
+                            for docstring_result in processed_response.docstrings:
+                                parent_metadata = parent_metadata_map.get(
+                                    docstring_result.node_id
+                                )
+                                if not parent_metadata:
+                                    continue
+
+                                parent_hash = parent_metadata.get("parent_content_hash")
+                                if (
+                                    not parent_metadata.get("parent_should_cache")
+                                    or not parent_hash
+                                ):
+                                    continue
+
+                                if parent_hash in stored_parent_hashes:
+                                    continue
+
+                                try:
+                                    embedding = self.generate_embedding(
+                                        docstring_result.docstring or ""
+                                    )
+
+                                    cache_service.store_inference(
+                                        content_hash=parent_hash,
+                                        inference_data={
+                                            "node_id": docstring_result.node_id,
+                                            "docstring": docstring_result.docstring,
+                                            "tags": docstring_result.tags,
+                                        },
+                                        embedding_vector=embedding,
+                                        project_id=repo_id,
+                                        node_type=parent_metadata.get("node_type"),
+                                        content_length=parent_metadata.get(
+                                            "content_length"
+                                        ),
+                                        tags=docstring_result.tags,
+                                    )
+
+                                    logger.info(
+                                        f"✅ Cached consolidated parent node {docstring_result.node_id[:8]} "
+                                        f"with hash {parent_hash[:12]} and embedding"
+                                    )
+                                    stored_parent_hashes.add(parent_hash)
+                                except Exception as cache_error:
+                                    logger.warning(
+                                        f"Failed to cache parent node {docstring_result.node_id}: {cache_error}"
+                                    )
+
                         if processed_response:
                             self.update_neo4j_with_docstrings(
                                 repo_id, processed_response
