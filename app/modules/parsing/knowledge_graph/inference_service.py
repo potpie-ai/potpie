@@ -273,7 +273,10 @@ class InferenceService:
                 else subsequent_line_tokens[index]
             )
 
-            if current_chunk_lines and current_chunk_tokens + line_tokens > max_chunk_tokens:
+            if (
+                current_chunk_lines
+                and current_chunk_tokens + line_tokens > max_chunk_tokens
+            ):
                 append_chunk()
                 current_chunk_lines = [line]
                 current_chunk_tokens = first_line_tokens[index]
@@ -536,9 +539,7 @@ class InferenceService:
                 for chunk in node_chunks:
                     chunk_tokens = chunk.pop("token_count", None)
                     if chunk_tokens is None:
-                        chunk_tokens = self.num_tokens_from_string(
-                            chunk["text"], model
-                        )
+                        chunk_tokens = self.num_tokens_from_string(chunk["text"], model)
 
                     if current_tokens + chunk_tokens > max_tokens:
                         if current_batch:
@@ -872,12 +873,13 @@ class InferenceService:
                         parent_metadata_map = {}
                         for original_request in batch:
                             original_metadata = original_request.metadata or {}
-                            if (
-                                original_metadata.get("is_chunk")
-                                and original_metadata.get("parent_node_id")
-                            ):
+                            if original_metadata.get(
+                                "is_chunk"
+                            ) and original_metadata.get("parent_node_id"):
                                 parent_id = original_metadata.get("parent_node_id")
-                                parent_metadata_map.setdefault(parent_id, original_metadata)
+                                parent_metadata_map.setdefault(
+                                    parent_id, original_metadata
+                                )
 
                         for request, docstring_result in zip(
                             batch, response.docstrings
