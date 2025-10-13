@@ -583,6 +583,7 @@ class ConversationAPI:
             "0-0", description="Stream cursor position to resume from"
         ),
         db: Session = Depends(get_db),
+        async_db: AsyncSession = Depends(get_async_db),
         user=Depends(AuthService.check_auth),
     ):
         """Resume streaming from an existing session"""
@@ -590,7 +591,7 @@ class ConversationAPI:
         user_email = user["email"]
 
         # Verify user has access to conversation
-        controller = ConversationController(db, user_id, user_email)
+        controller = ConversationController(db, async_db, user_id, user_email)
         try:
             await controller.get_conversation_info(conversation_id)
         except Exception as e:
