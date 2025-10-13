@@ -20,6 +20,14 @@ class ConfigProvider:
         self.google_application_credentials = os.getenv(
             "GOOGLE_APPLICATION_CREDENTIALS"
         )
+        self.object_storage_provider = os.getenv(
+            "OBJECT_STORAGE_PROVIDER", "auto"
+        ).lower()
+
+        self.s3_bucket_name = os.getenv("S3_BUCKET_NAME")
+        self.aws_region = os.getenv("AWS_REGION")
+        self.aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
+        self.aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
 
     def get_neo4j_config(self):
         return self.neo4j_config
@@ -111,23 +119,44 @@ class ConfigProvider:
         - "enabled": Force enabled (requires GCP vars, will fail if missing)
         - "auto": Automatic detection based on GCP variable presence (default)
         """
+
         if self.is_multimodal_enabled.lower() == "disabled":
             return False
-        elif self.is_multimodal_enabled.lower() == "enabled":
+        if self.is_multimodal_enabled.lower() == "enabled":
             return True
         else:  # "auto" mode
-            return self._detect_gcp_dependencies()
+            return self._detect_object_storage_dependencies()
 
-    def _detect_gcp_dependencies(self) -> bool:
-        """Detect if all required GCP dependencies are available"""
-        return all(
+    def get_media_storage_backend(self) -> str:
+        _, backend = self._detect_object_storage_dependencies()
+        return backend
+
+    def _detect_object_storage_dependencies(self) -> tuple[bool, str]:
+        gcs_ready = all(
             [
                 self.gcp_project_id,
-                self.gcp_bucket_name,  # Can use default but check if set
+                self.gcp_bucket_name,
                 self.google_application_credentials
                 and os.path.exists(self.google_application_credentials),
             ]
         )
+        s3_ready = all(
+            [
+                self.s3_bucket_name,
+                self.aws_region,
+                self.aws_access_key,
+                self.aws_secret_key,
+            ]
+        )
+        if self.object_storage_provider == "gcs":
+            return gcs_ready, "gcs"
+        if self.object_storage_provider == "s3":
+            return s3_ready, "s3"
+        if gcs_ready:
+            return True, "gcs"
+        if s3_ready:
+            return True, "s3"
+        return False, "none"
 
     @staticmethod
     def get_stream_ttl_secs() -> int:
