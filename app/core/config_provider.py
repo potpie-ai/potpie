@@ -20,8 +20,9 @@ class ConfigProvider:
         self.google_application_credentials = os.getenv(
             "GOOGLE_APPLICATION_CREDENTIALS"
         )
-        self.object_storage_provider = os.getenv("OBJECT_STORAGE_PROVIDER",
-            "auto").lower()
+        self.object_storage_provider = os.getenv(
+            "OBJECT_STORAGE_PROVIDER", "auto"
+        ).lower()
 
         self.s3_bucket_name = os.getenv("S3_BUCKET_NAME")
         self.aws_region = os.getenv("AWS_REGION")
@@ -131,18 +132,22 @@ class ConfigProvider:
         return backend
 
     def _detect_object_storage_dependencies(self) -> tuple[bool, str]:
-        gcs_ready = all([
-            self.gcp_project_id,
-            self.gcp_bucket_name,
-            self.google_application_credentials
-            and os.path.exists(self.google_application_credentials),
-        ])
-        s3_ready = all([
-            self.s3_bucket_name,
-            self.aws_region,
-            self.aws_access_key,
-            self.aws_secret_key,
-        ])
+        gcs_ready = all(
+            [
+                self.gcp_project_id,
+                self.gcp_bucket_name,
+                self.google_application_credentials
+                and os.path.exists(self.google_application_credentials),
+            ]
+        )
+        s3_ready = all(
+            [
+                self.s3_bucket_name,
+                self.aws_region,
+                self.aws_access_key,
+                self.aws_secret_key,
+            ]
+        )
         if self.object_storage_provider == "gcs":
             return gcs_ready, "gcs"
         if self.object_storage_provider == "s3":
@@ -151,7 +156,7 @@ class ConfigProvider:
             return True, "gcs"
         if s3_ready:
             return True, "s3"
-        return False, "none"        
+        return False, "none"
 
     @staticmethod
     def get_stream_ttl_secs() -> int:
