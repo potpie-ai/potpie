@@ -171,7 +171,7 @@ async def create_conversation_and_message(
     if message.agent_id is None:
         message.agent_id = "codebase_qna_agent"
 
-    controller = ConversationController(db, async_db ,user_id, None)
+    controller = ConversationController(db, async_db, user_id, None)
 
     # Create conversation with hidden parameter
     res = await controller.create_conversation(
