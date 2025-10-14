@@ -5,7 +5,7 @@ Handles GitHub App user token lifecycle endpoints.
 """
 
 import logging
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -24,6 +24,7 @@ class GitHubAppAuthAPI:
     @github_app_auth_router.post("/github-app/generate-token")
     async def generate_github_app_token(
         request: Request,
+        response: Response,
         db: Session = Depends(get_db)
     ):
         """
@@ -34,7 +35,7 @@ class GitHubAppAuthAPI:
         """
         try:
             # Get authenticated user
-            user_data = await AuthService.check_auth(request, None)
+            user_data = await AuthService.check_auth(request, response)
             user_id = user_data["user_id"]
 
             github_service = GithubService(db)
@@ -71,6 +72,7 @@ class GitHubAppAuthAPI:
     @github_app_auth_router.get("/github-app/status")
     async def get_github_app_token_status(
         request: Request,
+        response: Response,
         db: Session = Depends(get_db)
     ):
         """
@@ -80,7 +82,7 @@ class GitHubAppAuthAPI:
         """
         try:
             # Get authenticated user
-            user_data = await AuthService.check_auth(request, None)
+            user_data = await AuthService.check_auth(request, response)
             user_id = user_data["user_id"]
 
             token_service = TokenService(db)
@@ -114,6 +116,7 @@ class GitHubAppAuthAPI:
     @github_app_auth_router.post("/github-app/refresh")
     async def refresh_github_app_token(
         request: Request,
+        response: Response,
         db: Session = Depends(get_db)
     ):
         """
@@ -124,7 +127,7 @@ class GitHubAppAuthAPI:
         """
         try:
             # Get authenticated user
-            user_data = await AuthService.check_auth(request, None)
+            user_data = await AuthService.check_auth(request, response)
             user_id = user_data["user_id"]
 
             token_service = TokenService(db)
