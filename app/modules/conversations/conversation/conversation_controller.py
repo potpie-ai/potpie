@@ -204,8 +204,7 @@ class ConversationController:
 
                 response.append(
                     UserConversationListResponse(
-                        id=conversation.id,
-                        user_id=conversation.user_id,
+                        id=conversation.id,                        
                         title=conversation.title,
                         status=conversation.status,
                         project_ids=conversation.project_ids,
@@ -214,7 +213,6 @@ class ConversationController:
                         agent_id=display_agent_id,
                         created_at=conversation.created_at.isoformat(),
                         updated_at=conversation.updated_at.isoformat(),
-                        shared_with_emails=conversation.shared_with_emails,
                     )
                 )
 

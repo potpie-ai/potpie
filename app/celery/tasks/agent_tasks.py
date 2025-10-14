@@ -86,54 +86,54 @@ def execute_agent_background(
                     },
                 )
 
-            # Store the user message and generate AI response
-            async for chunk in service.store_message(
-                conversation_id,
-                message_request,
-                MessageType.HUMAN,
-                user_id,
-                stream=True,
-            ):
-                # Check for cancellation
-                if redis_manager.check_cancellation(conversation_id, run_id):
-                    logger.info(
-                        f"Agent execution cancelled: {conversation_id}:{run_id}"
-                    )
+                # Store the user message and generate AI response
+                async for chunk in service.store_message(
+                    conversation_id,
+                    message_request,
+                    MessageType.HUMAN,
+                    user_id,
+                    stream=True,
+                ):
+                    # Check for cancellation
+                    if redis_manager.check_cancellation(conversation_id, run_id):
+                        logger.info(
+                            f"Agent execution cancelled: {conversation_id}:{run_id}"
+                        )
+                        redis_manager.publish_event(
+                            conversation_id,
+                            run_id,
+                            "end",
+                            {
+                                "status": "cancelled",
+                                "message": "Generation cancelled by user",
+                            },
+                        )
+                        return
+
+                    # Publish chunk event
+
+                    # Properly serialize tool calls before sending through Redis
+                    serialized_tool_calls = []
+                    if chunk.tool_calls:
+                        for tool_call in chunk.tool_calls:
+                            if hasattr(tool_call, "model_dump"):
+                                serialized_tool_calls.append(tool_call.model_dump())
+                            elif hasattr(tool_call, "dict"):
+                                serialized_tool_calls.append(tool_call.dict())
+                            else:
+                                # Fallback for already serialized or dict objects
+                                serialized_tool_calls.append(tool_call)
+
                     redis_manager.publish_event(
                         conversation_id,
                         run_id,
-                        "end",
+                        "chunk",
                         {
-                            "status": "cancelled",
-                            "message": "Generation cancelled by user",
+                            "content": chunk.message or "",
+                            "citations_json": chunk.citations or [],
+                            "tool_calls_json": serialized_tool_calls,
                         },
                     )
-                    return
-
-                # Publish chunk event
-
-                # Properly serialize tool calls before sending through Redis
-                serialized_tool_calls = []
-                if chunk.tool_calls:
-                    for tool_call in chunk.tool_calls:
-                        if hasattr(tool_call, "model_dump"):
-                            serialized_tool_calls.append(tool_call.model_dump())
-                        elif hasattr(tool_call, "dict"):
-                            serialized_tool_calls.append(tool_call.dict())
-                        else:
-                            # Fallback for already serialized or dict objects
-                            serialized_tool_calls.append(tool_call)
-
-                redis_manager.publish_event(
-                    conversation_id,
-                    run_id,
-                    "chunk",
-                    {
-                        "content": chunk.message or "",
-                        "citations_json": chunk.citations or [],
-                        "tool_calls_json": serialized_tool_calls,
-                    },
-                )
 
         # Run the async agent execution
         asyncio.run(run_agent())
@@ -236,53 +236,53 @@ def execute_regenerate_background(
                     },
                 )
 
-            # Track if we've received any chunks
-            has_chunks = False
+                # Track if we've received any chunks
+                has_chunks = False
 
-            async for chunk in service.regenerate_last_message_background(
-                conversation_id, node_ids, attachment_ids
-            ):
-                has_chunks = True
+                async for chunk in service.regenerate_last_message_background(
+                    conversation_id, node_ids, attachment_ids
+                ):
+                    has_chunks = True
 
-                # Check for cancellation
-                if redis_manager.check_cancellation(conversation_id, run_id):
-                    logger.info(
-                        f"Regenerate execution cancelled: {conversation_id}:{run_id}"
-                    )
+                    # Check for cancellation
+                    if redis_manager.check_cancellation(conversation_id, run_id):
+                        logger.info(
+                            f"Regenerate execution cancelled: {conversation_id}:{run_id}"
+                        )
+                        redis_manager.publish_event(
+                            conversation_id,
+                            run_id,
+                            "end",
+                            {
+                                "status": "cancelled",
+                                "message": "Regeneration cancelled by user",
+                            },
+                        )
+                        return
+
+                    # Publish chunk event
+                    # Properly serialize tool calls before sending through Redis
+                    serialized_tool_calls = []
+                    if chunk.tool_calls:
+                        for tool_call in chunk.tool_calls:
+                            if hasattr(tool_call, "model_dump"):
+                                serialized_tool_calls.append(tool_call.model_dump())
+                            elif hasattr(tool_call, "dict"):
+                                serialized_tool_calls.append(tool_call.dict())
+                            else:
+                                # Fallback for already serialized or dict objects
+                                serialized_tool_calls.append(tool_call)
+
                     redis_manager.publish_event(
                         conversation_id,
                         run_id,
-                        "end",
+                        "chunk",
                         {
-                            "status": "cancelled",
-                            "message": "Regeneration cancelled by user",
+                            "content": chunk.message or "",
+                            "citations_json": chunk.citations or [],
+                            "tool_calls_json": serialized_tool_calls,
                         },
                     )
-                    return
-
-                # Publish chunk event
-                # Properly serialize tool calls before sending through Redis
-                serialized_tool_calls = []
-                if chunk.tool_calls:
-                    for tool_call in chunk.tool_calls:
-                        if hasattr(tool_call, "model_dump"):
-                            serialized_tool_calls.append(tool_call.model_dump())
-                        elif hasattr(tool_call, "dict"):
-                            serialized_tool_calls.append(tool_call.dict())
-                        else:
-                            # Fallback for already serialized or dict objects
-                            serialized_tool_calls.append(tool_call)
-
-                redis_manager.publish_event(
-                    conversation_id,
-                    run_id,
-                    "chunk",
-                    {
-                        "content": chunk.message or "",
-                        "citations_json": chunk.citations or [],
-                        "tool_calls_json": serialized_tool_calls,
-                    },
-                )
 
             # Ensure the database session is properly committed after regeneration
             # The flush_message_buffer should have been called at the end of the generator

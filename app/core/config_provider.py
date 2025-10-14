@@ -125,7 +125,7 @@ class ConfigProvider:
         if self.is_multimodal_enabled.lower() == "enabled":
             return True
         else:  # "auto" mode
-            return self._detect_object_storage_dependencies()
+            return self._detect_object_storage_dependencies()[0]
 
     def get_media_storage_backend(self) -> str:
         _, backend = self._detect_object_storage_dependencies()

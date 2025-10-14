@@ -186,7 +186,7 @@ class MediaService:
                 file_size=len(processed_image_data),
                 mime_type=mime_type,
                 storage_path=storage_path,
-                storage_provider=self.backend,
+                storage_provider=self.storage_provider,
                 file_metadata=file_metadata,
             )
 

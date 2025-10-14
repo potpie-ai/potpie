@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import patch, AsyncMock, MagicMock, ANY
 from app.modules.conversations.conversation.conversation_model import Conversation
 from app.modules.conversations.message.message_model import Message, MessageType
-from app.modules.media.media_schema import AttachmentUploadResponse
+from app.modules.media.media_schema import AttachmentUploadResponse, AttachmentType
 from app.modules.users.user_model import User
 from sqlalchemy.orm import Session
 from app.modules.projects.projects_model import Project
@@ -35,7 +35,7 @@ async def test_post_message_successful_flow(
         mock_instance.upload_image = AsyncMock(
             return_value=AttachmentUploadResponse(
                 id="fake_attachment_id",
-                attachment_type="image",
+                attachment_type=AttachmentType.IMAGE,
                 file_name="test_image.png",
                 mime_type="image/png",
                 file_size=1000,

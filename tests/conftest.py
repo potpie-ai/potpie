@@ -80,7 +80,7 @@ def setup_test_database():
     """Handles the safe, automatic creation and teardown of a dedicated test database."""
     main_db_url = os.getenv("POSTGRES_SERVER")  # Use the standard DATABASE_URL
     if not main_db_url:
-        raise ValueError("FATAL: DATABASE_URL not found in your .env file.")
+        raise ValueError("FATAL: POSTGRES_SERVER not found in your .env file.")
 
     parsed_url = urllib.parse.urlparse(main_db_url)
     main_db_name = parsed_url.path.lstrip("/")
