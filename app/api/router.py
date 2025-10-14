@@ -69,14 +69,8 @@ async def get_api_key_user(
             )
         return {"user_id": user.uid, "email": user.email, "auth_type": "api_key"}
 
+    # validate_api_key now raises HTTPException with specific error messages
     user = await APIKeyService.validate_api_key(x_api_key, db)
-    if not user:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid API key",
-            headers={"WWW-Authenticate": "ApiKey"},
-        )
-
     return user
 
 
