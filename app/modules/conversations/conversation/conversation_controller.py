@@ -204,7 +204,7 @@ class ConversationController:
 
                 response.append(
                     UserConversationListResponse(
-                        id=conversation.id,                        
+                        id=conversation.id,
                         title=conversation.title,
                         status=conversation.status,
                         project_ids=conversation.project_ids,
