@@ -23,9 +23,7 @@ github_app_auth_router = APIRouter()
 class GitHubAppAuthAPI:
     @github_app_auth_router.post("/github-app/generate-token")
     async def generate_github_app_token(
-        request: Request,
-        response: Response,
-        db: Session = Depends(get_db)
+        request: Request, response: Response, db: Session = Depends(get_db)
     ):
         """
         Generate a GitHub App user token for the authenticated user.
@@ -76,9 +74,7 @@ class GitHubAppAuthAPI:
 
     @github_app_auth_router.get("/github-app/status")
     async def get_github_app_token_status(
-        request: Request,
-        response: Response,
-        db: Session = Depends(get_db)
+        request: Request, response: Response, db: Session = Depends(get_db)
     ):
         """
         Get the GitHub App token status for the authenticated user.
@@ -118,9 +114,7 @@ class GitHubAppAuthAPI:
 
     @github_app_auth_router.post("/github-app/refresh")
     async def refresh_github_app_token(
-        request: Request,
-        response: Response,
-        db: Session = Depends(get_db)
+        request: Request, response: Response, db: Session = Depends(get_db)
     ):
         """
         Refresh the GitHub App user token for the authenticated user.

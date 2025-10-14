@@ -109,7 +109,11 @@ class AuthAPI:
                 created_at=first_login,
                 last_login_at=first_login,
                 provider_info=provider_info,
-                provider_username=(provider_username or "email_user") if provider == "email" else provider_username,
+                provider_username=(
+                    (provider_username or "email_user")
+                    if provider == "email"
+                    else provider_username
+                ),
             )
             uid, message, error = user_service.create_user(user)
 
