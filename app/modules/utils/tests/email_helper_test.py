@@ -126,8 +126,7 @@ class TestEmailValidation:
 
         def test_none_value(self):
             """Test None value handling."""
-            with pytest.raises(AttributeError):
-                is_valid_email(None)
+            assert is_valid_email(None) is False
 
         def test_numeric_string(self):
             """Test numeric string."""
