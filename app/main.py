@@ -94,7 +94,9 @@ class MainApp:
 
     def include_routers(self):
         self.app.include_router(auth_router, prefix="/api/v1", tags=["Auth"])
-        self.app.include_router(github_app_auth_router, prefix="/api/v1/auth", tags=["GitHub App Auth"])
+        self.app.include_router(
+            github_app_auth_router, prefix="/api/v1/auth", tags=["GitHub App Auth"]
+        )
         self.app.include_router(user_router, prefix="/api/v1", tags=["User"])
         self.app.include_router(parsing_router, prefix="/api/v1", tags=["Parsing"])
         self.app.include_router(

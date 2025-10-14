@@ -35,6 +35,7 @@ class CreateUser(BaseModel):
 
 class TokenMetadata(BaseModel):
     """Metadata about how the token was created"""
+
     created_via: str
     provider: str
     auth_method: str
@@ -43,21 +44,20 @@ class TokenMetadata(BaseModel):
 
 class ProviderInfo(BaseModel):
     """Structured format for provider_info JSONB field"""
+
     access_token: Optional[str] = None  # Optional for email/password users
     providerId: str
     uid: str
     displayName: Optional[str] = None
     email: Optional[str] = None
-    token_type: Optional[Literal['oauth', 'app_user', 'pat']] = None
+    token_type: Optional[Literal["oauth", "app_user", "pat"]] = None
     expires_at: Optional[datetime] = None
     refresh_token: Optional[str] = None
     installation_id: Optional[int] = None
     token_metadata: Optional[TokenMetadata] = None
 
     model_config = {
-        "json_encoders": {
-            datetime: lambda v: v.isoformat() if v else None
-        },
+        "json_encoders": {datetime: lambda v: v.isoformat() if v else None},
         "extra": "allow",
     }
 

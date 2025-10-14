@@ -55,7 +55,9 @@ class TokenService:
 
             access_token = provider_info.get("access_token")
             if not access_token:
-                logger.warning("provider_info missing access_token for user %s", user_id)
+                logger.warning(
+                    "provider_info missing access_token for user %s", user_id
+                )
                 return None, provider, "none"
 
             token_type = provider_info.get("token_type") or "oauth"
@@ -63,7 +65,9 @@ class TokenService:
 
             if expires_at:
                 if self._is_expired(expires_at):
-                    logger.info("Token expired for user %s; attempting refresh", user_id)
+                    logger.info(
+                        "Token expired for user %s; attempting refresh", user_id
+                    )
                     refreshed_token = self.refresh_token(user_id, provider)
                     if refreshed_token:
                         return refreshed_token, provider, token_type
@@ -91,7 +95,11 @@ class TokenService:
                 logger.error("Cannot generate token; user %s not found", user_id)
                 return False
 
-            provider_info = deepcopy(user.provider_info) if isinstance(user.provider_info, dict) else {}
+            provider_info = (
+                deepcopy(user.provider_info)
+                if isinstance(user.provider_info, dict)
+                else {}
+            )
 
             token = token_payload.get("token")
             if not token:
@@ -109,7 +117,9 @@ class TokenService:
                     "token_metadata": {
                         "created_via": f"{provider}_app",
                         "provider": provider,
-                        "auth_method": token_payload.get("auth_method", "app_installation"),
+                        "auth_method": token_payload.get(
+                            "auth_method", "app_installation"
+                        ),
                         "created_at": datetime.utcnow().isoformat(),
                     },
                 }
@@ -146,12 +156,15 @@ class TokenService:
             installation_id = provider_info.get("installation_id")
             if not installation_id:
                 logger.warning(
-                    "Cannot refresh token for user %s - missing installation_id", user_id
+                    "Cannot refresh token for user %s - missing installation_id",
+                    user_id,
                 )
                 return None
 
             if provider == "github":
-                from app.modules.code_provider.github.github_service import GithubService
+                from app.modules.code_provider.github.github_service import (
+                    GithubService,
+                )
 
                 github_service = GithubService(self.db)
                 token, expires_at = github_service.generate_github_app_user_token(
@@ -194,7 +207,9 @@ class TokenService:
                 is_expired = self._is_expired(expires_at)
 
             metadata = provider_info.get("token_metadata") or {}
-            provider = metadata.get("provider") or provider_info.get("provider", "github")
+            provider = metadata.get("provider") or provider_info.get(
+                "provider", "github"
+            )
 
             return {
                 "has_token": bool(provider_info.get("access_token")),

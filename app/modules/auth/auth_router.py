@@ -57,7 +57,9 @@ class AuthAPI:
         user_service = UserService(db)
 
         # Detect provider type from request body
-        provider = body.get("provider", "github")  # Default to github for backward compatibility
+        provider = body.get(
+            "provider", "github"
+        )  # Default to github for backward compatibility
 
         # Get optional fields with defaults
         oauth_token = body.get("accessToken")  # None for email/password sign-in

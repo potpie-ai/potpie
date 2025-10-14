@@ -4,7 +4,7 @@ import os
 import random
 import re
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
@@ -265,7 +265,9 @@ class GithubService:
                     status_code=400, detail="No GitHub token available for this user"
                 )
 
-            logger.info(f"Using {token_type} for user {firebase_uid} in get_repos_for_user")
+            logger.info(
+                f"Using {token_type} for user {firebase_uid} in get_repos_for_user"
+            )
             user_github = Github(github_token)
 
             user_orgs = user_github.get_user().get_orgs()
@@ -795,7 +797,9 @@ class GithubService:
     # GitHub App User Token Authentication Methods
     # ============================================================================
 
-    def generate_github_app_user_token(self, user_id: str, installation_id: Optional[int] = None) -> Tuple[str, datetime]:
+    def generate_github_app_user_token(
+        self, user_id: str, installation_id: Optional[int] = None
+    ) -> Tuple[str, datetime]:
         """
         Generate a GitHub App user token for the specified user.
 
@@ -823,7 +827,9 @@ class GithubService:
             app_id = os.environ["GITHUB_APP_ID"]
             auth = AppAuth(app_id=app_id, private_key=private_key)
 
-            provider_info = user.provider_info if isinstance(user.provider_info, dict) else {}
+            provider_info = (
+                user.provider_info if isinstance(user.provider_info, dict) else {}
+            )
 
             # If installation_id not provided, try to pull from provider_info
             if not installation_id:
@@ -836,7 +842,7 @@ class GithubService:
             if not installation_id:
                 raise HTTPException(
                     status_code=400,
-                    detail="No GitHub App installation found for user. Please install the app first."
+                    detail="No GitHub App installation found for user. Please install the app first.",
                 )
 
             # Generate user access token via GitHub App
@@ -850,15 +856,19 @@ class GithubService:
 
             response = requests.post(url, headers=headers)
             if response.status_code != 201:
-                error_detail = response.json().get('message', 'Failed to generate user token')
+                error_detail = response.json().get(
+                    "message", "Failed to generate user token"
+                )
                 raise HTTPException(
                     status_code=response.status_code,
-                    detail=f"Failed to generate GitHub App user token: {error_detail}"
+                    detail=f"Failed to generate GitHub App user token: {error_detail}",
                 )
 
             token_data = response.json()
             token = token_data["token"]
-            expires_at = datetime.fromisoformat(token_data["expires_at"].replace('Z', '+00:00'))
+            expires_at = datetime.fromisoformat(
+                token_data["expires_at"].replace("Z", "+00:00")
+            )
 
             payload = {
                 "token": token,
@@ -878,16 +888,22 @@ class GithubService:
                     detail="Failed to persist GitHub App token",
                 )
 
-            logger.info("Generated GitHub App user token for user %s, expires at %s", user_id, expires_at)
+            logger.info(
+                "Generated GitHub App user token for user %s, expires at %s",
+                user_id,
+                expires_at,
+            )
             return token, expires_at
 
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Error generating GitHub App user token for user {user_id}: {str(e)}")
+            logger.error(
+                f"Error generating GitHub App user token for user {user_id}: {str(e)}"
+            )
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to generate GitHub App user token: {str(e)}"
+                detail=f"Failed to generate GitHub App user token: {str(e)}",
             )
 
     def _find_user_installation_id(self, user: User, auth: AppAuth) -> Optional[int]:
@@ -908,7 +924,9 @@ class GithubService:
                 return None
 
             # Get user's OAuth token to fetch organizations
-            oauth_token = user.provider_info.get("access_token") if user.provider_info else None
+            oauth_token = (
+                user.provider_info.get("access_token") if user.provider_info else None
+            )
             if not oauth_token:
                 return None
 
@@ -937,8 +955,9 @@ class GithubService:
                 account_login = account["login"].lower()
                 account_type = account["type"]
 
-                if (account_type == "User" and account_login == github_username.lower()) or \
-                   (account_type == "Organization" and account_login in org_logins):
+                if (
+                    account_type == "User" and account_login == github_username.lower()
+                ) or (account_type == "Organization" and account_login in org_logins):
                     return installation["id"]
 
             return None
@@ -955,7 +974,9 @@ class GithubService:
         legacy return values (`app_user_token`, `oauth_token`, `public_token`).
         """
         try:
-            token, provider, auth_type = self.token_service.get_best_token(user_id, "github")
+            token, provider, auth_type = self.token_service.get_best_token(
+                user_id, "github"
+            )
             if token:
                 token_type_map = {
                     "app_user": "app_user_token",
@@ -969,5 +990,7 @@ class GithubService:
             logger.info("Falling back to public GitHub token for user %s", user_id)
             return random.choice(self.gh_token_list), "public_token"
         except Exception as exc:  # pragma: no cover - defensive logging
-            logger.error("Error getting best GitHub token for user %s: %s", user_id, exc)
+            logger.error(
+                "Error getting best GitHub token for user %s: %s", user_id, exc
+            )
             return random.choice(self.gh_token_list), "public_token"

@@ -57,16 +57,21 @@ class GitHubAppAuthAPI:
             )
 
         except HTTPException as he:
-            logger.error(f"HTTP error generating GitHub App token for user: {he.detail}")
+            logger.error(
+                f"HTTP error generating GitHub App token for user: {he.detail}"
+            )
             return JSONResponse(
                 content={"success": False, "error": he.detail},
-                status_code=he.status_code
+                status_code=he.status_code,
             )
         except Exception as e:
             logger.error(f"Unexpected error generating GitHub App token: {str(e)}")
             return JSONResponse(
-                content={"success": False, "error": "Failed to generate GitHub App token"},
-                status_code=500
+                content={
+                    "success": False,
+                    "error": "Failed to generate GitHub App token",
+                },
+                status_code=500,
             )
 
     @github_app_auth_router.get("/github-app/status")
@@ -103,14 +108,12 @@ class GitHubAppAuthAPI:
         except HTTPException as he:
             logger.error(f"HTTP error getting token status: {he.detail}")
             return JSONResponse(
-                content={"error": he.detail},
-                status_code=he.status_code
+                content={"error": he.detail}, status_code=he.status_code
             )
         except Exception as e:
             logger.error(f"Unexpected error getting token status: {str(e)}")
             return JSONResponse(
-                content={"error": "Failed to get token status"},
-                status_code=500
+                content={"error": "Failed to get token status"}, status_code=500
             )
 
     @github_app_auth_router.post("/github-app/refresh")
@@ -157,11 +160,11 @@ class GitHubAppAuthAPI:
             logger.error(f"HTTP error refreshing token: {he.detail}")
             return JSONResponse(
                 content={"success": False, "error": he.detail},
-                status_code=he.status_code
+                status_code=he.status_code,
             )
         except Exception as e:
             logger.error(f"Unexpected error refreshing token: {str(e)}")
             return JSONResponse(
                 content={"success": False, "error": "Failed to refresh token"},
-                status_code=500
+                status_code=500,
             )
