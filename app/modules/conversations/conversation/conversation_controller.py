@@ -2,6 +2,9 @@ from typing import AsyncGenerator, List
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from .conversation_store import ConversationStore
+from ..message.message_store import MessageStore
 
 from app.modules.conversations.conversation.conversation_schema import (
     ChatMessageResponse,
@@ -22,13 +25,29 @@ from app.modules.conversations.message.message_schema import (
     MessageResponse,
     NodeContext,
 )
+from app.modules.users.user_schema import UserConversationListResponse
+from app.modules.intelligence.agents.custom_agents.custom_agent_model import CustomAgent
 
 
 class ConversationController:
-    def __init__(self, db: Session, user_id: str, user_email: str):
+    def __init__(
+        self, db: Session, async_db: AsyncSession, user_id: str, user_email: str
+    ):
         self.user_email = user_email
-        self.service = ConversationService.create(db, user_id, user_email)
         self.user_id = user_id
+        self.db = db
+        self.async_db = async_db
+
+        conversation_store = ConversationStore(db, async_db)
+        message_store = MessageStore(db, async_db)
+
+        self.service = ConversationService.create(
+            conversation_store=conversation_store,
+            message_store=message_store,
+            db=self.db,
+            user_id=self.user_id,
+            user_email=self.user_email,
+        )
 
     async def create_conversation(
         self, conversation: CreateConversationRequest, hidden: bool = False
@@ -149,4 +168,54 @@ class ConversationController:
         except AccessTypeReadError:
             raise HTTPException(status_code=403, detail="Access denied")
         except ConversationServiceError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    async def get_conversations_for_user(
+        self,
+        start: int,
+        limit: int,
+        sort: str = "updated_at",
+        order: str = "desc",
+    ) -> List[UserConversationListResponse]:
+        try:
+            conversations = await self.service.get_conversations_with_projects_for_user(
+                self.user_id, start, limit, sort, order
+            )
+            response = []
+            agent_ids = [
+                conversation.agent_ids[0]
+                for conversation in conversations
+                if conversation.agent_ids
+            ]
+            custom_agents = {
+                agent.id: agent.role
+                for agent in self.db.query(CustomAgent)
+                .filter(CustomAgent.id.in_(agent_ids))
+                .all()
+            }
+
+            for conversation in conversations:
+                projects = conversation.projects
+                repo_name = projects[0].repo_name if projects else None
+                branch_name = projects[0].branch_name if projects else None
+
+                agent_id = conversation.agent_ids[0] if conversation.agent_ids else None
+                display_agent_id = custom_agents.get(agent_id, agent_id)
+
+                response.append(
+                    UserConversationListResponse(
+                        id=conversation.id,                        
+                        title=conversation.title,
+                        status=conversation.status,
+                        project_ids=conversation.project_ids,
+                        repository=repo_name,
+                        branch=branch_name,
+                        agent_id=display_agent_id,
+                        created_at=conversation.created_at.isoformat(),
+                        updated_at=conversation.updated_at.isoformat(),
+                    )
+                )
+
+            return response
+        except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
