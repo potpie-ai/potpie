@@ -967,7 +967,7 @@ class PydanticMultiAgent(ChatAgent):
                 "parallel_tool_calls": True,
                 "max_tokens": 14000,
                 "temperature": 0.4,
-                "extra_body": {"max_tokens": 14000, "temperature": 0.3},
+                "extra_body": {"temperature": 0.3},
             },
         )
 
