@@ -4,9 +4,9 @@ from typing import Any
 from dotenv import load_dotenv
 
 from .storage_strategies import (
-    S3StorageStrategy, 
+    S3StorageStrategy,
     GCSStorageStrategy,
-    AzureStorageStrategy
+    AzureStorageStrategy,
 )
 
 load_dotenv()
@@ -43,7 +43,7 @@ class ConfigProvider:
         # Strategy registry
         self._storage_strategies = {
             "s3": S3StorageStrategy(),
-            "gcs": GCSStorageStrategy(), 
+            "gcs": GCSStorageStrategy(),
             "azure": AzureStorageStrategy(),
         }
 
@@ -152,10 +152,10 @@ class ConfigProvider:
     def get_object_storage_descriptor(self) -> dict[str, Any]:
         backend = self.get_media_storage_backend()
         strategy = self._storage_strategies.get(backend)
-        
+
         if not strategy:
             raise MediaServiceConfigError(f"Unsupported storage provider: {backend}")
-            
+
         try:
             return strategy.get_descriptor(self)
         except ValueError as e:
@@ -163,16 +163,19 @@ class ConfigProvider:
 
     def _detect_object_storage_dependencies(self) -> tuple[bool, str]:
         # Check explicit provider selection first
-        if self.object_storage_provider != "auto" and self.object_storage_provider in self._storage_strategies:
+        if (
+            self.object_storage_provider != "auto"
+            and self.object_storage_provider in self._storage_strategies
+        ):
             strategy = self._storage_strategies[self.object_storage_provider]
             is_ready = strategy.is_ready(self)
             return is_ready, self.object_storage_provider
-        
+
         # Auto-detection: return first ready provider
         for provider, strategy in self._storage_strategies.items():
             if strategy.is_ready(self):
                 return True, provider
-                
+
         return False, "none"
 
     @staticmethod

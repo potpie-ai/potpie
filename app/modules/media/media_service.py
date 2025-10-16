@@ -1,4 +1,3 @@
-import os
 import logging
 import hashlib
 from typing import Optional, Dict, Any, List, Union
@@ -71,7 +70,9 @@ class MediaService:
             if self.storage_provider != StorageProvider.LOCAL:
                 self._initialize_storage_client()
         else:
-            logger.info("Multimodal functionality disabled - cloud storage not initialized")
+            logger.info(
+                "Multimodal functionality disabled - cloud storage not initialized"
+            )
 
     def _initialize_storage_client(self):
         if not self.object_storage_descriptor:
@@ -351,7 +352,9 @@ class MediaService:
                 raise HTTPException(status_code=404, detail="Attachment not found")
 
             if not self.s3_client or not self.bucket_name:
-                raise MediaServiceError("Object storage client not initialized for download")
+                raise MediaServiceError(
+                    "Object storage client not initialized for download"
+                )
 
             try:
                 response = self.s3_client.get_object(
@@ -362,7 +365,9 @@ class MediaService:
             except ClientError as e:
                 error_code = e.response.get("Error", {}).get("Code")
                 if error_code == "NoSuchKey":
-                    raise HTTPException(status_code=404, detail="Attachment not found in storage")
+                    raise HTTPException(
+                        status_code=404, detail="Attachment not found in storage"
+                    )
                 raise
 
         except HTTPException:
@@ -381,7 +386,9 @@ class MediaService:
                 raise HTTPException(status_code=404, detail="Attachment not found")
 
             if not self.s3_client or not self.bucket_name:
-                raise MediaServiceError("Object storage client not initialized for signed URL")
+                raise MediaServiceError(
+                    "Object storage client not initialized for signed URL"
+                )
 
             return self.s3_client.generate_presigned_url(
                 "get_object",
@@ -409,7 +416,9 @@ class MediaService:
 
             try:
                 if not self.s3_client or not self.bucket_name:
-                    raise MediaServiceError("Object storage client not initialized for delete")
+                    raise MediaServiceError(
+                        "Object storage client not initialized for delete"
+                    )
 
                 try:
                     self.s3_client.delete_object(
