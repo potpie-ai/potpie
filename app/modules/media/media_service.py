@@ -1,12 +1,13 @@
 import os
 import logging
+import hashlib
 from typing import Optional, Dict, Any, List, Union
 from io import BytesIO
 import base64
 
 from PIL import Image
-from google.cloud import storage
-from google.cloud.exceptions import NotFound
+import boto3
+from botocore.exceptions import ClientError
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, UploadFile
 from uuid6 import uuid7
@@ -46,50 +47,48 @@ class MediaService:
 
     def __init__(self, db: Session):
         self.db = db
-        self.bucket_name = os.getenv("GCS_BUCKET_NAME", "potpie-media-attachments")
-        self.gcs_project_id = os.getenv("GCS_PROJECT_ID")
         self.is_multimodal_enabled = config_provider.get_is_multimodal_enabled()
 
+        self.storage_provider = StorageProvider.LOCAL
+        self.bucket_name = None
+        self.object_storage_descriptor: dict[str, Any] | None = None
+        self.s3_client = None
+
         if self.is_multimodal_enabled:
-            # Original GCS initialization logic
-            self._initialize_gcs_client()
+            descriptor = config_provider.get_object_storage_descriptor()
+            provider = descriptor["provider"]
+            try:
+                self.storage_provider = StorageProvider(provider)
+            except ValueError as exc:  # fall back to safe default
+                logger.error("Unsupported storage provider '%s': %s", provider, exc)
+                raise MediaServiceError(
+                    f"Unsupported storage provider configured: {provider}"
+                ) from exc
+
+            self.bucket_name = descriptor["bucket_name"]
+            self.object_storage_descriptor = descriptor
+
+            if self.storage_provider != StorageProvider.LOCAL:
+                self._initialize_storage_client()
         else:
-            # Multimodal disabled - set None values
-            self.gcs_client = None
-            self.bucket = None
-            logger.info(
-                "Multimodal functionality disabled - GCS client not initialized"
-            )
+            logger.info("Multimodal functionality disabled - cloud storage not initialized")
 
-    def _initialize_gcs_client(self):
-        """Initialize GCS client with existing logic"""
+    def _initialize_storage_client(self):
+        if not self.object_storage_descriptor:
+            raise MediaServiceError("Object storage descriptor not configured")
+
         try:
-            service_account_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-
-            if service_account_path and os.path.exists(service_account_path):
-                # Use service account credentials for signed URL support
-                from google.oauth2 import service_account
-
-                credentials = service_account.Credentials.from_service_account_file(
-                    service_account_path
-                )
-                self.gcs_client = storage.Client(
-                    credentials=credentials, project=self.gcs_project_id
-                )
-                logger.info(
-                    "Initialized GCS client with service account credentials (signed URLs supported)"
-                )
-            else:
-                # Fallback to default credentials (signed URLs will fail)
-                self.gcs_client = storage.Client(project=self.gcs_project_id)
-                logger.warning(
-                    "GCS client initialized with default credentials (signed URLs not supported)"
-                )
-
-            self.bucket = self.gcs_client.bucket(self.bucket_name)
+            client_kwargs = dict(self.object_storage_descriptor["client_kwargs"])
+            self.s3_client = boto3.client("s3", **client_kwargs)
+            self.s3_client.head_bucket(Bucket=self.bucket_name)
+            logger.info(
+                "Initialized boto3 client for provider %s (bucket=%s)",
+                self.storage_provider.value,
+                self.bucket_name,
+            )
         except Exception as e:
-            logger.error(f"Failed to initialize GCS client: {str(e)}")
-            raise MediaServiceError(f"Failed to initialize cloud storage: {str(e)}")
+            logger.error("Failed to initialize object storage client: %s", e)
+            raise MediaServiceError(f"Failed to initialize object storage: {e}")
 
     def _check_multimodal_enabled(self):
         """Raise appropriate error if multimodal functionality is disabled"""
@@ -147,7 +146,8 @@ class MediaService:
             storage_path = self._generate_storage_path(attachment_id, file_name)
 
             # Upload to GCS
-            await self._upload_to_gcs(storage_path, processed_image_data, mime_type)
+            # await self._upload_to_gcs(storage_path, processed_image_data, mime_type)
+            await self._upload_to_cloud(storage_path, processed_image_data, mime_type)
 
             # Create database record
             attachment = MessageAttachment(
@@ -158,7 +158,7 @@ class MediaService:
                 file_size=len(processed_image_data),
                 mime_type=mime_type,
                 storage_path=storage_path,
-                storage_provider=StorageProvider.GCS,
+                storage_provider=self.storage_provider,
                 file_metadata=file_metadata,
             )
 
@@ -302,17 +302,33 @@ class MediaService:
 
         return path
 
-    async def _upload_to_gcs(
+    async def _upload_to_cloud(
         self, storage_path: str, file_data: bytes, mime_type: str
     ) -> None:
-        """Upload file to Google Cloud Storage"""
+        """Upload file to the configured object storage bucket via boto3."""
+        if not self.s3_client or not self.bucket_name:
+            raise MediaServiceError("Object storage client not initialized for upload")
+
         try:
-            blob = self.bucket.blob(storage_path)
-            blob.upload_from_string(file_data, content_type=mime_type)
-            logger.info(f"Successfully uploaded to GCS: {storage_path}")
+            logger.info(
+                "Uploading object -> provider=%s bucket=%s key=%s content_type=%s",
+                self.storage_provider.value,
+                self.bucket_name,
+                storage_path,
+                mime_type,
+            )
+            md5_b64 = base64.b64encode(hashlib.md5(file_data).digest()).decode("utf-8")
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=storage_path,
+                Body=file_data,
+                ContentType=mime_type,
+                ContentMD5=md5_b64,
+            )
+            logger.info("Uploaded object to %s:%s", self.bucket_name, storage_path)
         except Exception as e:
-            logger.error(f"Failed to upload to GCS: {str(e)}")
-            raise MediaServiceError(f"Failed to upload to cloud storage: {str(e)}")
+            logger.error("Failed to upload to object storage: %s", e)
+            raise MediaServiceError(f"Failed to upload to object storage: {e}")
 
     async def get_attachment(self, attachment_id: str) -> Optional[MessageAttachment]:
         """Get attachment record by ID"""
@@ -334,13 +350,20 @@ class MediaService:
             if not attachment:
                 raise HTTPException(status_code=404, detail="Attachment not found")
 
-            if attachment.storage_provider == StorageProvider.GCS:
-                blob = self.bucket.blob(attachment.storage_path)
-                return blob.download_as_bytes()
-            else:
-                raise MediaServiceError(
-                    f"Unsupported storage provider: {attachment.storage_provider}"
+            if not self.s3_client or not self.bucket_name:
+                raise MediaServiceError("Object storage client not initialized for download")
+
+            try:
+                response = self.s3_client.get_object(
+                    Bucket=self.bucket_name,
+                    Key=attachment.storage_path,
                 )
+                return response["Body"].read()
+            except ClientError as e:
+                error_code = e.response.get("Error", {}).get("Code")
+                if error_code == "NoSuchKey":
+                    raise HTTPException(status_code=404, detail="Attachment not found in storage")
+                raise
 
         except HTTPException:
             raise
@@ -357,23 +380,17 @@ class MediaService:
             if not attachment:
                 raise HTTPException(status_code=404, detail="Attachment not found")
 
-            if attachment.storage_provider == StorageProvider.GCS:
-                blob = self.bucket.blob(attachment.storage_path)
+            if not self.s3_client or not self.bucket_name:
+                raise MediaServiceError("Object storage client not initialized for signed URL")
 
-                # Generate signed URL
-                from datetime import timedelta
-
-                url = blob.generate_signed_url(
-                    version="v4",
-                    expiration=timedelta(minutes=expiration_minutes),
-                    method="GET",
-                    response_disposition=f'inline; filename="{attachment.file_name}"',
-                )
-                return url
-            else:
-                raise MediaServiceError(
-                    f"Unsupported storage provider: {attachment.storage_provider}"
-                )
+            return self.s3_client.generate_presigned_url(
+                "get_object",
+                Params={
+                    "Bucket": self.bucket_name,
+                    "Key": attachment.storage_path,
+                },
+                ExpiresIn=expiration_minutes * 60,
+            )
 
         except HTTPException:
             raise
@@ -390,14 +407,34 @@ class MediaService:
             if not attachment:
                 return False
 
-            # Delete from storage
-            if attachment.storage_provider == StorageProvider.GCS:
+            try:
+                if not self.s3_client or not self.bucket_name:
+                    raise MediaServiceError("Object storage client not initialized for delete")
+
                 try:
-                    blob = self.bucket.blob(attachment.storage_path)
-                    blob.delete()
-                    logger.info(f"Deleted from GCS: {attachment.storage_path}")
-                except NotFound:
-                    logger.warning(f"File not found in GCS: {attachment.storage_path}")
+                    self.s3_client.delete_object(
+                        Bucket=self.bucket_name,
+                        Key=attachment.storage_path,
+                    )
+                    logger.info(
+                        "Deleted object from %s:%s",
+                        self.bucket_name,
+                        attachment.storage_path,
+                    )
+                except ClientError as e:
+                    if e.response.get("Error", {}).get("Code") == "NoSuchKey":
+                        logger.warning(
+                            "File not found in bucket=%s key=%s; continuing with DB delete",
+                            self.bucket_name,
+                            attachment.storage_path,
+                        )
+                    else:
+                        raise
+            except Exception as e:
+                logger.error(f"Failed to delete from cloud storage: {str(e)}")
+                raise MediaServiceError(
+                    f"Failed to delete from cloud storage: {str(e)}"
+                )
 
             # Delete from database
             self.db.delete(attachment)
