@@ -292,6 +292,14 @@ AVAILABLE_MODELS = [
         is_inference_model=True,
     ),
     AvailableModelOption(
+        id="anthropic/claude-3-7-sonnet-20250219",
+        name="Claude 3.7 Sonnet",
+        description="Highest level of intelligence and capability with toggleable extended thinking",
+        provider="anthropic",
+        is_chat_model=True,
+        is_inference_model=False,
+    ),
+    AvailableModelOption(
         id="anthropic/claude-sonnet-4-20250514",
         name="Claude Sonnet 4",
         description="Faster, more efficient Claude model for code generation",
