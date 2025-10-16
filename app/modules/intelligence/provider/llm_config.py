@@ -37,7 +37,6 @@ MODEL_CONFIG_MAP = {
         "provider": "anthropic",
         "default_params": {"temperature": 0.2, "max_tokens": 8000},
     },
-    
     # DeepSeek Models
     "openrouter/deepseek/deepseek-chat-v3-0324": {
         "provider": "deepseek",
