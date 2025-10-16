@@ -301,7 +301,7 @@ AVAILABLE_MODELS = [
     ),
     AvailableModelOption(
         id="anthropic/claude-opus-4-1-20250805",
-        name="Claude Opus 4.1",
+        name="Claude 4.1 Opus",
         description="Exceptional model for specialized complex tasks",
         provider="anthropic",
         is_chat_model=True,
