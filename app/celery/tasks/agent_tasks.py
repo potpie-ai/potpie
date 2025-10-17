@@ -107,7 +107,7 @@ def execute_agent_background(
                                 "message": "Generation cancelled by user",
                             },
                         )
-                        return
+                        return False  # Indicate cancellation
 
                     # Publish chunk event
 
@@ -133,22 +133,28 @@ def execute_agent_background(
                             "tool_calls_json": serialized_tool_calls,
                         },
                     )
+            
+            return True  # Indicate successful completion
 
         # Run the async agent execution on the worker's long-lived loop
-        self.run_async(run_agent())
+        completed = self.run_async(run_agent())
 
-        # Publish completion event
-        redis_manager.publish_event(
-            conversation_id,
-            run_id,
-            "end",
-            {"status": "completed", "message": "Agent execution completed"},
-        )
+        # Only publish completion event if not cancelled
+        if completed:
+            # Publish completion event
+            redis_manager.publish_event(
+                conversation_id,
+                run_id,
+                "end",
+                {"status": "completed", "message": "Agent execution completed"},
+            )
 
-        # Set task status to completed
-        redis_manager.set_task_status(conversation_id, run_id, "completed")
+            # Set task status to completed
+            redis_manager.set_task_status(conversation_id, run_id, "completed")
 
-        logger.info(f"Background agent execution completed: {conversation_id}:{run_id}")
+            logger.info(f"Background agent execution completed: {conversation_id}:{run_id}")
+        else:
+            logger.info(f"Background agent execution cancelled: {conversation_id}:{run_id}")
 
     except Exception as e:
         logger.error(
@@ -257,7 +263,7 @@ def execute_regenerate_background(
                                 "message": "Regeneration cancelled by user",
                             },
                         )
-                        return
+                        return False  # Indicate cancellation
 
                     # Publish chunk event
                     # Properly serialize tool calls before sending through Redis
@@ -292,24 +298,32 @@ def execute_regenerate_background(
                     logger.warning(
                         f"No chunks received during regeneration for conversation {conversation_id}"
                     )
+            
+            return True  # Indicate successful completion
 
         # Run the async regeneration on the worker's long-lived loop
-        self.run_async(run_regeneration())
+        completed = self.run_async(run_regeneration())
 
-        # Publish completion event
-        redis_manager.publish_event(
-            conversation_id,
-            run_id,
-            "end",
-            {"status": "completed", "message": "Regeneration completed"},
-        )
+        # Only publish completion event if not cancelled
+        if completed:
+            # Publish completion event
+            redis_manager.publish_event(
+                conversation_id,
+                run_id,
+                "end",
+                {"status": "completed", "message": "Regeneration completed"},
+            )
 
-        # Set task status to completed
-        redis_manager.set_task_status(conversation_id, run_id, "completed")
+            # Set task status to completed
+            redis_manager.set_task_status(conversation_id, run_id, "completed")
 
-        logger.info(
-            f"Background regenerate execution completed: {conversation_id}:{run_id}"
-        )
+            logger.info(
+                f"Background regenerate execution completed: {conversation_id}:{run_id}"
+            )
+        else:
+            logger.info(
+                f"Background regenerate execution cancelled: {conversation_id}:{run_id}"
+            )
 
     except Exception as e:
         logger.error(
