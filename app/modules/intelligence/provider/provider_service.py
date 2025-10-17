@@ -285,7 +285,7 @@ AVAILABLE_MODELS = [
     ),
     AvailableModelOption(
         id="anthropic/claude-3-5-haiku-20241022",
-        name="Claude 3.5 Haiku",
+        name="Claude Haiku 3.5",
         description="Faster, more efficient Claude model",
         provider="anthropic",
         is_chat_model=False,
@@ -293,7 +293,7 @@ AVAILABLE_MODELS = [
     ),
     AvailableModelOption(
         id="anthropic/claude-3-7-sonnet-20250219",
-        name="Claude 3.7 Sonnet",
+        name="Claude Sonnet 3.7",
         description="Highest level of intelligence and capability with toggleable extended thinking",
         provider="anthropic",
         is_chat_model=True,
@@ -317,7 +317,7 @@ AVAILABLE_MODELS = [
     ),
     AvailableModelOption(
         id="anthropic/claude-haiku-4-5-20251001",
-        name="Claude 4.5 Haiku",
+        name="Claude Haiku 4.5",
         description="Faster, even surpasses Claude Sonnet 4 at certain tasks",
         provider="anthropic",
         is_chat_model=True,
@@ -325,7 +325,7 @@ AVAILABLE_MODELS = [
     ),
     AvailableModelOption(
         id="anthropic/claude-sonnet-4-5-20250929",
-        name="Claude 4.5 Sonnet",
+        name="Claude Sonnet 4.5",
         description="Best model for complex agents and coding",
         provider="anthropic",
         is_chat_model=True,
