@@ -31,7 +31,7 @@ MODEL_CONFIG_MAP = {
     },
     "anthropic/claude-opus-4-1-20250805": {
         "provider": "anthropic",
-        "default_params": {"temperature": 0.3, "max_tokens": 8000}
+        "default_params": {"temperature": 0.3, "max_tokens": 8000},
     },
     "anthropic/claude-3-7-sonnet-20250219": {
         "provider": "anthropic",
