@@ -135,8 +135,8 @@ def execute_agent_background(
                         },
                     )
 
-        # Run the async agent execution
-        asyncio.run(run_agent())
+        # Run the async agent execution on the worker's long-lived loop
+        self.run_async(run_agent())
 
         # Publish completion event
         redis_manager.publish_event(
@@ -308,7 +308,8 @@ def execute_regenerate_background(
                     f"No chunks received during regeneration for conversation {conversation_id}"
                 )
 
-        asyncio.run(run_regeneration())
+        # Run the async regeneration on the worker's long-lived loop
+        self.run_async(run_regeneration())
 
         # Publish completion event
         redis_manager.publish_event(

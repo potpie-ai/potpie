@@ -96,6 +96,16 @@ def redis_stream_generator(
                 )
                 json_response = json.dumps(response.dict(), default=json_serializer)
                 yield json_response
+            
+            elif event.get("type") == "queued":
+                # Send a queued status to the client
+                response = ChatMessageResponse(
+                    message="",
+                    citations=[],
+                    tool_calls=[],
+                )
+                json_response = json.dumps(response.dict(), default=json_serializer)
+                yield json_response
 
             elif event.get("type") == "end":
                 # End the stream when we receive an end event
@@ -329,6 +339,21 @@ class ConversationAPI:
         # Use parsed node_ids
         node_ids_list = parsed_node_ids or []
 
+        # Set initial "queued" status before starting the task
+        redis_manager = RedisStreamManager()
+        redis_manager.set_task_status(conversation_id, run_id, "queued")
+        
+        # Publish a queued event so the client knows the task is accepted
+        redis_manager.publish_event(
+            conversation_id,
+            run_id,
+            "queued",
+            {
+                "status": "queued",
+                "message": "Task queued for processing",
+            },
+        )
+        
         # Start background task
         execute_agent_background.delay(
             conversation_id=conversation_id,
@@ -341,18 +366,16 @@ class ConversationAPI:
         )
 
         # Wait for background task to start (with health check)
-        from app.modules.conversations.utils.redis_streaming import RedisStreamManager
-
-        redis_manager = RedisStreamManager()
+        # Increased timeout to 30 seconds to handle queued tasks
         task_started = redis_manager.wait_for_task_start(
-            conversation_id, run_id, timeout=10
+            conversation_id, run_id, timeout=30
         )
 
         if not task_started:
             logger.warning(
-                f"Background task failed to start for {conversation_id}:{run_id}"
+                f"Background task failed to start within 30s for {conversation_id}:{run_id} - may still be queued"
             )
-            # Could add fallback logic here if needed
+            # Don't fail - the stream consumer will wait up to 120 seconds
 
         # Return Redis stream response
         return StreamingResponse(
@@ -444,6 +467,22 @@ class ConversationAPI:
 
         # Start background regenerate task
         from app.celery.tasks.agent_tasks import execute_regenerate_background
+        from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+
+        redis_manager = RedisStreamManager()
+        # Set initial "queued" status before starting the task
+        redis_manager.set_task_status(conversation_id, run_id, "queued")
+        
+        # Publish a queued event so the client knows the task is accepted
+        redis_manager.publish_event(
+            conversation_id,
+            run_id,
+            "queued",
+            {
+                "status": "queued",
+                "message": "Regeneration task queued for processing",
+            },
+        )
 
         execute_regenerate_background.delay(
             conversation_id=conversation_id,
@@ -454,18 +493,16 @@ class ConversationAPI:
         )
 
         # Wait for background task to start (with health check)
-        from app.modules.conversations.utils.redis_streaming import RedisStreamManager
-
-        redis_manager = RedisStreamManager()
+        # Increased timeout to 30 seconds to handle queued tasks
         task_started = redis_manager.wait_for_task_start(
-            conversation_id, run_id, timeout=10
+            conversation_id, run_id, timeout=30
         )
 
         if not task_started:
             logger.warning(
-                f"Background regenerate task failed to start for {conversation_id}:{run_id}"
+                f"Background regenerate task failed to start within 30s for {conversation_id}:{run_id} - may still be queued"
             )
-            # Could add fallback logic here if needed
+            # Don't fail - the stream consumer will wait up to 120 seconds
 
         # Return Redis stream response
         return StreamingResponse(
