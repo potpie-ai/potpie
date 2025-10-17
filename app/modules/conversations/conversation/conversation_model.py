@@ -3,7 +3,6 @@ import enum
 from sqlalchemy import ARRAY, TIMESTAMP, Column
 from sqlalchemy import Enum as SQLAEnum
 from sqlalchemy import ForeignKey, String, func
-from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import relationship
 
 from app.core.base_model import Base
@@ -52,10 +51,9 @@ class Conversation(Base):
         "Message", back_populates="conversation", cascade="all, delete-orphan"
     )
 
-    @hybrid_property
-    def projects(self):
-        from app.core.database import SessionLocal
-        from app.modules.projects.projects_model import Project
-
-        with SessionLocal() as session:
-            return session.query(Project).filter(Project.id.in_(self.project_ids)).all()
+    projects = relationship(
+        "Project",
+        primaryjoin="foreign(Project.id) == any_(Conversation.project_ids)",
+        viewonly=True,  # stops SQLAlchemy from trying to "write" into project_ids
+        lazy="select",  # default; will be overridden by selectinload
+    )
