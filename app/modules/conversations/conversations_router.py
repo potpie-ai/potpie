@@ -96,7 +96,7 @@ def redis_stream_generator(
                 )
                 json_response = json.dumps(response.dict(), default=json_serializer)
                 yield json_response
-            
+
             elif event.get("type") == "queued":
                 # Send a queued status to the client
                 response = ChatMessageResponse(
@@ -342,7 +342,7 @@ class ConversationAPI:
         # Set initial "queued" status before starting the task
         redis_manager = RedisStreamManager()
         redis_manager.set_task_status(conversation_id, run_id, "queued")
-        
+
         # Publish a queued event so the client knows the task is accepted
         redis_manager.publish_event(
             conversation_id,
@@ -353,7 +353,7 @@ class ConversationAPI:
                 "message": "Task queued for processing",
             },
         )
-        
+
         # Start background task
         execute_agent_background.delay(
             conversation_id=conversation_id,
@@ -472,7 +472,7 @@ class ConversationAPI:
         redis_manager = RedisStreamManager()
         # Set initial "queued" status before starting the task
         redis_manager.set_task_status(conversation_id, run_id, "queued")
-        
+
         # Publish a queued event so the client knows the task is accepted
         redis_manager.publish_event(
             conversation_id,
