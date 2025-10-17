@@ -287,7 +287,7 @@ def execute_regenerate_background(
             # The flush_message_buffer should have been called at the end of the generator
             # but we need to ensure the session is committed
             try:
-                self.db.commit()
+                await async_db.commit()
                 logger.info(
                     f"Database session committed after regeneration for conversation {conversation_id}"
                 )
@@ -295,7 +295,7 @@ def execute_regenerate_background(
                 logger.error(
                     f"Failed to commit database session after regeneration: {str(commit_error)}"
                 )
-                self.db.rollback()
+                await async_db.rollback()
 
             # Log completion of regeneration
             if has_chunks:
