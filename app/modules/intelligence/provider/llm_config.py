@@ -21,6 +21,18 @@ MODEL_CONFIG_MAP = {
         "default_params": {"temperature": 0.3},
     },
     # Anthropic Models
+    "anthropic/claude-haiku-4-5-20251001": {
+        "provider": "anthropic",
+        "default_params": {"temperature": 0.2, "max_tokens": 8000},
+    },
+    "anthropic/claude-sonnet-4-5-20250929": {
+        "provider": "anthropic",
+        "default_params": {"temperature": 0.3, "max_tokens": 8000},
+    },
+    "anthropic/claude-opus-4-1-20250805": {
+        "provider": "anthropic",
+        "default_params": {"temperature": 0.3, "max_tokens": 8000}
+    },
     "anthropic/claude-3-7-sonnet-20250219": {
         "provider": "anthropic",
         "default_params": {"temperature": 0.3, "max_tokens": 8000},
