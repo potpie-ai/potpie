@@ -8,7 +8,6 @@ logger = logging.getLogger(__name__)
 
 class BaseTask(Task):
     _db = None
-    _async_db = None
 
     @property
     def db(self):
@@ -21,17 +20,11 @@ class BaseTask(Task):
         """
         Provides an async session that is automatically created and closed.
         """
-        if self._async_db is None:
-            self._async_db = AsyncSessionLocal()
-
+        async_session = AsyncSessionLocal()
         try:
-            # Yield the session to the `async with` block in the task
-            yield self._async_db
+            yield async_session
         finally:
-            # This code runs after the `async with` block exits
-            if self._async_db:
-                await self._async_db.close()
-                self._async_db = None
+            await async_session.close()
 
     def on_success(self, retval, task_id, args, kwargs):
         """Called on successful task execution."""
