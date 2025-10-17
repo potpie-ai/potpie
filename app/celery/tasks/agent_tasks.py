@@ -133,7 +133,7 @@ def execute_agent_background(
                             "tool_calls_json": serialized_tool_calls,
                         },
                     )
-            
+
             return True  # Indicate successful completion
 
         # Run the async agent execution on the worker's long-lived loop
@@ -152,9 +152,13 @@ def execute_agent_background(
             # Set task status to completed
             redis_manager.set_task_status(conversation_id, run_id, "completed")
 
-            logger.info(f"Background agent execution completed: {conversation_id}:{run_id}")
+            logger.info(
+                f"Background agent execution completed: {conversation_id}:{run_id}"
+            )
         else:
-            logger.info(f"Background agent execution cancelled: {conversation_id}:{run_id}")
+            logger.info(
+                f"Background agent execution cancelled: {conversation_id}:{run_id}"
+            )
 
     except Exception as e:
         logger.error(
@@ -298,7 +302,7 @@ def execute_regenerate_background(
                     logger.warning(
                         f"No chunks received during regeneration for conversation {conversation_id}"
                     )
-            
+
             return True  # Indicate successful completion
 
         # Run the async regeneration on the worker's long-lived loop
