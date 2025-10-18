@@ -187,12 +187,13 @@ class ConversationController:
                 for conversation in conversations
                 if conversation.agent_ids
             ]
-            custom_agents = {
-                agent.id: agent.role
-                for agent in self.db.query(CustomAgent)
-                .filter(CustomAgent.id.in_(agent_ids))
-                .all()
-            }
+
+            custom_agents = {}
+            stmt = select(CustomAgent).where(CustomAgent.id.in_(agent_ids))
+            result = await self.async_db.execute(stmt)
+
+            agents = result.scalars().all()
+            custom_agents = {agent.id: agent.role for agent in agents}
 
             for conversation in conversations:
                 projects = conversation.projects
