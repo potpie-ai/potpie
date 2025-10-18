@@ -192,6 +192,18 @@ class LLMProviderConfig:
         self.base_url = base_url or env_base_url
         self.api_version = api_version or env_api_version
 
+        capability_overrides = {
+            "supports_pydantic": _normalize_bool_env("LLM_SUPPORTS_PYDANTIC"),
+            "supports_streaming": _normalize_bool_env("LLM_SUPPORTS_STREAMING"),
+            "supports_vision": _normalize_bool_env("LLM_SUPPORTS_VISION"),
+            "supports_tool_parallelism": _normalize_bool_env(
+                "LLM_SUPPORTS_TOOL_PARALLELISM"
+            ),
+        }
+        for key, override in capability_overrides.items():
+            if override is not None:
+                self.capabilities[key] = override
+
     def get_llm_params(self, api_key: str) -> Dict[str, Any]:
         """Build a complete parameter dictionary for LLM calls."""
         params = {
@@ -206,11 +218,27 @@ class LLMProviderConfig:
         return params
 
 
+def _normalize_bool_env(var_name: str) -> Optional[bool]:
+    """Return a boolean override from the environment if present."""
+    raw_value = os.environ.get(var_name)
+    if raw_value is None:
+        return None
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def parse_model_string(model_string: str) -> tuple[str, str]:
     """Parse a model string into provider and model name."""
     try:
-        provider = model_string.split("/")[0]
-        return provider, model_string
+        parts = model_string.split("/")
+        provider = parts[0]
+
+        if provider == "ollama_chat":
+            provider = "ollama"
+            full_model_name = "ollama/" + "/".join(parts[1:])
+        else:
+            full_model_name = model_string
+
+        return provider, full_model_name
     except (IndexError, AttributeError):
         return "openai", DEFAULT_CHAT_MODEL
 
@@ -221,12 +249,13 @@ def get_config_for_model(model_string: str) -> Dict[str, Any]:
         return MODEL_CONFIG_MAP[model_string]
     # If model not found, use default configuration based on provider
     provider, _ = parse_model_string(model_string)
+    env_base_url = os.environ.get("LLM_API_BASE")
+    supports_pydantic = provider in {"openai", "anthropic", "openrouter", "azure", "ollama"}
     return {
         "provider": provider,
         "default_params": {"temperature": 0.3},
         "capabilities": {
-            "supports_pydantic": provider
-            in {"openai", "anthropic", "openrouter", "azure"},
+            "supports_pydantic": supports_pydantic or bool(env_base_url),
             "supports_streaming": True,
             "supports_vision": provider in {"openai", "anthropic"},
             "supports_tool_parallelism": provider in {"openai", "anthropic"},

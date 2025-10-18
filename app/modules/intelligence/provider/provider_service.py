@@ -472,6 +472,11 @@ class ProviderService:
     def _build_llm_params(self, config: LLMProviderConfig) -> Dict[str, Any]:
         """Build a dictionary of parameters for LLM initialization."""
         api_key = self._get_api_key(config.provider)
+        if not api_key and config.provider == "ollama" and config.base_url:
+            api_key = os.environ.get("OLLAMA_API_KEY", "ollama")
+        if not api_key:
+            api_key = os.environ.get("LLM_API_KEY", api_key)
+
         params = config.get_llm_params(api_key)
 
         if config.base_url:
@@ -619,17 +624,28 @@ class ProviderService:
         try:
             if config.provider == "ollama":
                 # use openai client to call ollama because of https://github.com/BerriAI/litellm/issues/7355
+                ollama_base_url = params.get("base_url") or os.environ.get(
+                    "LLM_API_BASE", "http://localhost:11434/v1"
+                )
+                ollama_api_key = params.get("api_key") or os.environ.get(
+                    "OLLAMA_API_KEY", "ollama"
+                )
                 client = instructor.from_openai(
-                    AsyncOpenAI(base_url="http://localhost:11434/v1", api_key="ollama"),
+                    AsyncOpenAI(base_url=ollama_base_url, api_key=ollama_api_key),
                     mode=instructor.Mode.JSON,
                 )
+                ollama_request_kwargs = {
+                    key: value
+                    for key, value in request_kwargs.items()
+                    if key not in {"base_url", "api_key", "api_version"}
+                }
                 response = await client.chat.completions.create(
                     model=params["model"].split("/")[-1],
                     messages=messages,
                     response_model=output_schema,
                     temperature=params.get("temperature", 0.3),
                     max_tokens=params.get("max_tokens"),
-                    **request_kwargs,
+                    **ollama_request_kwargs,
                 )
             else:
                 client = instructor.from_litellm(acompletion, mode=instructor.Mode.JSON)
@@ -952,8 +968,15 @@ class ProviderService:
             config.provider = provider
 
         api_key = self._get_api_key(config.provider)
+        if not api_key and config.provider == "ollama":
+            api_key = os.environ.get("OLLAMA_API_KEY", "ollama")
         if not api_key:
-            return None
+            api_key = os.environ.get("LLM_API_KEY", api_key)
+
+        if not api_key and config.provider not in {"ollama"}:
+            raise UnsupportedProviderError(
+                f"API key not found for provider '{config.provider}'."
+            )
 
         model_name = (
             target_model.split("/", 1)[1] if "/" in target_model else target_model
@@ -970,7 +993,7 @@ class ProviderService:
         if config.api_version:
             provider_kwargs["api_version"] = config.api_version
 
-        openai_like_providers = {"openai", "openrouter", "azure"}
+        openai_like_providers = {"openai", "openrouter", "azure", "ollama"}
         if config.provider in openai_like_providers:
             return OpenAIModel(
                 model_name=model_name,
