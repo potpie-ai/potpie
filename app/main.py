@@ -12,6 +12,7 @@ from app.core.base_model import Base
 from app.core.database import SessionLocal, engine
 from app.core.models import *  # noqa #necessary for models to not give import errors
 from app.modules.auth.auth_router import auth_router
+from app.modules.auth.github_app_auth_router import github_app_auth_router
 from app.modules.code_provider.github.github_router import router as github_router
 from app.modules.conversations.conversations_router import (
     router as conversations_router,
@@ -93,6 +94,9 @@ class MainApp:
 
     def include_routers(self):
         self.app.include_router(auth_router, prefix="/api/v1", tags=["Auth"])
+        self.app.include_router(
+            github_app_auth_router, prefix="/api/v1/auth", tags=["GitHub App Auth"]
+        )
         self.app.include_router(user_router, prefix="/api/v1", tags=["User"])
         self.app.include_router(parsing_router, prefix="/api/v1", tags=["Parsing"])
         self.app.include_router(

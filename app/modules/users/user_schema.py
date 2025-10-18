@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 from pydantic import BaseModel
 
@@ -30,7 +30,36 @@ class CreateUser(BaseModel):
     created_at: datetime
     last_login_at: datetime
     provider_info: dict
-    provider_username: str
+    provider_username: Optional[str] = None  # Optional for email/password users
+
+
+class TokenMetadata(BaseModel):
+    """Metadata about how the token was created"""
+
+    created_via: str
+    provider: str
+    auth_method: str
+    created_at: Optional[datetime] = None
+
+
+class ProviderInfo(BaseModel):
+    """Structured format for provider_info JSONB field"""
+
+    access_token: Optional[str] = None  # Optional for email/password users
+    providerId: str
+    uid: str
+    displayName: Optional[str] = None
+    email: Optional[str] = None
+    token_type: Optional[Literal["oauth", "app_user", "pat"]] = None
+    expires_at: Optional[datetime] = None
+    refresh_token: Optional[str] = None
+    installation_id: Optional[int] = None
+    token_metadata: Optional[TokenMetadata] = None
+
+    model_config = {
+        "json_encoders": {datetime: lambda v: v.isoformat() if v else None},
+        "extra": "allow",
+    }
 
 
 class UserProfileResponse(BaseModel):
