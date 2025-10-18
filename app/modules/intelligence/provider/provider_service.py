@@ -982,7 +982,9 @@ class ProviderService:
 
         if config.provider == "anthropic":
             anthropic_kwargs = {
-                key: value for key, value in provider_kwargs.items() if key != "api_version"
+                key: value
+                for key, value in provider_kwargs.items()
+                if key != "api_version"
             }
             return AnthropicModel(
                 model_name=model_name,
