@@ -594,6 +594,22 @@ async def share_chat(
     db: Session = Depends(get_db),
     user=Depends(AuthService.check_auth),
 ):
+    """
+    Share a conversation with specified users via email.
+
+    **Email Validation:**
+    - All recipient emails are validated before sharing
+    - Email format requirements:
+        - Must contain exactly one '@' symbol
+        - Local part (before @) cannot start or end with a dot
+        - Domain part cannot contain consecutive dots
+        - Must have a valid top-level domain (minimum 2 characters)
+    - Invalid email formats will return a 400 error
+
+    **Errors:**
+    - 400: Invalid email address format
+    - 404: Chat does not exist or unauthorized access
+    """
     user_id = user["user_id"]
     service = ShareChatService(db)
     try:
@@ -629,7 +645,25 @@ async def remove_access(
     user: str = Depends(AuthService.check_auth),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Remove access for specified emails from a conversation."""
+    """
+    Remove access for specified emails from a conversation.
+
+    **Email Validation:**
+    - All emails to remove are validated before processing
+    - Email format requirements:
+        - Must contain exactly one '@' symbol
+        - Local part (before @) cannot start or end with a dot
+        - Domain part cannot contain consecutive dots
+        - Must have a valid top-level domain (minimum 2 characters)
+    - Invalid email formats will return a 400 error
+    - No changes are made if any email is invalid (atomic operation)
+
+    **Errors:**
+    - 400: Invalid email address format
+    - 400: Chat has no shared access to remove
+    - 400: None of the specified emails have access
+    - 404: Chat does not exist or unauthorized access
+    """
     share_service = ShareChatService(db)
     current_user_id = user["user_id"]
     try:
