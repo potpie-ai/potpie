@@ -5,8 +5,9 @@ from typing import List, Optional
 from fastapi import Depends, Header, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_db, get_async_db
 from app.modules.auth.api_key_service import APIKeyService
 from app.modules.conversations.conversation.conversation_controller import (
     ConversationController,
@@ -87,6 +88,7 @@ async def create_conversation(
         True, description="Whether to hide this conversation from the web UI"
     ),
     db: Session = Depends(get_db),
+    async_db: AsyncSession = Depends(get_async_db),
     user=Depends(get_api_key_user),
 ):
     user_id = user["user_id"]
@@ -101,7 +103,7 @@ async def create_conversation(
         agent_ids=conversation.agent_ids,
     )
 
-    controller = ConversationController(db, user_id, None)
+    controller = ConversationController(db, async_db, user_id, None)
     return await controller.create_conversation(full_request, hidden)
 
 
@@ -128,6 +130,7 @@ async def post_message(
     conversation_id: str,
     message: MessageRequest,
     db: Session = Depends(get_db),
+    async_db: AsyncSession = Depends(get_async_db),
     user=Depends(get_api_key_user),
 ):
     if message.content == "" or message.content is None or message.content.isspace():
@@ -142,7 +145,7 @@ async def post_message(
         )
 
     # Note: email is no longer available with API key auth
-    controller = ConversationController(db, user_id, None)
+    controller = ConversationController(db, async_db, user_id, None)
     message_stream = controller.post_message(conversation_id, message, stream=False)
     async for chunk in message_stream:
         return chunk
@@ -156,6 +159,7 @@ async def create_conversation_and_message(
         True, description="Whether to hide this conversation from the web UI"
     ),
     db: Session = Depends(get_db),
+    async_db: AsyncSession = Depends(get_async_db),
     user=Depends(get_api_key_user),
 ):
     if message.content == "" or message.content is None or message.content.isspace():
@@ -167,7 +171,7 @@ async def create_conversation_and_message(
     if message.agent_id is None:
         message.agent_id = "codebase_qna_agent"
 
-    controller = ConversationController(db, user_id, None)
+    controller = ConversationController(db, async_db, user_id, None)
 
     # Create conversation with hidden parameter
     res = await controller.create_conversation(

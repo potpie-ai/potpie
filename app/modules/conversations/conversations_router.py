@@ -1,12 +1,13 @@
 import json
 import logging
-from typing import Any, AsyncGenerator, Generator, List, Optional, Union
+from typing import Any, AsyncGenerator, Generator, List, Optional, Union, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_db, get_async_db
 from app.modules.auth.auth_service import AuthService
 from app.modules.conversations.access.access_schema import (
     RemoveAccessRequest,
@@ -23,7 +24,6 @@ from app.modules.conversations.conversation.conversation_controller import (
 from app.modules.usage.usage_service import UsageService
 from app.modules.media.media_service import MediaService
 
-
 from .conversation.conversation_schema import (
     ConversationInfoResponse,
     CreateConversationRequest,
@@ -36,6 +36,7 @@ from .conversation.conversation_schema import (
 )
 from .message.message_schema import MessageRequest, MessageResponse, RegenerateRequest
 from .session.session_service import SessionService
+from app.modules.users.user_schema import UserConversationListResponse
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -96,6 +97,16 @@ def redis_stream_generator(
                 json_response = json.dumps(response.dict(), default=json_serializer)
                 yield json_response
 
+            elif event.get("type") == "queued":
+                # Send a queued status to the client
+                response = ChatMessageResponse(
+                    message="",
+                    citations=[],
+                    tool_calls=[],
+                )
+                json_response = json.dumps(response.dict(), default=json_serializer)
+                yield json_response
+
             elif event.get("type") == "end":
                 # End the stream when we receive an end event
                 break
@@ -107,6 +118,29 @@ def redis_stream_generator(
 
 class ConversationAPI:
     @staticmethod
+    @router.get(
+        "/conversations/",
+        response_model=List[UserConversationListResponse],
+        description="Get a list of conversations for the current user with sorting options.",
+    )
+    async def get_conversations_for_user(
+        user=Depends(AuthService.check_auth),
+        start: int = Query(0, ge=0),
+        limit: int = Query(10, ge=1),
+        sort: Literal["updated_at", "created_at"] = Query(
+            "updated_at", description="Field to sort by"
+        ),
+        order: Literal["asc", "desc"] = Query("desc", description="Direction of sort"),
+        db: Session = Depends(get_db),
+        async_db: AsyncSession = Depends(get_async_db),
+    ):
+        """Get a list of conversations for the current user with sorting options."""
+        user_id = user["user_id"]
+        user_email = user["email"]
+        controller = ConversationController(db, async_db, user_id, user_email)
+        return await controller.get_conversations_for_user(start, limit, sort, order)
+
+    @staticmethod
     @router.post("/conversations/", response_model=CreateConversationResponse)
     async def create_conversation(
         conversation: CreateConversationRequest,
@@ -114,6 +148,7 @@ class ConversationAPI:
             False, description="Whether to hide this conversation from the web UI"
         ),
         db: Session = Depends(get_db),
+        async_db: AsyncSession = Depends(get_async_db),
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
@@ -124,7 +159,7 @@ class ConversationAPI:
                 detail="Subscription required to create a conversation.",
             )
         user_email = user["email"]
-        controller = ConversationController(db, user_id, user_email)
+        controller = ConversationController(db, async_db, user_id, user_email)
         return await controller.create_conversation(conversation, hidden)
 
     @staticmethod
@@ -135,12 +170,13 @@ class ConversationAPI:
     async def get_conversation_info(
         conversation_id: str,
         db: Session = Depends(get_db),
+        async_db: AsyncSession = Depends(get_async_db),
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
         user_email = user["email"]
 
-        controller = ConversationController(db, user_id, user_email)
+        controller = ConversationController(db, async_db, user_id, user_email)
 
         try:
             result = await controller.get_conversation_info(conversation_id)
@@ -162,12 +198,13 @@ class ConversationAPI:
         start: int = Query(0, ge=0),
         limit: int = Query(10, ge=1),
         db: Session = Depends(get_db),
+        async_db: AsyncSession = Depends(get_async_db),
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
         user_email = user["email"]
 
-        controller = ConversationController(db, user_id, user_email)
+        controller = ConversationController(db, async_db, user_id, user_email)
 
         try:
             result = await controller.get_conversation_messages(
@@ -197,6 +234,7 @@ class ConversationAPI:
         ),
         cursor: Optional[str] = Query(None, description="Stream cursor for replay"),
         db: Session = Depends(get_db),
+        async_db: AsyncSession = Depends(get_async_db),
         user=Depends(AuthService.check_auth),
     ):
         # Validate message content
@@ -261,7 +299,7 @@ class ConversationAPI:
             attachment_ids=attachment_ids if attachment_ids else None,
         )
 
-        controller = ConversationController(db, user_id, user_email)
+        controller = ConversationController(db, async_db, user_id, user_email)
 
         if not stream:
             # Non-streaming behavior unchanged
@@ -301,6 +339,21 @@ class ConversationAPI:
         # Use parsed node_ids
         node_ids_list = parsed_node_ids or []
 
+        # Set initial "queued" status before starting the task
+        redis_manager = RedisStreamManager()
+        redis_manager.set_task_status(conversation_id, run_id, "queued")
+
+        # Publish a queued event so the client knows the task is accepted
+        redis_manager.publish_event(
+            conversation_id,
+            run_id,
+            "queued",
+            {
+                "status": "queued",
+                "message": "Task queued for processing",
+            },
+        )
+
         # Start background task
         execute_agent_background.delay(
             conversation_id=conversation_id,
@@ -313,18 +366,16 @@ class ConversationAPI:
         )
 
         # Wait for background task to start (with health check)
-        from app.modules.conversations.utils.redis_streaming import RedisStreamManager
-
-        redis_manager = RedisStreamManager()
+        # Increased timeout to 30 seconds to handle queued tasks
         task_started = redis_manager.wait_for_task_start(
-            conversation_id, run_id, timeout=10
+            conversation_id, run_id, timeout=30
         )
 
         if not task_started:
             logger.warning(
-                f"Background task failed to start for {conversation_id}:{run_id}"
+                f"Background task failed to start within 30s for {conversation_id}:{run_id} - may still be queued"
             )
-            # Could add fallback logic here if needed
+            # Don't fail - the stream consumer will wait up to 120 seconds
 
         # Return Redis stream response
         return StreamingResponse(
@@ -349,6 +400,7 @@ class ConversationAPI:
             True, description="Use background execution (recommended)"
         ),
         db: Session = Depends(get_db),
+        async_db: AsyncSession = Depends(get_async_db),
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
@@ -362,7 +414,7 @@ class ConversationAPI:
 
         if not stream or not background:
             # Fallback to existing direct execution for non-streaming or explicit direct mode
-            controller = ConversationController(db, user_id, user_email)
+            controller = ConversationController(db, async_db, user_id, user_email)
             message_stream = controller.regenerate_last_message(
                 conversation_id, request.node_ids, stream
             )
@@ -375,7 +427,7 @@ class ConversationAPI:
                     return chunk
 
         # NEW: Background execution with session management
-        controller = ConversationController(db, user_id, user_email)
+        controller = ConversationController(db, async_db, user_id, user_email)
 
         # Generate deterministic run_id
         run_id = _normalize_run_id(
@@ -415,6 +467,22 @@ class ConversationAPI:
 
         # Start background regenerate task
         from app.celery.tasks.agent_tasks import execute_regenerate_background
+        from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+
+        redis_manager = RedisStreamManager()
+        # Set initial "queued" status before starting the task
+        redis_manager.set_task_status(conversation_id, run_id, "queued")
+
+        # Publish a queued event so the client knows the task is accepted
+        redis_manager.publish_event(
+            conversation_id,
+            run_id,
+            "queued",
+            {
+                "status": "queued",
+                "message": "Regeneration task queued for processing",
+            },
+        )
 
         execute_regenerate_background.delay(
             conversation_id=conversation_id,
@@ -425,18 +493,16 @@ class ConversationAPI:
         )
 
         # Wait for background task to start (with health check)
-        from app.modules.conversations.utils.redis_streaming import RedisStreamManager
-
-        redis_manager = RedisStreamManager()
+        # Increased timeout to 30 seconds to handle queued tasks
         task_started = redis_manager.wait_for_task_start(
-            conversation_id, run_id, timeout=10
+            conversation_id, run_id, timeout=30
         )
 
         if not task_started:
             logger.warning(
-                f"Background regenerate task failed to start for {conversation_id}:{run_id}"
+                f"Background regenerate task failed to start within 30s for {conversation_id}:{run_id} - may still be queued"
             )
-            # Could add fallback logic here if needed
+            # Don't fail - the stream consumer will wait up to 120 seconds
 
         # Return Redis stream response
         return StreamingResponse(
@@ -449,11 +515,12 @@ class ConversationAPI:
     async def delete_conversation(
         conversation_id: str,
         db: Session = Depends(get_db),
+        async_db: AsyncSession = Depends(get_async_db),
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
         user_email = user["email"]
-        controller = ConversationController(db, user_id, user_email)
+        controller = ConversationController(db, async_db, user_id, user_email)
         return await controller.delete_conversation(conversation_id)
 
     @staticmethod
@@ -462,11 +529,12 @@ class ConversationAPI:
         conversation_id: str,
         session_id: Optional[str] = Query(None, description="Session ID to stop"),
         db: Session = Depends(get_db),
+        async_db: AsyncSession = Depends(get_async_db),
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
         user_email = user["email"]
-        controller = ConversationController(db, user_id, user_email)
+        controller = ConversationController(db, async_db, user_id, user_email)
         return await controller.stop_generation(conversation_id, session_id)
 
     @staticmethod
@@ -475,11 +543,12 @@ class ConversationAPI:
         conversation_id: str,
         request: RenameConversationRequest,
         db: Session = Depends(get_db),
+        async_db: AsyncSession = Depends(get_async_db),
         user=Depends(AuthService.check_auth),
     ):
         user_id = user["user_id"]
         user_email = user["email"]
-        controller = ConversationController(db, user_id, user_email)
+        controller = ConversationController(db, async_db, user_id, user_email)
         return await controller.rename_conversation(conversation_id, request.title)
 
     @staticmethod
@@ -487,6 +556,7 @@ class ConversationAPI:
     async def get_active_session(
         conversation_id: str,
         db: Session = Depends(get_db),
+        async_db: AsyncSession = Depends(get_async_db),
         user=Depends(AuthService.check_auth),
     ) -> Union[ActiveSessionResponse, ActiveSessionErrorResponse]:
         """Get active session information for a conversation"""
@@ -494,7 +564,7 @@ class ConversationAPI:
         user_email = user["email"]
 
         # Verify user has access to conversation
-        controller = ConversationController(db, user_id, user_email)
+        controller = ConversationController(db, async_db, user_id, user_email)
         try:
             await controller.get_conversation_info(conversation_id)
         except Exception as e:
@@ -516,6 +586,7 @@ class ConversationAPI:
     async def get_task_status(
         conversation_id: str,
         db: Session = Depends(get_db),
+        async_db: AsyncSession = Depends(get_async_db),
         user=Depends(AuthService.check_auth),
     ) -> Union[TaskStatusResponse, TaskStatusErrorResponse]:
         """Get background task status for a conversation"""
@@ -523,7 +594,7 @@ class ConversationAPI:
         user_email = user["email"]
 
         # Verify user has access to conversation
-        controller = ConversationController(db, user_id, user_email)
+        controller = ConversationController(db, async_db, user_id, user_email)
         try:
             await controller.get_conversation_info(conversation_id)
         except Exception as e:
@@ -549,6 +620,7 @@ class ConversationAPI:
             "0-0", description="Stream cursor position to resume from"
         ),
         db: Session = Depends(get_db),
+        async_db: AsyncSession = Depends(get_async_db),
         user=Depends(AuthService.check_auth),
     ):
         """Resume streaming from an existing session"""
@@ -556,7 +628,7 @@ class ConversationAPI:
         user_email = user["email"]
 
         # Verify user has access to conversation
-        controller = ConversationController(db, user_id, user_email)
+        controller = ConversationController(db, async_db, user_id, user_email)
         try:
             await controller.get_conversation_info(conversation_id)
         except Exception as e:

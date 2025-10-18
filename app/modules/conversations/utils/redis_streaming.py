@@ -91,7 +91,8 @@ class RedisStreamManager:
             # If no cursor provided (fresh request), wait for stream to be created
             if not cursor and not self.redis_client.exists(key):
                 # Wait for the stream to be created (with timeout)
-                wait_timeout = 30  # 30 seconds
+                # Increased timeout to 120 seconds to handle queued Celery tasks
+                wait_timeout = 120  # 2 minutes
                 wait_start = datetime.now()
 
                 while not self.redis_client.exists(key):
@@ -99,7 +100,7 @@ class RedisStreamManager:
                         yield {
                             "type": "end",
                             "status": "timeout",
-                            "message": "Stream creation timeout",
+                            "message": "Stream creation timeout - task may be queued",
                             "stream_id": "0-0",
                         }
                         return
@@ -203,7 +204,7 @@ class RedisStreamManager:
         start_time = datetime.now()
         while (datetime.now() - start_time).total_seconds() < timeout:
             status = self.get_task_status(conversation_id, run_id)
-            if status in ["running", "completed", "error"]:
+            if status in ["queued", "running", "completed", "error"]:
                 return True
             import time
 
