@@ -250,7 +250,13 @@ def get_config_for_model(model_string: str) -> Dict[str, Any]:
     # If model not found, use default configuration based on provider
     provider, _ = parse_model_string(model_string)
     env_base_url = os.environ.get("LLM_API_BASE")
-    supports_pydantic = provider in {"openai", "anthropic", "openrouter", "azure", "ollama"}
+    supports_pydantic = provider in {
+        "openai",
+        "anthropic",
+        "openrouter",
+        "azure",
+        "ollama",
+    }
     return {
         "provider": provider,
         "default_params": {"temperature": 0.3},
