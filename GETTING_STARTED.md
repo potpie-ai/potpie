@@ -71,9 +71,6 @@ To set up Firebase, follow these steps:
 PostHog is an open-source platform that helps us analyze user behavior on Potpie.
 - **Sign Up**: Create a free account at [PostHog](https://us.posthog.com/signup) and keep your API key in `.env` as `POSTHOG_API_KEY`, and `POSTHOG_HOST`
 ---
-## Portkey Integration
-Portkey provides observability and monitoring capabilities for AI integration with Potpie.
-- **Sign Up**: Create a free account at [Portkey](https://app.portkey.ai/signup) and keep your API key in `.env` as `PORTKEY_API_KEY`.
 ---
 ## Setting Up GitHub App
 To enable login via GitHub, create a GitHub app by following these steps:

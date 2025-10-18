@@ -37,15 +37,11 @@ from app.modules.intelligence.agents.custom_agents.custom_agents_service import 
 from app.modules.intelligence.agents.agents_service import AgentsService
 from app.modules.intelligence.agents.chat_agent import ChatContext
 from app.modules.intelligence.memory.chat_history_service import ChatHistoryService
-from app.modules.intelligence.provider.provider_service import (
-    ProviderService,
-)
+from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.projects.projects_service import ProjectService
 from app.modules.users.user_service import UserService
 from app.modules.utils.posthog_helper import PostHogClient
-from app.modules.intelligence.agents.chat_agents.adaptive_agent import (
-    PromptService,
-)
+from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.media.media_service import MediaService
 
