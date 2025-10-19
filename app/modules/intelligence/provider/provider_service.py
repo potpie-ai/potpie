@@ -472,7 +472,7 @@ class ProviderService:
     def _build_llm_params(self, config: LLMProviderConfig) -> Dict[str, Any]:
         """Build a dictionary of parameters for LLM initialization."""
         api_key = self._get_api_key(config.provider)
-        if not api_key and config.provider == "ollama" and config.base_url:
+        if not api_key and config.provider == "ollama":
             api_key = os.environ.get("OLLAMA_API_KEY", "ollama")
         if not api_key:
             api_key = os.environ.get("LLM_API_KEY", api_key)
@@ -480,7 +480,14 @@ class ProviderService:
         params = config.get_llm_params(api_key)
 
         if config.base_url:
-            params["base_url"] = config.base_url
+            base_url = config.base_url
+            if config.provider == "ollama":
+                base_url = base_url.rstrip("/")
+                if base_url.endswith("/v1"):
+                    base_url = base_url[:-3]
+            params["base_url"] = base_url
+        elif config.provider == "ollama":
+            params["base_url"] = os.environ.get("LLM_API_BASE", "http://localhost:11434")
         if config.api_version:
             params["api_version"] = config.api_version
 
@@ -624,9 +631,13 @@ class ProviderService:
         try:
             if config.provider == "ollama":
                 # use openai client to call ollama because of https://github.com/BerriAI/litellm/issues/7355
-                ollama_base_url = params.get("base_url") or os.environ.get(
-                    "LLM_API_BASE", "http://localhost:11434/v1"
+                ollama_base_root = (
+                    params.get("base_url")
+                    or config.base_url
+                    or os.environ.get("LLM_API_BASE")
+                    or "http://localhost:11434"
                 )
+                ollama_base_url = ollama_base_root.rstrip("/") + "/v1"
                 ollama_api_key = params.get("api_key") or os.environ.get(
                     "OLLAMA_API_KEY", "ollama"
                 )
@@ -995,6 +1006,13 @@ class ProviderService:
 
         openai_like_providers = {"openai", "openrouter", "azure", "ollama"}
         if config.provider in openai_like_providers:
+            if config.provider == "ollama":
+                base_url_root = (
+                    config.base_url
+                    or os.environ.get("LLM_API_BASE")
+                    or "http://localhost:11434"
+                )
+                provider_kwargs["base_url"] = base_url_root.rstrip("/") + "/v1"
             return OpenAIModel(
                 model_name=model_name,
                 provider=OpenAIProvider(
