@@ -174,14 +174,19 @@ class UserService:
             raise UserServiceError(err_msg) from e
 
     def get_user_id_by_email(self, email: str) -> str:
+        logger.info(f"DEBUG: get_user_id_by_email called for email: {email}")
         try:
             user = self.db.query(User).filter(User.email == email).first()
             if user:
+                logger.info(
+                    f"DEBUG: Found user with uid: {user.uid} for email: {email}"
+                )
                 return user.uid
             else:
+                logger.warning(f"DEBUG: No user found for email: {email}")
                 return None
         except Exception as e:
-            logger.error(f"Error fetching user ID by email {email}: {e}")
+            logger.error(f"DEBUG: Error fetching user ID by email {email}: {e}")
             return None
 
     async def get_user_by_email(self, email: str) -> User:
@@ -201,15 +206,18 @@ class UserService:
             return None
 
     def get_user_ids_by_emails(self, emails: List[str]) -> List[str]:
+        logger.info(f"DEBUG: get_user_ids_by_emails called for emails: {emails}")
         try:
             users = self.db.query(User).filter(User.email.in_(emails)).all()
             if users:
                 user_ids = [user.uid for user in users]
+                logger.info(f"DEBUG: Found user IDs: {user_ids} for emails: {emails}")
                 return user_ids
             else:
+                logger.warning(f"DEBUG: No users found for emails: {emails}")
                 return None
         except Exception as e:
-            logger.error(f"Error fetching user ID by emails {emails}: {e}")
+            logger.error(f"DEBUG: Error fetching user ID by emails {emails}: {e}")
             return None
 
     async def get_user_profile_pic(self, uid: str) -> UserProfileResponse:

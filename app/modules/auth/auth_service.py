@@ -53,25 +53,42 @@ class AuthService:
             HTTPBearer(auto_error=False)
         ),
     ):
+        logging.info("DEBUG: AuthService.check_auth called")
+        logging.info(f"DEBUG: Development mode: {os.getenv('isDevelopmentMode')}")
+        logging.info(f"DEBUG: Credential provided: {credential is not None}")
+
         # Check if the application is in debug mode
         if os.getenv("isDevelopmentMode") == "enabled" and credential is None:
             request.state.user = {"user_id": os.getenv("defaultUsername")}
-            logging.info("Development mode enabled. Using Mock Authentication.")
+            logging.info("DEBUG: Development mode enabled. Using Mock Authentication.")
             return {
                 "user_id": os.getenv("defaultUsername"),
                 "email": "defaultuser@potpie.ai",
             }
         else:
             if credential is None:
+                logging.error(
+                    "DEBUG: No credential provided and not in development mode"
+                )
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Bearer authentication is needed",
                     headers={"WWW-Authenticate": 'Bearer realm="auth_required"'},
                 )
             try:
+                logging.info(
+                    f"DEBUG: Verifying Firebase token: {credential.credentials[:20]}..."
+                )
                 decoded_token = auth.verify_id_token(credential.credentials)
+                logging.info(
+                    f"DEBUG: Successfully verified token for user: {decoded_token.get('user_id', 'unknown')}"
+                )
+                logging.info(
+                    f"DEBUG: Token email: {decoded_token.get('email', 'unknown')}"
+                )
                 request.state.user = decoded_token
             except Exception as err:
+                logging.error(f"DEBUG: Firebase token verification failed: {str(err)}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail=f"Invalid authentication from Firebase. {err}",

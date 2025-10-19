@@ -63,3 +63,30 @@ ConversationInfoResponse.update_forward_refs()
 
 class RenameConversationRequest(BaseModel):
     title: str
+
+
+# Frontend-aligned schemas for session endpoints
+class ActiveSessionResponse(BaseModel):
+    sessionId: str
+    status: str  # "active", "idle", "completed"
+    cursor: str
+    conversationId: str
+    startedAt: int  # Unix timestamp in milliseconds
+    lastActivity: int  # Unix timestamp in milliseconds
+
+
+class ActiveSessionErrorResponse(BaseModel):
+    error: str
+    conversationId: str
+
+
+class TaskStatusResponse(BaseModel):
+    isActive: bool
+    sessionId: str
+    estimatedCompletion: int  # Unix timestamp in milliseconds
+    conversationId: str
+
+
+class TaskStatusErrorResponse(BaseModel):
+    error: str
+    conversationId: str

@@ -68,3 +68,7 @@ package-lock.json
 
 .next
 .vscode/
+.claude/
+.cursor/
+.taskmaster/
+thoughts/

@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
-from typing import AsyncGenerator, List
+from typing import AsyncGenerator, List, Optional, Dict, Union
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -47,6 +47,7 @@ from app.modules.intelligence.agents.chat_agents.adaptive_agent import (
     PromptService,
 )
 from app.modules.intelligence.tools.tool_service import ToolService
+from app.modules.media.media_service import MediaService
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,7 @@ class ConversationService:
         promt_service: PromptService,
         agent_service: AgentsService,
         custom_agent_service: CustomAgentService,
+        media_service: MediaService,
     ):
         self.sql_db = db
         self.user_id = user_id
@@ -95,6 +97,7 @@ class ConversationService:
         self.prompt_service = promt_service
         self.agent_service = agent_service
         self.custom_agent_service = custom_agent_service
+        self.media_service = media_service
 
     @classmethod
     def create(cls, db: Session, user_id: str, user_email: str):
@@ -106,7 +109,8 @@ class ConversationService:
         agent_service = AgentsService(
             db, provider_service, prompt_service, tool_service
         )
-        custom_agent_service = CustomAgentService(db)
+        custom_agent_service = CustomAgentService(db, provider_service, tool_service)
+        media_service = MediaService(db)
         return cls(
             db,
             user_id,
@@ -118,21 +122,29 @@ class ConversationService:
             prompt_service,
             agent_service,
             custom_agent_service,
+            media_service,
         )
 
     async def check_conversation_access(
-        self, conversation_id: str, user_email: str
+        self, conversation_id: str, user_email: str, firebase_user_id: str = None
     ) -> str:
+
         if not user_email:
             return ConversationAccessType.WRITE
-        user_service = UserService(self.sql_db)
-        user_id = user_service.get_user_id_by_email(user_email)
+
+        # Use Firebase user ID directly if available, otherwise fall back to email lookup
+        if firebase_user_id:
+            user_id = firebase_user_id
+        else:
+            user_service = UserService(self.sql_db)
+            user_id = user_service.get_user_id_by_email(user_email)
 
         # Retrieve the conversation
         conversation = (
             self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
         )
         if not conversation:
+            logger.warning(f"Conversation {conversation_id} not found in database")
             return (
                 ConversationAccessType.NOT_FOUND
             )  # Return 'not found' if conversation doesn't exist
@@ -148,14 +160,23 @@ class ConversationService:
 
         # Check if the conversation is shared
         if conversation.shared_with_emails:
+            user_service = UserService(self.sql_db)
             shared_user_ids = user_service.get_user_ids_by_emails(
                 conversation.shared_with_emails
             )
             if shared_user_ids is None:
+                logger.warning(
+                    "Failed to get user IDs for shared emails, returning NOT_FOUND"
+                )
                 return ConversationAccessType.NOT_FOUND
             # Check if the current user ID is in the shared user IDs
             if user_id in shared_user_ids:
                 return ConversationAccessType.READ  # Shared users can only read
+            else:
+                return ConversationAccessType.NOT_FOUND
+        else:
+            return ConversationAccessType.NOT_FOUND
+
         return ConversationAccessType.NOT_FOUND
 
     async def create_conversation(
@@ -265,18 +286,36 @@ class ConversationService:
         stream: bool = True,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         try:
+            logger.info(
+                f"DEBUG: store_message called with message.attachment_ids: {message.attachment_ids}"
+            )
             access_level = await self.check_conversation_access(
-                conversation_id, self.user_email
+                conversation_id, self.user_email, user_id
             )
             if access_level == ConversationAccessType.READ:
                 raise AccessTypeReadError("Access denied.")
             self.history_manager.add_message_chunk(
                 conversation_id, message.content, message_type, user_id
             )
-            self.history_manager.flush_message_buffer(
+            message_id = self.history_manager.flush_message_buffer(
                 conversation_id, message_type, user_id
             )
             logger.info(f"Stored message in conversation {conversation_id}")
+
+            # Handle attachments if present
+            if message_type == MessageType.HUMAN and message.attachment_ids:
+                try:
+                    await self.media_service.update_message_attachments(
+                        message_id, message.attachment_ids
+                    )
+                    logger.info(
+                        f"Linked {len(message.attachment_ids)} attachments to message {message_id}"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to link attachments to message {message_id}: {str(e)}"
+                    )
+                    # Continue processing even if attachment linking fails
 
             if message_type == MessageType.HUMAN:
                 conversation = await self._get_conversation_with_message_count(
@@ -304,14 +343,22 @@ class ConversationService:
 
                 if stream:
                     async for chunk in self._generate_and_stream_ai_response(
-                        message.content, conversation_id, user_id, message.node_ids
+                        message.content,
+                        conversation_id,
+                        user_id,
+                        message.node_ids,
+                        message.attachment_ids,
                     ):
                         yield chunk
                 else:
                     full_message = ""
                     all_citations = []
                     async for chunk in self._generate_and_stream_ai_response(
-                        message.content, conversation_id, user_id, message.node_ids
+                        message.content,
+                        conversation_id,
+                        user_id,
+                        message.node_ids,
+                        message.attachment_ids,
                     ):
                         full_message += chunk.message
                         all_citations = all_citations + chunk.citations
@@ -394,7 +441,7 @@ class ConversationService:
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         try:
             access_level = await self.check_conversation_access(
-                conversation_id, self.user_email
+                conversation_id, self.user_email, user_id
             )
             if access_level != ConversationAccessType.WRITE:
                 raise AccessTypeReadError(
@@ -403,6 +450,33 @@ class ConversationService:
             last_human_message = await self._get_last_human_message(conversation_id)
             if not last_human_message:
                 raise MessageNotFoundError("No human message found to regenerate from")
+
+            # Get attachment IDs from the last human message
+            attachment_ids = None
+            if last_human_message.has_attachments:
+                try:
+                    attachments = await self.media_service.get_message_attachments(
+                        last_human_message.id, include_download_urls=False
+                    )
+                    # Extract only image attachment IDs for multimodal processing
+                    from app.modules.media.media_model import AttachmentType
+
+                    attachment_ids = [
+                        att.id
+                        for att in attachments
+                        if att.attachment_type == AttachmentType.IMAGE
+                    ]
+                    if attachment_ids:
+                        logger.info(
+                            f"Found {len(attachment_ids)} image attachments for regeneration: {attachment_ids}"
+                        )
+                    else:
+                        logger.info("No image attachments found in last human message")
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to retrieve attachments for message {last_human_message.id}: {e}"
+                    )
+                    attachment_ids = None
 
             await self._archive_subsequent_messages(
                 conversation_id, last_human_message.created_at
@@ -415,7 +489,11 @@ class ConversationService:
 
             if stream:
                 async for chunk in self._generate_and_stream_ai_response(
-                    last_human_message.content, conversation_id, user_id, node_ids
+                    last_human_message.content,
+                    conversation_id,
+                    user_id,
+                    node_ids,
+                    attachment_ids,
                 ):
                     yield chunk
             else:
@@ -423,7 +501,11 @@ class ConversationService:
                 all_citations = []
 
                 async for chunk in self._generate_and_stream_ai_response(
-                    last_human_message.content, conversation_id, user_id, node_ids
+                    last_human_message.content,
+                    conversation_id,
+                    user_id,
+                    node_ids,
+                    attachment_ids,
                 ):
                     full_message += chunk.message
                     all_citations = all_citations + chunk.citations
@@ -445,6 +527,67 @@ class ConversationService:
                 exc_info=True,
             )
             raise ConversationServiceError("Failed to regenerate last message.") from e
+
+    async def regenerate_last_message_background(
+        self,
+        conversation_id: str,
+        node_ids: Optional[List[str]] = None,
+        attachment_ids: List[str] = [],
+    ) -> AsyncGenerator[ChatMessageResponse, None]:
+        """Background version of regenerate_last_message for Celery task execution"""
+        try:
+            # Access control validation
+            access_level = await self.check_conversation_access(
+                conversation_id, self.user_email, self.user_id
+            )
+            if access_level != ConversationAccessType.WRITE:
+                raise AccessTypeReadError(
+                    "Access denied. Only conversation creators can regenerate messages."
+                )
+
+            # Get last human message (already validated by background task caller)
+            last_human_message = await self._get_last_human_message(conversation_id)
+            if not last_human_message:
+                raise MessageNotFoundError("No human message found to regenerate from")
+
+            # Archive subsequent messages
+            await self._archive_subsequent_messages(
+                conversation_id, last_human_message.created_at
+            )
+
+            # PostHog analytics
+            PostHogClient().send_event(
+                self.user_id,
+                "regenerate_conversation_event",
+                {"conversation_id": conversation_id},
+            )
+
+            # Convert string node_ids to NodeContext objects for compatibility
+            node_contexts = []
+            if node_ids:
+                node_contexts = [NodeContext(node_id=node_id) for node_id in node_ids]
+
+            # Execute AI response generation with existing logic
+            async for chunk in self._generate_and_stream_ai_response(
+                last_human_message.content,
+                conversation_id,
+                self.user_id,
+                node_contexts,
+                attachment_ids,
+            ):
+                yield chunk
+
+        except (AccessTypeReadError, MessageNotFoundError) as e:
+            logger.error(
+                f"Background regeneration error for {conversation_id}: {str(e)}"
+            )
+            raise
+        except Exception as e:
+            logger.error(
+                f"Background regeneration failed for {conversation_id}: {str(e)}",
+                exc_info=True,
+            )
+            raise ConversationServiceError(f"Failed to regenerate message: {str(e)}")
 
     async def _get_last_human_message(self, conversation_id: str):
         message = (
@@ -503,6 +646,7 @@ class ConversationService:
         conversation_id: str,
         user_id: str,
         node_ids: List[NodeContext],
+        attachment_ids: Optional[List[str]] = None,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
         conversation = (
             self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
@@ -534,37 +678,75 @@ class ConversationService:
                 project_ids=[project_id]
             )
 
+            # Prepare multimodal context - use current message attachments if available
+            image_attachments = None
+            if attachment_ids:
+                image_attachments = await self._prepare_attachments_as_images(
+                    attachment_ids
+                )
+
+            # Also get context images from recent conversation history
+            context_images = await self._prepare_conversation_context_images(
+                conversation_id
+            )
+
             logger.info(
                 f"conversation_id: {conversation_id} Running agent {agent_id} with query: {query}"
             )
 
+            if image_attachments or context_images:
+                logger.info(
+                    f"Multimodal context: {len(image_attachments) if image_attachments else 0} current images, {len(context_images) if context_images else 0} context images"
+                )
+
             if type == "CUSTOM_AGENT":
-                # Custom agent doesn't support streaming, so we'll yield the entire response at once
-                response = (
+
+                res = (
                     await self.agent_service.custom_agent_service.execute_agent_runtime(
-                        agent_id,
                         user_id,
-                        query,
-                        node_ids,
-                        project_id,
-                        project_name,
-                        conversation.id,
+                        ChatContext(
+                            project_id=str(project_id),
+                            project_name=project_name,
+                            curr_agent_id=str(agent_id),
+                            history=validated_history[-12:],
+                            node_ids=[node.node_id for node in node_ids],
+                            query=query,
+                        ),
                     )
                 )
-                yield ChatMessageResponse(
-                    message=response["message"], citations=[], tool_calls=[]
+                async for chunk in res:
+                    self.history_manager.add_message_chunk(
+                        conversation_id,
+                        chunk.response,
+                        MessageType.AI_GENERATED,
+                        citations=chunk.citations,
+                    )
+                    yield ChatMessageResponse(
+                        message=chunk.response,
+                        citations=chunk.citations,
+                        tool_calls=[
+                            tool_call.model_dump_json()
+                            for tool_call in chunk.tool_calls
+                        ],
+                    )
+                self.history_manager.flush_message_buffer(
+                    conversation_id, MessageType.AI_GENERATED
                 )
             else:
-                res = self.agent_service.execute_stream(
-                    ChatContext(
-                        project_id=str(project_id),
-                        project_name=project_name,
-                        curr_agent_id=str(agent_id),
-                        history=validated_history[-8:],
-                        node_ids=[node.node_id for node in node_ids],
-                        query=query,
-                    )
+                # Create enhanced ChatContext with multimodal support
+                nodes = [] if node_ids is None else [node.node_id for node in node_ids]
+                chat_context = ChatContext(
+                    project_id=str(project_id),
+                    project_name=project_name,
+                    curr_agent_id=str(agent_id),
+                    history=validated_history[-8:],
+                    node_ids=nodes,
+                    query=query,
+                    image_attachments=image_attachments,
+                    context_images=context_images,
                 )
+
+                res = self.agent_service.execute_stream(chat_context)
 
                 async for chunk in res:
                     self.history_manager.add_message_chunk(
@@ -597,10 +779,123 @@ class ConversationService:
                 "Failed to generate and stream AI response."
             ) from e
 
+    async def _generate_and_stream_ai_response_background(
+        self,
+        query: str,
+        conversation_id: str,
+        user_id: str,
+        node_ids: List[NodeContext],
+        attachment_ids: Optional[List[str]] = None,
+        run_id: str = None,
+    ) -> AsyncGenerator[ChatMessageResponse, None]:
+        """Background version for Celery tasks - reuses existing streaming logic"""
+
+        async for chunk in self._generate_and_stream_ai_response(
+            query, conversation_id, user_id, node_ids, attachment_ids
+        ):
+            yield chunk
+
+    async def _prepare_attachments_as_images(
+        self, attachment_ids: List[str]
+    ) -> Optional[Dict[str, Dict[str, Union[str, int]]]]:
+        """Convert attachment IDs directly to base64 images for multimodal processing"""
+        try:
+            if not attachment_ids:
+                return None
+
+            images = {}
+            for attachment_id in attachment_ids:
+                try:
+                    # Get attachment info
+                    attachment = await self.media_service.get_attachment(attachment_id)
+                    logger.info(
+                        f"DEBUG: Retrieved attachment {attachment_id}: type={attachment.attachment_type.value if attachment else 'None'}, mime_type={attachment.mime_type if attachment else 'None'}"
+                    )
+                    if (
+                        attachment
+                        and attachment.attachment_type.value.upper() == "IMAGE"
+                    ):  # Check if it's an image
+                        base64_data = await self.media_service.get_image_as_base64(
+                            attachment_id
+                        )
+                        images[attachment_id] = {
+                            "base64": base64_data,
+                            "mime_type": attachment.mime_type,
+                            "file_name": attachment.file_name,
+                            "file_size": attachment.file_size,
+                        }
+                        logger.info(
+                            f"Prepared image {attachment_id} ({attachment.file_name}) for multimodal processing"
+                        )
+                    else:
+                        logger.info(
+                            f"DEBUG: Skipping attachment {attachment_id} - not an image or attachment not found"
+                        )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to prepare attachment {attachment_id} as image: {str(e)}"
+                    )
+                    continue
+
+            logger.info(
+                f"Prepared {len(images)} images from {len(attachment_ids)} attachments for multimodal processing"
+            )
+            return images if images else None
+
+        except Exception as e:
+            logger.error(f"Error preparing attachments as images: {str(e)}")
+            return None
+
+    async def _prepare_current_message_images(
+        self, conversation_id: str
+    ) -> Optional[Dict[str, Dict[str, Union[str, int]]]]:
+        """Get images from the most recent human message in the conversation"""
+        try:
+            # Get the most recent human message with attachments
+            latest_human_message = (
+                self.sql_db.query(Message)
+                .filter_by(
+                    conversation_id=conversation_id,
+                    type=MessageType.HUMAN,
+                    status=MessageStatus.ACTIVE,
+                )
+                .filter(Message.has_attachments == True)
+                .order_by(Message.created_at.desc())
+                .first()
+            )
+
+            if not latest_human_message:
+                return None
+
+            # Get images from this message
+            images = await self.media_service.get_message_images_as_base64(
+                latest_human_message.id
+            )
+            return images if images else None
+
+        except Exception as e:
+            logger.error(f"Error preparing current message images: {str(e)}")
+            return None
+
+    async def _prepare_conversation_context_images(
+        self, conversation_id: str, limit: int = 3
+    ) -> Optional[Dict[str, Dict[str, Union[str, int]]]]:
+        """Get recent images from conversation history for additional context"""
+        try:
+            # Get recent images from conversation (excluding the most recent message to avoid duplicates)
+            context_images = await self.media_service.get_conversation_recent_images(
+                conversation_id, limit=limit
+            )
+            return context_images if context_images else None
+
+        except Exception as e:
+            logger.error(f"Error preparing conversation context images: {str(e)}")
+            return None
+
     async def delete_conversation(self, conversation_id: str, user_id: str) -> dict:
         try:
             access_level = await self.check_conversation_access(
-                conversation_id, self.user_email
+                conversation_id, self.user_email, user_id
             )
             if access_level == ConversationAccessType.READ:
                 raise AccessTypeReadError("Access denied.")
@@ -666,20 +961,27 @@ class ConversationService:
     async def get_conversation_info(
         self, conversation_id: str, user_id: str
     ) -> ConversationInfoResponse:
+
         try:
             conversation = (
                 self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
             )
             if not conversation:
+                logger.warning(f"Conversation {conversation_id} not found in database")
                 raise ConversationNotFoundError(
                     f"Conversation with id {conversation_id} not found"
                 )
+
             is_creator = conversation.user_id == user_id
+
             access_type = await self.check_conversation_access(
-                conversation_id, self.user_email
+                conversation_id, self.user_email, user_id
             )
 
             if access_type == ConversationAccessType.NOT_FOUND:
+                logger.error(
+                    f"Access denied - access type is NOT_FOUND for user {user_id} on conversation {conversation_id}"
+                )
                 raise AccessTypeNotFoundError("Access type not found")
 
             total_messages = (
@@ -704,7 +1006,7 @@ class ConversationService:
                     if custom_agent:
                         agent_ids = [custom_agent.role]
 
-            return ConversationInfoResponse(
+            result = ConversationInfoResponse(
                 id=conversation.id,
                 title=conversation.title,
                 status=conversation.status,
@@ -718,10 +1020,12 @@ class ConversationService:
                 creator_id=conversation.user_id,
                 visibility=conversation.visibility,
             )
+            return result
         except ConversationNotFoundError as e:
-            logger.warning(str(e))
+            logger.warning(f"ConversationNotFoundError: {str(e)}")
             raise
-        except AccessTypeNotFoundError:
+        except AccessTypeNotFoundError as e:
+            logger.error(f"AccessTypeNotFoundError: {str(e)}")
             raise
         except Exception as e:
             logger.error(f"Error in get_conversation_info: {e}", exc_info=True)
@@ -732,16 +1036,23 @@ class ConversationService:
     async def get_conversation_messages(
         self, conversation_id: str, start: int, limit: int, user_id: str
     ) -> List[MessageResponse]:
+
         try:
             access_level = await self.check_conversation_access(
-                conversation_id, self.user_email
+                conversation_id, self.user_email, user_id
             )
+
             if access_level == ConversationAccessType.NOT_FOUND:
+                logger.error(
+                    f"Access denied - access level is NOT_FOUND for user {user_id} on conversation {conversation_id}"
+                )
                 raise AccessTypeNotFoundError("Access denied.")
+
             conversation = (
                 self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
             )
             if not conversation:
+                logger.warning(f"Conversation {conversation_id} not found in database")
                 raise ConversationNotFoundError(
                     f"Conversation with id {conversation_id} not found"
                 )
@@ -757,42 +1068,82 @@ class ConversationService:
                 .all()
             )
 
-            return [
-                MessageResponse(
-                    id=message.id,
-                    conversation_id=message.conversation_id,
-                    content=message.content,
-                    sender_id=message.sender_id,
-                    type=message.type,
-                    status=message.status,
-                    created_at=message.created_at,
-                    citations=(
-                        message.citations.split(",") if message.citations else None
-                    ),
+            message_responses = []
+            for message in messages:
+                # Get attachments for this message
+                attachments = None
+                if message.has_attachments:
+                    try:
+                        attachments = await self.media_service.get_message_attachments(
+                            message.id
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to get attachments for message {message.id}: {str(e)}"
+                        )
+                        attachments = []
+
+                message_responses.append(
+                    MessageResponse(
+                        id=message.id,
+                        conversation_id=message.conversation_id,
+                        content=message.content,
+                        sender_id=message.sender_id,
+                        type=message.type,
+                        status=message.status,
+                        created_at=message.created_at,
+                        citations=(
+                            message.citations.split(",") if message.citations else None
+                        ),
+                        has_attachments=message.has_attachments,
+                        attachments=attachments,
+                    )
                 )
-                for message in messages
-            ]
+            return message_responses
         except ConversationNotFoundError as e:
-            logger.warning(str(e))
+            logger.warning(f"ConversationNotFoundError: {str(e)}")
             raise
-        except AccessTypeNotFoundError:
+        except AccessTypeNotFoundError as e:
+            logger.error(f"AccessTypeNotFoundError: {str(e)}")
             raise
         except Exception as e:
-            logger.error(f"Error in get_conversation_messages: {e}", exc_info=True)
+            logger.error(
+                f"DEBUG: Error in get_conversation_messages: {e}", exc_info=True
+            )
             raise ConversationServiceError(
                 f"Failed to get messages for conversation {conversation_id}"
             ) from e
 
-    async def stop_generation(self, conversation_id: str, user_id: str) -> dict:
-        logger.info(f"Attempting to stop generation for conversation {conversation_id}")
-        return {"status": "success", "message": "Generation stop request received"}
+    async def stop_generation(
+        self, conversation_id: str, user_id: str, run_id: str = None
+    ) -> dict:
+        logger.info(
+            f"Attempting to stop generation for conversation {conversation_id}, run_id: {run_id}"
+        )
+
+        if not run_id:
+            return {
+                "status": "error",
+                "message": "run_id required for stopping background generation",
+            }
+
+        # Set cancellation flag in Redis for background task to check
+        from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+
+        redis_manager = RedisStreamManager()
+        redis_manager.set_cancellation(conversation_id, run_id)
+
+        return {
+            "status": "success",
+            "message": "Cancellation signal sent to background task",
+        }
 
     async def rename_conversation(
         self, conversation_id: str, new_title: str, user_id: str
     ) -> dict:
         try:
             access_level = await self.check_conversation_access(
-                conversation_id, self.user_email
+                conversation_id, self.user_email, user_id
             )
             if access_level == ConversationAccessType.READ:
                 raise AccessTypeReadError("Access denied.")

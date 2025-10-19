@@ -19,6 +19,7 @@ class CustomAgent(Base):
     deployment_url = Column(String, nullable=True)
     deployment_status = Column(String, default="STOPPED", nullable=True)
     visibility = Column(String, default="private", nullable=False)
+
     created_at = Column(DateTime(timezone=True), default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=True), default=func.now(), onupdate=func.now(), nullable=False
