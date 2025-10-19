@@ -1,16 +1,10 @@
 import logging
 import os
-from enum import Enum
 from typing import List, Dict, Any, Union, AsyncGenerator, Optional
-import uuid
-from anthropic import AsyncAnthropic
-from crewai import LLM
 from pydantic import BaseModel
 from pydantic_ai.models import Model
 from litellm import litellm, AsyncOpenAI, acompletion
 import instructor
-import httpx
-from portkey_ai import createHeaders, PORTKEY_GATEWAY_URL
 
 from app.core.config_provider import config_provider
 from app.modules.key_management.secret_manager import SecretManager
@@ -27,7 +21,12 @@ from .provider_schema import (
     SetProviderRequest,
     ModelInfo,
 )
-from .llm_config import LLMProviderConfig, build_llm_provider_config
+from .llm_config import (
+    LLMProviderConfig,
+    build_llm_provider_config,
+    get_config_for_model,
+)
+from .exceptions import UnsupportedProviderError
 
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.models.anthropic import AnthropicModel
@@ -243,12 +242,6 @@ def robust_llm_call(settings: Optional[RetrySettings] = None):
     return decorator
 
 
-class AgentProvider(Enum):
-    CREWAI = "CREWAI"
-    LANGCHAIN = "LANGCHAIN"
-    PYDANTICAI = "PYDANTICAI"
-
-
 # Available models with their metadata
 AVAILABLE_MODELS = [
     AvailableModelOption(
@@ -335,7 +328,7 @@ AVAILABLE_MODELS = [
         id="openrouter/deepseek/deepseek-chat-v3-0324",
         name="DeepSeek V3",
         description="DeepSeek's latest chat model",
-        provider="deepseek",
+        provider="openrouter",
         is_chat_model=True,
         is_inference_model=True,
     ),
@@ -343,7 +336,7 @@ AVAILABLE_MODELS = [
         id="openrouter/meta-llama/llama-3.3-70b-instruct",
         name="Llama 3.3 70B",
         description="Meta's latest Llama model",
-        provider="meta-llama",
+        provider="openrouter",
         is_chat_model=True,
         is_inference_model=True,
     ),
@@ -351,7 +344,7 @@ AVAILABLE_MODELS = [
         id="openrouter/google/gemini-2.0-flash-001",
         name="Gemini 2.0 Flash",
         description="Google's Gemini model optimized for speed",
-        provider="gemini",
+        provider="openrouter",
         is_chat_model=True,
         is_inference_model=True,
     ),
@@ -359,7 +352,7 @@ AVAILABLE_MODELS = [
         id="openrouter/google/gemini-2.5-pro-preview",
         name="Gemini 2.5 Pro",
         description="Google's Latest pro Gemini model",
-        provider="gemini",
+        provider="openrouter",
         is_chat_model=True,
         is_inference_model=True,
     ),
@@ -373,9 +366,7 @@ class ProviderService:
     def __init__(self, db, user_id: str):
         litellm.modify_params = True
         self.db = db
-        self.llm = None
         self.user_id = user_id
-        self.portkey_api_key = os.environ.get("PORTKEY_API_KEY", None)
 
         # Load user preferences
         user_pref = db.query(UserPreferences).filter_by(user_id=user_id).first()
@@ -480,29 +471,44 @@ class ProviderService:
 
     def _build_llm_params(self, config: LLMProviderConfig) -> Dict[str, Any]:
         """Build a dictionary of parameters for LLM initialization."""
-        api_key = self._get_api_key(config.model.split("/")[0])
-        return config.get_llm_params(api_key)
+        api_key = self._get_api_key(config.provider)
+        if not api_key and config.provider == "ollama":
+            api_key = os.environ.get("OLLAMA_API_KEY", "ollama")
+        if not api_key:
+            api_key = os.environ.get("LLM_API_KEY", api_key)
 
-    def get_extra_params_and_headers(
-        self, routing_provider: Optional[str]
-    ) -> tuple[dict[str, Any], Any]:
-        """Get extra parameters and headers for API calls."""
-        extra_params = {}
-        headers = createHeaders(
-            api_key=self.portkey_api_key,
-            provider=routing_provider,
-            trace_id=str(uuid.uuid4())[:8],
-            custom_host=os.environ.get("LLM_API_BASE"),
-            api_version=os.environ.get("LLM_API_VERSION"),
+        params = config.get_llm_params(api_key)
+
+        if config.base_url:
+            base_url = config.base_url
+            if config.provider == "ollama":
+                base_url = base_url.rstrip("/")
+                if base_url.endswith("/v1"):
+                    base_url = base_url[:-3]
+            params["base_url"] = base_url
+        elif config.provider == "ollama":
+            params["base_url"] = os.environ.get("LLM_API_BASE", "http://localhost:11434")
+        if config.api_version:
+            params["api_version"] = config.api_version
+
+        # Filter out falsy values litellm would not expect
+        return {key: value for key, value in params.items() if value is not None}
+
+    def _build_config_for_model_identifier(
+        self, model_identifier: str
+    ) -> LLMProviderConfig:
+        """Create a provider config for a specific model identifier."""
+        config_data = get_config_for_model(model_identifier).copy()
+        default_params = dict(config_data.get("default_params", {}))
+
+        return LLMProviderConfig(
+            provider=config_data["provider"],
+            model=model_identifier,
+            default_params=default_params,
+            capabilities=config_data.get("capabilities", {}),
+            base_url=config_data.get("base_url"),
+            api_version=config_data.get("api_version"),
         )
-        if self.portkey_api_key and routing_provider != "ollama":
-            # ollama + portkey is not supported currently
-            extra_params["base_url"] = PORTKEY_GATEWAY_URL
-            extra_params["extra_headers"] = headers
-        elif routing_provider == "azure":
-            extra_params["api_base"] = os.environ.get("LLM_API_BASE")
-            extra_params["api_version"] = os.environ.get("LLM_API_VERSION")
-        return extra_params, headers
 
     async def get_global_ai_provider(self, user_id: str) -> GetProviderResponse:
         """Get the current global AI provider configuration."""
@@ -568,12 +574,10 @@ class ProviderService:
             logging.error(f"Error getting global AI provider: {e}")
             raise e
 
-    def is_current_model_supported_by_pydanticai(
-        self, config_type: str = "chat"
-    ) -> bool:
-        """Check if the current model is supported by PydanticAI."""
+    def supports_pydantic(self, config_type: str = "chat") -> bool:
+        """Return True when the active model supports the pydantic-ai stack."""
         config = self.chat_config if config_type == "chat" else self.inference_config
-        return config.provider in ["openai", "anthropic", "openrouter"]
+        return config.capabilities.get("supports_pydantic", False)
 
     @robust_llm_call()  # Apply the robust_llm_call decorator
     async def call_llm(
@@ -585,11 +589,7 @@ class ProviderService:
 
         # Build parameters using the config object
         params = self._build_llm_params(config)
-        routing_provider = config.model.split("/")[0]
-
-        # Get extra parameters and headers for API calls
-        extra_params, _ = self.get_extra_params_and_headers(routing_provider)
-        params.update(extra_params)
+        routing_provider = config.provider
 
         # Handle streaming response if requested
         try:
@@ -620,25 +620,43 @@ class ProviderService:
 
         # Build parameters
         params = self._build_llm_params(config)
-        routing_provider = config.model.split("/")[0]
+        routing_provider = config.provider
 
-        # Get extra parameters and headers
-        extra_params, _ = self.get_extra_params_and_headers(routing_provider)
+        request_kwargs = {
+            key: params[key]
+            for key in ("api_key", "base_url", "api_version")
+            if key in params
+        }
 
         try:
             if config.provider == "ollama":
                 # use openai client to call ollama because of https://github.com/BerriAI/litellm/issues/7355
+                ollama_base_root = (
+                    params.get("base_url")
+                    or config.base_url
+                    or os.environ.get("LLM_API_BASE")
+                    or "http://localhost:11434"
+                )
+                ollama_base_url = ollama_base_root.rstrip("/") + "/v1"
+                ollama_api_key = params.get("api_key") or os.environ.get(
+                    "OLLAMA_API_KEY", "ollama"
+                )
                 client = instructor.from_openai(
-                    AsyncOpenAI(base_url="http://localhost:11434/v1", api_key="ollama"),
+                    AsyncOpenAI(base_url=ollama_base_url, api_key=ollama_api_key),
                     mode=instructor.Mode.JSON,
                 )
+                ollama_request_kwargs = {
+                    key: value
+                    for key, value in request_kwargs.items()
+                    if key not in {"base_url", "api_key", "api_version"}
+                }
                 response = await client.chat.completions.create(
                     model=params["model"].split("/")[-1],
                     messages=messages,
                     response_model=output_schema,
                     temperature=params.get("temperature", 0.3),
                     max_tokens=params.get("max_tokens"),
-                    **extra_params,
+                    **ollama_request_kwargs,
                 )
             else:
                 client = instructor.from_litellm(acompletion, mode=instructor.Mode.JSON)
@@ -649,8 +667,7 @@ class ProviderService:
                     strict=True,
                     temperature=params.get("temperature", 0.3),
                     max_tokens=params.get("max_tokens"),
-                    api_key=params.get("api_key"),
-                    **extra_params,
+                    **request_kwargs,
                 )
             return response
         except Exception as e:
@@ -682,11 +699,7 @@ class ProviderService:
 
         # Build parameters using the config object
         params = self._build_llm_params(config)
-        routing_provider = config.model.split("/")[0]
-
-        # Get extra parameters and headers for API calls
-        extra_params, _ = self.get_extra_params_and_headers(routing_provider)
-        params.update(extra_params)
+        routing_provider = config.provider
 
         # Validate and filter images before processing
         if images:
@@ -955,113 +968,73 @@ class ProviderService:
 
         return is_vision
 
-    def _initialize_llm(self, config: LLMProviderConfig, agent_type: AgentProvider):
-        """Initialize LLM for the specified agent type."""
-        params = self._build_llm_params(config)
-        routing_provider = config.model.split("/")[0]
-
-        # Get extra parameters and headers
-        extra_params, headers = self.get_extra_params_and_headers(routing_provider)
-
-        if agent_type == AgentProvider.CREWAI:
-            crewai_params = {"model": params["model"], **params}
-            if "default_headers" in params:
-                crewai_params["headers"] = params["default_headers"]
-
-            # Update with extra parameters
-            crewai_params.update(extra_params)
-            self.llm = LLM(**crewai_params)
-        else:
-            return None
-
-    def get_llm(self, agent_type: AgentProvider, config_type: str = "chat"):
-        """Get LLM for the specified agent type."""
-        config = self.chat_config if config_type == "chat" else self.inference_config
-        self._initialize_llm(config, agent_type)
-        return self.llm
-
     def get_pydantic_model(
         self, provider: str | None = None, model: str | None = None
     ) -> Model | None:
-        """Get the appropriate PydanticAI model based on the current provider."""
-        config = self.chat_config
-        model_name = config.model.split("/")[-1]
+        """Get the appropriate PydanticAI model based on the active provider."""
+        target_model = model or self.chat_config.model
+        config = self._build_config_for_model_identifier(target_model)
 
         if provider:
             config.provider = provider
 
-        if model:
-            model_name = model
-
         api_key = self._get_api_key(config.provider)
-
+        if not api_key and config.provider == "ollama":
+            api_key = os.environ.get("OLLAMA_API_KEY", "ollama")
         if not api_key:
-            return None
+            api_key = os.environ.get("LLM_API_KEY", api_key)
 
-        # if portkey is enabled, use portkey gateway
-        if self.portkey_api_key:
-            match config.provider:
-                case "openai":
-                    return OpenAIModel(
-                        model_name=model_name,
-                        provider=OpenAIProvider(
-                            api_key=api_key,
-                            base_url=PORTKEY_GATEWAY_URL,
-                            http_client=httpx.AsyncClient(
-                                headers=createHeaders(
-                                    api_key=self.portkey_api_key,
-                                    provider=config.provider,
-                                    trace_id=str(uuid.uuid4())[:8],
-                                ),
-                            ),
-                        ),
-                    )
-                case "anthropic":
-                    return AnthropicModel(
-                        model_name=model_name,
-                        provider=AnthropicProvider(
-                            anthropic_client=AsyncAnthropic(
-                                base_url=PORTKEY_GATEWAY_URL,
-                                api_key=api_key,
-                                default_headers=createHeaders(
-                                    api_key=self.portkey_api_key,
-                                    provider=config.provider,
-                                    trace_id=str(uuid.uuid4())[:8],
-                                ),
-                            ),
-                        ),
-                    )
-                case "openrouter":
-                    # PORTKEY has a issue when used with openrouter here
-                    return OpenAIModel(
-                        model_name=config.model.split("/")[-2] + "/" + model_name,
-                        provider=OpenAIProvider(
-                            api_key=api_key,
-                            base_url="https://openrouter.ai/api/v1",
-                        ),
-                    )
+        if not api_key and config.provider not in {"ollama"}:
+            raise UnsupportedProviderError(
+                f"API key not found for provider '{config.provider}'."
+            )
 
-        match config.model.split("/")[0]:
-            case "openai":
-                return OpenAIModel(
-                    model_name=model_name,
-                    provider=OpenAIProvider(
-                        api_key=api_key,
-                    ),
+        model_name = (
+            target_model.split("/", 1)[1] if "/" in target_model else target_model
+        )
+
+        if not config.capabilities.get("supports_pydantic", False):
+            raise UnsupportedProviderError(
+                f"Model '{target_model}' does not support Pydantic-based agents."
+            )
+
+        provider_kwargs = {}
+        if config.base_url:
+            provider_kwargs["base_url"] = config.base_url
+        if config.api_version:
+            provider_kwargs["api_version"] = config.api_version
+
+        openai_like_providers = {"openai", "openrouter", "azure", "ollama"}
+        if config.provider in openai_like_providers:
+            if config.provider == "ollama":
+                base_url_root = (
+                    config.base_url
+                    or os.environ.get("LLM_API_BASE")
+                    or "http://localhost:11434"
                 )
-            case "anthropic":
-                return AnthropicModel(
-                    model_name=model_name,
-                    provider=AnthropicProvider(
-                        api_key=api_key,
-                    ),
-                )
-            case "gemini":
-                # OpenRouter uses OpenAI-compatible API
-                return OpenAIModel(
-                    model_name="google/" + model_name,
-                    provider=OpenAIProvider(
-                        api_key=api_key,
-                        base_url="https://openrouter.ai/api/v1",
-                    ),
-                )
+                provider_kwargs["base_url"] = base_url_root.rstrip("/") + "/v1"
+            return OpenAIModel(
+                model_name=model_name,
+                provider=OpenAIProvider(
+                    api_key=api_key,
+                    **provider_kwargs,
+                ),
+            )
+
+        if config.provider == "anthropic":
+            anthropic_kwargs = {
+                key: value
+                for key, value in provider_kwargs.items()
+                if key != "api_version"
+            }
+            return AnthropicModel(
+                model_name=model_name,
+                provider=AnthropicProvider(
+                    api_key=api_key,
+                    **anthropic_kwargs,
+                ),
+            )
+
+        raise UnsupportedProviderError(
+            f"Provider '{config.provider}' is not supported for Pydantic-based agents."
+        )
