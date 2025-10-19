@@ -487,7 +487,9 @@ class ProviderService:
                     base_url = base_url[:-3]
             params["base_url"] = base_url
         elif config.provider == "ollama":
-            params["base_url"] = os.environ.get("LLM_API_BASE", "http://localhost:11434")
+            params["base_url"] = os.environ.get(
+                "LLM_API_BASE", "http://localhost:11434"
+            )
         if config.api_version:
             params["api_version"] = config.api_version
 
