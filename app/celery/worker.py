@@ -6,6 +6,7 @@ from app.celery.tasks.parsing_tasks import (
 from app.celery.tasks.agent_tasks import (
     execute_agent_background,  # Import agent task
     execute_regenerate_background,  # Import regenerate task
+)
 from app.modules.event_bus.tasks.event_tasks import (
     process_webhook_event,
     process_custom_event,
