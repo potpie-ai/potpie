@@ -1,6 +1,7 @@
 from typing import AsyncGenerator, List
 
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
 from .conversation_store import ConversationStore
