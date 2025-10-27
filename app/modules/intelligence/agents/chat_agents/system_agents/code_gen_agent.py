@@ -20,6 +20,9 @@ from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class CodeGenAgent(ChatAgent):
@@ -76,8 +79,20 @@ class CodeGenAgent(ChatAgent):
                 "analyze_code_structure",
             ]
         )
-        if self.llm_provider.supports_pydantic("chat"):
-            if MultiAgentConfig.should_use_multi_agent("code_generation_agent"):
+        supports_pydantic = self.llm_provider.supports_pydantic("chat")
+        should_use_multi = MultiAgentConfig.should_use_multi_agent(
+            "code_generation_agent"
+        )
+
+        logger.info(
+            f"CodeGenAgent: supports_pydantic={supports_pydantic}, should_use_multi_agent={should_use_multi}"
+        )
+        logger.info(f"Current model: {self.llm_provider.chat_config.model}")
+        logger.info(f"Model capabilities: {self.llm_provider.chat_config.capabilities}")
+
+        if supports_pydantic:
+            if should_use_multi:
+                logger.info("✅ Using PydanticMultiAgent (multi-agent system)")
                 # Create specialized delegate agents for code generation using available agent types
                 delegate_agents = {
                     MultiAgentType.CAB: AgentConfig(
@@ -109,12 +124,13 @@ class CodeGenAgent(ChatAgent):
                     self.llm_provider, agent_config, tools, None, delegate_agents
                 )
             else:
+                logger.info("❌ Multi-agent disabled by config, using PydanticRagAgent")
                 return PydanticRagAgent(self.llm_provider, agent_config, tools)
         else:
-            raise UnsupportedProviderError(
-                f"Model '{self.llm_provider.chat_config.model}' does not support Pydantic-based agents."
+            logger.error(
+                f"❌ Model '{self.llm_provider.chat_config.model}' does not support Pydantic - using fallback PydanticRagAgent"
             )
-        return PydanticRagAgent(self.llm_provider, agent_config, tools)
+            return PydanticRagAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if ctx.node_ids and len(ctx.node_ids) > 0:

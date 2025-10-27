@@ -49,7 +49,7 @@ class MultiAgentConfig:
             agent_type: The type of agent to check. If None, returns global setting.
 
         Returns:
-            bool: True if multi-agent mode should be enabled
+            bool: True if multi-agent mode should be enabled (DEFAULT: True for all agents)
         """
         if not cls.ENABLE_MULTI_AGENT:
             return False
@@ -57,7 +57,9 @@ class MultiAgentConfig:
         if agent_type is None:
             return cls.ENABLE_MULTI_AGENT
 
-        return cls.AGENT_MULTI_AGENT_SETTINGS.get(agent_type, cls.ENABLE_MULTI_AGENT)
+        # Default to True for all agents (including custom agents and any new agent types)
+        # This makes multi-agent the default behavior for all agents
+        return cls.AGENT_MULTI_AGENT_SETTINGS.get(agent_type, True)
 
     @classmethod
     def get_agent_config(cls, agent_type: str) -> Dict[str, Any]:
