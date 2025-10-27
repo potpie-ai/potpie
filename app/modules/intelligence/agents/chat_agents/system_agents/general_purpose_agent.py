@@ -1,5 +1,10 @@
 from app.modules.intelligence.agents.chat_agents.adaptive_agent import AdaptiveAgent
 from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
+from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent import (
+    PydanticMultiAgent,
+    AgentType as MultiAgentType,
+)
+from app.modules.intelligence.agents.multi_agent_config import MultiAgentConfig
 from app.modules.intelligence.prompts.classification_prompts import AgentType
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.provider_service import (
@@ -55,7 +60,39 @@ class GeneralPurposeAgent(ChatAgent):
         if self.llm_provider.is_current_model_supported_by_pydanticai(
             config_type="chat"
         ):
-            return PydanticRagAgent(self.llm_provider, agent_config, tools)
+            if MultiAgentConfig.should_use_multi_agent("general_purpose_agent"):
+                # Create specialized delegate agents for general purpose tasks using available agent types
+                delegate_agents = {
+                    MultiAgentType.CBL: AgentConfig(
+                        role="Information Locator Specialist",
+                        goal="Locate and gather relevant information for general queries",
+                        backstory="You are an expert at finding and organizing information from various sources including web research and codebase exploration.",
+                        tasks=[
+                            TaskConfig(
+                                description="Locate relevant information, gather data, and organize findings",
+                                expected_output="Well-organized information with sources and relevant details",
+                            )
+                        ],
+                        max_iter=10,
+                    ),
+                    MultiAgentType.THINK_EXECUTE: AgentConfig(
+                        role="Analysis and Execution Specialist",
+                        goal="Analyze information, provide insights, and execute tasks",
+                        backstory="You are a skilled analyst and executor who excels at breaking down complex information, providing clear insights, and taking action.",
+                        tasks=[
+                            TaskConfig(
+                                description="Analyze provided information, extract key insights, and execute necessary tasks",
+                                expected_output="Clear analysis with actionable insights, recommendations, and executed solutions",
+                            )
+                        ],
+                        max_iter=15,
+                    ),
+                }
+                return PydanticMultiAgent(
+                    self.llm_provider, agent_config, tools, None, delegate_agents
+                )
+            else:
+                return PydanticRagAgent(self.llm_provider, agent_config, tools)
         else:
             return AdaptiveAgent(
                 llm_provider=self.llm_provider,

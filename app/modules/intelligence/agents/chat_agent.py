@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 class ToolCallEventType(Enum):
     CALL = "call"
     RESULT = "result"
+    DELEGATION_CALL = "delegation_call"  # Supervisor delegating to specialist
+    DELEGATION_RESULT = "delegation_result"  # Specialist completing task
 
 
 class ToolCallResponse(BaseModel):
