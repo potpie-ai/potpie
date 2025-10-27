@@ -8,7 +8,6 @@ from github.GithubException import GithubException
 from sqlalchemy.orm import Session
 from langchain_core.tools import StructuredTool
 
-from app.core.config_provider import config_provider
 from app.modules.code_provider.provider_factory import CodeProviderFactory
 
 
@@ -78,11 +77,16 @@ class CodeProviderCreatePullRequestTool:
         try:
             logging.info(f"[CREATE_PR] Creating provider for repo: {repo_name}")
             provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
-            logging.info(f"[CREATE_PR] Provider created successfully, type: {type(provider).__name__}")
+            logging.info(
+                f"[CREATE_PR] Provider created successfully, type: {type(provider).__name__}"
+            )
             logging.info(f"[CREATE_PR] Client object: {type(provider.client).__name__}")
             return provider.client
         except Exception as e:
-            logging.error(f"[CREATE_PR] Failed to get client: {type(e).__name__}: {str(e)}", exc_info=True)
+            logging.error(
+                f"[CREATE_PR] Failed to get client: {type(e).__name__}: {str(e)}",
+                exc_info=True,
+            )
             raise Exception(
                 f"Repository {repo_name} not found or inaccessible: {str(e)}"
             )
@@ -112,29 +116,42 @@ class CodeProviderCreatePullRequestTool:
         Returns:
             Dict containing the result of the pull request creation operation
         """
-        logging.info(f"[CREATE_PR] Starting PR creation: repo={repo_name}, head={head_branch}, base={base_branch}, title={title}")
+        logging.info(
+            f"[CREATE_PR] Starting PR creation: repo={repo_name}, head={head_branch}, base={base_branch}, title={title}"
+        )
         try:
             # Initialize GitHub client
             logging.info(f"[CREATE_PR] Getting client for repo: {repo_name}")
             g = self._get_github_client(repo_name)
 
             # Get the actual repo name for API calls (handles GitBucket conversion)
-            from app.modules.parsing.utils.repo_name_normalizer import get_actual_repo_name_for_lookup
+            from app.modules.parsing.utils.repo_name_normalizer import (
+                get_actual_repo_name_for_lookup,
+            )
             import os
+
             provider_type = os.getenv("CODE_PROVIDER", "github").lower()
             actual_repo_name = get_actual_repo_name_for_lookup(repo_name, provider_type)
-            logging.info(f"[CREATE_PR] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}")
+            logging.info(
+                f"[CREATE_PR] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}"
+            )
 
             repo = g.get_repo(actual_repo_name)
             logging.info(f"[CREATE_PR] Successfully got repo object: {repo.name}")
 
             # Check if the branches exist
             try:
-                logging.info(f"[CREATE_PR] Checking if head branch exists: heads/{head_branch}")
+                logging.info(
+                    f"[CREATE_PR] Checking if head branch exists: heads/{head_branch}"
+                )
                 head_ref = repo.get_git_ref(f"heads/{head_branch}")
-                logging.info(f"[CREATE_PR] Head branch exists: {head_ref.ref}, sha: {head_ref.object.sha}")
+                logging.info(
+                    f"[CREATE_PR] Head branch exists: {head_ref.ref}, sha: {head_ref.object.sha}"
+                )
             except GithubException as e:
-                logging.error(f"[CREATE_PR] Head branch '{head_branch}' not found: status={e.status}, data={e.data}")
+                logging.error(
+                    f"[CREATE_PR] Head branch '{head_branch}' not found: status={e.status}, data={e.data}"
+                )
                 return {
                     "success": False,
                     "error": f"Head branch '{head_branch}' not found: {str(e)}",
@@ -142,11 +159,17 @@ class CodeProviderCreatePullRequestTool:
                 }
 
             try:
-                logging.info(f"[CREATE_PR] Checking if base branch exists: heads/{base_branch}")
+                logging.info(
+                    f"[CREATE_PR] Checking if base branch exists: heads/{base_branch}"
+                )
                 base_ref = repo.get_git_ref(f"heads/{base_branch}")
-                logging.info(f"[CREATE_PR] Base branch exists: {base_ref.ref}, sha: {base_ref.object.sha}")
+                logging.info(
+                    f"[CREATE_PR] Base branch exists: {base_ref.ref}, sha: {base_ref.object.sha}"
+                )
             except GithubException as e:
-                logging.error(f"[CREATE_PR] Base branch '{base_branch}' not found: status={e.status}, data={e.data}")
+                logging.error(
+                    f"[CREATE_PR] Base branch '{base_branch}' not found: status={e.status}, data={e.data}"
+                )
                 return {
                     "success": False,
                     "error": f"Base branch '{base_branch}' not found: {str(e)}",
@@ -154,11 +177,15 @@ class CodeProviderCreatePullRequestTool:
                 }
 
             # Create the pull request
-            logging.info(f"[CREATE_PR] Creating pull request: head={head_branch}, base={base_branch}")
+            logging.info(
+                f"[CREATE_PR] Creating pull request: head={head_branch}, base={base_branch}"
+            )
 
             # For GitBucket, use raw API call to avoid PyGithub parsing issues
             if provider_type == "gitbucket":
-                logging.info(f"[CREATE_PR] Using raw API call for GitBucket compatibility")
+                logging.info(
+                    "[CREATE_PR] Using raw API call for GitBucket compatibility"
+                )
                 try:
                     import json
 
@@ -174,17 +201,21 @@ class CodeProviderCreatePullRequestTool:
                         f"{repo.url}/pulls",
                         input=post_parameters,
                     )
-                    logging.info(f"[CREATE_PR] Raw API response received (type: {type(data)}): {data}")
+                    logging.info(
+                        f"[CREATE_PR] Raw API response received (type: {type(data)}): {data}"
+                    )
 
                     # Parse JSON string if needed
                     if isinstance(data, str):
-                        logging.info(f"[CREATE_PR] Parsing JSON string response")
+                        logging.info("[CREATE_PR] Parsing JSON string response")
                         data = json.loads(data)
 
                     # Extract PR details from raw response
                     pr_number = data.get("number")
                     pr_url = data.get("html_url")
-                    logging.info(f"[CREATE_PR] Successfully created PR #{pr_number}: {pr_url}")
+                    logging.info(
+                        f"[CREATE_PR] Successfully created PR #{pr_number}: {pr_url}"
+                    )
 
                     result = {
                         "success": True,
@@ -200,32 +231,41 @@ class CodeProviderCreatePullRequestTool:
                     logging.info(f"[CREATE_PR] Returning success result: {result}")
                     return result
                 except Exception as e:
-                    logging.error(f"[CREATE_PR] Raw API call failed: {type(e).__name__}: {str(e)}", exc_info=True)
+                    logging.error(
+                        f"[CREATE_PR] Raw API call failed: {type(e).__name__}: {str(e)}",
+                        exc_info=True,
+                    )
                     raise
 
             # For GitHub, use standard PyGithub method
             pr = repo.create_pull(
                 title=title, body=body, head=head_branch, base=base_branch
             )
-            logging.info(f"[CREATE_PR] Successfully created PR #{pr.number}: {pr.html_url}")
+            logging.info(
+                f"[CREATE_PR] Successfully created PR #{pr.number}: {pr.html_url}"
+            )
 
             # Add reviewers if provided
             if reviewers:
                 try:
                     logging.info(f"[CREATE_PR] Adding reviewers: {reviewers}")
                     pr.create_review_request(reviewers=reviewers)
-                    logging.info(f"[CREATE_PR] Successfully added reviewers")
+                    logging.info("[CREATE_PR] Successfully added reviewers")
                 except GithubException as e:
-                    logging.warning(f"[CREATE_PR] Error adding reviewers: status={e.status}, data={e.data}, message={str(e)}")
+                    logging.warning(
+                        f"[CREATE_PR] Error adding reviewers: status={e.status}, data={e.data}, message={str(e)}"
+                    )
 
             # Add labels if provided
             if labels:
                 try:
                     logging.info(f"[CREATE_PR] Adding labels: {labels}")
                     pr.add_to_labels(*labels)
-                    logging.info(f"[CREATE_PR] Successfully added labels")
+                    logging.info("[CREATE_PR] Successfully added labels")
                 except GithubException as e:
-                    logging.warning(f"[CREATE_PR] Error adding labels: status={e.status}, data={e.data}, message={str(e)}")
+                    logging.warning(
+                        f"[CREATE_PR] Error adding labels: status={e.status}, data={e.data}, message={str(e)}"
+                    )
 
             result = {
                 "success": True,
@@ -242,7 +282,9 @@ class CodeProviderCreatePullRequestTool:
             return result
 
         except GithubException as e:
-            logging.error(f"[CREATE_PR] GithubException caught: status={e.status}, data={e.data}, message={str(e)}")
+            logging.error(
+                f"[CREATE_PR] GithubException caught: status={e.status}, data={e.data}, message={str(e)}"
+            )
             return {
                 "success": False,
                 "error": f"GitHub API error: {str(e)}",
@@ -250,7 +292,10 @@ class CodeProviderCreatePullRequestTool:
                 "data": e.data if hasattr(e, "data") else None,
             }
         except Exception as e:
-            logging.error(f"[CREATE_PR] Unexpected exception: {type(e).__name__}: {str(e)}", exc_info=True)
+            logging.error(
+                f"[CREATE_PR] Unexpected exception: {type(e).__name__}: {str(e)}",
+                exc_info=True,
+            )
             return {"success": False, "error": f"Error creating pull request: {str(e)}"}
 
     async def _arun(

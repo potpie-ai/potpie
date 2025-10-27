@@ -284,21 +284,23 @@ class GitHubProvider(ICodeProvider):
             files = []
             for file in comparison.files:
                 file_data = {
-                    'filename': file.filename,
-                    'status': file.status,
-                    'additions': file.additions,
-                    'deletions': file.deletions,
-                    'changes': file.changes,
+                    "filename": file.filename,
+                    "status": file.status,
+                    "additions": file.additions,
+                    "deletions": file.deletions,
+                    "changes": file.changes,
                 }
                 if file.patch:
-                    file_data['patch'] = file.patch
+                    file_data["patch"] = file.patch
                 files.append(file_data)
 
-            logger.info(f"[GITHUB] Compared branches {base_branch}...{head_branch}: {len(files)} files, {comparison.total_commits} commits")
+            logger.info(
+                f"[GITHUB] Compared branches {base_branch}...{head_branch}: {len(files)} files, {comparison.total_commits} commits"
+            )
 
             return {
-                'files': files,
-                'commits': comparison.total_commits,
+                "files": files,
+                "commits": comparison.total_commits,
             }
 
         except GithubException as e:

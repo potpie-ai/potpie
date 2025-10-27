@@ -584,41 +584,49 @@ class GitBucketProvider(ICodeProvider):
             # Iterate through head branch commits until we find common ancestor
             for commit in head_commits:
                 if commit.sha in base_commit_shas:
-                    logging.info(f"[GITBUCKET] Reached common ancestor at commit {commit.sha[:7]}")
+                    logging.info(
+                        f"[GITBUCKET] Reached common ancestor at commit {commit.sha[:7]}"
+                    )
                     break
 
                 commit_count += 1
-                logging.info(f"[GITBUCKET] Processing commit {commit.sha[:7]}: {commit.commit.message.split(chr(10))[0]}")
+                logging.info(
+                    f"[GITBUCKET] Processing commit {commit.sha[:7]}: {commit.commit.message.split(chr(10))[0]}"
+                )
 
                 # Extract files from this commit
                 for file in commit.files:
                     # Only add file if we haven't seen it yet (keep first occurrence)
                     if file.filename not in files_dict:
                         file_data = {
-                            'filename': file.filename,
-                            'status': file.status,
-                            'additions': file.additions,
-                            'deletions': file.deletions,
-                            'changes': file.changes,
+                            "filename": file.filename,
+                            "status": file.status,
+                            "additions": file.additions,
+                            "deletions": file.deletions,
+                            "changes": file.changes,
                         }
                         if file.patch:
-                            file_data['patch'] = file.patch
+                            file_data["patch"] = file.patch
                         files_dict[file.filename] = file_data
                         logging.info(f"[GITBUCKET] Added file: {file.filename}")
 
                 # Safety check
                 if commit_count >= max_commits:
-                    logging.warning(f"[GITBUCKET] Reached commit limit of {max_commits}, stopping")
+                    logging.warning(
+                        f"[GITBUCKET] Reached commit limit of {max_commits}, stopping"
+                    )
                     break
 
             # Convert dict to list
             files = list(files_dict.values())
 
-            logging.info(f"[GITBUCKET] Compared branches {base_branch}...{head_branch}: {len(files)} files, {commit_count} commits")
+            logging.info(
+                f"[GITBUCKET] Compared branches {base_branch}...{head_branch}: {len(files)} files, {commit_count} commits"
+            )
 
             return {
-                'files': files,
-                'commits': commit_count,
+                "files": files,
+                "commits": commit_count,
             }
 
         except GithubException as e:

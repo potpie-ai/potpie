@@ -65,11 +65,18 @@ class CodeProviderCreateBranchTool:
         try:
             logging.info(f"[CREATE_BRANCH] Creating provider for repo: {repo_name}")
             provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
-            logging.info(f"[CREATE_BRANCH] Provider created successfully, type: {type(provider).__name__}")
-            logging.info(f"[CREATE_BRANCH] Client object: {type(provider.client).__name__}")
+            logging.info(
+                f"[CREATE_BRANCH] Provider created successfully, type: {type(provider).__name__}"
+            )
+            logging.info(
+                f"[CREATE_BRANCH] Client object: {type(provider.client).__name__}"
+            )
             return provider.client
         except Exception as e:
-            logging.error(f"[CREATE_BRANCH] Failed to get client: {type(e).__name__}: {str(e)}", exc_info=True)
+            logging.error(
+                f"[CREATE_BRANCH] Failed to get client: {type(e).__name__}: {str(e)}",
+                exc_info=True,
+            )
             raise Exception(
                 f"Repository {repo_name} not found or inaccessible: {str(e)}"
             )
@@ -91,29 +98,42 @@ class CodeProviderCreateBranchTool:
         Returns:
             Dict containing the result of the branch creation operation
         """
-        logging.info(f"[CREATE_BRANCH] Starting branch creation: repo={repo_name}, base={base_branch}, new={new_branch_name}")
+        logging.info(
+            f"[CREATE_BRANCH] Starting branch creation: repo={repo_name}, base={base_branch}, new={new_branch_name}"
+        )
         try:
             # Initialize GitHub client
             logging.info(f"[CREATE_BRANCH] Getting client for repo: {repo_name}")
             g = self._get_github_client(repo_name)
 
             # Get the actual repo name for API calls (handles GitBucket conversion)
-            from app.modules.parsing.utils.repo_name_normalizer import get_actual_repo_name_for_lookup
+            from app.modules.parsing.utils.repo_name_normalizer import (
+                get_actual_repo_name_for_lookup,
+            )
             import os
+
             provider_type = os.getenv("CODE_PROVIDER", "github").lower()
             actual_repo_name = get_actual_repo_name_for_lookup(repo_name, provider_type)
-            logging.info(f"[CREATE_BRANCH] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}")
+            logging.info(
+                f"[CREATE_BRANCH] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}"
+            )
 
             repo = g.get_repo(actual_repo_name)
             logging.info(f"[CREATE_BRANCH] Successfully got repo object: {repo.name}")
 
             # Get the base branch reference
             try:
-                logging.info(f"[CREATE_BRANCH] Attempting to get ref for base branch: heads/{base_branch}")
+                logging.info(
+                    f"[CREATE_BRANCH] Attempting to get ref for base branch: heads/{base_branch}"
+                )
                 base_ref = repo.get_git_ref(f"heads/{base_branch}")
-                logging.info(f"[CREATE_BRANCH] Successfully got base branch ref: {base_ref.ref}, sha: {base_ref.object.sha}")
+                logging.info(
+                    f"[CREATE_BRANCH] Successfully got base branch ref: {base_ref.ref}, sha: {base_ref.object.sha}"
+                )
             except GithubException as e:
-                logging.error(f"[CREATE_BRANCH] Failed to get base branch '{base_branch}': status={e.status}, data={e.data}, message={str(e)}")
+                logging.error(
+                    f"[CREATE_BRANCH] Failed to get base branch '{base_branch}': status={e.status}, data={e.data}, message={str(e)}"
+                )
                 return {
                     "success": False,
                     "error": f"Base branch '{base_branch}' not found: {str(e)}",
@@ -123,9 +143,13 @@ class CodeProviderCreateBranchTool:
 
             # Check if the new branch already exists
             try:
-                logging.info(f"[CREATE_BRANCH] Checking if new branch already exists: heads/{new_branch_name}")
+                logging.info(
+                    f"[CREATE_BRANCH] Checking if new branch already exists: heads/{new_branch_name}"
+                )
                 repo.get_git_ref(f"heads/{new_branch_name}")
-                logging.warning(f"[CREATE_BRANCH] Branch '{new_branch_name}' already exists")
+                logging.warning(
+                    f"[CREATE_BRANCH] Branch '{new_branch_name}' already exists"
+                )
                 return {
                     "success": False,
                     "error": f"Branch '{new_branch_name}' already exists",
@@ -133,21 +157,29 @@ class CodeProviderCreateBranchTool:
             except GithubException as e:
                 if e.status != 404:
                     # If error is not "Not Found", it's an unexpected error
-                    logging.error(f"[CREATE_BRANCH] Unexpected error checking branch existence: status={e.status}, data={e.data}")
+                    logging.error(
+                        f"[CREATE_BRANCH] Unexpected error checking branch existence: status={e.status}, data={e.data}"
+                    )
                     return {
                         "success": False,
                         "error": f"Error checking branch existence: {str(e)}",
                         "status_code": e.status,
                     }
                 # 404 means the branch doesn't exist, which is what we want
-                logging.info(f"[CREATE_BRANCH] Branch '{new_branch_name}' does not exist (404), proceeding with creation")
+                logging.info(
+                    f"[CREATE_BRANCH] Branch '{new_branch_name}' does not exist (404), proceeding with creation"
+                )
 
             # Create the new branch
-            logging.info(f"[CREATE_BRANCH] Creating new branch: refs/heads/{new_branch_name} from sha: {base_ref.object.sha}")
+            logging.info(
+                f"[CREATE_BRANCH] Creating new branch: refs/heads/{new_branch_name} from sha: {base_ref.object.sha}"
+            )
             new_ref = repo.create_git_ref(
                 ref=f"refs/heads/{new_branch_name}", sha=base_ref.object.sha
             )
-            logging.info(f"[CREATE_BRANCH] Successfully created branch: {new_ref.ref}, sha: {new_ref.object.sha}")
+            logging.info(
+                f"[CREATE_BRANCH] Successfully created branch: {new_ref.ref}, sha: {new_ref.object.sha}"
+            )
 
             result = {
                 "success": True,
@@ -161,7 +193,9 @@ class CodeProviderCreateBranchTool:
             return result
 
         except GithubException as e:
-            logging.error(f"[CREATE_BRANCH] GithubException caught: status={e.status}, data={e.data}, message={str(e)}")
+            logging.error(
+                f"[CREATE_BRANCH] GithubException caught: status={e.status}, data={e.data}, message={str(e)}"
+            )
             return {
                 "success": False,
                 "error": f"GitHub API error: {str(e)}",
@@ -169,7 +203,10 @@ class CodeProviderCreateBranchTool:
                 "data": e.data if hasattr(e, "data") else None,
             }
         except Exception as e:
-            logging.error(f"[CREATE_BRANCH] Unexpected exception: {type(e).__name__}: {str(e)}", exc_info=True)
+            logging.error(
+                f"[CREATE_BRANCH] Unexpected exception: {type(e).__name__}: {str(e)}",
+                exc_info=True,
+            )
             return {"success": False, "error": f"Error creating branch: {str(e)}"}
 
     async def _arun(

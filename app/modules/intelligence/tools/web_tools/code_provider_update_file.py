@@ -8,7 +8,6 @@ from github.GithubException import GithubException
 from sqlalchemy.orm import Session
 from langchain_core.tools import StructuredTool
 
-from app.core.config_provider import config_provider
 from app.modules.code_provider.provider_factory import CodeProviderFactory
 
 
@@ -100,25 +99,34 @@ class CodeProviderUpdateFileTool:
         Returns:
             Dict containing the result of the update operation
         """
-        logging.info(f"[UPDATE_FILE] Starting file update: repo={repo_name}, file={file_path}, branch={branch_name}")
+        logging.info(
+            f"[UPDATE_FILE] Starting file update: repo={repo_name}, file={file_path}, branch={branch_name}"
+        )
         try:
             # Initialize GitHub client
             logging.info(f"[UPDATE_FILE] Getting client for repo: {repo_name}")
             g = self._get_github_client(repo_name)
 
             # Get the actual repo name for API calls (handles GitBucket conversion)
-            from app.modules.parsing.utils.repo_name_normalizer import get_actual_repo_name_for_lookup
+            from app.modules.parsing.utils.repo_name_normalizer import (
+                get_actual_repo_name_for_lookup,
+            )
             import os
+
             provider_type = os.getenv("CODE_PROVIDER", "github").lower()
             actual_repo_name = get_actual_repo_name_for_lookup(repo_name, provider_type)
-            logging.info(f"[UPDATE_FILE] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}")
+            logging.info(
+                f"[UPDATE_FILE] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}"
+            )
 
             repo = g.get_repo(actual_repo_name)
             logging.info(f"[UPDATE_FILE] Successfully got repo object: {repo.name}")
 
             # Try to get the file to check if it exists and get its SHA
             try:
-                logging.info(f"[UPDATE_FILE] Checking if file exists: {file_path} on branch: {branch_name}")
+                logging.info(
+                    f"[UPDATE_FILE] Checking if file exists: {file_path} on branch: {branch_name}"
+                )
                 file = repo.get_contents(file_path, ref=branch_name)
                 sha = file.sha
                 file_exists = True
@@ -128,9 +136,13 @@ class CodeProviderUpdateFileTool:
                     # File doesn't exist
                     file_exists = False
                     sha = None
-                    logging.info(f"[UPDATE_FILE] File does not exist (404), will create new file")
+                    logging.info(
+                        "[UPDATE_FILE] File does not exist (404), will create new file"
+                    )
                 else:
-                    logging.error(f"[UPDATE_FILE] Error checking file existence: status={e.status}, data={e.data}")
+                    logging.error(
+                        f"[UPDATE_FILE] Error checking file existence: status={e.status}, data={e.data}"
+                    )
                     raise e
 
             # Create commit with author info if provided
@@ -148,7 +160,9 @@ class CodeProviderUpdateFileTool:
                     branch=branch_name,
                     **commit_kwargs,
                 )
-                logging.info(f"[UPDATE_FILE] Successfully updated file, commit sha: {result['commit'].sha}")
+                logging.info(
+                    f"[UPDATE_FILE] Successfully updated file, commit sha: {result['commit'].sha}"
+                )
                 return {
                     "success": True,
                     "operation": "update",
@@ -165,7 +179,9 @@ class CodeProviderUpdateFileTool:
                     branch=branch_name,
                     **commit_kwargs,
                 )
-                logging.info(f"[UPDATE_FILE] Successfully created file, commit sha: {result['commit'].sha}")
+                logging.info(
+                    f"[UPDATE_FILE] Successfully created file, commit sha: {result['commit'].sha}"
+                )
                 return {
                     "success": True,
                     "operation": "create",
@@ -176,7 +192,9 @@ class CodeProviderUpdateFileTool:
                 }
 
         except GithubException as e:
-            logging.error(f"[UPDATE_FILE] GithubException: status={e.status}, data={e.data}, message={str(e)}")
+            logging.error(
+                f"[UPDATE_FILE] GithubException: status={e.status}, data={e.data}, message={str(e)}"
+            )
             return {
                 "success": False,
                 "error": f"GitHub API error: {str(e)}",
@@ -184,7 +202,10 @@ class CodeProviderUpdateFileTool:
                 "data": e.data,
             }
         except Exception as e:
-            logging.error(f"[UPDATE_FILE] Unexpected exception: {type(e).__name__}: {str(e)}", exc_info=True)
+            logging.error(
+                f"[UPDATE_FILE] Unexpected exception: {type(e).__name__}: {str(e)}",
+                exc_info=True,
+            )
             return {"success": False, "error": f"Error updating file: {str(e)}"}
 
     async def _arun(

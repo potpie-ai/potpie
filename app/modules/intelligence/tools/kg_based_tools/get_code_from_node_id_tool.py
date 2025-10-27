@@ -94,7 +94,9 @@ class GetCodeFromNodeIdTool:
     ) -> Dict[str, Any]:
         # Check if node_data has the required fields
         if not node_data or "file_path" not in node_data:
-            logger.error(f"Node data is incomplete or missing file_path for node_id: {node_id}")
+            logger.error(
+                f"Node data is incomplete or missing file_path for node_id: {node_id}"
+            )
             return {"error": f"Node data is incomplete for node_id: {node_id}"}
 
         file_path = node_data["file_path"]

@@ -77,10 +77,18 @@ class ToolService:
         self.webpage_extractor_tool = webpage_extractor_tool(db, user_id)
         self.web_search_tool = web_search_tool(db, user_id)
         self.code_provider_tool = code_provider_tool(db, user_id)
-        self.code_provider_create_branch_tool = code_provider_create_branch_tool(db, user_id)
-        self.code_provider_create_pr_tool = code_provider_create_pull_request_tool(db, user_id)
-        self.code_provider_add_pr_comments_tool = code_provider_add_pr_comments_tool(db, user_id)
-        self.code_provider_update_file_tool = code_provider_update_file_tool(db, user_id)
+        self.code_provider_create_branch_tool = code_provider_create_branch_tool(
+            db, user_id
+        )
+        self.code_provider_create_pr_tool = code_provider_create_pull_request_tool(
+            db, user_id
+        )
+        self.code_provider_add_pr_comments_tool = code_provider_add_pr_comments_tool(
+            db, user_id
+        )
+        self.code_provider_update_file_tool = code_provider_update_file_tool(
+            db, user_id
+        )
         self.get_code_from_multiple_node_ids_tool = GetCodeFromMultipleNodeIdsTool(
             self.db, self.user_id
         )
@@ -141,7 +149,9 @@ class ToolService:
             tools["code_provider_create_pr"] = self.code_provider_create_pr_tool
 
         if self.code_provider_add_pr_comments_tool:
-            tools["code_provider_add_pr_comments"] = self.code_provider_add_pr_comments_tool
+            tools["code_provider_add_pr_comments"] = (
+                self.code_provider_add_pr_comments_tool
+            )
 
         if self.code_provider_update_file_tool:
             tools["code_provider_update_file"] = self.code_provider_update_file_tool

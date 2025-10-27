@@ -627,20 +627,26 @@ class ParseHelper:
 
         if len(repo_name.split("/")) < 2:
             # Local repo, always parse local repos
-            logger.info(f"check_commit_status: Local repo detected, forcing reparse")
+            logger.info("check_commit_status: Local repo detected, forcing reparse")
             return False
 
         try:
-            logger.info(f"check_commit_status: Branch-based parse - getting repo info for {repo_name}")
+            logger.info(
+                f"check_commit_status: Branch-based parse - getting repo info for {repo_name}"
+            )
             github, repo = self.github_service.get_repo(repo_name)
 
             # If current_commit_id is None, we should reparse
             if current_commit_id is None:
-                logger.info(f"check_commit_status: Project {project_id} has no commit_id, will reparse")
+                logger.info(
+                    f"check_commit_status: Project {project_id} has no commit_id, will reparse"
+                )
                 return False
 
             # Get the latest commit from the branch
-            logger.info(f"check_commit_status: Getting latest commit from branch {branch_name}")
+            logger.info(
+                f"check_commit_status: Getting latest commit from branch {branch_name}"
+            )
             branch = repo.get_branch(branch_name)
             latest_commit_id = branch.commit.sha
 
@@ -656,6 +662,6 @@ class ParseHelper:
         except Exception as e:
             logger.error(
                 f"check_commit_status: Error fetching latest commit for {repo_name}/{branch_name}: {e}",
-                exc_info=True
+                exc_info=True,
             )
             return False

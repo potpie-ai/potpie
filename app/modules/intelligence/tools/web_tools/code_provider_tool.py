@@ -10,7 +10,6 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.core.config_provider import config_provider
 from app.modules.code_provider.provider_factory import CodeProviderFactory
 
 
@@ -124,11 +123,16 @@ class CodeProviderTool:
             github = self._get_github_client(repo_name)
 
             # Get the actual repo name for API calls (handles GitBucket conversion)
-            from app.modules.parsing.utils.repo_name_normalizer import get_actual_repo_name_for_lookup
+            from app.modules.parsing.utils.repo_name_normalizer import (
+                get_actual_repo_name_for_lookup,
+            )
             import os
+
             provider_type = os.getenv("CODE_PROVIDER", "github").lower()
             actual_repo_name = get_actual_repo_name_for_lookup(repo_name, provider_type)
-            logging.info(f"[CODE_PROVIDER_TOOL] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}")
+            logging.info(
+                f"[CODE_PROVIDER_TOOL] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}"
+            )
 
             repo = github.get_repo(actual_repo_name)
 
