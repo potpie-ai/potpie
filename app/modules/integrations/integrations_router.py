@@ -665,8 +665,6 @@ async def linear_webhook(
         )
 
 
-
-
 @router.post("/sentry/save")
 async def save_sentry_integration(
     request: SentrySaveRequest,
