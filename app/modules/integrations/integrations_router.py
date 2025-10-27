@@ -665,6 +665,120 @@ async def linear_webhook(
         )
 
 
+@router.post("/gitbucket/webhook")
+async def gitbucket_webhook(request: Request) -> Dict[str, Any]:
+    """
+    Receive webhook events from GitBucket.
+
+    GitBucket sends webhooks with X-GitBucket-Event header.
+    """
+    import json
+
+    try:
+        # Log the incoming webhook request details
+        logging.info("GitBucket webhook received")
+        logging.info(f"Request method: {request.method}")
+        logging.info(f"Request URL: {request.url}")
+        logging.info(f"Request headers: {dict(request.headers)}")
+
+        # Get query parameters
+        query_params = dict(request.query_params)
+
+        # Try to get request body
+        webhook_data = {}
+        try:
+            body = await request.body()
+            if body:
+                body_text = body.decode("utf-8")
+                # Try to parse as JSON
+                try:
+                    webhook_data = json.loads(body_text)
+                except json.JSONDecodeError:
+                    logging.warning("GitBucket webhook body is not valid JSON")
+                    webhook_data = {"raw_body": body_text}
+        except Exception as e:
+            logging.warning(f"Could not read GitBucket webhook body: {str(e)}")
+
+        # Extract event type from headers
+        event_type = (
+            dict(request.headers).get("X-GitBucket-Event")
+            or webhook_data.get("action")
+            or "gitbucket.unknown"
+        )
+
+        logging.info(f"GitBucket webhook event type: {event_type}")
+
+        # Parse the webhook using GitBucket webhook parser
+        from app.modules.event_bus.handlers.gitbucket_webhook_parser import GitBucketWebhookParser
+
+        parsed_data = GitBucketWebhookParser.parse_webhook(event_type, webhook_data)
+
+        if parsed_data:
+            logging.info(f"GitBucket webhook parsed successfully: {parsed_data}")
+        else:
+            logging.warning(f"GitBucket webhook could not be parsed or is unsupported: {event_type}")
+
+        # Get integration ID from query params (GitBucket doesn't include it in payload)
+        integration_id = query_params.get("integration_id") or dict(request.headers).get("X-Integration-ID")
+
+        if integration_id:
+            # Initialize event bus and publish webhook event
+            from app.modules.event_bus import CeleryEventBus
+            from app.celery.celery_app import celery_app
+
+            event_bus = CeleryEventBus(celery_app)
+
+            try:
+                event_id = await event_bus.publish_webhook_event(
+                    integration_id=integration_id,
+                    integration_type="gitbucket",
+                    event_type=event_type,
+                    payload=webhook_data,
+                    headers=dict(request.headers),
+                    source_ip=request.client.host if request.client else None,
+                )
+
+                logging.info(
+                    f"GitBucket webhook event {event_id} published for integration {integration_id}, "
+                    f"type: {event_type}"
+                )
+
+                return {
+                    "status": "success",
+                    "message": "GitBucket webhook logged and published to event bus",
+                    "logged_at": time.time(),
+                    "event_id": event_id,
+                    "event_type": event_type,
+                    "integration_id": integration_id,
+                    "parsed_data": parsed_data,
+                }
+            except Exception as e:
+                logging.error(f"Failed to publish GitBucket webhook to event bus: {str(e)}")
+                # Continue with normal response even if event bus fails
+                return {
+                    "status": "success",
+                    "message": "GitBucket webhook logged successfully (event bus failed)",
+                    "logged_at": time.time(),
+                    "event_bus_error": str(e),
+                    "parsed_data": parsed_data,
+                }
+        else:
+            logging.warning("No integration_id provided in GitBucket webhook request")
+            return {
+                "status": "success",
+                "message": "GitBucket webhook logged successfully (no integration_id for event bus)",
+                "logged_at": time.time(),
+                "parsed_data": parsed_data,
+            }
+
+    except Exception as e:
+        logging.error(f"Error processing GitBucket webhook: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process GitBucket webhook: {str(e)}",
+        )
+
+
 @router.post("/sentry/save")
 async def save_sentry_integration(
     request: SentrySaveRequest,
