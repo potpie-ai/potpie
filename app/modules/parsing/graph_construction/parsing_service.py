@@ -139,7 +139,9 @@ class ParsingService:
                     project_id, ProjectStatusEnum.ERROR
                 )
             except Exception as update_error:
-                logger.error(f"Failed to update project status after error: {update_error}")
+                logger.error(
+                    f"Failed to update project status after error: {update_error}"
+                )
             await ParseWebhookHelper().send_slack_notification(project_id, str(e))
             tb_str = "".join(traceback.format_exception(None, e, e.__traceback__))
             raise HTTPException(
@@ -192,17 +194,23 @@ class ParsingService:
         logger.info(
             f"ParsingService: Parsing project {project_id}: Analyzing directory: {extracted_dir}"
         )
-        
+
         # Validate that extracted_dir is a valid path
         if not isinstance(extracted_dir, str):
-            logger.error(f"ParsingService: Invalid extracted_dir type: {type(extracted_dir)}, value: {extracted_dir}")
-            raise ValueError(f"Expected string path, got {type(extracted_dir)}: {extracted_dir}")
-        
+            logger.error(
+                f"ParsingService: Invalid extracted_dir type: {type(extracted_dir)}, value: {extracted_dir}"
+            )
+            raise ValueError(
+                f"Expected string path, got {type(extracted_dir)}: {extracted_dir}"
+            )
+
         if not os.path.exists(extracted_dir):
             logger.error(f"ParsingService: Directory does not exist: {extracted_dir}")
             raise FileNotFoundError(f"Directory not found: {extracted_dir}")
-        
-        logger.info(f"ParsingService: Directory exists and is accessible: {extracted_dir}")
+
+        logger.info(
+            f"ParsingService: Directory exists and is accessible: {extracted_dir}"
+        )
         project_details = await self.project_service.get_project_from_db_by_id(
             project_id
         )

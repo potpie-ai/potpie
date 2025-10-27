@@ -3,7 +3,10 @@ import logging
 from typing import Optional, Dict, Any
 from enum import Enum
 
-from app.modules.code_provider.base.code_provider_interface import ICodeProvider, AuthMethod
+from app.modules.code_provider.base.code_provider_interface import (
+    ICodeProvider,
+    AuthMethod,
+)
 from app.modules.code_provider.github.github_provider import GitHubProvider
 from app.core.config_provider import config_provider
 
@@ -35,7 +38,7 @@ class CodeProviderFactory:
         provider_type: Optional[str] = None,
         base_url: Optional[str] = None,
         credentials: Optional[Dict[str, Any]] = None,
-        auth_method: Optional[AuthMethod] = None
+        auth_method: Optional[AuthMethod] = None,
     ) -> ICodeProvider:
         """
         Create and configure a code provider instance.
@@ -68,7 +71,10 @@ class CodeProviderFactory:
                     "GitBucket requires CODE_PROVIDER_BASE_URL environment variable. "
                     "Example: CODE_PROVIDER_BASE_URL=http://localhost:8080/api/v3"
                 )
-            from app.modules.code_provider.gitbucket.gitbucket_provider import GitBucketProvider
+            from app.modules.code_provider.gitbucket.gitbucket_provider import (
+                GitBucketProvider,
+            )
+
             provider = GitBucketProvider(base_url=base_url)
 
         elif provider_type == ProviderType.GITLAB:
@@ -100,27 +106,38 @@ class CodeProviderFactory:
             token = os.getenv("CODE_PROVIDER_TOKEN")
             if token:
                 logger.info("Authenticating with CODE_PROVIDER_TOKEN (PAT)")
-                provider.authenticate({"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN)
+                provider.authenticate(
+                    {"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN
+                )
             else:
                 # Try Basic Auth from environment
                 username = os.getenv("CODE_PROVIDER_USERNAME")
                 password = os.getenv("CODE_PROVIDER_PASSWORD")
                 if username and password:
-                    logger.info("Authenticating with CODE_PROVIDER_USERNAME/PASSWORD (Basic Auth)")
+                    logger.info(
+                        "Authenticating with CODE_PROVIDER_USERNAME/PASSWORD (Basic Auth)"
+                    )
                     provider.authenticate(
                         {"username": username, "password": password},
-                        AuthMethod.BASIC_AUTH
+                        AuthMethod.BASIC_AUTH,
                     )
                 else:
                     # Fallback to legacy GH_TOKEN_LIST
                     token_list_str = os.getenv("GH_TOKEN_LIST", "")
                     if token_list_str:
                         import random
-                        tokens = [t.strip() for t in token_list_str.split(",") if t.strip()]
+
+                        tokens = [
+                            t.strip() for t in token_list_str.split(",") if t.strip()
+                        ]
                         if tokens:
                             token = random.choice(tokens)
-                            logger.info("Authenticating with GH_TOKEN_LIST (legacy PAT pool)")
-                            provider.authenticate({"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN)
+                            logger.info(
+                                "Authenticating with GH_TOKEN_LIST (legacy PAT pool)"
+                            )
+                            provider.authenticate(
+                                {"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN
+                            )
 
         return provider
 
@@ -158,7 +175,7 @@ class CodeProviderFactory:
         headers = {
             "Accept": "application/vnd.github+json",
             "Authorization": f"Bearer {jwt}",
-            "X-GitHub-Api-Version": "2022-11-28"
+            "X-GitHub-Api-Version": "2022-11-28",
         }
         response = requests.get(url, headers=headers)
 
@@ -171,9 +188,9 @@ class CodeProviderFactory:
             {
                 "app_id": app_id,
                 "private_key": private_key,
-                "installation_id": installation_id
+                "installation_id": installation_id,
             },
-            AuthMethod.APP_INSTALLATION
+            AuthMethod.APP_INSTALLATION,
         )
 
         return provider
@@ -213,13 +230,16 @@ class CodeProviderFactory:
         token_list_str = os.getenv("GH_TOKEN_LIST", "")
         if token_list_str:
             import random
+
             tokens = [t.strip() for t in token_list_str.split(",") if t.strip()]
             if tokens:
                 logger.info("Using GH_TOKEN_LIST for authentication")
                 # Use the configured provider type instead of hardcoded GitHubProvider
                 provider = CodeProviderFactory.create_provider()
                 token = random.choice(tokens)
-                provider.authenticate({"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN)
+                provider.authenticate(
+                    {"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN
+                )
                 return provider
 
         # Try GitHub App authentication as fallback

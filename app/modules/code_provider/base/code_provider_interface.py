@@ -1,10 +1,11 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 from enum import Enum
 
 
 class AuthMethod(str, Enum):
     """Supported authentication methods across providers."""
+
     PERSONAL_ACCESS_TOKEN = "pat"
     OAUTH_TOKEN = "oauth"
     APP_INSTALLATION = "app"
@@ -68,7 +69,7 @@ class ICodeProvider(ABC):
         file_path: str,
         ref: Optional[str] = None,
         start_line: Optional[int] = None,
-        end_line: Optional[int] = None
+        end_line: Optional[int] = None,
     ) -> str:
         """Get file content from repository (decoded as string)."""
         pass
@@ -79,7 +80,7 @@ class ICodeProvider(ABC):
         repo_name: str,
         path: str = "",
         ref: Optional[str] = None,
-        max_depth: int = 4
+        max_depth: int = 4,
     ) -> List[Dict[str, Any]]:
         """Get repository directory structure recursively."""
         pass
@@ -98,10 +99,7 @@ class ICodeProvider(ABC):
 
     @abstractmethod
     def create_branch(
-        self,
-        repo_name: str,
-        branch_name: str,
-        base_branch: str
+        self, repo_name: str, branch_name: str, base_branch: str
     ) -> Dict[str, Any]:
         """Create a new branch from base branch."""
         pass
@@ -110,20 +108,14 @@ class ICodeProvider(ABC):
 
     @abstractmethod
     def list_pull_requests(
-        self,
-        repo_name: str,
-        state: str = "open",
-        limit: int = 10
+        self, repo_name: str, state: str = "open", limit: int = 10
     ) -> List[Dict[str, Any]]:
         """List pull requests."""
         pass
 
     @abstractmethod
     def get_pull_request(
-        self,
-        repo_name: str,
-        pr_number: int,
-        include_diff: bool = False
+        self, repo_name: str, pr_number: int, include_diff: bool = False
     ) -> Dict[str, Any]:
         """Get pull request details with optional diff."""
         pass
@@ -137,7 +129,7 @@ class ICodeProvider(ABC):
         head_branch: str,
         base_branch: str,
         reviewers: Optional[List[str]] = None,
-        labels: Optional[List[str]] = None
+        labels: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Create a pull request."""
         pass
@@ -150,7 +142,7 @@ class ICodeProvider(ABC):
         body: str,
         commit_id: Optional[str] = None,
         path: Optional[str] = None,
-        line: Optional[int] = None
+        line: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Add comment to pull request (general or inline)."""
         pass
@@ -162,7 +154,7 @@ class ICodeProvider(ABC):
         pr_number: int,
         body: str,
         event: str,  # "COMMENT", "APPROVE", "REQUEST_CHANGES"
-        comments: Optional[List[Dict[str, Any]]] = None
+        comments: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Create a pull request review with optional inline comments."""
         pass
@@ -171,10 +163,7 @@ class ICodeProvider(ABC):
 
     @abstractmethod
     def list_issues(
-        self,
-        repo_name: str,
-        state: str = "open",
-        limit: int = 10
+        self, repo_name: str, state: str = "open", limit: int = 10
     ) -> List[Dict[str, Any]]:
         """List issues in repository."""
         pass
@@ -186,11 +175,7 @@ class ICodeProvider(ABC):
 
     @abstractmethod
     def create_issue(
-        self,
-        repo_name: str,
-        title: str,
-        body: str,
-        labels: Optional[List[str]] = None
+        self, repo_name: str, title: str, body: str, labels: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """Create an issue."""
         pass
@@ -206,7 +191,7 @@ class ICodeProvider(ABC):
         commit_message: str,
         branch: str,
         author_name: Optional[str] = None,
-        author_email: Optional[str] = None
+        author_email: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create or update a file in repository."""
         pass
@@ -214,7 +199,9 @@ class ICodeProvider(ABC):
     # ============ User/Organization Operations ============
 
     @abstractmethod
-    def list_user_repositories(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def list_user_repositories(
+        self, user_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """List repositories accessible to authenticated user."""
         pass
 

@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch, MagicMock
 from app.modules.code_provider.gitbucket.gitbucket_provider import GitBucketProvider
 from app.modules.code_provider.base.code_provider_interface import AuthMethod
 
@@ -27,7 +27,7 @@ class TestGitBucketProvider:
         assert AuthMethod.OAUTH_TOKEN in methods
         assert AuthMethod.APP_INSTALLATION not in methods
 
-    @patch('app.modules.code_provider.gitbucket.gitbucket_provider.Github')
+    @patch("app.modules.code_provider.gitbucket.gitbucket_provider.Github")
     def test_authenticate_with_pat(self, mock_github):
         """Test authentication with Personal Access Token."""
         provider = GitBucketProvider(base_url="http://localhost:8080/api/v3")
@@ -36,12 +36,11 @@ class TestGitBucketProvider:
         provider.authenticate(credentials, AuthMethod.PERSONAL_ACCESS_TOKEN)
 
         mock_github.assert_called_once_with(
-            "test_token",
-            base_url="http://localhost:8080/api/v3"
+            "test_token", base_url="http://localhost:8080/api/v3"
         )
         assert provider.client is not None
 
-    @patch('app.modules.code_provider.gitbucket.gitbucket_provider.Github')
+    @patch("app.modules.code_provider.gitbucket.gitbucket_provider.Github")
     def test_authenticate_with_basic_auth(self, mock_github):
         """Test authentication with Basic Auth."""
         provider = GitBucketProvider(base_url="http://localhost:8080/api/v3")
@@ -50,12 +49,10 @@ class TestGitBucketProvider:
         provider.authenticate(credentials, AuthMethod.BASIC_AUTH)
 
         mock_github.assert_called_once_with(
-            "user",
-            "pass",
-            base_url="http://localhost:8080/api/v3"
+            "user", "pass", base_url="http://localhost:8080/api/v3"
         )
 
-    @patch('app.modules.code_provider.gitbucket.gitbucket_provider.Github')
+    @patch("app.modules.code_provider.gitbucket.gitbucket_provider.Github")
     def test_authenticate_with_oauth(self, mock_github):
         """Test authentication with OAuth token."""
         provider = GitBucketProvider(base_url="http://localhost:8080/api/v3")
@@ -64,8 +61,7 @@ class TestGitBucketProvider:
         provider.authenticate(credentials, AuthMethod.OAUTH_TOKEN)
 
         mock_github.assert_called_once_with(
-            "oauth_token",
-            base_url="http://localhost:8080/api/v3"
+            "oauth_token", base_url="http://localhost:8080/api/v3"
         )
 
     def test_authenticate_app_installation_raises_error(self):
@@ -92,7 +88,7 @@ class TestGitBucketProvider:
         with pytest.raises(RuntimeError, match="not authenticated"):
             provider.get_repository("owner/repo")
 
-    @patch('app.modules.code_provider.gitbucket.gitbucket_provider.Github')
+    @patch("app.modules.code_provider.gitbucket.gitbucket_provider.Github")
     def test_get_repository(self, mock_github):
         """Test getting repository details."""
         provider = GitBucketProvider(base_url="http://localhost:8080/api/v3")
@@ -122,7 +118,7 @@ class TestGitBucketProvider:
         assert result["default_branch"] == "master"
         assert result["private"] is False
 
-    @patch('app.modules.code_provider.gitbucket.gitbucket_provider.Github')
+    @patch("app.modules.code_provider.gitbucket.gitbucket_provider.Github")
     def test_check_repository_access(self, mock_github):
         """Test checking repository access."""
         provider = GitBucketProvider(base_url="http://localhost:8080/api/v3")
@@ -145,7 +141,7 @@ class TestGitBucketProvider:
 
         assert provider.check_repository_access("owner/test-repo") is True
 
-    @patch('app.modules.code_provider.gitbucket.gitbucket_provider.Github')
+    @patch("app.modules.code_provider.gitbucket.gitbucket_provider.Github")
     def test_check_repository_access_fails(self, mock_github):
         """Test checking repository access when it fails."""
         provider = GitBucketProvider(base_url="http://localhost:8080/api/v3")
@@ -157,7 +153,7 @@ class TestGitBucketProvider:
 
         assert provider.check_repository_access("owner/test-repo") is False
 
-    @patch('app.modules.code_provider.gitbucket.gitbucket_provider.Github')
+    @patch("app.modules.code_provider.gitbucket.gitbucket_provider.Github")
     def test_list_branches(self, mock_github):
         """Test listing branches."""
         provider = GitBucketProvider(base_url="http://localhost:8080/api/v3")
@@ -186,7 +182,7 @@ class TestGitBucketProvider:
         assert "feature/test" in branches
         assert len(branches) == 3
 
-    @patch('app.modules.code_provider.gitbucket.gitbucket_provider.Github')
+    @patch("app.modules.code_provider.gitbucket.gitbucket_provider.Github")
     def test_get_rate_limit_info(self, mock_github):
         """Test getting rate limit info."""
         provider = GitBucketProvider(base_url="http://localhost:8080/api/v3")
@@ -207,7 +203,7 @@ class TestGitBucketProvider:
         assert result["remaining"] == 4999
         assert result["reset_at"] == "2025-01-01T00:00:00"
 
-    @patch('app.modules.code_provider.gitbucket.gitbucket_provider.Github')
+    @patch("app.modules.code_provider.gitbucket.gitbucket_provider.Github")
     def test_get_rate_limit_info_not_supported(self, mock_github):
         """Test getting rate limit info when GitBucket doesn't support it."""
         provider = GitBucketProvider(base_url="http://localhost:8080/api/v3")
@@ -215,6 +211,7 @@ class TestGitBucketProvider:
         # Setup mock to raise exception
         mock_client = MagicMock()
         from github.GithubException import GithubException
+
         mock_client.get_rate_limit.side_effect = GithubException(404, "Not found")
         provider.client = mock_client
 
