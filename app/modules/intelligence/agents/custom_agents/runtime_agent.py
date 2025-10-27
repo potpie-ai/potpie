@@ -1,8 +1,6 @@
 from pydantic import BaseModel
-from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
 from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent import (
     PydanticMultiAgent,
-    AgentType,
 )
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,

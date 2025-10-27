@@ -24,7 +24,6 @@ from app.modules.intelligence.agents.custom_agents.custom_agent_schema import (
 from app.modules.intelligence.agents.custom_agents.runtime_agent import (
     RuntimeCustomAgent,
 )
-from app.modules.intelligence.agents.multi_agent_config import MultiAgentConfig
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )

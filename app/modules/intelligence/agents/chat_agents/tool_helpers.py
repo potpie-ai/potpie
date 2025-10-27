@@ -6,7 +6,7 @@ try:
     from app.modules.intelligence.tools.todo_management_tool import (
         _format_current_todo_list,
     )
-except ImportError as e:
+except ImportError:
     # Fallback if todo management tool is not available
     _todo_import_failed = True
 
@@ -298,12 +298,12 @@ def get_delegation_call_message(agent_type: str) -> str:
     match agent_type:
         case "codebase_analyzer":
             base_message = (
-                f"🔍 Delegating to Codebase Analyzer to examine how code works"
+                "🔍 Delegating to Codebase Analyzer to examine how code works"
             )
         case "codebase_locator":
-            base_message = f"📍 Delegating to Codebase Locator to find relevant files"
+            base_message = "📍 Delegating to Codebase Locator to find relevant files"
         case "think_execute":
-            base_message = f"🧠 Delegating to Think & Execute Agent for problem-solving and execution"
+            base_message = "🧠 Delegating to Think & Execute Agent for problem-solving and execution"
         case _:
             base_message = f"🤖 Delegating to {agent_type} specialist"
 
@@ -312,9 +312,9 @@ def get_delegation_call_message(agent_type: str) -> str:
     if todo_list.strip():
         base_message += f"\n\n{todo_list}"
     elif _todo_import_failed:
-        base_message += f"\n\n📋 **Current Todo List:** (Todo management not available - dependencies missing)"
+        base_message += "\n\n📋 **Current Todo List:** (Todo management not available - dependencies missing)"
     else:
-        base_message += f"\n\n📋 **Current Todo List:** No active todos"
+        base_message += "\n\n📋 **Current Todo List:** No active todos"
 
     return base_message
 
@@ -324,11 +324,11 @@ def get_delegation_response_message(agent_type: str) -> str:
     base_message = ""
     match agent_type:
         case "codebase_analyzer":
-            base_message = f"✅ Codebase Analyzer completed analysis"
+            base_message = "✅ Codebase Analyzer completed analysis"
         case "codebase_locator":
-            base_message = f"✅ Codebase Locator found relevant files"
+            base_message = "✅ Codebase Locator found relevant files"
         case "think_execute":
-            base_message = f"✅ Think & Execute Agent completed task"
+            base_message = "✅ Think & Execute Agent completed task"
         case _:
             base_message = f"✅ {agent_type} specialist completed task"
 
@@ -337,9 +337,9 @@ def get_delegation_response_message(agent_type: str) -> str:
     if todo_list.strip():
         base_message += f"\n\n{todo_list}"
     elif _todo_import_failed:
-        base_message += f"\n\n📋 **Current Todo List:** (Todo management not available - dependencies missing)"
+        base_message += "\n\n📋 **Current Todo List:** (Todo management not available - dependencies missing)"
     else:
-        base_message += f"\n\n📋 **Current Todo List:** No active todos"
+        base_message += "\n\n📋 **Current Todo List:** No active todos"
 
     return base_message
 
@@ -372,9 +372,9 @@ def get_delegation_info_content(
     if todo_list.strip():
         info += f"\n\n{todo_list}"
     elif _todo_import_failed:
-        info += f"\n\n📋 **Current Todo List:** (Todo management not available - dependencies missing)"
+        info += "\n\n📋 **Current Todo List:** (Todo management not available - dependencies missing)"
     else:
-        info += f"\n\n📋 **Current Todo List:** No active todos"
+        info += "\n\n📋 **Current Todo List:** No active todos"
 
     return info
 
@@ -387,7 +387,7 @@ def get_delegation_info_with_todo_context(
 
     if todo_id:
         base_info += f"\n\n**Todo ID:** {todo_id}"
-        base_info += f"\n*This task is being tracked in the todo management system*"
+        base_info += "\n*This task is being tracked in the todo management system*"
 
     return base_info
 

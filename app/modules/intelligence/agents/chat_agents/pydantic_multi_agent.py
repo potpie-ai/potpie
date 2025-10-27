@@ -1,6 +1,6 @@
 import functools
 import re
-from typing import List, AsyncGenerator, Sequence, Dict, Any, Optional, Union
+from typing import List, AsyncGenerator, Sequence, Dict, Any, Optional
 from dataclasses import dataclass
 from enum import Enum
 
@@ -292,7 +292,7 @@ SEARCH STRATEGY:
 
 Output Structure:
 - Implementation Files: Core logic files with paths
-- Test Files: Unit, integration, e2e tests  
+- Test Files: Unit, integration, e2e tests
 - Configuration: Config files
 - Type Definitions: TypeScript types, interfaces
 - Related Directories: Directory clusters with file counts
@@ -512,7 +512,7 @@ TASK EXECUTION PRINCIPLES:
             🚨🚨🚨 STOP! READ THIS FIRST! 🚨🚨🚨
             YOU ARE A SUPERVISOR AGENT. YOU SOLVE PROBLEMS BY ORCHESTRATING SPECIALISTS.
             YOU ARE THE PROBLEM SOLVER - BREAK DOWN WORK AND COORDINATE THE SOLUTION!
-            
+
             Role: {self.config.role} - SUPERVISOR AGENT
             Goal: {self.config.goal}
             Backstory: {self.config.backstory}
@@ -551,7 +551,7 @@ TASK EXECUTION PRINCIPLES:
 
             CRITICAL COMMUNICATION REQUIREMENT:
             🗣️ ALWAYS explain what you're doing before each tool call with detailed context:
-            
+
             BEFORE EVERY TOOL CALL, PROVIDE CLEAR EXPLANATION:
             - Before create_todo: "I'm breaking down this problem into manageable tasks. Let me create a todo for [specific task] because [reason]..."
             - Before update_todo_status: "I'm updating task [ID/title] from [old status] to [new status] because [reason]..."
@@ -560,7 +560,7 @@ TASK EXECUTION PRINCIPLES:
             - Before delegate_to_think_execute: "I'm delegating implementation work to the Think & Execute agent to [specific action] because [reason]..."
             - Before add_todo_note: "I'm recording the results from [agent] for task [ID/title]. The specialist found/completed [summary]..."
             - Before list_todos: "Let me check the current progress on all tasks to see what's completed and what needs attention next..."
-            
+
             COMMUNICATION STYLE:
             ✅ Always explain the "why" behind each action
             ✅ Reference specific task IDs/titles when updating todos
@@ -572,7 +572,7 @@ TASK EXECUTION PRINCIPLES:
 
             AVAILABLE SPECIALIST AGENTS (USE THESE DELEGATION TOOLS IMMEDIATELY):
             - delegate_to_codebase_analyzer: For analyzing codebase implementation details and documenting how code works
-            - delegate_to_codebase_locator: For locating files, directories, and components relevant to a feature or task  
+            - delegate_to_codebase_locator: For locating files, directories, and components relevant to a feature or task
             - delegate_to_think_execute: For general problem-solving, implementation, debugging, and complex analysis tasks
 
             TODO MANAGEMENT TOOLS (FOR LONG-RUNNING TASKS):
@@ -583,12 +583,12 @@ TASK EXECUTION PRINCIPLES:
             - add_todo_note: Add progress notes to todos
 
             ORCHESTRATION WORKFLOW - COMBINE TODO MANAGEMENT + DELEGATION:
-            
+
             FOR SIMPLE REQUESTS:
             1. Understand the specific task needed
             2. IMMEDIATELY delegate to the appropriate specialist using delegate_to_[agent_type]
             3. Present the result to user
-            
+
             FOR COMPLEX PROBLEMS (YOUR MAIN ROLE - MUST USE BOTH TODOS + DELEGATION):
             1. Analyze the user's problem and what needs to be solved
             2. Break it down into specific, well-defined subtasks using create_todo
@@ -603,7 +603,7 @@ TASK EXECUTION PRINCIPLES:
 
             EXAMPLE ORCHESTRATION - "Review and improve CLI implementation":
             1. create_todo("Locate CLI files", "Find all CLI-related files", "high", "codebase_locator")
-            2. create_todo("Analyze CLI structure", "Examine current implementation", "high", "codebase_analyzer") 
+            2. create_todo("Analyze CLI structure", "Examine current implementation", "high", "codebase_analyzer")
             3. create_todo("Identify improvements", "Find issues and improvements", "high", "think_execute")
             4. create_todo("Implement fixes", "Apply improvements to code", "high", "think_execute")
             5. For EACH todo: update_todo_status → delegate_to_specialist → add_todo_note → mark completed
@@ -647,9 +647,9 @@ TASK EXECUTION PRINCIPLES:
                 # Prepare the task with context
                 full_task = f"""
                 DELEGATED TASK: {task_description}
-                
+
                 CONTEXT: {context}
-                
+
                 Please complete this task using your specialized knowledge and available tools.
                 Provide a detailed, professional response.
                 """
@@ -813,7 +813,7 @@ TASK EXECUTION PRINCIPLES:
                 - Break down complex problems using create_todo
                 - IMMEDIATELY delegate each todo using delegate_to_[agent_type] tools
                 - File/component location tasks → delegate_to_codebase_locator
-                - Code analysis tasks → delegate_to_codebase_analyzer  
+                - Code analysis tasks → delegate_to_codebase_analyzer
                 - Implementation/problem-solving tasks → delegate_to_think_execute
                 - Track each delegation using update_todo_status
 

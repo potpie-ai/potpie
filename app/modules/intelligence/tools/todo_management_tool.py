@@ -5,7 +5,6 @@ This tool allows the supervisor agent to create, update, and track todo items
 for long-running tasks, providing state management across multiple delegations.
 """
 
-import json
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional, Any
@@ -316,7 +315,7 @@ def get_todo_tool(input_data: GetTodoInput) -> str:
                 result += f"Dependencies: {', '.join(todo['dependencies'])}\n"
 
             if todo["notes"]:
-                result += f"Notes:\n"
+                result += "Notes:\n"
                 for note in todo["notes"][-3:]:  # Show last 3 notes
                     result += f"  - {note}\n"
 

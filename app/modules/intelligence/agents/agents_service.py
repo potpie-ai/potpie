@@ -4,7 +4,6 @@ from typing import List, Optional
 from app.modules.intelligence.agents.chat_agents.system_agents.general_purpose_agent import (
     GeneralPurposeAgent,
 )
-from app.modules.intelligence.agents.multi_agent_config import MultiAgentConfig
 from app.modules.intelligence.agents.custom_agents.custom_agent_schema import (
     AgentVisibility,
 )
