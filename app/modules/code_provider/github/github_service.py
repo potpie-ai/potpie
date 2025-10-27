@@ -21,6 +21,9 @@ from app.core.config_provider import config_provider
 from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_service import ProjectService
 from app.modules.users.user_model import User
+from app.modules.code_provider.github.github_provider import GitHubProvider
+from app.modules.code_provider.provider_factory import CodeProviderFactory
+from app.modules.code_provider.base.code_provider_interface import AuthMethod
 
 logger = logging.getLogger(__name__)
 
@@ -80,40 +83,18 @@ class GithubService:
         return github, response.json(), owner
 
     def get_github_app_client(self, repo_name: str) -> Github:
+        """
+        Get GitHub client using provider abstraction.
+        Maintains backward compatibility with existing code.
+        """
         try:
-            # Try authenticated access first
-            private_key = (
-                "-----BEGIN RSA PRIVATE KEY-----\n"
-                + config_provider.get_github_key()
-                + "\n-----END RSA PRIVATE KEY-----\n"
+            provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+            return provider.client
+        except Exception as e:
+            logger.error(f"Failed to get GitHub client for {repo_name}: {str(e)}")
+            raise Exception(
+                f"Repository {repo_name} not found or inaccessible on GitHub"
             )
-            app_id = os.environ["GITHUB_APP_ID"]
-            auth = AppAuth(app_id=app_id, private_key=private_key)
-            jwt = auth.create_jwt()
-
-            # Get installation ID
-            url = f"https://api.github.com/repos/{repo_name}/installation"
-            headers = {
-                "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {jwt}",
-                "X-GitHub-Api-Version": "2022-11-28",
-            }
-            response = requests.get(url, headers=headers)
-            if response.status_code != 200:
-                raise Exception(f"Failed to get installation ID for {repo_name}")
-
-            app_auth = auth.get_installation_auth(response.json()["id"])
-            return Github(auth=app_auth)
-        except Exception as private_error:
-            logging.info(f"Failed to access private repo: {str(private_error)}")
-            # If authenticated access fails, try public access
-            try:
-                return self.get_public_github_instance()
-            except Exception as public_error:
-                logging.error(f"Failed to access public repo: {str(public_error)}")
-                raise Exception(
-                    f"Repository {repo_name} not found or inaccessible on GitHub"
-                )
 
     def get_file_content(
         self,
@@ -537,35 +518,41 @@ class GithubService:
 
     @classmethod
     def get_public_github_instance(cls):
+        """
+        Get public GitHub instance using PAT from token pool.
+        Uses new provider factory with PAT-first strategy.
+        """
+        # Initialize legacy token list if needed
         if not cls.gh_token_list:
             cls.initialize_tokens()
+
+        # Use factory to create provider with PAT
+
         token = random.choice(cls.gh_token_list)
-        return Github(token)
+        provider = GitHubProvider()
+        provider.authenticate({"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN)
+        return provider.client
 
     def get_repo(self, repo_name: str) -> Tuple[Github, Any]:
+        """
+        Get repository using provider abstraction.
+        Returns (Github client, Repository) for backward compatibility.
+        """
         try:
-            # Try authenticated access first
-            github, _, _ = self.get_github_repo_details(repo_name)
-            repo = github.get_repo(repo_name)
+            # Try to create provider with authentication fallback
+            provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
 
-            return github, repo
-        except Exception as private_error:
-            logger.info(
-                f"Failed to access private repo {repo_name}: {str(private_error)}"
+            # For backward compatibility, return the PyGithub client and repo
+            github_client = provider.client
+            repo = github_client.get_repo(repo_name)
+
+            return github_client, repo
+        except Exception as e:
+            logger.error(f"Failed to access repository {repo_name}: {str(e)}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Repository {repo_name} not found or inaccessible on GitHub",
             )
-            # If authenticated access fails, try public access
-            try:
-                github = self.get_public_github_instance()
-                repo = github.get_repo(repo_name)
-                return github, repo
-            except Exception as public_error:
-                logger.error(
-                    f"Failed to access public repo {repo_name}: {str(public_error)}"
-                )
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Repository {repo_name} not found or inaccessible on GitHub",
-                )
 
     async def get_project_structure_async(
         self, project_id: str, path: Optional[str] = None

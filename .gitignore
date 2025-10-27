@@ -72,3 +72,4 @@ package-lock.json
 .cursor/
 .taskmaster/
 thoughts/
+.codex/

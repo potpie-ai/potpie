@@ -4,15 +4,14 @@ import os
 import random
 from typing import Any, Dict, List, Optional
 
-import requests
 from github import Github
-from github.Auth import AppAuth
 from github.GithubException import UnknownObjectException
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
+from app.modules.code_provider.provider_factory import CodeProviderFactory
 
 
 class GithubToolInput(BaseModel):
@@ -109,40 +108,14 @@ class GithubTool:
         return Github(token)
 
     def _get_github_client(self, repo_name: str) -> Github:
+        """Get GitHub client using provider factory."""
         try:
-            # Try authenticated access first
-            private_key = (
-                "-----BEGIN RSA PRIVATE KEY-----\n"
-                + config_provider.get_github_key()
-                + "\n-----END RSA PRIVATE KEY-----\n"
-            )
-            app_id = os.environ["GITHUB_APP_ID"]
-            auth = AppAuth(app_id=app_id, private_key=private_key)
-            jwt = auth.create_jwt()
-
-            # Get installation ID
-            url = f"https://api.github.com/repos/{repo_name}/installation"
-            headers = {
-                "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {jwt}",
-                "X-GitHub-Api-Version": "2022-11-28",
-            }
-            response = requests.get(url, headers=headers)
-            if response.status_code != 200:
-                raise Exception(f"Failed to get installation ID for {repo_name}")
-
-            app_auth = auth.get_installation_auth(response.json()["id"])
-            return Github(auth=app_auth)
-        except Exception as private_error:
-            logging.info(f"Failed to access private repo: {str(private_error)}")
-            # If authenticated access fails, try public access
-            try:
-                return self.get_public_github_instance()
-            except Exception as public_error:
-                logging.error(f"Failed to access public repo: {str(public_error)}")
-                raise Exception(
-                    f"Repository {repo_name} not found or inaccessible on GitHub"
-                )
+            # Use the standard provider factory instead of the GitHub-specific fallback
+            provider = CodeProviderFactory.create_provider()
+            return provider.client
+        except Exception as e:
+            logging.error(f"Failed to get GitHub client: {str(e)}")
+            raise Exception(f"Repository {repo_name} not found or inaccessible")
 
     def _fetch_github_content(
         self, repo_name: str, issue_number: Optional[int], is_pull_request: bool

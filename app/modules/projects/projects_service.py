@@ -3,7 +3,7 @@ from datetime import datetime
 
 from fastapi import HTTPException
 from sqlalchemy import String, cast
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy.orm import Session
 
 from app.modules.projects.projects_model import Project
@@ -65,6 +65,35 @@ class ProjectService:
         commit_id: str = None,
         repo_path: str = None,
     ):
+        # Check if a project with this ID already exists
+        existing_project = (
+            self.db.query(Project).filter(Project.id == project_id).first()
+        )
+
+        if existing_project:
+            # Update the existing project with new information (e.g., normalized repo_name)
+            logger.info(
+                f"Project {project_id} already exists. Updating repo_name from '{existing_project.repo_name}' to '{repo_name}'"
+            )
+            existing_project.repo_name = repo_name
+            existing_project.branch_name = branch_name
+            existing_project.user_id = user_id
+            existing_project.repo_path = repo_path
+            existing_project.commit_id = commit_id
+            existing_project.status = ProjectStatusEnum.SUBMITTED.value
+            existing_project.updated_at = datetime.utcnow()
+            try:
+                self.db.commit()
+                self.db.refresh(existing_project)
+            except Exception as e:
+                logger.error(f"Error updating existing project {project_id}: {e}")
+                self.db.rollback()
+                raise
+            message = f"Project id '{project_id}' for repo '{repo_name}' and branch '{branch_name}' updated successfully."
+            logging.info(message)
+            return project_id
+
+        # Create new project if it doesn't exist
         project = Project(
             id=project_id,
             repo_name=repo_name,
@@ -74,7 +103,12 @@ class ProjectService:
             commit_id=commit_id,
             status=ProjectStatusEnum.SUBMITTED.value,
         )
-        project = ProjectService.create_project(self.db, project)
+        try:
+            project = ProjectService.create_project(self.db, project)
+        except Exception as e:
+            logger.error(f"Error creating project {project_id}: {e}")
+            self.db.rollback()
+            raise
         message = f"Project id '{project.id}' for repo '{repo_name}' and branch '{branch_name}' registered successfully."
         logging.info(message)
         return project_id
@@ -115,10 +149,15 @@ class ProjectService:
         return project_list
 
     async def update_project_status(self, project_id: int, status: ProjectStatusEnum):
-        ProjectService.update_project(self.db, project_id, status=status.value)
-        logging.info(
-            f"Project with ID {project_id} has now been updated with status {status}."
-        )
+        try:
+            ProjectService.update_project(self.db, project_id, status=status.value)
+            logging.info(
+                f"Project with ID {project_id} has now been updated with status {status}."
+            )
+        except Exception as e:
+            logger.error(f"Error updating project status for {project_id}: {e}")
+            self.db.rollback()
+            raise
 
     async def get_project_from_db(
         self,
@@ -289,9 +328,18 @@ class ProjectService:
         project.created_at = datetime.utcnow()
         project.updated_at = datetime.utcnow()
         db.add(project)
-        db.commit()
-        db.refresh(project)
-        return project
+        try:
+            db.commit()
+            db.refresh(project)
+            return project
+        except IntegrityError as e:
+            db.rollback()
+            logger.error(f"IntegrityError creating project {project.id}: {e}")
+            raise
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error creating project {project.id}: {e}")
+            raise
 
     def update_project(db: Session, project_id: int, **kwargs):
         project = db.query(Project).filter(Project.id == project_id).first()
