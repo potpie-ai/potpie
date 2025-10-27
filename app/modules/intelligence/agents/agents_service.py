@@ -4,6 +4,7 @@ from typing import List, Optional
 from app.modules.intelligence.agents.chat_agents.system_agents.general_purpose_agent import (
     GeneralPurposeAgent,
 )
+from app.modules.intelligence.agents.multi_agent_config import MultiAgentConfig
 from app.modules.intelligence.agents.custom_agents.custom_agent_schema import (
     AgentVisibility,
 )
@@ -121,7 +122,9 @@ class AgentsService:
                 name="Code Generation Agent",
                 description="An agent specialized in generating code for new features or fixing bugs.",
                 agent=code_gen_agent.CodeGenAgent(
-                    llm_provider, tools_provider, prompt_provider
+                    llm_provider,
+                    tools_provider,
+                    prompt_provider,
                 ),
             ),
             "general_purpose_agent": AgentWithInfo(
@@ -129,7 +132,9 @@ class AgentsService:
                 name="General Purpose Agent",
                 description="Agent for queries not needing understanding of or access to the users code repository",
                 agent=GeneralPurposeAgent(
-                    llm_provider, tools_provider, prompt_provider
+                    llm_provider,
+                    tools_provider,
+                    prompt_provider,
                 ),
             ),
         }
@@ -168,7 +173,7 @@ class AgentsService:
                 id=agent.id,
                 name=agent.role,
                 description=agent.goal,
-                status=agent.deployment_status,
+                status=agent.deployment_status or "STOPPED",
                 visibility=agent.visibility,
             )
             for agent in custom_agents
