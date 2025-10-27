@@ -36,7 +36,7 @@ from .tool_helpers import (
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
-from .crewai_agent import AgentConfig, TaskConfig
+from .agent_config import AgentConfig, TaskConfig
 from app.modules.utils.logger import setup_logger
 
 from ..chat_agent import (
