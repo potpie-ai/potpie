@@ -260,6 +260,51 @@ class GitHubProvider(ICodeProvider):
                 "status_code": e.status if hasattr(e, "status") else None,
             }
 
+    def compare_branches(
+        self, repo_name: str, base_branch: str, head_branch: str
+    ) -> Dict[str, Any]:
+        """
+        Compare two branches using GitHub's compare API.
+
+        Args:
+            repo_name: Repository name (e.g., 'owner/repo')
+            base_branch: Base branch to compare from
+            head_branch: Head branch to compare to
+
+        Returns:
+            Dict with files (list of file changes with patches) and commits count
+        """
+        self._ensure_authenticated()
+
+        try:
+            repo = self.client.get_repo(repo_name)
+            comparison = repo.compare(base_branch, head_branch)
+
+            # Extract file changes with patches
+            files = []
+            for file in comparison.files:
+                file_data = {
+                    'filename': file.filename,
+                    'status': file.status,
+                    'additions': file.additions,
+                    'deletions': file.deletions,
+                    'changes': file.changes,
+                }
+                if file.patch:
+                    file_data['patch'] = file.patch
+                files.append(file_data)
+
+            logger.info(f"[GITHUB] Compared branches {base_branch}...{head_branch}: {len(files)} files, {comparison.total_commits} commits")
+
+            return {
+                'files': files,
+                'commits': comparison.total_commits,
+            }
+
+        except GithubException as e:
+            logger.error(f"[GITHUB] Error comparing branches: {str(e)}")
+            raise
+
     # ============ Pull Request Operations ============
 
     def list_pull_requests(

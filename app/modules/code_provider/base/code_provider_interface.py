@@ -104,6 +104,32 @@ class ICodeProvider(ABC):
         """Create a new branch from base branch."""
         pass
 
+    @abstractmethod
+    def compare_branches(
+        self, repo_name: str, base_branch: str, head_branch: str
+    ) -> Dict[str, Any]:
+        """
+        Compare two branches and return file changes with patches.
+
+        Args:
+            repo_name: Repository name (e.g., 'owner/repo')
+            base_branch: Base branch to compare from
+            head_branch: Head branch to compare to
+
+        Returns:
+            Dict with:
+                - files: List of changed files with patches
+                - commits: Number of commits different
+                Example: {
+                    'files': [
+                        {'filename': 'path/to/file.py', 'patch': '@@ ...', 'status': 'modified'},
+                        ...
+                    ],
+                    'commits': 2
+                }
+        """
+        pass
+
     # ============ Pull Request Operations ============
 
     @abstractmethod

@@ -14,7 +14,7 @@ from app.core.config_provider import config_provider
 from app.modules.code_provider.provider_factory import CodeProviderFactory
 
 
-class GithubToolInput(BaseModel):
+class CodeProviderToolInput(BaseModel):
     repo_name: str = Field(
         description="The full repository name in format 'owner/repo' WITHOUT any quotes"
     )
@@ -27,8 +27,8 @@ class GithubToolInput(BaseModel):
     )
 
 
-class GithubTool:
-    name = "GitHub Tool"
+class CodeProviderTool:
+    name = "Code Provider Tool"
     description = """Fetches GitHub issues and pull request information including diffs.
         :param repo_name: string, the full repository name (owner/repo)
         :param issue_number: optional int, the issue or PR number to fetch
@@ -61,8 +61,8 @@ class GithubTool:
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db
         self.user_id = user_id
-        if not GithubTool.gh_token_list:
-            GithubTool.initialize_tokens()
+        if not CodeProviderTool.gh_token_list:
+            CodeProviderTool.initialize_tokens()
 
     async def arun(
         self,
@@ -122,7 +122,15 @@ class GithubTool:
     ) -> Optional[Dict[str, Any]]:
         try:
             github = self._get_github_client(repo_name)
-            repo = github.get_repo(repo_name)
+
+            # Get the actual repo name for API calls (handles GitBucket conversion)
+            from app.modules.parsing.utils.repo_name_normalizer import get_actual_repo_name_for_lookup
+            import os
+            provider_type = os.getenv("CODE_PROVIDER", "github").lower()
+            actual_repo_name = get_actual_repo_name_for_lookup(repo_name, provider_type)
+            logging.info(f"[CODE_PROVIDER_TOOL] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}")
+
+            repo = github.get_repo(actual_repo_name)
 
             if issue_number is None:
                 # Fetch all issues/PRs
@@ -206,19 +214,22 @@ class GithubTool:
             return None
 
 
-def github_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
-    if not os.getenv("GITHUB_APP_ID") or not config_provider.get_github_key():
+def code_provider_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
+    from app.modules.code_provider.provider_factory import has_code_provider_credentials
+
+    if not has_code_provider_credentials():
         logging.warning(
-            "GitHub app credentials not set, GitHub tool will not be initialized"
+            "No code provider credentials configured. Please set CODE_PROVIDER_TOKEN, "
+            "GH_TOKEN_LIST, GITHUB_APP_ID, or CODE_PROVIDER_USERNAME/PASSWORD."
         )
         return None
 
-    tool_instance = GithubTool(sql_db, user_id)
+    tool_instance = CodeProviderTool(sql_db, user_id)
     return StructuredTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
-        name="GitHub Content Fetcher",
-        description="""Fetches GitHub issues and pull request information including diffs.
+        name="Code Provider Content Fetcher",
+        description="""Fetches repository issues and pull request information including diffs.
         :param repo_name: string, the full repository name (owner/repo)
         :param issue_number: optional int, the issue or PR number to fetch
         :param is_pull_request: optional bool, whether to fetch a PR (True) or issue (False)
@@ -231,5 +242,5 @@ def github_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
             }
 
         Returns dictionary containing the issue/PR content, metadata, and success status.""",
-        args_schema=GithubToolInput,
+        args_schema=CodeProviderToolInput,
     )

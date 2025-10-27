@@ -546,6 +546,85 @@ class GitBucketProvider(ICodeProvider):
                 "status_code": e.status if hasattr(e, "status") else None,
             }
 
+    def compare_branches(
+        self, repo_name: str, base_branch: str, head_branch: str
+    ) -> Dict[str, Any]:
+        """
+        Compare two branches using commits API (GitBucket workaround).
+
+        GitBucket doesn't fully support the /compare endpoint, so we iterate
+        through commits on the head branch until we reach the common ancestor.
+
+        Args:
+            repo_name: Repository name (e.g., 'owner/repo')
+            base_branch: Base branch to compare from
+            head_branch: Head branch to compare to
+
+        Returns:
+            Dict with files (list of file changes with patches) and commits count
+        """
+        self._ensure_authenticated()
+
+        try:
+            repo = self.client.get_repo(repo_name)
+
+            # Get commits on the head branch
+            logging.info(f"[GITBUCKET] Getting commits for branch: {head_branch}")
+            head_commits = repo.get_commits(sha=head_branch)
+
+            # Get commits on the base branch for comparison
+            base_commits = list(repo.get_commits(sha=base_branch))
+            base_commit_shas = {c.sha for c in base_commits}
+
+            # Track files and their patches
+            files_dict = {}
+            commit_count = 0
+            max_commits = 50  # Safety limit
+
+            # Iterate through head branch commits until we find common ancestor
+            for commit in head_commits:
+                if commit.sha in base_commit_shas:
+                    logging.info(f"[GITBUCKET] Reached common ancestor at commit {commit.sha[:7]}")
+                    break
+
+                commit_count += 1
+                logging.info(f"[GITBUCKET] Processing commit {commit.sha[:7]}: {commit.commit.message.split(chr(10))[0]}")
+
+                # Extract files from this commit
+                for file in commit.files:
+                    # Only add file if we haven't seen it yet (keep first occurrence)
+                    if file.filename not in files_dict:
+                        file_data = {
+                            'filename': file.filename,
+                            'status': file.status,
+                            'additions': file.additions,
+                            'deletions': file.deletions,
+                            'changes': file.changes,
+                        }
+                        if file.patch:
+                            file_data['patch'] = file.patch
+                        files_dict[file.filename] = file_data
+                        logging.info(f"[GITBUCKET] Added file: {file.filename}")
+
+                # Safety check
+                if commit_count >= max_commits:
+                    logging.warning(f"[GITBUCKET] Reached commit limit of {max_commits}, stopping")
+                    break
+
+            # Convert dict to list
+            files = list(files_dict.values())
+
+            logging.info(f"[GITBUCKET] Compared branches {base_branch}...{head_branch}: {len(files)} files, {commit_count} commits")
+
+            return {
+                'files': files,
+                'commits': commit_count,
+            }
+
+        except GithubException as e:
+            logging.error(f"[GITBUCKET] Error comparing branches: {str(e)}")
+            raise
+
     # ============ Pull Request Operations ============
 
     def list_pull_requests(

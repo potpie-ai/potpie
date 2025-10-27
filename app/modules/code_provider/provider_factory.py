@@ -256,3 +256,46 @@ class CodeProviderFactory:
             "No authentication method available. "
             "Please configure CODE_PROVIDER_TOKEN, GH_TOKEN_LIST, or GitHub App credentials."
         )
+
+
+def has_code_provider_credentials() -> bool:
+    """
+    Check if any valid code provider credentials are configured.
+
+    This function checks for credentials in the same order as
+    create_provider_with_fallback() to ensure consistency.
+
+    Checks for:
+    1. CODE_PROVIDER_TOKEN (works for all providers)
+    2. GH_TOKEN_LIST (legacy, works for GitHub/GitBucket)
+    3. CODE_PROVIDER_USERNAME + CODE_PROVIDER_PASSWORD (GitBucket Basic Auth)
+    4. GITHUB_APP_ID + private key (GitHub only)
+
+    Returns:
+        bool: True if any valid credentials exist, False otherwise
+
+    Example:
+        >>> os.environ['CODE_PROVIDER_TOKEN'] = 'ghp_xxx'
+        >>> has_code_provider_credentials()
+        True
+    """
+    # Check for primary PAT (works for all providers)
+    if os.getenv("CODE_PROVIDER_TOKEN"):
+        return True
+
+    # Check for legacy PAT pool (works for GitHub/GitBucket)
+    token_list_str = os.getenv("GH_TOKEN_LIST", "")
+    if token_list_str:
+        tokens = [t.strip() for t in token_list_str.split(",") if t.strip()]
+        if tokens:
+            return True
+
+    # Check for Basic Auth credentials (works for GitBucket)
+    if os.getenv("CODE_PROVIDER_USERNAME") and os.getenv("CODE_PROVIDER_PASSWORD"):
+        return True
+
+    # Check for GitHub App credentials (GitHub only)
+    if os.getenv("GITHUB_APP_ID") and config_provider.get_github_key():
+        return True
+
+    return False
