@@ -169,7 +169,9 @@ class ParsingController:
             # Handle existing projects (including previously duplicated demo projects)
             if project:
                 project_id = project.id
-                is_latest = await parse_helper.check_commit_status(project_id)
+                is_latest = await parse_helper.check_commit_status(
+                    project_id, requested_commit_id=repo_details.commit_id
+                )
 
                 if not is_latest or project.status != ProjectStatusEnum.READY.value:
                     cleanup_graph = True

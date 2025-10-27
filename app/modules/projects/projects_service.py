@@ -170,15 +170,19 @@ class ProjectService:
         """
         Get a project from the database for a specific user, prioritizing commit_id over branch_name.
 
+        This method attempts to find an existing project by:
+        1. First trying exact commit_id match (if commit_id provided)
+        2. Falling back to branch_name match if commit_id match fails or not provided
+
         Args:
             repo_name: Repository name
-            branch_name: Branch name (used as fallback if commit_id is None)
+            branch_name: Branch name (used as fallback if commit_id doesn't match)
             user_id: User ID
             repo_path: Path to the repository (optional)
-            commit_id: Commit ID (optional, prioritized over branch_name if provided)
+            commit_id: Commit ID (optional, will try exact match first then fall back to branch)
 
         Returns:
-            Project object if found, None otherwise
+            Project object if found by either commit_id or branch_name, None if no match
         """
         query = self.db.query(Project).filter(
             Project.repo_name == repo_name,
@@ -186,16 +190,28 @@ class ProjectService:
             Project.repo_path == repo_path,
         )
 
+        logger.info(
+            f"Looking up project: repo_name={repo_name}, branch={branch_name}, "
+            f"user={user_id}, repo_path={repo_path}, commit_id={commit_id}"
+        )
+
         if commit_id:
-            # If commit_id is provided, use it for deduplication
+            # If commit_id is provided, try to find exact match first
             project = query.filter(Project.commit_id == commit_id).first()
             if project:
+                logger.info(f"Found project by commit_id: {project.id}")
                 return project
-            else:
-                return None
+            # ✅ FIX: Fall through to branch-based lookup instead of returning None
+            logger.info(
+                f"No project found with commit_id={commit_id}, falling back to branch lookup"
+            )
 
-        # Fall back to branch_name if commit_id is not provided or no match was found
+        # Fall back to branch_name lookup
         project = query.filter(Project.branch_name == branch_name).first()
+        if project:
+            logger.info(f"Found project by branch_name: {project.id}")
+        else:
+            logger.info("No existing project found for this repository and branch")
         return project
 
     async def get_global_project_from_db(

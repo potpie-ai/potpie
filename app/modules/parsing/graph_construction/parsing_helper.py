@@ -556,15 +556,23 @@ class ParseHelper:
 
         return metadata
 
-    async def check_commit_status(self, project_id: str) -> bool:
+    async def check_commit_status(
+        self, project_id: str, requested_commit_id: str = None
+    ) -> bool:
         """
         Check if the current commit ID of the project matches the latest commit ID from the repository.
 
         Args:
             project_id (str): The ID of the project to check.
+            requested_commit_id (str, optional): The commit ID from the current parse request.
+                If provided, indicates this is a pinned commit parse (not branch-based).
         Returns:
-            bool: True if the commit IDs match, False otherwise.
+            bool: True if the commit IDs match or if this is a pinned commit parse, False otherwise.
         """
+        logger.info(
+            f"check_commit_status: Checking commit status for project {project_id}, "
+            f"requested_commit_id={requested_commit_id}"
+        )
 
         project = await self.project_manager.get_project_from_db_by_id(project_id)
         if not project:
@@ -574,6 +582,36 @@ class ParseHelper:
         current_commit_id = project.get("commit_id")
         repo_name = project.get("project_name")
         branch_name = project.get("branch_name")
+
+        logger.info(
+            f"check_commit_status: Project {project_id} - repo={repo_name}, "
+            f"branch={branch_name}, current_commit_id={current_commit_id}"
+        )
+
+        # Check if this is a pinned commit parse
+        # If the user explicitly provided a commit_id in the parse request,
+        # this is a pinned commit parse (not branch-based)
+        if requested_commit_id is not None:
+            logger.info(
+                f"check_commit_status: Pinned commit parse detected "
+                f"(requested_commit_id={requested_commit_id})"
+            )
+            # For pinned commits, check if the requested commit matches the stored commit
+            if requested_commit_id == current_commit_id:
+                logger.info(
+                    f"check_commit_status: Pinned commit {requested_commit_id} matches "
+                    f"stored commit, no reparse needed"
+                )
+                return True
+            else:
+                logger.info(
+                    f"check_commit_status: Pinned commit changed from {current_commit_id} "
+                    f"to {requested_commit_id}, reparse needed"
+                )
+                return False
+
+        # If we reach here, this is a branch-based parse (not pinned commit)
+        # We need to compare the stored commit with the latest branch commit
 
         if not repo_name:
             logger.error(
@@ -589,42 +627,35 @@ class ParseHelper:
 
         if len(repo_name.split("/")) < 2:
             # Local repo, always parse local repos
+            logger.info(f"check_commit_status: Local repo detected, forcing reparse")
             return False
 
         try:
+            logger.info(f"check_commit_status: Branch-based parse - getting repo info for {repo_name}")
             github, repo = self.github_service.get_repo(repo_name)
 
             # If current_commit_id is None, we should reparse
             if current_commit_id is None:
-                logger.info(f"Project {project_id} has no commit_id, will reparse")
+                logger.info(f"check_commit_status: Project {project_id} has no commit_id, will reparse")
                 return False
 
-            # If current_commit_id is a specific commit (not a branch head),
-            # then we can assume it's not "latest" and should be reparsed
-            # This is because when using specific commits, we don't want to check branch head
-            if len(current_commit_id) == 40:  # SHA1 commit hash is 40 chars
-                try:
-                    # Try to verify if this is a specific commit instead of branch head
-                    repo.get_commit(current_commit_id)
-                    # If we successfully get a commit, assume that it was a pinned commit,
-                    # thus it's still up to date (we're parsing a specific commit, not latest)
-                    return True
-                except:
-                    # If we can't find the commit, we should reparse
-                    return False
+            # Get the latest commit from the branch
+            logger.info(f"check_commit_status: Getting latest commit from branch {branch_name}")
             branch = repo.get_branch(branch_name)
             latest_commit_id = branch.commit.sha
 
+            # Compare current commit with latest commit
             is_up_to_date = current_commit_id == latest_commit_id
             logger.info(
-                f"""Project {project_id} commit status for branch {branch_name}: {'Up to date' if is_up_to_date else 'Outdated'}"
-            Current commit ID: {current_commit_id}
-            Latest commit ID: {latest_commit_id}"""
+                f"check_commit_status: Project {project_id} commit status for branch {branch_name}: "
+                f"{'Up to date' if is_up_to_date else 'Outdated'} - "
+                f"Current: {current_commit_id}, Latest: {latest_commit_id}"
             )
 
             return is_up_to_date
         except Exception as e:
             logger.error(
-                f"Error fetching latest commit for {repo_name}/{branch_name}: {e}"
+                f"check_commit_status: Error fetching latest commit for {repo_name}/{branch_name}: {e}",
+                exc_info=True
             )
             return False
