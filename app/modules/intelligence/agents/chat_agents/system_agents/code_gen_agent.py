@@ -1,5 +1,10 @@
 from app.modules.intelligence.agents.chat_agents.adaptive_agent import AdaptiveAgent
 from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
+from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent import (
+    PydanticMultiAgent,
+    AgentType as MultiAgentType,
+)
+from app.modules.intelligence.agents.multi_agent_config import MultiAgentConfig
 from app.modules.intelligence.prompts.classification_prompts import AgentType
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.provider_service import (
@@ -68,7 +73,39 @@ class CodeGenAgent(ChatAgent):
         if self.llm_provider.is_current_model_supported_by_pydanticai(
             config_type="chat"
         ):
-            return PydanticRagAgent(self.llm_provider, agent_config, tools)
+            if MultiAgentConfig.should_use_multi_agent("code_generation_agent"):
+                # Create specialized delegate agents for code generation using available agent types
+                delegate_agents = {
+                    MultiAgentType.CAB: AgentConfig(
+                        role="Code Analysis Specialist",
+                        goal="Analyze code requirements and existing codebase",
+                        backstory="You are an expert code analyst who understands code structure, patterns, and requirements.",
+                        tasks=[
+                            TaskConfig(
+                                description="Analyze code requirements, existing patterns, and dependencies",
+                                expected_output="Detailed analysis of code requirements and implementation approach",
+                            )
+                        ],
+                        max_iter=10,
+                    ),
+                    MultiAgentType.THINK_EXECUTE: AgentConfig(
+                        role="Code Implementation and Review Specialist",
+                        goal="Implement code solutions and review them for quality",
+                        backstory="You are a skilled developer who excels at writing clean, efficient, maintainable code and reviewing it for quality and best practices.",
+                        tasks=[
+                            TaskConfig(
+                                description="Implement code solutions following best practices and project patterns, then review for quality, security, and maintainability",
+                                expected_output="Production-ready code implementation with proper error handling and quality review",
+                            )
+                        ],
+                        max_iter=20,
+                    ),
+                }
+                return PydanticMultiAgent(
+                    self.llm_provider, agent_config, tools, None, delegate_agents
+                )
+            else:
+                return PydanticRagAgent(self.llm_provider, agent_config, tools)
         else:
             return AdaptiveAgent(
                 llm_provider=self.llm_provider,

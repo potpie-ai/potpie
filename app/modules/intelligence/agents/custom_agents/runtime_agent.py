@@ -1,5 +1,9 @@
 from pydantic import BaseModel
 from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
+from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent import (
+    PydanticMultiAgent,
+    AgentType,
+)
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
@@ -31,6 +35,7 @@ class CustomAgentConfig(BaseModel):
     system_prompt: str
     tasks: List[CustomTaskConfig]
     project_id: str = ""
+    use_multi_agent: bool = True  # Multi-agent mode is now default
 
 
 class RuntimeCustomAgent(ChatAgent):
@@ -79,7 +84,9 @@ class RuntimeCustomAgent(ChatAgent):
         if self.llm_provider.is_current_model_supported_by_pydanticai(
             config_type="chat"
         ):
-            agent = PydanticRagAgent(
+            # Use multi-agent mode by default
+            logger.info("Using PydanticMultiAgent for enhanced task delegation")
+            agent = PydanticMultiAgent(
                 self.llm_provider, agent_config, tools, mcp_servers
             )
             self._pydantic_agent = agent  # Store reference for status access

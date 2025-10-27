@@ -1,5 +1,20 @@
 from typing import Any, Dict, List
 
+# Import todo management for streaming todo list state
+_todo_import_failed = False
+try:
+    from app.modules.intelligence.tools.todo_management_tool import (
+        _format_current_todo_list,
+    )
+except ImportError as e:
+    # Fallback if todo management tool is not available
+    _todo_import_failed = True
+
+    def _format_current_todo_list() -> str:
+        return (
+            "📋 **Current Todo List:** (Todo management not available - import failed)"
+        )
+
 
 def get_tool_run_message(tool_name: str):
     match tool_name:
@@ -29,6 +44,18 @@ def get_tool_run_message(tool_name: str):
             return "Searching the web"
         case "analyze_code_structure":
             return "Analyzing code structure"
+        case "create_todo":
+            return "Creating todo item"
+        case "update_todo_status":
+            return "Updating todo status"
+        case "add_todo_note":
+            return "Adding todo note"
+        case "get_todo":
+            return "Retrieving todo details"
+        case "list_todos":
+            return "Listing todos"
+        case "get_todo_summary":
+            return "Getting todo summary"
         case _:
             return "Querying data"
 
@@ -59,6 +86,18 @@ def get_tool_response_message(tool_name: str):
             return "Code structure analyzed successfully"
         case "WebSearchTool":
             return "Web search successful"
+        case "create_todo":
+            return "Todo item created successfully"
+        case "update_todo_status":
+            return "Todo status updated successfully"
+        case "add_todo_note":
+            return "Todo note added successfully"
+        case "get_todo":
+            return "Todo details retrieved successfully"
+        case "list_todos":
+            return "Todos listed successfully"
+        case "get_todo_summary":
+            return "Todo summary generated successfully"
         case _:
             return "Data queried successfully"
 
@@ -103,6 +142,27 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             return f"Analyzing file - {args.get('file_path')}\n"
         case "WebSearchTool":
             return f"-> searching the web for {args.get('query')}\n"
+        case "create_todo":
+            title = args.get("title", "")
+            priority = args.get("priority", "medium")
+            return f"-> creating todo: '{title}' (priority: {priority})\n"
+        case "update_todo_status":
+            todo_id = args.get("todo_id", "")
+            status = args.get("status", "")
+            return f"-> updating todo {todo_id} to status: {status}\n"
+        case "add_todo_note":
+            todo_id = args.get("todo_id", "")
+            return f"-> adding note to todo {todo_id}\n"
+        case "get_todo":
+            todo_id = args.get("todo_id", "")
+            return f"-> retrieving details for todo {todo_id}\n"
+        case "list_todos":
+            status_filter = args.get("status_filter")
+            if status_filter:
+                return f"-> listing todos with status: {status_filter}\n"
+            return "-> listing all todos\n"
+        case "get_todo_summary":
+            return "-> generating todo summary\n"
         case _:
             return ""
 
@@ -198,19 +258,153 @@ description:
                     return f"""
 ```{content.get("content")}```
                 """
+            return ""
         case "analyze_code_structure":
             if isinstance(content, Dict):
                 if not content.get("success"):
                     return "Failed to analyze code structure"
                 else:
-                    return f"""
-{[ f''' {element.get("type")}: {element.get("name")} ''' for element in content.get("elements")]}
+                    elements = content.get("elements")
+                    if elements:
+                        return f"""
+{[ f''' {element.get("type")}: {element.get("name")} ''' for element in elements]}
 """
+            return ""
         case "WebSearchTool":
             if isinstance(content, Dict):
                 res = content.get("content")
                 if isinstance(res, str):
                     return res[: min(len(res), 600)] + " ..."
             return ""
+        case (
+            "create_todo"
+            | "update_todo_status"
+            | "add_todo_note"
+            | "get_todo"
+            | "list_todos"
+            | "get_todo_summary"
+        ):
+            # For todo tools, return the content directly as it already includes the formatted todo list
+            if isinstance(content, str):
+                return content
+            return str(content)
         case _:
             return ""
+
+
+def get_delegation_call_message(agent_type: str) -> str:
+    """Get user-friendly message when delegating to a specialist agent"""
+    base_message = ""
+    match agent_type:
+        case "codebase_analyzer":
+            base_message = (
+                f"🔍 Delegating to Codebase Analyzer to examine how code works"
+            )
+        case "codebase_locator":
+            base_message = f"📍 Delegating to Codebase Locator to find relevant files"
+        case "think_execute":
+            base_message = f"🧠 Delegating to Think & Execute Agent for problem-solving and execution"
+        case _:
+            base_message = f"🤖 Delegating to {agent_type} specialist"
+
+    # Add current todo list state to show progress
+    todo_list = _format_current_todo_list()
+    if todo_list.strip():
+        base_message += f"\n\n{todo_list}"
+    elif _todo_import_failed:
+        base_message += f"\n\n📋 **Current Todo List:** (Todo management not available - dependencies missing)"
+    else:
+        base_message += f"\n\n📋 **Current Todo List:** No active todos"
+
+    return base_message
+
+
+def get_delegation_response_message(agent_type: str) -> str:
+    """Get user-friendly message when delegation completes"""
+    base_message = ""
+    match agent_type:
+        case "codebase_analyzer":
+            base_message = f"✅ Codebase Analyzer completed analysis"
+        case "codebase_locator":
+            base_message = f"✅ Codebase Locator found relevant files"
+        case "think_execute":
+            base_message = f"✅ Think & Execute Agent completed task"
+        case _:
+            base_message = f"✅ {agent_type} specialist completed task"
+
+    # Add current todo list state to show updated progress
+    todo_list = _format_current_todo_list()
+    if todo_list.strip():
+        base_message += f"\n\n{todo_list}"
+    elif _todo_import_failed:
+        base_message += f"\n\n📋 **Current Todo List:** (Todo management not available - dependencies missing)"
+    else:
+        base_message += f"\n\n📋 **Current Todo List:** No active todos"
+
+    return base_message
+
+
+def get_delegation_info_content(
+    agent_type: str, task_description: str, context: str = ""
+) -> str:
+    """Get detailed info about what the specialist agent will do"""
+    info = ""
+    match agent_type:
+        case "codebase_analyzer":
+            info = f"**Codebase Analyzer Task:**\n{task_description}"
+            if context:
+                info += f"\n\n**Context:**\n{context}"
+        case "codebase_locator":
+            info = f"**Codebase Locator Task:**\n{task_description}"
+            if context:
+                info += f"\n\n**Context:**\n{context}"
+        case "think_execute":
+            info = f"**Think & Execute Task:**\n{task_description}"
+            if context:
+                info += f"\n\n**Context:**\n{context}"
+        case _:
+            info = f"**{agent_type} Task:**\n{task_description}"
+            if context:
+                info += f"\n\n**Context:**\n{context}"
+
+    # Add current todo list state for context
+    todo_list = _format_current_todo_list()
+    if todo_list.strip():
+        info += f"\n\n{todo_list}"
+    elif _todo_import_failed:
+        info += f"\n\n📋 **Current Todo List:** (Todo management not available - dependencies missing)"
+    else:
+        info += f"\n\n📋 **Current Todo List:** No active todos"
+
+    return info
+
+
+def get_delegation_info_with_todo_context(
+    agent_type: str, task_description: str, todo_id: str = "", context: str = ""
+) -> str:
+    """Get delegation info with todo context for better tracking"""
+    base_info = get_delegation_info_content(agent_type, task_description, context)
+
+    if todo_id:
+        base_info += f"\n\n**Todo ID:** {todo_id}"
+        base_info += f"\n*This task is being tracked in the todo management system*"
+
+    return base_info
+
+
+def get_delegation_result_content(agent_type: str, result: str) -> str:
+    """Get formatted result from specialist agent"""
+    # Limit result display to reasonable length
+    display_result = result[: min(len(result), 1000)] + (
+        "..." if len(result) > 1000 else ""
+    )
+
+    match agent_type:
+        case "codebase_analyzer":
+            return f"**Codebase Analysis Result:**\n\n{display_result}"
+        case "codebase_locator":
+            return f"**File Location Result:**\n\n{display_result}"
+        case "think_execute":
+            return f"**Think & Execute Result:**\n\n{display_result}"
+        case _:
+            return f"**{agent_type} Result:**\n\n{display_result}"
