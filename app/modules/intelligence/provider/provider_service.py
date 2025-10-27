@@ -328,7 +328,7 @@ AVAILABLE_MODELS = [
         id="openrouter/deepseek/deepseek-chat-v3-0324",
         name="DeepSeek V3",
         description="DeepSeek's latest chat model",
-        provider="openrouter",
+        provider="deepseek",
         is_chat_model=True,
         is_inference_model=True,
     ),
@@ -336,7 +336,7 @@ AVAILABLE_MODELS = [
         id="openrouter/meta-llama/llama-3.3-70b-instruct",
         name="Llama 3.3 70B",
         description="Meta's latest Llama model",
-        provider="openrouter",
+        provider="meta-llama",
         is_chat_model=True,
         is_inference_model=True,
     ),
@@ -344,7 +344,7 @@ AVAILABLE_MODELS = [
         id="openrouter/google/gemini-2.0-flash-001",
         name="Gemini 2.0 Flash",
         description="Google's Gemini model optimized for speed",
-        provider="openrouter",
+        provider="gemini",
         is_chat_model=True,
         is_inference_model=True,
     ),
@@ -352,14 +352,20 @@ AVAILABLE_MODELS = [
         id="openrouter/google/gemini-2.5-pro-preview",
         name="Gemini 2.5 Pro",
         description="Google's Latest pro Gemini model",
-        provider="openrouter",
+        provider="gemini",
         is_chat_model=True,
         is_inference_model=True,
     ),
 ]
 
 # Extract unique platform providers from the available models
-PLATFORM_PROVIDERS = list({model.provider for model in AVAILABLE_MODELS})
+PLATFORM_PROVIDERS = list(
+    {model.provider for model in AVAILABLE_MODELS}
+    | {
+        get_config_for_model(model.id).get("auth_provider", model.provider)
+        for model in AVAILABLE_MODELS
+    }
+)
 
 
 class ProviderService:
@@ -471,8 +477,8 @@ class ProviderService:
 
     def _build_llm_params(self, config: LLMProviderConfig) -> Dict[str, Any]:
         """Build a dictionary of parameters for LLM initialization."""
-        api_key = self._get_api_key(config.provider)
-        if not api_key and config.provider == "ollama":
+        api_key = self._get_api_key(config.auth_provider)
+        if not api_key and config.auth_provider == "ollama":
             api_key = os.environ.get("OLLAMA_API_KEY", "ollama")
         if not api_key:
             api_key = os.environ.get("LLM_API_KEY", api_key)
@@ -481,12 +487,12 @@ class ProviderService:
 
         if config.base_url:
             base_url = config.base_url
-            if config.provider == "ollama":
+            if config.auth_provider == "ollama":
                 base_url = base_url.rstrip("/")
                 if base_url.endswith("/v1"):
                     base_url = base_url[:-3]
             params["base_url"] = base_url
-        elif config.provider == "ollama":
+        elif config.auth_provider == "ollama":
             params["base_url"] = os.environ.get(
                 "LLM_API_BASE", "http://localhost:11434"
             )
@@ -510,6 +516,7 @@ class ProviderService:
             capabilities=config_data.get("capabilities", {}),
             base_url=config_data.get("base_url"),
             api_version=config_data.get("api_version"),
+            auth_provider=config_data.get("auth_provider"),
         )
 
     async def get_global_ai_provider(self, user_id: str) -> GetProviderResponse:
@@ -979,16 +986,17 @@ class ProviderService:
 
         if provider:
             config.provider = provider
+            config.auth_provider = provider
 
-        api_key = self._get_api_key(config.provider)
-        if not api_key and config.provider == "ollama":
+        api_key = self._get_api_key(config.auth_provider)
+        if not api_key and config.auth_provider == "ollama":
             api_key = os.environ.get("OLLAMA_API_KEY", "ollama")
         if not api_key:
             api_key = os.environ.get("LLM_API_KEY", api_key)
 
-        if not api_key and config.provider not in {"ollama"}:
+        if not api_key and config.auth_provider not in {"ollama"}:
             raise UnsupportedProviderError(
-                f"API key not found for provider '{config.provider}'."
+                f"API key not found for provider '{config.auth_provider}'."
             )
 
         model_name = (
@@ -1007,8 +1015,8 @@ class ProviderService:
             provider_kwargs["api_version"] = config.api_version
 
         openai_like_providers = {"openai", "openrouter", "azure", "ollama"}
-        if config.provider in openai_like_providers:
-            if config.provider == "ollama":
+        if config.auth_provider in openai_like_providers:
+            if config.auth_provider == "ollama":
                 base_url_root = (
                     config.base_url
                     or os.environ.get("LLM_API_BASE")

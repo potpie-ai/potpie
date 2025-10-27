@@ -119,7 +119,8 @@ MODEL_CONFIG_MAP = {
     },
     # DeepSeek Models
     "openrouter/deepseek/deepseek-chat-v3-0324": {
-        "provider": "openrouter",
+        "provider": "deepseek",
+        "auth_provider": "openrouter",
         "default_params": {"temperature": 0.3, "max_tokens": 8000},
         "capabilities": {
             "supports_pydantic": True,
@@ -132,7 +133,8 @@ MODEL_CONFIG_MAP = {
     },
     # Meta-Llama Models
     "openrouter/meta-llama/llama-3.3-70b-instruct": {
-        "provider": "openrouter",
+        "provider": "meta-llama",
+        "auth_provider": "openrouter",
         "default_params": {"temperature": 0.3},
         "capabilities": {
             "supports_pydantic": True,
@@ -145,7 +147,8 @@ MODEL_CONFIG_MAP = {
     },
     # Gemini Models
     "openrouter/google/gemini-2.0-flash-001": {
-        "provider": "openrouter",
+        "provider": "gemini",
+        "auth_provider": "openrouter",
         "default_params": {"temperature": 0.3},
         "capabilities": {
             "supports_pydantic": True,
@@ -157,7 +160,8 @@ MODEL_CONFIG_MAP = {
         "api_version": None,
     },
     "openrouter/google/gemini-2.5-pro-preview": {
-        "provider": "openrouter",
+        "provider": "gemini",
+        "auth_provider": "openrouter",
         "default_params": {"temperature": 0.3},
         "capabilities": {
             "supports_pydantic": True,
@@ -180,8 +184,10 @@ class LLMProviderConfig:
         capabilities: Dict[str, bool],
         base_url: Optional[str] = None,
         api_version: Optional[str] = None,
+        auth_provider: Optional[str] = None,
     ):
         self.provider = provider
+        self.auth_provider = auth_provider or provider
         self.model = model
         self.default_params = default_params
         self.capabilities = dict(capabilities) if capabilities else {}
@@ -268,6 +274,7 @@ def get_config_for_model(model_string: str) -> Dict[str, Any]:
         },
         "base_url": None,
         "api_version": None,
+        "auth_provider": provider,
     }
 
 
@@ -308,4 +315,5 @@ def build_llm_provider_config(
         capabilities=config_data.get("capabilities", {}),
         base_url=config_data.get("base_url"),
         api_version=config_data.get("api_version"),
+        auth_provider=config_data.get("auth_provider"),
     )
