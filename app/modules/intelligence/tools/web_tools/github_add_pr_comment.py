@@ -5,8 +5,6 @@ from typing import Dict, Any, Optional, Type, List
 from pydantic import BaseModel, Field
 from github import Github
 from github.GithubException import GithubException
-from github.Auth import AppAuth
-import requests
 from sqlalchemy.orm import Session
 from langchain_core.tools import StructuredTool
 

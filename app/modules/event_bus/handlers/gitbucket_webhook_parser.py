@@ -7,6 +7,7 @@ logger = logging.getLogger(__name__)
 
 class GitBucketWebhookEvent(str, Enum):
     """GitBucket webhook event types."""
+
     CREATE = "CreateEvent"
     ISSUES = "IssuesEvent"
     ISSUE_COMMENT = "IssueCommentEvent"
@@ -25,8 +26,7 @@ class GitBucketWebhookParser:
 
     @staticmethod
     def parse_webhook(
-        event_type: str,
-        payload: Dict[str, Any]
+        event_type: str, payload: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
         """
         Parse GitBucket webhook payload into normalized format.
@@ -81,7 +81,7 @@ class GitBucketWebhookParser:
                 "state": pr.get("state"),
                 "head_branch": pr.get("head", {}).get("ref"),
                 "base_branch": pr.get("base", {}).get("ref"),
-            }
+            },
         }
 
     @staticmethod
@@ -97,7 +97,7 @@ class GitBucketWebhookParser:
                 "number": issue.get("number"),
                 "title": issue.get("title"),
                 "state": issue.get("state"),
-            }
+            },
         }
 
     @staticmethod

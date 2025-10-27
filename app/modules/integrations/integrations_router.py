@@ -709,17 +709,23 @@ async def gitbucket_webhook(request: Request) -> Dict[str, Any]:
         logging.info(f"GitBucket webhook event type: {event_type}")
 
         # Parse the webhook using GitBucket webhook parser
-        from app.modules.event_bus.handlers.gitbucket_webhook_parser import GitBucketWebhookParser
+        from app.modules.event_bus.handlers.gitbucket_webhook_parser import (
+            GitBucketWebhookParser,
+        )
 
         parsed_data = GitBucketWebhookParser.parse_webhook(event_type, webhook_data)
 
         if parsed_data:
             logging.info(f"GitBucket webhook parsed successfully: {parsed_data}")
         else:
-            logging.warning(f"GitBucket webhook could not be parsed or is unsupported: {event_type}")
+            logging.warning(
+                f"GitBucket webhook could not be parsed or is unsupported: {event_type}"
+            )
 
         # Get integration ID from query params (GitBucket doesn't include it in payload)
-        integration_id = query_params.get("integration_id") or dict(request.headers).get("X-Integration-ID")
+        integration_id = query_params.get("integration_id") or dict(
+            request.headers
+        ).get("X-Integration-ID")
 
         if integration_id:
             # Initialize event bus and publish webhook event
@@ -753,7 +759,9 @@ async def gitbucket_webhook(request: Request) -> Dict[str, Any]:
                     "parsed_data": parsed_data,
                 }
             except Exception as e:
-                logging.error(f"Failed to publish GitBucket webhook to event bus: {str(e)}")
+                logging.error(
+                    f"Failed to publish GitBucket webhook to event bus: {str(e)}"
+                )
                 # Continue with normal response even if event bus fails
                 return {
                     "status": "success",

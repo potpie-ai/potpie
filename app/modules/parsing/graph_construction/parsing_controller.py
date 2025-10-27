@@ -93,8 +93,10 @@ class ParsingController:
         try:
             # Normalize repository name for consistent database lookups
             normalized_repo_name = normalize_repo_name(repo_name)
-            logger.info(f"Original repo_name: {repo_name}, Normalized: {normalized_repo_name}")
-            
+            logger.info(
+                f"Original repo_name: {repo_name}, Normalized: {normalized_repo_name}"
+            )
+
             project = await project_manager.get_project_from_db(
                 normalized_repo_name,
                 repo_details.branch_name,
@@ -106,7 +108,9 @@ class ParsingController:
             # First check if this is a demo project that hasn't been accessed by this user yet
             if not project and repo_details.repo_name in demo_repos:
                 existing_project = await project_manager.get_global_project_from_db(
-                    normalized_repo_name, repo_details.branch_name, repo_details.commit_id
+                    normalized_repo_name,
+                    repo_details.branch_name,
+                    repo_details.commit_id,
                 )
 
                 new_project_id = str(uuid7())

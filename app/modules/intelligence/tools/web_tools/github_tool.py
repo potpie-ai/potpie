@@ -4,9 +4,7 @@ import os
 import random
 from typing import Any, Dict, List, Optional
 
-import requests
 from github import Github
-from github.Auth import AppAuth
 from github.GithubException import UnknownObjectException
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -117,9 +115,7 @@ class GithubTool:
             return provider.client
         except Exception as e:
             logging.error(f"Failed to get GitHub client: {str(e)}")
-            raise Exception(
-                f"Repository {repo_name} not found or inaccessible"
-            )
+            raise Exception(f"Repository {repo_name} not found or inaccessible")
 
     def _fetch_github_content(
         self, repo_name: str, issue_number: Optional[int], is_pull_request: bool

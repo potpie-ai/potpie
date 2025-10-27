@@ -527,7 +527,7 @@ class GithubService:
             cls.initialize_tokens()
 
         # Use factory to create provider with PAT
-        import random
+
         token = random.choice(cls.gh_token_list)
         provider = GitHubProvider()
         provider.authenticate({"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN)

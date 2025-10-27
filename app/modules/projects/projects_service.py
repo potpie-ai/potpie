@@ -66,11 +66,15 @@ class ProjectService:
         repo_path: str = None,
     ):
         # Check if a project with this ID already exists
-        existing_project = self.db.query(Project).filter(Project.id == project_id).first()
+        existing_project = (
+            self.db.query(Project).filter(Project.id == project_id).first()
+        )
 
         if existing_project:
             # Update the existing project with new information (e.g., normalized repo_name)
-            logger.info(f"Project {project_id} already exists. Updating repo_name from '{existing_project.repo_name}' to '{repo_name}'")
+            logger.info(
+                f"Project {project_id} already exists. Updating repo_name from '{existing_project.repo_name}' to '{repo_name}'"
+            )
             existing_project.repo_name = repo_name
             existing_project.branch_name = branch_name
             existing_project.user_id = user_id
