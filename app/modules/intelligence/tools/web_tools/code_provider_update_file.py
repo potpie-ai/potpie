@@ -5,15 +5,14 @@ from typing import Dict, Any, List, Optional, Type
 from pydantic import BaseModel, Field
 from github import Github
 from github.GithubException import GithubException
-from github.Auth import AppAuth
-import requests
 from sqlalchemy.orm import Session
 from langchain_core.tools import StructuredTool
 
 from app.core.config_provider import config_provider
+from app.modules.code_provider.provider_factory import CodeProviderFactory
 
 
-class GitHubUpdateFileInput(BaseModel):
+class CodeProviderUpdateFileInput(BaseModel):
     """Input for updating a file in a GitHub repository."""
 
     repo_name: str = Field(
@@ -27,16 +26,16 @@ class GitHubUpdateFileInput(BaseModel):
     commit_message: str = Field(..., description="The commit message")
 
 
-class GitHubUpdateFileTool:
+class CodeProviderUpdateFileTool:
     """Tool for updating files in a GitHub repository branch."""
 
-    name: str = "Update a file in a branch in GitHub"
+    name: str = "Update a file in a branch"
     description: str = """
     Update a file in a GitHub repository branch.
     Useful for making changes to configuration files, code, documentation, or any other file in a repository.
     The tool will handle encoding the content and creating a commit on the specified branch.
     """
-    args_schema: Type[BaseModel] = GitHubUpdateFileInput
+    args_schema: Type[BaseModel] = CodeProviderUpdateFileInput
 
     gh_token_list: List[str] = []
 
@@ -55,8 +54,8 @@ class GitHubUpdateFileTool:
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db
         self.user_id = user_id
-        if not GitHubUpdateFileTool.gh_token_list:
-            GitHubUpdateFileTool.initialize_tokens()
+        if not CodeProviderUpdateFileTool.gh_token_list:
+            CodeProviderUpdateFileTool.initialize_tokens()
 
     @classmethod
     def get_public_github_instance(cls):
@@ -66,40 +65,15 @@ class GitHubUpdateFileTool:
         return Github(token)
 
     def _get_github_client(self, repo_name: str) -> Github:
+        """Get GitHub client using provider factory."""
         try:
-            # Try authenticated access first
-            private_key = (
-                "-----BEGIN RSA PRIVATE KEY-----\n"
-                + config_provider.get_github_key()
-                + "\n-----END RSA PRIVATE KEY-----\n"
+            provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+            return provider.client
+        except Exception as e:
+            logging.error(f"Failed to get GitHub client: {str(e)}")
+            raise Exception(
+                f"Repository {repo_name} not found or inaccessible on GitHub"
             )
-            app_id = os.environ["GITHUB_APP_ID"]
-            auth = AppAuth(app_id=app_id, private_key=private_key)
-            jwt = auth.create_jwt()
-
-            # Get installation ID
-            url = f"https://api.github.com/repos/{repo_name}/installation"
-            headers = {
-                "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {jwt}",
-                "X-GitHub-Api-Version": "2022-11-28",
-            }
-            response = requests.get(url, headers=headers)
-            if response.status_code != 200:
-                raise Exception(f"Failed to get installation ID for {repo_name}")
-
-            app_auth = auth.get_installation_auth(response.json()["id"])
-            return Github(auth=app_auth)
-        except Exception as private_error:
-            logging.info(f"Failed to access private repo: {str(private_error)}")
-            # If authenticated access fails, try public access
-            try:
-                return self.get_public_github_instance()
-            except Exception as public_error:
-                logging.error(f"Failed to access public repo: {str(public_error)}")
-                raise Exception(
-                    f"Repository {repo_name} not found or inaccessible on GitHub"
-                )
 
     def _run(
         self,
@@ -126,22 +100,37 @@ class GitHubUpdateFileTool:
         Returns:
             Dict containing the result of the update operation
         """
+        logging.info(f"[UPDATE_FILE] Starting file update: repo={repo_name}, file={file_path}, branch={branch_name}")
         try:
             # Initialize GitHub client
+            logging.info(f"[UPDATE_FILE] Getting client for repo: {repo_name}")
             g = self._get_github_client(repo_name)
-            repo = g.get_repo(repo_name)
+
+            # Get the actual repo name for API calls (handles GitBucket conversion)
+            from app.modules.parsing.utils.repo_name_normalizer import get_actual_repo_name_for_lookup
+            import os
+            provider_type = os.getenv("CODE_PROVIDER", "github").lower()
+            actual_repo_name = get_actual_repo_name_for_lookup(repo_name, provider_type)
+            logging.info(f"[UPDATE_FILE] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}")
+
+            repo = g.get_repo(actual_repo_name)
+            logging.info(f"[UPDATE_FILE] Successfully got repo object: {repo.name}")
 
             # Try to get the file to check if it exists and get its SHA
             try:
+                logging.info(f"[UPDATE_FILE] Checking if file exists: {file_path} on branch: {branch_name}")
                 file = repo.get_contents(file_path, ref=branch_name)
                 sha = file.sha
                 file_exists = True
+                logging.info(f"[UPDATE_FILE] File exists with sha: {sha}")
             except GithubException as e:
                 if e.status == 404:
                     # File doesn't exist
                     file_exists = False
                     sha = None
+                    logging.info(f"[UPDATE_FILE] File does not exist (404), will create new file")
                 else:
+                    logging.error(f"[UPDATE_FILE] Error checking file existence: status={e.status}, data={e.data}")
                     raise e
 
             # Create commit with author info if provided
@@ -151,6 +140,7 @@ class GitHubUpdateFileTool:
 
             # Update or create the file
             if file_exists:
+                logging.info(f"[UPDATE_FILE] Updating existing file: {file_path}")
                 result = repo.update_file(
                     path=file_path,
                     content=content,
@@ -158,6 +148,7 @@ class GitHubUpdateFileTool:
                     branch=branch_name,
                     **commit_kwargs,
                 )
+                logging.info(f"[UPDATE_FILE] Successfully updated file, commit sha: {result['commit'].sha}")
                 return {
                     "success": True,
                     "operation": "update",
@@ -167,12 +158,14 @@ class GitHubUpdateFileTool:
                     "url": result["commit"].html_url,
                 }
             else:
+                logging.info(f"[UPDATE_FILE] Creating new file: {file_path}")
                 result = repo.create_file(
                     path=file_path,
                     content=content,
                     branch=branch_name,
                     **commit_kwargs,
                 )
+                logging.info(f"[UPDATE_FILE] Successfully created file, commit sha: {result['commit'].sha}")
                 return {
                     "success": True,
                     "operation": "create",
@@ -183,6 +176,7 @@ class GitHubUpdateFileTool:
                 }
 
         except GithubException as e:
+            logging.error(f"[UPDATE_FILE] GithubException: status={e.status}, data={e.data}, message={str(e)}")
             return {
                 "success": False,
                 "error": f"GitHub API error: {str(e)}",
@@ -190,6 +184,7 @@ class GitHubUpdateFileTool:
                 "data": e.data,
             }
         except Exception as e:
+            logging.error(f"[UPDATE_FILE] Unexpected exception: {type(e).__name__}: {str(e)}", exc_info=True)
             return {"success": False, "error": f"Error updating file: {str(e)}"}
 
     async def _arun(
@@ -214,24 +209,27 @@ class GitHubUpdateFileTool:
         )
 
 
-def github_update_branch_tool(
+def code_provider_update_file_tool(
     sql_db: Session, user_id: str
 ) -> Optional[StructuredTool]:
-    if not os.getenv("GITHUB_APP_ID") or not config_provider.get_github_key():
+    from app.modules.code_provider.provider_factory import has_code_provider_credentials
+
+    if not has_code_provider_credentials():
         logging.warning(
-            "GitHub app credentials not set, GitHub tool will not be initialized"
+            "No code provider credentials configured. Please set CODE_PROVIDER_TOKEN, "
+            "GH_TOKEN_LIST, GITHUB_APP_ID, or CODE_PROVIDER_USERNAME/PASSWORD."
         )
         return None
 
-    tool_instance = GitHubUpdateFileTool(sql_db, user_id)
+    tool_instance = CodeProviderUpdateFileTool(sql_db, user_id)
     return StructuredTool.from_function(
         coroutine=tool_instance._arun,
         func=tool_instance._run,
-        name="Update a file in a branch in GitHub",
+        name="Update a file in a branch",
         description="""
         Update a file in a GitHub repository branch.
         Useful for making changes to configuration files, code, documentation, or any other file in a repository.
         The tool will handle encoding the content and creating a commit on the specified branch.
         """,
-        args_schema=GitHubUpdateFileInput,
+        args_schema=CodeProviderUpdateFileInput,
     )
