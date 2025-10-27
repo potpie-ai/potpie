@@ -112,12 +112,13 @@ class GithubTool:
     def _get_github_client(self, repo_name: str) -> Github:
         """Get GitHub client using provider factory."""
         try:
-            provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+            # Use the standard provider factory instead of the GitHub-specific fallback
+            provider = CodeProviderFactory.create_provider()
             return provider.client
         except Exception as e:
             logging.error(f"Failed to get GitHub client: {str(e)}")
             raise Exception(
-                f"Repository {repo_name} not found or inaccessible on GitHub"
+                f"Repository {repo_name} not found or inaccessible"
             )
 
     def _fetch_github_content(

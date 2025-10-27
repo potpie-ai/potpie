@@ -204,7 +204,8 @@ class CodeProviderFactory:
         token = os.getenv("CODE_PROVIDER_TOKEN")
         if token:
             logger.info("Using CODE_PROVIDER_TOKEN for authentication")
-            provider = GitHubProvider()
+            # Use the configured provider type instead of hardcoded GitHubProvider
+            provider = CodeProviderFactory.create_provider()
             provider.authenticate({"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN)
             return provider
 
@@ -215,7 +216,8 @@ class CodeProviderFactory:
             tokens = [t.strip() for t in token_list_str.split(",") if t.strip()]
             if tokens:
                 logger.info("Using GH_TOKEN_LIST for authentication")
-                provider = GitHubProvider()
+                # Use the configured provider type instead of hardcoded GitHubProvider
+                provider = CodeProviderFactory.create_provider()
                 token = random.choice(tokens)
                 provider.authenticate({"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN)
                 return provider

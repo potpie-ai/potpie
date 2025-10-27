@@ -100,9 +100,16 @@ class GitBucketProvider(ICodeProvider):
         """Get repository details."""
         self._ensure_authenticated()
 
+        # Convert normalized repo name back to GitBucket format for API calls
+        from app.modules.parsing.utils.repo_name_normalizer import get_actual_repo_name_for_lookup
+        actual_repo_name = get_actual_repo_name_for_lookup(repo_name, "gitbucket")
+        
+        logger.info(f"GitBucket: Attempting to get repository '{repo_name}' (actual: '{actual_repo_name}')")
         try:
-            repo = self.client.get_repo(repo_name)
-            return {
+            repo = self.client.get_repo(actual_repo_name)
+            logger.info(f"GitBucket: Successfully retrieved repository '{repo_name}' - ID: {repo.id}, Default branch: {repo.default_branch}")
+            
+            repo_data = {
                 "id": repo.id,
                 "name": repo.name,
                 "full_name": repo.full_name,
@@ -113,8 +120,20 @@ class GitBucketProvider(ICodeProvider):
                 "description": repo.description,
                 "language": repo.language,
             }
+            logger.debug(f"GitBucket: Repository data for '{repo_name}': {repo_data}")
+            return repo_data
         except GithubException as e:
-            logger.error(f"Failed to get repository {repo_name}: {e}")
+            logger.error(f"GitBucket: Failed to get repository '{repo_name}': {e}")
+            logger.error(f"GitBucket: Exception details - Status: {getattr(e, 'status', 'Unknown')}, Message: {str(e)}")
+            
+            # Handle specific GitBucket API differences
+            if hasattr(e, 'status') and e.status == 404:
+                logger.error(f"GitBucket: Repository '{repo_name}' not found. This might be due to:")
+                logger.error(f"  1. Repository doesn't exist")
+                logger.error(f"  2. Insufficient permissions")
+                logger.error(f"  3. Repository name format issue (expected: 'root/repo' for GitBucket)")
+                logger.error(f"  4. GitBucket instance not accessible at {self.base_url}")
+            
             raise
 
     def check_repository_access(self, repo_name: str) -> bool:
@@ -138,7 +157,11 @@ class GitBucketProvider(ICodeProvider):
         """Get file content."""
         self._ensure_authenticated()
 
-        repo = self.client.get_repo(repo_name)
+        # Convert normalized repo name back to GitBucket format for API calls
+        from app.modules.parsing.utils.repo_name_normalizer import get_actual_repo_name_for_lookup
+        actual_repo_name = get_actual_repo_name_for_lookup(repo_name, "gitbucket")
+        
+        repo = self.client.get_repo(actual_repo_name)
         file_contents = repo.get_contents(file_path, ref=ref)
 
         # Decode content
@@ -171,34 +194,160 @@ class GitBucketProvider(ICodeProvider):
         """Get repository structure recursively."""
         self._ensure_authenticated()
 
-        repo = self.client.get_repo(repo_name)
+        # Convert normalized repo name back to GitBucket format for API calls
+        from app.modules.parsing.utils.repo_name_normalizer import get_actual_repo_name_for_lookup
+        actual_repo_name = get_actual_repo_name_for_lookup(repo_name, "gitbucket")
+        
+        try:
+            repo = self.client.get_repo(actual_repo_name)
+        except GithubException as e:
+            logger.error(f"GitBucket: Failed to get repository '{actual_repo_name}': {e}")
+            raise
+        except Exception as e:
+            logger.error(f"GitBucket: Unexpected error getting repository '{actual_repo_name}': {e}")
+            raise
+
+        # GitBucket doesn't handle ref=None well, so resolve it to the default branch
+        if ref is None:
+            try:
+                ref = repo.default_branch
+                logger.debug(f"GitBucket: Using default branch '{ref}' for ref")
+            except Exception as e:
+                logger.warning(f"GitBucket: Could not get default branch, using 'main': {e}")
+                ref = "main"
 
         def _recurse(current_path: str, depth: int) -> List[Dict[str, Any]]:
+            logger.debug(f"GitBucket: _recurse called with path='{current_path}', depth={depth}, max_depth={max_depth}")
+            
             if depth > max_depth:
+                logger.warning(f"GitBucket: Max depth {max_depth} reached for path '{current_path}' - stopping recursion")
                 return []
 
+            # Validate path
+            if not current_path or current_path.strip() == "":
+                current_path = ""
+            
             result = []
             try:
-                contents = repo.get_contents(current_path, ref=ref)
+                logger.debug(f"GitBucket: Getting contents for path '{current_path}' at depth {depth} with ref='{ref}'")
+                
+                # GitBucket may have issues with get_contents for some paths
+                # Try to use the raw API if standard method fails
+                try:
+                    contents = repo.get_contents(current_path, ref=ref)
+                except (GithubException, Exception) as e:
+                    error_msg = str(e)
+                    logger.warning(f"GitBucket: Standard get_contents failed for '{current_path}': {error_msg}")
+                    logger.debug(f"GitBucket: Error type: {type(e).__name__}, checking for URL error...")
+                    
+                    # Check if this is the "no URL" error that GitBucket sometimes returns
+                    # Also check for "Returned object contains" which is part of the full error message
+                    if "no URL" in error_msg or "400" in error_msg or "Returned object contains" in error_msg:
+                        logger.info(f"GitBucket: Attempting raw API fallback for '{current_path}'")
+                        # Try alternative approach using raw API and simple dict objects
+                        try:
+                            # Construct the API URL manually
+                            if current_path:
+                                url = f"{repo.url}/contents/{current_path}?ref={ref}"
+                            else:
+                                url = f"{repo.url}/contents?ref={ref}"
+                            
+                            logger.debug(f"GitBucket: Using raw API: {url}")
+                            headers, data = repo._requester.requestJsonAndCheck("GET", url)
+                            
+                            # Create simple namespace objects instead of ContentFile objects
+                            # to avoid PyGithub's assumptions about GitBucket's response format
+                            from types import SimpleNamespace
+                            
+                            if isinstance(data, list):
+                                contents = [
+                                    SimpleNamespace(
+                                        name=item.get('name', ''),
+                                        path=item.get('path', ''),
+                                        type=item.get('type', 'file'),
+                                        size=item.get('size', 0),
+                                        sha=item.get('sha', ''),
+                                        url=item.get('url', '')
+                                    )
+                                    for item in data
+                                ]
+                            else:
+                                contents = [SimpleNamespace(
+                                    name=data.get('name', ''),
+                                    path=data.get('path', ''),
+                                    type=data.get('type', 'file'),
+                                    size=data.get('size', 0),
+                                    sha=data.get('sha', ''),
+                                    url=data.get('url', '')
+                                )]
+                            logger.info(f"GitBucket: Raw API fallback succeeded for '{current_path}', found {len(contents)} items")
+                        except Exception as fallback_error:
+                            logger.error(f"GitBucket: Raw API fallback also failed for '{current_path}': {fallback_error}", exc_info=True)
+                            raise
+                    else:
+                        raise
+                
+                # Handle both single item and list responses
                 if not isinstance(contents, list):
                     contents = [contents]
 
+                logger.debug(f"GitBucket: Found {len(contents)} items in path '{current_path}'")
+
                 for item in contents:
+                    # Safely extract attributes with fallbacks for GitBucket compatibility
+                    # Access raw attributes directly to avoid PyGithub's lazy loading which fails with GitBucket
+                    try:
+                        # Try to access raw internal attributes first (avoid triggering _complete)
+                        item_type = item._type.value if hasattr(item, '_type') else 'file'
+                        item_path = item._path.value if hasattr(item, '_path') else ''
+                        item_name = item._name.value if hasattr(item, '_name') else ''
+                        item_size = item._size.value if hasattr(item, '_size') and item._size.value is not None else 0
+                        item_sha = item._sha.value if hasattr(item, '_sha') else ''
+                    except Exception as e:
+                        logger.warning(f"GitBucket: Error accessing raw attributes for item: {e}")
+                        # Fallback to trying getattr (which might trigger lazy loading)
+                        try:
+                            item_type = getattr(item, 'type', 'file')
+                            item_path = getattr(item, 'path', '')
+                            item_name = getattr(item, 'name', '')
+                            item_size = getattr(item, 'size', 0) if hasattr(item, 'size') else 0
+                            item_sha = getattr(item, 'sha', '')
+                        except:
+                            # Last resort: use empty defaults
+                            item_type = 'file'
+                            item_path = ''
+                            item_name = ''
+                            item_size = 0
+                            item_sha = ''
+                    
                     entry = {
-                        "name": item.name,
-                        "path": item.path,
-                        "type": item.type,
-                        "size": item.size,
-                        "sha": item.sha
+                        "name": item_name,
+                        "path": item_path,
+                        "type": item_type,
+                        "size": item_size,
+                        "sha": item_sha
                     }
                     result.append(entry)
 
                     # Recurse into directories
-                    if item.type == "dir":
-                        entry["children"] = _recurse(item.path, depth + 1)
+                    if item_type == "dir":
+                        logger.debug(f"GitBucket: Found directory '{item_path}', recursing at depth {depth + 1}")
+                        try:
+                            children = _recurse(item_path, depth + 1)
+                            entry["children"] = children
+                            logger.debug(f"GitBucket: Directory '{item_path}' returned {len(children)} children")
+                        except GithubException as e:
+                            logger.error(f"GitBucket: GithubException recursing into directory '{item_path}': {e}")
+                            entry["children"] = []
+                        except Exception as e:
+                            logger.error(f"GitBucket: Unexpected exception recursing into directory '{item_path}': {e}", exc_info=True)
+                            entry["children"] = []
 
             except GithubException as e:
-                logger.warning(f"Failed to get contents for {current_path}: {e}")
+                logger.error(f"GitBucket: GithubException getting contents for '{current_path}': {e}", exc_info=True)
+                # Return empty result instead of failing completely
+            except Exception as e:
+                logger.error(f"GitBucket: Unexpected error getting contents for '{current_path}': {e}", exc_info=True)
 
             return result
 
@@ -210,7 +359,11 @@ class GitBucketProvider(ICodeProvider):
         """List branches."""
         self._ensure_authenticated()
 
-        repo = self.client.get_repo(repo_name)
+        # Convert normalized repo name back to GitBucket format for API calls
+        from app.modules.parsing.utils.repo_name_normalizer import get_actual_repo_name_for_lookup
+        actual_repo_name = get_actual_repo_name_for_lookup(repo_name, "gitbucket")
+        
+        repo = self.client.get_repo(actual_repo_name)
         branches = [branch.name for branch in repo.get_branches()]
 
         # Put default branch first
@@ -225,14 +378,35 @@ class GitBucketProvider(ICodeProvider):
         """Get branch details."""
         self._ensure_authenticated()
 
-        repo = self.client.get_repo(repo_name)
-        branch = repo.get_branch(branch_name)
-
-        return {
-            "name": branch.name,
-            "commit_sha": branch.commit.sha,
-            "protected": branch.protected
-        }
+        # Convert normalized repo name back to GitBucket format for API calls
+        from app.modules.parsing.utils.repo_name_normalizer import get_actual_repo_name_for_lookup
+        actual_repo_name = get_actual_repo_name_for_lookup(repo_name, "gitbucket")
+        
+        logger.info(f"GitBucket: Getting branch '{branch_name}' for repository '{repo_name}' (actual: '{actual_repo_name}')")
+        try:
+            repo = self.client.get_repo(actual_repo_name)
+            branch = repo.get_branch(branch_name)
+            
+            branch_data = {
+                "name": branch.name,
+                "commit_sha": branch.commit.sha,
+                "protected": branch.protected
+            }
+            logger.info(f"GitBucket: Successfully retrieved branch '{branch_name}' - SHA: {branch.commit.sha}")
+            logger.debug(f"GitBucket: Branch data for '{branch_name}': {branch_data}")
+            return branch_data
+        except GithubException as e:
+            logger.error(f"GitBucket: Failed to get branch '{branch_name}' for repository '{repo_name}': {e}")
+            logger.error(f"GitBucket: Exception details - Status: {getattr(e, 'status', 'Unknown')}, Message: {str(e)}")
+            
+            # Handle specific GitBucket API differences
+            if hasattr(e, 'status') and e.status == 404:
+                logger.error(f"GitBucket: Branch '{branch_name}' not found in repository '{repo_name}'. This might be due to:")
+                logger.error(f"  1. Branch doesn't exist")
+                logger.error(f"  2. Repository access issues")
+                logger.error(f"  3. GitBucket API compatibility issues")
+            
+            raise
 
     def create_branch(
         self,
@@ -675,6 +849,74 @@ class GitBucketProvider(ICodeProvider):
         except GithubException as e:
             logger.warning(f"Failed to get organizations (GitBucket Groups): {e}")
             return []
+
+    # ============ Archive Operations ============
+
+    def get_archive_link(self, repo_name: str, format_type: str, ref: str) -> str:
+        """Get archive download link for repository."""
+        self._ensure_authenticated()
+        
+        # Convert normalized repo name back to GitBucket format for API calls
+        from app.modules.parsing.utils.repo_name_normalizer import get_actual_repo_name_for_lookup
+        actual_repo_name = get_actual_repo_name_for_lookup(repo_name, "gitbucket")
+        
+        logger.info(f"GitBucket: Getting archive link for repo '{repo_name}' (actual: '{actual_repo_name}'), format: '{format_type}', ref: '{ref}'")
+        
+        try:
+            repo = self.client.get_repo(actual_repo_name)
+            
+            # GitBucket uses a different URL format than GitHub API
+            # The correct format is: http://hostname/owner/repo/archive/ref.format
+            # We need to extract the base URL without /api/v3 and construct the proper path
+            
+            # Extract the base URL (remove /api/v3 if present)
+            base_url = self.base_url
+            if base_url.endswith('/api/v3'):
+                base_url = base_url[:-7]  # Remove '/api/v3'
+            
+            # Construct the correct GitBucket archive URL using actual repo name
+            if format_type == "tarball":
+                archive_url = f"{base_url}/{actual_repo_name}/archive/{ref}.tar.gz"
+            elif format_type == "zipball":
+                archive_url = f"{base_url}/{actual_repo_name}/archive/{ref}.zip"
+            else:
+                raise ValueError(f"Unsupported archive format: {format_type}")
+            
+            logger.info(f"GitBucket: Constructed archive URL: {archive_url}")
+            
+            # Test the URL to make sure it works
+            import requests
+            try:
+                response = requests.head(archive_url, timeout=10)
+                if response.status_code == 200:
+                    logger.info(f"GitBucket: Archive URL is accessible - Status: {response.status_code}")
+                    return archive_url
+                else:
+                    logger.warning(f"GitBucket: Archive URL returned status {response.status_code}")
+                    # Still return the URL as it might work with authentication
+                    return archive_url
+            except requests.exceptions.RequestException as e:
+                logger.warning(f"GitBucket: Error testing archive URL: {e}")
+                # Still return the URL as it might work with authentication
+                return archive_url
+            
+        except GithubException as e:
+            logger.error(f"GitBucket: Failed to get archive link for '{repo_name}': {e}")
+            logger.error(f"GitBucket: Exception details - Status: {getattr(e, 'status', 'Unknown')}, Message: {str(e)}")
+            
+            # Handle specific GitBucket API differences
+            if hasattr(e, 'status') and e.status == 404:
+                logger.error(f"GitBucket: Repository '{repo_name}' not found for archive download. This might be due to:")
+                logger.error(f"  1. Repository doesn't exist")
+                logger.error(f"  2. Insufficient permissions")
+                logger.error(f"  3. GitBucket archive feature not available")
+                logger.error(f"  4. Repository name format issue")
+            
+            raise
+        except Exception as e:
+            logger.error(f"GitBucket: Unexpected error getting archive link for '{repo_name}': {e}")
+            logger.error(f"GitBucket: This might be due to GitBucket API compatibility issues or network problems")
+            raise
 
     # ============ Provider Metadata ============
 

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
+from app.modules.parsing.utils.repo_name_normalizer import normalize_repo_name
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 
@@ -146,14 +147,33 @@ class ParseHelper:
     async def download_and_extract_tarball(
         self, repo, branch, target_dir, auth, repo_details, user_id
     ):
+        logger.info(f"ParsingHelper: Starting tarball download for repo '{repo.full_name}', branch '{branch}'")
+        
         try:
+            logger.info(f"ParsingHelper: Getting archive link for repo '{repo.full_name}', branch '{branch}'")
             tarball_url = repo.get_archive_link("tarball", branch)
+            logger.info(f"ParsingHelper: Retrieved tarball URL: {tarball_url}")
+            
+            # Validate that tarball_url is a string, not an exception object
+            if not isinstance(tarball_url, str):
+                logger.error(f"ParsingHelper: Invalid tarball URL type: {type(tarball_url)}, value: {tarball_url}")
+                raise ValueError(f"Expected string URL, got {type(tarball_url)}: {tarball_url}")
+            
             headers = {"Authorization": f"Bearer {auth.token}"} if auth else {}
-            response = requests.get(tarball_url, stream=True, headers=headers)
+            logger.info(f"ParsingHelper: Making request to tarball URL with headers: {list(headers.keys())}")
+            
+            response = requests.get(tarball_url, stream=True, headers=headers, timeout=30)
+            logger.info(f"ParsingHelper: Response status code: {response.status_code}")
             response.raise_for_status()
+            
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching tarball: {e}")
-            return e
+            logger.error(f"ParsingHelper: Error fetching tarball: {e}")
+            logger.error(f"ParsingHelper: Request details - URL: {tarball_url}, Headers: {headers}")
+            raise ParsingFailedError(f"Failed to download repository archive: {e}")
+        except Exception as e:
+            logger.error(f"ParsingHelper: Unexpected error in tarball download: {e}")
+            logger.error(f"ParsingHelper: Error type: {type(e)}, Value: {e}")
+            raise ParsingFailedError(f"Unexpected error during repository download: {e}")
         tarball_path = os.path.join(
             target_dir,
             f"{repo.full_name.replace('/', '-').replace('.', '-')}-{branch.replace('/', '-').replace('.', '-')}.tar.gz",
@@ -164,14 +184,27 @@ class ParseHelper:
             f"{repo.full_name.replace('/', '-').replace('.', '-')}-{branch.replace('/', '-').replace('.', '-')}-{user_id}",
         )
 
+        logger.info(f"ParsingHelper: Tarball path: {tarball_path}")
+        logger.info(f"ParsingHelper: Final directory: {final_dir}")
+
         try:
+            logger.info(f"ParsingHelper: Writing tarball to {tarball_path}")
             with open(tarball_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
+            logger.info(f"ParsingHelper: Successfully downloaded tarball, size: {os.path.getsize(tarball_path)} bytes")
+            
+            logger.info(f"ParsingHelper: Extracting tarball to {final_dir}")
             with tarfile.open(tarball_path, "r:gz") as tar:
                 temp_dir = os.path.join(final_dir, "temp_extract")
+                os.makedirs(temp_dir, exist_ok=True)
                 tar.extractall(path=temp_dir)
+                logger.info(f"ParsingHelper: Extracted tarball contents to {temp_dir}")
+                
                 extracted_dir = os.path.join(temp_dir, os.listdir(temp_dir)[0])
+                logger.info(f"ParsingHelper: Main extracted directory: {extracted_dir}")
+                
+                text_files_count = 0
                 for root, dirs, files in os.walk(extracted_dir):
                     for file in files:
                         if file.startswith("."):
@@ -185,8 +218,11 @@ class ParseHelper:
                                 dest_path = os.path.join(final_dir, relative_path)
                                 os.makedirs(os.path.dirname(dest_path), exist_ok=True)
                                 shutil.copy2(file_path, dest_path)
+                                text_files_count += 1
                             except (shutil.Error, OSError) as e:
-                                logger.error(f"Error copying file {file_path}: {e}")
+                                logger.error(f"ParsingHelper: Error copying file {file_path}: {e}")
+                
+                logger.info(f"ParsingHelper: Copied {text_files_count} text files to final directory")
                 # Remove the temporary directory
                 try:
                     shutil.rmtree(temp_dir)
@@ -196,7 +232,7 @@ class ParseHelper:
 
         except (IOError, tarfile.TarError, shutil.Error) as e:
             logger.error(f"Error handling tarball: {e}")
-            return e
+            raise ParsingFailedError(f"Failed to process repository archive: {e}")
         finally:
             if os.path.exists(tarball_path):
                 os.remove(tarball_path)
@@ -312,12 +348,17 @@ class ParseHelper:
         repo_path = getattr(repo_details, "repo_path", None)
         if full_name is None:
             full_name = repo_path.split("/")[-1]
+        
+        # Normalize repository name for consistent database lookups
+        normalized_full_name = normalize_repo_name(full_name)
+        logger.info(f"ParsingHelper: Original full_name: {full_name}, Normalized: {normalized_full_name}")
+        
         project = await self.project_manager.get_project_from_db(
-            full_name, branch, user_id, repo_path, commit_id
+            normalized_full_name, branch, user_id, repo_path, commit_id
         )
         if not project:
             project_id = await self.project_manager.register_project(
-                full_name,
+                normalized_full_name,
                 branch,
                 user_id,
                 project_id,
@@ -353,23 +394,30 @@ class ParseHelper:
             finally:
                 os.chdir(current_dir)  # Restore the original working directory
         else:
-            if commit_id:
-                # For GitHub API, we need to download tarball for specific commit
-                extracted_dir = await self.download_and_extract_tarball(
-                    repo,
-                    commit_id,
-                    os.getenv("PROJECT_PATH"),
-                    auth,
-                    repo_details,
-                    user_id,
-                )
-                latest_commit_sha = commit_id
-            else:
-                extracted_dir = await self.download_and_extract_tarball(
-                    repo, branch, os.getenv("PROJECT_PATH"), auth, repo_details, user_id
-                )
-                branch_details = repo_details.get_branch(branch)
-                latest_commit_sha = branch_details.commit.sha
+            try:
+                if commit_id:
+                    # For GitHub API, we need to download tarball for specific commit
+                    extracted_dir = await self.download_and_extract_tarball(
+                        repo,
+                        commit_id,
+                        os.getenv("PROJECT_PATH"),
+                        auth,
+                        repo_details,
+                        user_id,
+                    )
+                    latest_commit_sha = commit_id
+                else:
+                    extracted_dir = await self.download_and_extract_tarball(
+                        repo, branch, os.getenv("PROJECT_PATH"), auth, repo_details, user_id
+                    )
+                    branch_details = repo_details.get_branch(branch)
+                    latest_commit_sha = branch_details.commit.sha
+            except ParsingFailedError as e:
+                logger.error(f"Failed to download repository: {e}")
+                raise HTTPException(status_code=500, detail=f"Repository download failed: {e}")
+            except Exception as e:
+                logger.error(f"Unexpected error during repository download: {e}")
+                raise HTTPException(status_code=500, detail=f"Repository download failed: {e}")
 
         repo_metadata = ParseHelper.extract_repository_metadata(repo_details)
         repo_metadata["error_message"] = None
