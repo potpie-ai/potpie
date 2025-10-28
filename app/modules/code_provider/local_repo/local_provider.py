@@ -26,7 +26,9 @@ class LocalProvider(ICodeProvider):
 
     def authenticate(self, credentials: Dict[str, Any], method: AuthMethod) -> Any:
         """Authentication is not required for local repositories."""
-        logger.debug("LocalProvider.authenticate called; no action taken for local repos")
+        logger.debug(
+            "LocalProvider.authenticate called; no action taken for local repos"
+        )
         return None
 
     def get_supported_auth_methods(self) -> List[AuthMethod]:
@@ -37,7 +39,9 @@ class LocalProvider(ICodeProvider):
     def _get_repo(self, repo_name: Optional[str]) -> Repo:
         path = repo_name or self.default_repo_path
         if not path:
-            raise ValueError("Repository path is required for local provider operations")
+            raise ValueError(
+                "Repository path is required for local provider operations"
+            )
 
         expanded_path = os.path.abspath(os.path.expanduser(path))
         if not os.path.isdir(expanded_path):
@@ -150,7 +154,9 @@ class LocalProvider(ICodeProvider):
         path: Optional[str] = None,
         line: Optional[int] = None,
     ) -> Dict[str, Any]:
-        raise NotImplementedError("LocalProvider does not support pull request comments")
+        raise NotImplementedError(
+            "LocalProvider does not support pull request comments"
+        )
 
     def create_pull_request_review(
         self,

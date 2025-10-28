@@ -185,7 +185,9 @@ class ParseHelper:
             )
             raise ParsingFailedError("Failed to download repository archive") from e
         except Exception as e:
-            logger.exception(f"ParsingHelper: Unexpected error in tarball download: {e}")
+            logger.exception(
+                f"ParsingHelper: Unexpected error in tarball download: {e}"
+            )
             logger.error(f"ParsingHelper: Error type: {type(e)}, Value: {e}")
             raise ParsingFailedError(
                 "Unexpected error during repository download"
@@ -631,7 +633,9 @@ class ParseHelper:
             return False
 
         try:
-            logger.info(f"check_commit_status: Branch-based parse - getting repo info for {repo_name}")
+            logger.info(
+                f"check_commit_status: Branch-based parse - getting repo info for {repo_name}"
+            )
             _github, repo = self.github_service.get_repo(repo_name)
 
             # If current_commit_id is None, we should reparse

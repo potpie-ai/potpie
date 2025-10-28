@@ -46,7 +46,9 @@ def normalize_repo_name(repo_name: str, provider_type: str = None) -> str:
                 return repo_name
 
             normalized_name = repo_name.replace("root/", f"{actual_username}/", 1)
-            logger.info("GitBucket: Normalized '%s' to '%s'", repo_name, normalized_name)
+            logger.info(
+                "GitBucket: Normalized '%s' to '%s'", repo_name, normalized_name
+            )
             return normalized_name
 
     # For other providers, return as-is

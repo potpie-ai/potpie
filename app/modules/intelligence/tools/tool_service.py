@@ -152,7 +152,9 @@ class ToolService:
             tools["github_create_pull_request"] = self.code_provider_create_pr_tool
 
         if self.code_provider_add_pr_comments_tool:
-            tools["code_provider_add_pr_comments"] = self.code_provider_add_pr_comments_tool
+            tools["code_provider_add_pr_comments"] = (
+                self.code_provider_add_pr_comments_tool
+            )
             tools["github_add_pr_comments"] = self.code_provider_add_pr_comments_tool
 
         if self.code_provider_update_file_tool:
