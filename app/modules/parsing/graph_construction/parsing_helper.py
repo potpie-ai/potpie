@@ -179,17 +179,17 @@ class ParseHelper:
             response.raise_for_status()
 
         except requests.exceptions.RequestException as e:
-            logger.error(f"ParsingHelper: Error fetching tarball: {e}")
+            logger.exception(f"ParsingHelper: Error fetching tarball: {e}")
             logger.error(
                 f"ParsingHelper: Request details - URL: {tarball_url}, Headers: {headers}"
             )
-            raise ParsingFailedError(f"Failed to download repository archive: {e}")
+            raise ParsingFailedError("Failed to download repository archive") from e
         except Exception as e:
-            logger.error(f"ParsingHelper: Unexpected error in tarball download: {e}")
+            logger.exception(f"ParsingHelper: Unexpected error in tarball download: {e}")
             logger.error(f"ParsingHelper: Error type: {type(e)}, Value: {e}")
             raise ParsingFailedError(
-                f"Unexpected error during repository download: {e}"
-            )
+                "Unexpected error during repository download"
+            ) from e
         tarball_path = os.path.join(
             target_dir,
             f"{repo.full_name.replace('/', '-').replace('.', '-')}-{branch.replace('/', '-').replace('.', '-')}.tar.gz",
@@ -254,7 +254,7 @@ class ParseHelper:
 
         except (IOError, tarfile.TarError, shutil.Error) as e:
             logger.error(f"Error handling tarball: {e}")
-            raise ParsingFailedError(f"Failed to process repository archive: {e}")
+            raise ParsingFailedError("Failed to process repository archive") from e
         finally:
             if os.path.exists(tarball_path):
                 os.remove(tarball_path)
@@ -631,10 +631,8 @@ class ParseHelper:
             return False
 
         try:
-            logger.info(
-                f"check_commit_status: Branch-based parse - getting repo info for {repo_name}"
-            )
-            github, repo = self.github_service.get_repo(repo_name)
+            logger.info(f"check_commit_status: Branch-based parse - getting repo info for {repo_name}")
+            _github, repo = self.github_service.get_repo(repo_name)
 
             # If current_commit_id is None, we should reparse
             if current_commit_id is None:

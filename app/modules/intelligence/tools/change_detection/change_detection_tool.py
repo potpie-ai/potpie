@@ -194,10 +194,7 @@ class ChangeDetectionTool:
         return entry_points
 
     async def get_code_changes(self, project_id):
-        logging.info(
-            f"[CHANGE_DETECTION] Starting get_code_changes for project_id: {project_id}"
-        )
-        global patches_dict, repo
+        logging.info(f"[CHANGE_DETECTION] Starting get_code_changes for project_id: {project_id}")
         patches_dict = {}
         project_details = await ProjectService(self.sql_db).get_project_from_db_by_id(
             project_id

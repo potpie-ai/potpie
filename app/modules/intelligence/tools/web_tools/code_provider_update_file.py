@@ -67,12 +67,40 @@ class CodeProviderUpdateFileTool:
         """Get GitHub client using provider factory."""
         try:
             provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
-            return provider.client
-        except Exception as e:
-            logging.error(f"Failed to get GitHub client: {str(e)}")
-            raise Exception(
-                f"Repository {repo_name} not found or inaccessible on GitHub"
+        except ValueError as e:
+            logging.exception(
+                f"Failed to create provider for repository '{repo_name}': {str(e)}"
             )
+            raise ValueError(
+                f"Repository {repo_name} not found or inaccessible on GitHub"
+            ) from e
+
+        if provider is None:
+            message = (
+                f"Provider factory returned None for repository '{repo_name}'. "
+                "Unable to obtain client."
+            )
+            logging.error(message)
+            raise ValueError(message)
+
+        client = getattr(provider, "client", None)
+        if client is None:
+            message = (
+                f"Provider '{type(provider).__name__}' does not expose a client for "
+                f"repository '{repo_name}'."
+            )
+            logging.error(message)
+            raise ValueError(message)
+
+        if not hasattr(client, "get_repo"):
+            message = (
+                f"Client of type '{type(client).__name__}' for repository "
+                f"'{repo_name}' does not support required operations."
+            )
+            logging.error(message)
+            raise ValueError(message)
+
+        return client
 
     def _run(
         self,

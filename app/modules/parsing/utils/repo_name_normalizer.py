@@ -37,10 +37,16 @@ def normalize_repo_name(repo_name: str, provider_type: str = None) -> str:
         # GitBucket uses 'root' as owner name, but we want to normalize to actual username
         # for consistency with database lookups
         if repo_name.startswith("root/"):
-            # Extract the actual username from environment or use a default
-            actual_username = os.getenv("GITBUCKET_USERNAME", "dhirenmathur")
+            actual_username = os.getenv("GITBUCKET_USERNAME")
+            if not actual_username:
+                logger.debug(
+                    "GitBucket: Skipping normalization for '%s' because GITBUCKET_USERNAME is not set",
+                    repo_name,
+                )
+                return repo_name
+
             normalized_name = repo_name.replace("root/", f"{actual_username}/", 1)
-            logger.info(f"GitBucket: Normalized '{repo_name}' to '{normalized_name}'")
+            logger.info("GitBucket: Normalized '%s' to '%s'", repo_name, normalized_name)
             return normalized_name
 
     # For other providers, return as-is
@@ -70,16 +76,16 @@ def get_actual_repo_name_for_lookup(repo_name: str, provider_type: str = None) -
 
     # GitBucket specific handling
     if provider_type == "gitbucket":
-        # If the repo name doesn't start with 'root/', it might be normalized
-        # We need to convert it back to 'root/' for GitBucket API calls
-        if not repo_name.startswith("root/"):
-            # Check if it's a normalized name (username/repo)
+        # Only reverse-map when we previously normalized from 'root/<repo>' to '<username>/<repo>'
+        actual_username = os.getenv("GITBUCKET_USERNAME")
+        if actual_username and repo_name.startswith(f"{actual_username}/"):
             parts = repo_name.split("/")
             if len(parts) == 2:
-                # Convert back to root/repo format for GitBucket
                 actual_name = f"root/{parts[1]}"
-                logger.info(
-                    f"GitBucket: Converting '{repo_name}' to '{actual_name}' for API calls"
+                logger.debug(
+                    "GitBucket: Converting '%s' to '%s' for API calls",
+                    repo_name,
+                    actual_name,
                 )
                 return actual_name
 

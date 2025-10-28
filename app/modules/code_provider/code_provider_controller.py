@@ -28,7 +28,7 @@ class CodeProviderController:
         """
         try:
             # Get the configured provider (this will auto-authenticate if credentials are available)
-            provider = CodeProviderFactory.create_provider()
+            provider = CodeProviderFactory.create_provider(repo_name=repo_name)
 
             # Use the provider's list_branches method
             branches = provider.list_branches(repo_name)

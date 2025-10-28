@@ -39,6 +39,7 @@ class CodeProviderFactory:
         base_url: Optional[str] = None,
         credentials: Optional[Dict[str, Any]] = None,
         auth_method: Optional[AuthMethod] = None,
+        repo_name: Optional[str] = None,
     ) -> ICodeProvider:
         """
         Create and configure a code provider instance.
@@ -48,10 +49,21 @@ class CodeProviderFactory:
             base_url: Override default base URL
             credentials: Authentication credentials
             auth_method: Authentication method to use
+            repo_name: Optional repository identifier used for local path detection
 
         Returns:
             Configured ICodeProvider instance
         """
+        # Detect local repositories first
+        local_repo_path = CodeProviderFactory._resolve_local_repo_path(repo_name)
+        if local_repo_path:
+            from app.modules.code_provider.local_repo.local_provider import (
+                LocalProvider,
+            )
+
+            logger.debug(f"Using LocalProvider for repository path: {local_repo_path}")
+            return LocalProvider(default_repo_path=local_repo_path)
+
         # Determine provider type
         if not provider_type:
             provider_type = os.getenv("CODE_PROVIDER", "github").lower()
@@ -217,6 +229,18 @@ class CodeProviderFactory:
         Returns:
             Authenticated ICodeProvider instance
         """
+        # Handle local repositories without authentication
+        local_repo_path = CodeProviderFactory._resolve_local_repo_path(repo_name)
+        if local_repo_path:
+            from app.modules.code_provider.local_repo.local_provider import (
+                LocalProvider,
+            )
+
+            logger.debug(
+                f"Using LocalProvider (fallback) for repository path: {local_repo_path}"
+            )
+            return LocalProvider(default_repo_path=local_repo_path)
+
         # Try PAT authentication first (new config)
         token = os.getenv("CODE_PROVIDER_TOKEN")
         if token:
@@ -256,6 +280,35 @@ class CodeProviderFactory:
             "No authentication method available. "
             "Please configure CODE_PROVIDER_TOKEN, GH_TOKEN_LIST, or GitHub App credentials."
         )
+
+    @staticmethod
+    def _resolve_local_repo_path(repo_name: Optional[str]) -> Optional[str]:
+        """
+        Resolve repo_name to a local repository path if it points to a git directory.
+
+        Returns:
+            Absolute path to the repository or None if not local.
+        """
+        if not repo_name:
+            return None
+
+        expanded_path = os.path.abspath(os.path.expanduser(repo_name))
+
+        if not os.path.isdir(expanded_path):
+            return None
+
+        git_dir = os.path.join(expanded_path, ".git")
+        if os.path.isdir(git_dir) or os.path.isfile(git_dir):
+            return expanded_path
+
+        # Handle bare repositories where .git is the repository itself
+        try:
+            from git import Repo
+
+            Repo(expanded_path)
+            return expanded_path
+        except Exception:
+            return None
 
 
 def has_code_provider_credentials() -> bool:

@@ -141,20 +141,23 @@ class ToolService:
 
         if self.code_provider_tool:
             tools["code_provider_tool"] = self.code_provider_tool
+            tools["github_tool"] = self.code_provider_tool
 
         if self.code_provider_create_branch_tool:
             tools["code_provider_create_branch"] = self.code_provider_create_branch_tool
+            tools["github_create_branch"] = self.code_provider_create_branch_tool
 
         if self.code_provider_create_pr_tool:
             tools["code_provider_create_pr"] = self.code_provider_create_pr_tool
+            tools["github_create_pull_request"] = self.code_provider_create_pr_tool
 
         if self.code_provider_add_pr_comments_tool:
-            tools["code_provider_add_pr_comments"] = (
-                self.code_provider_add_pr_comments_tool
-            )
+            tools["code_provider_add_pr_comments"] = self.code_provider_add_pr_comments_tool
+            tools["github_add_pr_comments"] = self.code_provider_add_pr_comments_tool
 
         if self.code_provider_update_file_tool:
             tools["code_provider_update_file"] = self.code_provider_update_file_tool
+            tools["github_update_branch"] = self.code_provider_update_file_tool
 
         if self.web_search_tool:
             tools["web_search_tool"] = self.web_search_tool

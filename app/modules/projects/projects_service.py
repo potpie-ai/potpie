@@ -71,13 +71,20 @@ class ProjectService:
         )
 
         if existing_project:
+            if existing_project.user_id != user_id:
+                message = (
+                    f"Project {project_id} ownership mismatch: "
+                    f"stored user {existing_project.user_id}, requesting user {user_id}"
+                )
+                logger.warning(message)
+                raise HTTPException(status_code=403, detail=message)
+
             # Update the existing project with new information (e.g., normalized repo_name)
             logger.info(
                 f"Project {project_id} already exists. Updating repo_name from '{existing_project.repo_name}' to '{repo_name}'"
             )
             existing_project.repo_name = repo_name
             existing_project.branch_name = branch_name
-            existing_project.user_id = user_id
             existing_project.repo_path = repo_path
             existing_project.commit_id = commit_id
             existing_project.status = ProjectStatusEnum.SUBMITTED.value
@@ -86,11 +93,11 @@ class ProjectService:
                 self.db.commit()
                 self.db.refresh(existing_project)
             except Exception as e:
-                logger.error(f"Error updating existing project {project_id}: {e}")
+                logger.exception(f"Error updating existing project {project_id}: {e}")
                 self.db.rollback()
                 raise
             message = f"Project id '{project_id}' for repo '{repo_name}' and branch '{branch_name}' updated successfully."
-            logging.info(message)
+            logger.info(message)
             return project_id
 
         # Create new project if it doesn't exist
@@ -110,7 +117,7 @@ class ProjectService:
             self.db.rollback()
             raise
         message = f"Project id '{project.id}' for repo '{repo_name}' and branch '{branch_name}' registered successfully."
-        logging.info(message)
+        logger.info(message)
         return project_id
 
     async def duplicate_project(
@@ -151,11 +158,11 @@ class ProjectService:
     async def update_project_status(self, project_id: int, status: ProjectStatusEnum):
         try:
             ProjectService.update_project(self.db, project_id, status=status.value)
-            logging.info(
+            logger.info(
                 f"Project with ID {project_id} has now been updated with status {status}."
             )
         except Exception as e:
-            logger.error(f"Error updating project status for {project_id}: {e}")
+            logger.exception(f"Error updating project status for {project_id}: {e}")
             self.db.rollback()
             raise
 
@@ -350,11 +357,11 @@ class ProjectService:
             return project
         except IntegrityError as e:
             db.rollback()
-            logger.error(f"IntegrityError creating project {project.id}: {e}")
+            logger.exception(f"IntegrityError creating project {project.id}: {e}")
             raise
         except Exception as e:
             db.rollback()
-            logger.error(f"Error creating project {project.id}: {e}")
+            logger.exception(f"Error creating project {project.id}: {e}")
             raise
 
     def update_project(db: Session, project_id: int, **kwargs):
