@@ -588,6 +588,94 @@ class ProviderService:
         config = self.chat_config if config_type == "chat" else self.inference_config
         return config.capabilities.get("supports_pydantic", False)
 
+    @robust_llm_call()
+    async def call_llm_with_specific_model(
+        self, 
+        model_identifier: str, 
+        messages: list, 
+        output_schema: Optional[BaseModel] = None,
+        stream: bool = False,
+        **kwargs
+    ) -> Union[str, AsyncGenerator[str, None], Any]:
+        """Call LLM with a specific model identifier (e.g., 'openrouter/perplexity/sonar')."""
+        # Build configuration for the specific model
+        config = self._build_config_for_model_identifier(model_identifier)
+        
+        # Build parameters using the config object
+        params = self._build_llm_params(config)
+        
+        # Override with any additional parameters
+        params.update(kwargs)
+        
+        routing_provider = config.provider
+
+        try:
+            if output_schema:
+                # Use structured output with instructor
+                request_kwargs = {
+                    key: params[key]
+                    for key in ("api_key", "base_url", "api_version")
+                    if key in params
+                }
+
+                if config.provider == "ollama":
+                    # use openai client to call ollama because of https://github.com/BerriAI/litellm/issues/7355
+                    ollama_base_root = (
+                        params.get("base_url")
+                        or config.base_url
+                        or os.environ.get("LLM_API_BASE")
+                        or "http://localhost:11434"
+                    )
+                    ollama_base_url = ollama_base_root.rstrip("/") + "/v1"
+                    ollama_api_key = params.get("api_key") or os.environ.get(
+                        "OLLAMA_API_KEY", "ollama"
+                    )
+                    client = instructor.from_openai(
+                        AsyncOpenAI(base_url=ollama_base_url, api_key=ollama_api_key),
+                        mode=instructor.Mode.JSON,
+                    )
+                    ollama_request_kwargs = {
+                        key: value
+                        for key, value in request_kwargs.items()
+                        if key not in {"base_url", "api_key", "api_version"}
+                    }
+                    response = await client.chat.completions.create(
+                        model=params["model"].split("/")[-1],
+                        messages=messages,
+                        response_model=output_schema,
+                        temperature=params.get("temperature", 0.3),
+                        max_tokens=params.get("max_tokens"),
+                        **ollama_request_kwargs,
+                    )
+                else:
+                    client = instructor.from_litellm(acompletion, mode=instructor.Mode.JSON)
+                    response = await client.chat.completions.create(
+                        model=params["model"],
+                        messages=messages,
+                        response_model=output_schema,
+                        strict=True,
+                        temperature=params.get("temperature", 0.3),
+                        max_tokens=params.get("max_tokens"),
+                        **request_kwargs,
+                    )
+                return response
+            else:
+                # Regular text completion
+                if stream:
+                    async def generator() -> AsyncGenerator[str, None]:
+                        response = await acompletion(
+                            messages=messages, stream=True, **params
+                        )
+                        async for chunk in response:
+                            yield chunk.choices[0].delta.content or ""
+                    return generator()
+                else:
+                    response = await acompletion(messages=messages, **params)
+                    return response.choices[0].message.content
+        except Exception as e:
+            logging.error(f"Error calling LLM with model {model_identifier}: {e}, provider: {routing_provider}")
+            raise e
+
     @robust_llm_call()  # Apply the robust_llm_call decorator
     async def call_llm(
         self, messages: list, stream: bool = False, config_type: str = "chat"
