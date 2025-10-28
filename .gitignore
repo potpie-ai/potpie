@@ -73,3 +73,5 @@ package-lock.json
 .taskmaster/
 thoughts/
 .codex/
+worktrees/
+
