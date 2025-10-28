@@ -3,7 +3,7 @@ from datetime import datetime
 
 from fastapi import HTTPException
 from sqlalchemy import String, cast
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy.orm import Session
 
 from app.modules.projects.projects_model import Project
@@ -65,6 +65,42 @@ class ProjectService:
         commit_id: str = None,
         repo_path: str = None,
     ):
+        # Check if a project with this ID already exists
+        existing_project = (
+            self.db.query(Project).filter(Project.id == project_id).first()
+        )
+
+        if existing_project:
+            if existing_project.user_id != user_id:
+                message = (
+                    f"Project {project_id} ownership mismatch: "
+                    f"stored user {existing_project.user_id}, requesting user {user_id}"
+                )
+                logger.warning(message)
+                raise HTTPException(status_code=403, detail=message)
+
+            # Update the existing project with new information (e.g., normalized repo_name)
+            logger.info(
+                f"Project {project_id} already exists. Updating repo_name from '{existing_project.repo_name}' to '{repo_name}'"
+            )
+            existing_project.repo_name = repo_name
+            existing_project.branch_name = branch_name
+            existing_project.repo_path = repo_path
+            existing_project.commit_id = commit_id
+            existing_project.status = ProjectStatusEnum.SUBMITTED.value
+            existing_project.updated_at = datetime.utcnow()
+            try:
+                self.db.commit()
+                self.db.refresh(existing_project)
+            except Exception as e:
+                logger.exception(f"Error updating existing project {project_id}: {e}")
+                self.db.rollback()
+                raise
+            message = f"Project id '{project_id}' for repo '{repo_name}' and branch '{branch_name}' updated successfully."
+            logger.info(message)
+            return project_id
+
+        # Create new project if it doesn't exist
         project = Project(
             id=project_id,
             repo_name=repo_name,
@@ -74,9 +110,14 @@ class ProjectService:
             commit_id=commit_id,
             status=ProjectStatusEnum.SUBMITTED.value,
         )
-        project = ProjectService.create_project(self.db, project)
+        try:
+            project = ProjectService.create_project(self.db, project)
+        except Exception as e:
+            logger.error(f"Error creating project {project_id}: {e}")
+            self.db.rollback()
+            raise
         message = f"Project id '{project.id}' for repo '{repo_name}' and branch '{branch_name}' registered successfully."
-        logging.info(message)
+        logger.info(message)
         return project_id
 
     async def duplicate_project(
@@ -115,10 +156,15 @@ class ProjectService:
         return project_list
 
     async def update_project_status(self, project_id: int, status: ProjectStatusEnum):
-        ProjectService.update_project(self.db, project_id, status=status.value)
-        logging.info(
-            f"Project with ID {project_id} has now been updated with status {status}."
-        )
+        try:
+            ProjectService.update_project(self.db, project_id, status=status.value)
+            logger.info(
+                f"Project with ID {project_id} has now been updated with status {status}."
+            )
+        except Exception as e:
+            logger.exception(f"Error updating project status for {project_id}: {e}")
+            self.db.rollback()
+            raise
 
     async def get_project_from_db(
         self,
@@ -131,15 +177,19 @@ class ProjectService:
         """
         Get a project from the database for a specific user, prioritizing commit_id over branch_name.
 
+        This method attempts to find an existing project by:
+        1. First trying exact commit_id match (if commit_id provided)
+        2. Falling back to branch_name match if commit_id match fails or not provided
+
         Args:
             repo_name: Repository name
-            branch_name: Branch name (used as fallback if commit_id is None)
+            branch_name: Branch name (used as fallback if commit_id doesn't match)
             user_id: User ID
             repo_path: Path to the repository (optional)
-            commit_id: Commit ID (optional, prioritized over branch_name if provided)
+            commit_id: Commit ID (optional, will try exact match first then fall back to branch)
 
         Returns:
-            Project object if found, None otherwise
+            Project object if found by either commit_id or branch_name, None if no match
         """
         query = self.db.query(Project).filter(
             Project.repo_name == repo_name,
@@ -147,16 +197,28 @@ class ProjectService:
             Project.repo_path == repo_path,
         )
 
+        logger.info(
+            f"Looking up project: repo_name={repo_name}, branch={branch_name}, "
+            f"user={user_id}, repo_path={repo_path}, commit_id={commit_id}"
+        )
+
         if commit_id:
-            # If commit_id is provided, use it for deduplication
+            # If commit_id is provided, try to find exact match first
             project = query.filter(Project.commit_id == commit_id).first()
             if project:
+                logger.info(f"Found project by commit_id: {project.id}")
                 return project
-            else:
-                return None
+            # ✅ FIX: Fall through to branch-based lookup instead of returning None
+            logger.info(
+                f"No project found with commit_id={commit_id}, falling back to branch lookup"
+            )
 
-        # Fall back to branch_name if commit_id is not provided or no match was found
+        # Fall back to branch_name lookup
         project = query.filter(Project.branch_name == branch_name).first()
+        if project:
+            logger.info(f"Found project by branch_name: {project.id}")
+        else:
+            logger.info("No existing project found for this repository and branch")
         return project
 
     async def get_global_project_from_db(
@@ -289,9 +351,18 @@ class ProjectService:
         project.created_at = datetime.utcnow()
         project.updated_at = datetime.utcnow()
         db.add(project)
-        db.commit()
-        db.refresh(project)
-        return project
+        try:
+            db.commit()
+            db.refresh(project)
+            return project
+        except IntegrityError as e:
+            db.rollback()
+            logger.exception(f"IntegrityError creating project {project.id}: {e}")
+            raise
+        except Exception as e:
+            db.rollback()
+            logger.exception(f"Error creating project {project.id}: {e}")
+            raise
 
     def update_project(db: Session, project_id: int, **kwargs):
         project = db.query(Project).filter(Project.id == project_id).first()

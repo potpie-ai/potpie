@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
+from app.modules.parsing.utils.repo_name_normalizer import normalize_repo_name
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 
@@ -146,14 +147,49 @@ class ParseHelper:
     async def download_and_extract_tarball(
         self, repo, branch, target_dir, auth, repo_details, user_id
     ):
+        logger.info(
+            f"ParsingHelper: Starting tarball download for repo '{repo.full_name}', branch '{branch}'"
+        )
+
         try:
+            logger.info(
+                f"ParsingHelper: Getting archive link for repo '{repo.full_name}', branch '{branch}'"
+            )
             tarball_url = repo.get_archive_link("tarball", branch)
+            logger.info(f"ParsingHelper: Retrieved tarball URL: {tarball_url}")
+
+            # Validate that tarball_url is a string, not an exception object
+            if not isinstance(tarball_url, str):
+                logger.error(
+                    f"ParsingHelper: Invalid tarball URL type: {type(tarball_url)}, value: {tarball_url}"
+                )
+                raise ValueError(
+                    f"Expected string URL, got {type(tarball_url)}: {tarball_url}"
+                )
+
             headers = {"Authorization": f"Bearer {auth.token}"} if auth else {}
-            response = requests.get(tarball_url, stream=True, headers=headers)
+            logger.info(
+                f"ParsingHelper: Making request to tarball URL with headers: {list(headers.keys())}"
+            )
+
+            response = requests.get(
+                tarball_url, stream=True, headers=headers, timeout=30
+            )
+            logger.info(f"ParsingHelper: Response status code: {response.status_code}")
             response.raise_for_status()
+
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching tarball: {e}")
-            return e
+            logger.exception(f"ParsingHelper: Error fetching tarball: {e}")
+            logger.error(
+                f"ParsingHelper: Request details - URL: {tarball_url}, Headers: {headers}"
+            )
+            raise ParsingFailedError("Failed to download repository archive") from e
+        except Exception as e:
+            logger.exception(f"ParsingHelper: Unexpected error in tarball download: {e}")
+            logger.error(f"ParsingHelper: Error type: {type(e)}, Value: {e}")
+            raise ParsingFailedError(
+                "Unexpected error during repository download"
+            ) from e
         tarball_path = os.path.join(
             target_dir,
             f"{repo.full_name.replace('/', '-').replace('.', '-')}-{branch.replace('/', '-').replace('.', '-')}.tar.gz",
@@ -164,14 +200,29 @@ class ParseHelper:
             f"{repo.full_name.replace('/', '-').replace('.', '-')}-{branch.replace('/', '-').replace('.', '-')}-{user_id}",
         )
 
+        logger.info(f"ParsingHelper: Tarball path: {tarball_path}")
+        logger.info(f"ParsingHelper: Final directory: {final_dir}")
+
         try:
+            logger.info(f"ParsingHelper: Writing tarball to {tarball_path}")
             with open(tarball_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
+            logger.info(
+                f"ParsingHelper: Successfully downloaded tarball, size: {os.path.getsize(tarball_path)} bytes"
+            )
+
+            logger.info(f"ParsingHelper: Extracting tarball to {final_dir}")
             with tarfile.open(tarball_path, "r:gz") as tar:
                 temp_dir = os.path.join(final_dir, "temp_extract")
+                os.makedirs(temp_dir, exist_ok=True)
                 tar.extractall(path=temp_dir)
+                logger.info(f"ParsingHelper: Extracted tarball contents to {temp_dir}")
+
                 extracted_dir = os.path.join(temp_dir, os.listdir(temp_dir)[0])
+                logger.info(f"ParsingHelper: Main extracted directory: {extracted_dir}")
+
+                text_files_count = 0
                 for root, dirs, files in os.walk(extracted_dir):
                     for file in files:
                         if file.startswith("."):
@@ -185,8 +236,15 @@ class ParseHelper:
                                 dest_path = os.path.join(final_dir, relative_path)
                                 os.makedirs(os.path.dirname(dest_path), exist_ok=True)
                                 shutil.copy2(file_path, dest_path)
+                                text_files_count += 1
                             except (shutil.Error, OSError) as e:
-                                logger.error(f"Error copying file {file_path}: {e}")
+                                logger.error(
+                                    f"ParsingHelper: Error copying file {file_path}: {e}"
+                                )
+
+                logger.info(
+                    f"ParsingHelper: Copied {text_files_count} text files to final directory"
+                )
                 # Remove the temporary directory
                 try:
                     shutil.rmtree(temp_dir)
@@ -196,7 +254,7 @@ class ParseHelper:
 
         except (IOError, tarfile.TarError, shutil.Error) as e:
             logger.error(f"Error handling tarball: {e}")
-            return e
+            raise ParsingFailedError("Failed to process repository archive") from e
         finally:
             if os.path.exists(tarball_path):
                 os.remove(tarball_path)
@@ -312,12 +370,19 @@ class ParseHelper:
         repo_path = getattr(repo_details, "repo_path", None)
         if full_name is None:
             full_name = repo_path.split("/")[-1]
+
+        # Normalize repository name for consistent database lookups
+        normalized_full_name = normalize_repo_name(full_name)
+        logger.info(
+            f"ParsingHelper: Original full_name: {full_name}, Normalized: {normalized_full_name}"
+        )
+
         project = await self.project_manager.get_project_from_db(
-            full_name, branch, user_id, repo_path, commit_id
+            normalized_full_name, branch, user_id, repo_path, commit_id
         )
         if not project:
             project_id = await self.project_manager.register_project(
-                full_name,
+                normalized_full_name,
                 branch,
                 user_id,
                 project_id,
@@ -353,23 +418,39 @@ class ParseHelper:
             finally:
                 os.chdir(current_dir)  # Restore the original working directory
         else:
-            if commit_id:
-                # For GitHub API, we need to download tarball for specific commit
-                extracted_dir = await self.download_and_extract_tarball(
-                    repo,
-                    commit_id,
-                    os.getenv("PROJECT_PATH"),
-                    auth,
-                    repo_details,
-                    user_id,
+            try:
+                if commit_id:
+                    # For GitHub API, we need to download tarball for specific commit
+                    extracted_dir = await self.download_and_extract_tarball(
+                        repo,
+                        commit_id,
+                        os.getenv("PROJECT_PATH"),
+                        auth,
+                        repo_details,
+                        user_id,
+                    )
+                    latest_commit_sha = commit_id
+                else:
+                    extracted_dir = await self.download_and_extract_tarball(
+                        repo,
+                        branch,
+                        os.getenv("PROJECT_PATH"),
+                        auth,
+                        repo_details,
+                        user_id,
+                    )
+                    branch_details = repo_details.get_branch(branch)
+                    latest_commit_sha = branch_details.commit.sha
+            except ParsingFailedError as e:
+                logger.error(f"Failed to download repository: {e}")
+                raise HTTPException(
+                    status_code=500, detail=f"Repository download failed: {e}"
                 )
-                latest_commit_sha = commit_id
-            else:
-                extracted_dir = await self.download_and_extract_tarball(
-                    repo, branch, os.getenv("PROJECT_PATH"), auth, repo_details, user_id
+            except Exception as e:
+                logger.error(f"Unexpected error during repository download: {e}")
+                raise HTTPException(
+                    status_code=500, detail=f"Repository download failed: {e}"
                 )
-                branch_details = repo_details.get_branch(branch)
-                latest_commit_sha = branch_details.commit.sha
 
         repo_metadata = ParseHelper.extract_repository_metadata(repo_details)
         repo_metadata["error_message"] = None
@@ -475,15 +556,23 @@ class ParseHelper:
 
         return metadata
 
-    async def check_commit_status(self, project_id: str) -> bool:
+    async def check_commit_status(
+        self, project_id: str, requested_commit_id: str = None
+    ) -> bool:
         """
         Check if the current commit ID of the project matches the latest commit ID from the repository.
 
         Args:
             project_id (str): The ID of the project to check.
+            requested_commit_id (str, optional): The commit ID from the current parse request.
+                If provided, indicates this is a pinned commit parse (not branch-based).
         Returns:
-            bool: True if the commit IDs match, False otherwise.
+            bool: True if the commit IDs match or if this is a pinned commit parse, False otherwise.
         """
+        logger.info(
+            f"check_commit_status: Checking commit status for project {project_id}, "
+            f"requested_commit_id={requested_commit_id}"
+        )
 
         project = await self.project_manager.get_project_from_db_by_id(project_id)
         if not project:
@@ -493,6 +582,36 @@ class ParseHelper:
         current_commit_id = project.get("commit_id")
         repo_name = project.get("project_name")
         branch_name = project.get("branch_name")
+
+        logger.info(
+            f"check_commit_status: Project {project_id} - repo={repo_name}, "
+            f"branch={branch_name}, current_commit_id={current_commit_id}"
+        )
+
+        # Check if this is a pinned commit parse
+        # If the user explicitly provided a commit_id in the parse request,
+        # this is a pinned commit parse (not branch-based)
+        if requested_commit_id is not None:
+            logger.info(
+                f"check_commit_status: Pinned commit parse detected "
+                f"(requested_commit_id={requested_commit_id})"
+            )
+            # For pinned commits, check if the requested commit matches the stored commit
+            if requested_commit_id == current_commit_id:
+                logger.info(
+                    f"check_commit_status: Pinned commit {requested_commit_id} matches "
+                    f"stored commit, no reparse needed"
+                )
+                return True
+            else:
+                logger.info(
+                    f"check_commit_status: Pinned commit changed from {current_commit_id} "
+                    f"to {requested_commit_id}, reparse needed"
+                )
+                return False
+
+        # If we reach here, this is a branch-based parse (not pinned commit)
+        # We need to compare the stored commit with the latest branch commit
 
         if not repo_name:
             logger.error(
@@ -508,42 +627,39 @@ class ParseHelper:
 
         if len(repo_name.split("/")) < 2:
             # Local repo, always parse local repos
+            logger.info("check_commit_status: Local repo detected, forcing reparse")
             return False
 
         try:
-            github, repo = self.github_service.get_repo(repo_name)
+            logger.info(f"check_commit_status: Branch-based parse - getting repo info for {repo_name}")
+            _github, repo = self.github_service.get_repo(repo_name)
 
             # If current_commit_id is None, we should reparse
             if current_commit_id is None:
-                logger.info(f"Project {project_id} has no commit_id, will reparse")
+                logger.info(
+                    f"check_commit_status: Project {project_id} has no commit_id, will reparse"
+                )
                 return False
 
-            # If current_commit_id is a specific commit (not a branch head),
-            # then we can assume it's not "latest" and should be reparsed
-            # This is because when using specific commits, we don't want to check branch head
-            if len(current_commit_id) == 40:  # SHA1 commit hash is 40 chars
-                try:
-                    # Try to verify if this is a specific commit instead of branch head
-                    repo.get_commit(current_commit_id)
-                    # If we successfully get a commit, assume that it was a pinned commit,
-                    # thus it's still up to date (we're parsing a specific commit, not latest)
-                    return True
-                except:
-                    # If we can't find the commit, we should reparse
-                    return False
+            # Get the latest commit from the branch
+            logger.info(
+                f"check_commit_status: Getting latest commit from branch {branch_name}"
+            )
             branch = repo.get_branch(branch_name)
             latest_commit_id = branch.commit.sha
 
+            # Compare current commit with latest commit
             is_up_to_date = current_commit_id == latest_commit_id
             logger.info(
-                f"""Project {project_id} commit status for branch {branch_name}: {'Up to date' if is_up_to_date else 'Outdated'}"
-            Current commit ID: {current_commit_id}
-            Latest commit ID: {latest_commit_id}"""
+                f"check_commit_status: Project {project_id} commit status for branch {branch_name}: "
+                f"{'Up to date' if is_up_to_date else 'Outdated'} - "
+                f"Current: {current_commit_id}, Latest: {latest_commit_id}"
             )
 
             return is_up_to_date
         except Exception as e:
             logger.error(
-                f"Error fetching latest commit for {repo_name}/{branch_name}: {e}"
+                f"check_commit_status: Error fetching latest commit for {repo_name}/{branch_name}: {e}",
+                exc_info=True,
             )
             return False
