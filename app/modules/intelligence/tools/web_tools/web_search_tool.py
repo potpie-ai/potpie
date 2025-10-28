@@ -3,8 +3,6 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional
 
-import instructor
-import litellm
 from pydantic import BaseModel, Field
 from langchain_core.tools import StructuredTool
 from sqlalchemy.orm import Session
@@ -49,7 +47,14 @@ class WebSearchTool:
 
     def run(self, query: str):
         try:
-            response = self._make_llm_call(query)
+            # Run the async method in a new event loop
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                response = loop.run_until_complete(self._make_llm_call(query))
+            finally:
+                loop.close()
+            
             if not response:
                 response = {
                     "success": False,
@@ -66,30 +71,24 @@ class WebSearchTool:
             }
             return response
 
-    def _make_llm_call(self, query: str) -> Dict[str, Any]:
+    async def _make_llm_call(self, query: str) -> Dict[str, Any]:
         try:
             messages = [{"role": "user", "content": query}]
             provider_service = ProviderService(self.sql_db, self.user_id)
-            extra_params, _ = provider_service.get_extra_params_and_headers(
-                "openrouter"
-            )
-            client = instructor.from_litellm(
-                litellm.completion, mode=instructor.Mode.JSON
-            )
-            response = client.chat.completions.create(
-                model="openrouter/perplexity/sonar",
+            
+            # Perplexity via OpenRouter does not support instructor JSON schemas reliably.
+            # Call without structured output and wrap the text response.
+            text_response = await provider_service.call_llm_with_specific_model(
+                model_identifier="openrouter/perplexity/sonar",
                 messages=messages,
-                response_model=self.output_schema,
                 temperature=self.temperature,
-                max_tokens=self.max_tokens,
-                api_key=self.api_key,
-                **extra_params,
+                max_tokens=self.max_tokens
             )
 
             return {
-                "success": response.success,
-                "content": response.content,
-                "citations": response.citations,
+                "success": True,
+                "content": text_response or "",
+                "citations": [],
             }
         except Exception as e:
             logging.exception(f"Error in _make_llm_call: {str(e)}")
