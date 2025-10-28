@@ -590,23 +590,23 @@ class ProviderService:
 
     @robust_llm_call()
     async def call_llm_with_specific_model(
-        self, 
-        model_identifier: str, 
-        messages: list, 
+        self,
+        model_identifier: str,
+        messages: list,
         output_schema: Optional[BaseModel] = None,
         stream: bool = False,
-        **kwargs
+        **kwargs,
     ) -> Union[str, AsyncGenerator[str, None], Any]:
         """Call LLM with a specific model identifier (e.g., 'openrouter/perplexity/sonar')."""
         # Build configuration for the specific model
         config = self._build_config_for_model_identifier(model_identifier)
-        
+
         # Build parameters using the config object
         params = self._build_llm_params(config)
-        
+
         # Override with any additional parameters
         params.update(kwargs)
-        
+
         routing_provider = config.provider
 
         try:
@@ -648,7 +648,9 @@ class ProviderService:
                         **ollama_request_kwargs,
                     )
                 else:
-                    client = instructor.from_litellm(acompletion, mode=instructor.Mode.JSON)
+                    client = instructor.from_litellm(
+                        acompletion, mode=instructor.Mode.JSON
+                    )
                     response = await client.chat.completions.create(
                         model=params["model"],
                         messages=messages,
@@ -662,18 +664,22 @@ class ProviderService:
             else:
                 # Regular text completion
                 if stream:
+
                     async def generator() -> AsyncGenerator[str, None]:
                         response = await acompletion(
                             messages=messages, stream=True, **params
                         )
                         async for chunk in response:
                             yield chunk.choices[0].delta.content or ""
+
                     return generator()
                 else:
                     response = await acompletion(messages=messages, **params)
                     return response.choices[0].message.content
         except Exception as e:
-            logging.error(f"Error calling LLM with model {model_identifier}: {e}, provider: {routing_provider}")
+            logging.error(
+                f"Error calling LLM with model {model_identifier}: {e}, provider: {routing_provider}"
+            )
             raise e
 
     @robust_llm_call()  # Apply the robust_llm_call decorator

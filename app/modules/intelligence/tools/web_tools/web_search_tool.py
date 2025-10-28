@@ -54,7 +54,7 @@ class WebSearchTool:
                 response = loop.run_until_complete(self._make_llm_call(query))
             finally:
                 loop.close()
-            
+
             if not response:
                 response = {
                     "success": False,
@@ -75,14 +75,14 @@ class WebSearchTool:
         try:
             messages = [{"role": "user", "content": query}]
             provider_service = ProviderService(self.sql_db, self.user_id)
-            
+
             # Perplexity via OpenRouter does not support instructor JSON schemas reliably.
             # Call without structured output and wrap the text response.
             text_response = await provider_service.call_llm_with_specific_model(
                 model_identifier="openrouter/perplexity/sonar",
                 messages=messages,
                 temperature=self.temperature,
-                max_tokens=self.max_tokens
+                max_tokens=self.max_tokens,
             )
 
             return {
