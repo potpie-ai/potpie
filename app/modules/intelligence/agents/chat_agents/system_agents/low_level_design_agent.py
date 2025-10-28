@@ -1,14 +1,22 @@
-from app.modules.intelligence.agents.chat_agents.adaptive_agent import AdaptiveAgent
-from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
-from app.modules.intelligence.prompts.classification_prompts import AgentType
-from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.provider.provider_service import (
-    ProviderService,
+from app.modules.intelligence.agents.chat_agents.agent_config import (
+    AgentConfig,
+    TaskConfig,
 )
+from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
+from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent import (
+    PydanticMultiAgent,
+    AgentType as MultiAgentType,
+)
+from app.modules.intelligence.agents.multi_agent_config import MultiAgentConfig
+from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.provider.exceptions import UnsupportedProviderError
+from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
-from ..crewai_agent import AgentConfig, CrewAIAgent, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class LowLevelDesignAgent(ChatAgent):
@@ -55,17 +63,68 @@ class LowLevelDesignAgent(ChatAgent):
             ]
         )
 
-        if self.llm_provider.is_current_model_supported_by_pydanticai(
-            config_type="chat"
-        ):
-            return PydanticRagAgent(self.llm_provider, agent_config, tools)
+        supports_pydantic = self.llm_provider.supports_pydantic("chat")
+        should_use_multi = MultiAgentConfig.should_use_multi_agent("LLD_agent")
+
+        logger.info(
+            f"LowLevelDesignAgent: supports_pydantic={supports_pydantic}, should_use_multi_agent={should_use_multi}"
+        )
+        logger.info(f"Current model: {self.llm_provider.chat_config.model}")
+        logger.info(f"Model capabilities: {self.llm_provider.chat_config.capabilities}")
+
+        if supports_pydantic:
+            if should_use_multi:
+                logger.info("✅ Using PydanticMultiAgent (multi-agent system)")
+                # Create specialized delegate agents for low-level design
+                delegate_agents = {
+                    MultiAgentType.CBL: AgentConfig(
+                        role="Architecture Locator Specialist",
+                        goal="Locate existing architectural patterns and design components",
+                        backstory="You are an expert at finding existing architectural patterns, design documents, and related code structures.",
+                        tasks=[
+                            TaskConfig(
+                                description="Locate existing architectural patterns, similar implementations, and design documentation",
+                                expected_output="Comprehensive overview of existing patterns and architectural components",
+                            )
+                        ],
+                        max_iter=10,
+                    ),
+                    MultiAgentType.CAB: AgentConfig(
+                        role="Design Analysis Specialist",
+                        goal="Analyze existing code architecture and design patterns",
+                        backstory="You are an expert software architect who can analyze existing systems and understand their design patterns and architectural decisions.",
+                        tasks=[
+                            TaskConfig(
+                                description="Analyze existing architecture, identify patterns, and understand design decisions",
+                                expected_output="Detailed analysis of current architecture with design pattern identification",
+                            )
+                        ],
+                        max_iter=15,
+                    ),
+                    MultiAgentType.THINK_EXECUTE: AgentConfig(
+                        role="Design Planning Specialist",
+                        goal="Create comprehensive low-level design plans based on analysis",
+                        backstory="You are a senior architect who excels at creating detailed, actionable design plans that follow best practices.",
+                        tasks=[
+                            TaskConfig(
+                                description="Create detailed low-level design plans with clear implementation steps and architectural decisions",
+                                expected_output="Comprehensive low-level design document with implementation roadmap",
+                            )
+                        ],
+                        max_iter=20,
+                    ),
+                }
+                return PydanticMultiAgent(
+                    self.llm_provider, agent_config, tools, None, delegate_agents
+                )
+            else:
+                logger.info("❌ Multi-agent disabled by config, using PydanticRagAgent")
+                return PydanticRagAgent(self.llm_provider, agent_config, tools)
         else:
-            return AdaptiveAgent(
-                llm_provider=self.llm_provider,
-                prompt_provider=self.prompt_provider,
-                rag_agent=CrewAIAgent(self.llm_provider, agent_config, tools),
-                agent_type=AgentType.LLD,
+            logger.error(
+                f"❌ Model '{self.llm_provider.chat_config.model}' does not support Pydantic - using fallback PydanticRagAgent"
             )
+            return PydanticRagAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if ctx.node_ids and len(ctx.node_ids) > 0:

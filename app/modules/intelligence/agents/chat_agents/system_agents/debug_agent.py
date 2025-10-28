@@ -1,14 +1,22 @@
-from app.modules.intelligence.agents.chat_agents.adaptive_agent import AdaptiveAgent
-from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
-from app.modules.intelligence.prompts.classification_prompts import AgentType
-from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.provider.provider_service import (
-    ProviderService,
+from app.modules.intelligence.agents.chat_agents.agent_config import (
+    AgentConfig,
+    TaskConfig,
 )
+from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
+from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent import (
+    PydanticMultiAgent,
+    AgentType as MultiAgentType,
+)
+from app.modules.intelligence.agents.multi_agent_config import MultiAgentConfig
+from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.provider.exceptions import UnsupportedProviderError
+from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
-from ..crewai_agent import AgentConfig, CrewAIAgent, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class DebugAgent(ChatAgent):
@@ -59,17 +67,65 @@ class DebugAgent(ChatAgent):
             ]
         )
 
-        if self.llm_provider.is_current_model_supported_by_pydanticai(
-            config_type="chat"
-        ):
-            return PydanticRagAgent(self.llm_provider, agent_config, tools)
+        supports_pydantic = self.llm_provider.supports_pydantic("chat")
+        should_use_multi = MultiAgentConfig.should_use_multi_agent("debugging_agent")
+
+        logger.info(
+            f"DebugAgent: supports_pydantic={supports_pydantic}, should_use_multi_agent={should_use_multi}"
+        )
+
+        if supports_pydantic:
+            if should_use_multi:
+                logger.info("✅ Using PydanticMultiAgent (multi-agent system)")
+                delegate_agents = {
+                    MultiAgentType.CBL: AgentConfig(
+                        role="Bug Locator Specialist",
+                        goal="Locate bug sources and related code components",
+                        backstory="Expert at finding bug locations, error sources, and related code.",
+                        tasks=[
+                            TaskConfig(
+                                description="Locate and identify bug sources",
+                                expected_output="Bug location analysis",
+                            )
+                        ],
+                        max_iter=10,
+                    ),
+                    MultiAgentType.CAB: AgentConfig(
+                        role="Debug Analysis Specialist",
+                        goal="Analyze bugs and understand root causes",
+                        backstory="Expert at analyzing code to understand bug causes and impacts.",
+                        tasks=[
+                            TaskConfig(
+                                description="Analyze bugs and determine root causes",
+                                expected_output="Root cause analysis",
+                            )
+                        ],
+                        max_iter=15,
+                    ),
+                    MultiAgentType.THINK_EXECUTE: AgentConfig(
+                        role="Debug Solution Specialist",
+                        goal="Provide comprehensive debugging solutions",
+                        backstory="Expert at creating debugging strategies and solutions.",
+                        tasks=[
+                            TaskConfig(
+                                description="Create debugging solutions and strategies",
+                                expected_output="Debugging solution plan",
+                            )
+                        ],
+                        max_iter=12,
+                    ),
+                }
+                return PydanticMultiAgent(
+                    self.llm_provider, agent_config, tools, None, delegate_agents
+                )
+            else:
+                logger.info("❌ Multi-agent disabled by config, using PydanticRagAgent")
+                return PydanticRagAgent(self.llm_provider, agent_config, tools)
         else:
-            return AdaptiveAgent(
-                llm_provider=self.llm_provider,
-                prompt_provider=self.prompt_provider,
-                rag_agent=CrewAIAgent(self.llm_provider, agent_config, tools),
-                agent_type=AgentType.DEBUGGING,
+            logger.error(
+                f"❌ Model does not support Pydantic - using fallback PydanticRagAgent"
             )
+            return PydanticRagAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if ctx.node_ids and len(ctx.node_ids) > 0:
