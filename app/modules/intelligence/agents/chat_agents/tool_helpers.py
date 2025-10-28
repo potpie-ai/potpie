@@ -320,17 +320,21 @@ def get_delegation_call_message(agent_type: str) -> str:
 
 
 def get_delegation_response_message(agent_type: str) -> str:
-    """Get user-friendly message when delegation completes"""
+    """Get user-friendly message when delegation completes (now with clean task summary)"""
     base_message = ""
     match agent_type:
         case "codebase_analyzer":
-            base_message = "✅ Codebase Analyzer completed analysis"
+            base_message = (
+                "✅ Codebase Analyzer completed analysis - returning clean task summary"
+            )
         case "codebase_locator":
-            base_message = "✅ Codebase Locator found relevant files"
+            base_message = "✅ Codebase Locator found relevant files - returning clean task summary"
         case "think_execute":
-            base_message = "✅ Think & Execute Agent completed task"
+            base_message = (
+                "✅ Think & Execute Agent completed task - returning clean task summary"
+            )
         case _:
-            base_message = f"✅ {agent_type} specialist completed task"
+            base_message = f"✅ {agent_type} specialist completed task - returning clean task summary"
 
     # Add current todo list state to show updated progress
     todo_list = _format_current_todo_list()
@@ -393,18 +397,16 @@ def get_delegation_info_with_todo_context(
 
 
 def get_delegation_result_content(agent_type: str, result: str) -> str:
-    """Get formatted result from specialist agent"""
-    # Limit result display to reasonable length
-    display_result = result[: min(len(result), 1000)] + (
-        "..." if len(result) > 1000 else ""
-    )
+    """Get formatted result from specialist agent (now returns detailed task summary)"""
+    # Display the full task summary without truncation - it can be detailed and include code snippets
+    display_result = result
 
     match agent_type:
         case "codebase_analyzer":
-            return f"**Codebase Analysis Result:**\n\n{display_result}"
+            return f"**Codebase Analysis Summary:**\n\n{display_result}"
         case "codebase_locator":
-            return f"**File Location Result:**\n\n{display_result}"
+            return f"**File Location Summary:**\n\n{display_result}"
         case "think_execute":
-            return f"**Think & Execute Result:**\n\n{display_result}"
+            return f"**Task Completion Summary:**\n\n{display_result}"
         case _:
-            return f"**{agent_type} Result:**\n\n{display_result}"
+            return f"**{agent_type} Task Summary:**\n\n{display_result}"

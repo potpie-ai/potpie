@@ -94,6 +94,98 @@ def extract_agent_type_from_delegation_tool(tool_name: str) -> str:
     return tool_name
 
 
+def extract_task_summary_from_response(response: str) -> str:
+    """
+    Extract the Task Summary section from a subagent response.
+    Returns the full Task Summary without truncation - can include detailed content and code snippets.
+    If no Task Summary section is found, return the full response.
+    Enhanced to handle error cases and provide better fallbacks.
+    """
+    import re
+
+    if not response or not response.strip():
+        logger.warning("Empty response provided to extract_task_summary_from_response")
+        return ""
+
+    # Check for error indicators first
+    error_indicators = [
+        r"(?i)❌\s*error",
+        r"(?i)⚠️\s*error",
+        r"(?i)🚨\s*error",
+        r"(?i)error\s*occurred",
+        r"(?i)failed\s*to",
+        r"(?i)exception",
+        r"(?i)traceback",
+    ]
+
+    for error_pattern in error_indicators:
+        if re.search(error_pattern, response):
+            logger.info("Error indicators found in response, returning full response")
+            return response
+
+    # Pattern to match Task Summary section (case insensitive)
+    # Updated patterns to better capture the end of summary sections
+    patterns = [
+        r"(?i)#{1,4}\s*task\s*summary[:\s]*\n(.*?)(?=\n#{1,4}\s*(?!task\s*summary)\w+|\Z)",
+        r"(?i)\*\*task\s*summary[:\s]*\*\*\n(.*?)(?=\n\*\*(?!task\s*summary)\w+|\Z)",
+        r"(?i)task\s*summary[:\s]*\n(.*?)(?=\n\w+:|\n#{1,4}\s*\w+|\Z)",
+        r"(?i)## summary[:\s]*\n(.*?)(?=\n#{1,4}\s*(?!summary)\w+|\Z)",
+        r"(?i)\*\*summary[:\s]*\*\*\n(.*?)(?=\n\*\*(?!summary)\w+|\Z)",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, response, re.DOTALL)
+        if match:
+            summary = match.group(1).strip()
+            if summary:
+                logger.info(
+                    f"Successfully extracted Task Summary from subagent response (length: {len(summary)} chars)"
+                )
+                return summary
+
+    # If no Task Summary section is found, look for conclusion or final sections
+    conclusion_patterns = [
+        r"(?i)#{1,4}\s*conclusion[:\s]*\n(.*?)(?=\n#{1,4}\s*\w+|\Z)",
+        r"(?i)#{1,4}\s*result[:\s]*\n(.*?)(?=\n#{1,4}\s*\w+|\Z)",
+        r"(?i)#{1,4}\s*findings[:\s]*\n(.*?)(?=\n#{1,4}\s*\w+|\Z)",
+    ]
+
+    for pattern in conclusion_patterns:
+        match = re.search(pattern, response, re.DOTALL)
+        if match:
+            summary = match.group(1).strip()
+            if summary:
+                logger.warning(
+                    f"No Task Summary found, but found conclusion/result section (length: {len(summary)} chars)"
+                )
+                return summary
+
+    # If still no structured section found, return the last meaningful paragraphs without truncation
+    lines = response.strip().split("\n")
+    if len(lines) > 10:  # If response is substantial, try to get the final content
+        # Look for the last substantial paragraphs
+        meaningful_lines = []
+        for line in reversed(lines):
+            line = line.strip()
+            if line:  # Keep all non-empty lines including code blocks
+                meaningful_lines.append(line)
+                if len(meaningful_lines) >= 10:  # Get more content for detailed summary
+                    break
+
+        if meaningful_lines:
+            summary = "\n".join(reversed(meaningful_lines))
+            logger.warning(
+                f"No Task Summary section found, using last meaningful content as detailed summary (length: {len(summary)} chars)"
+            )
+            return summary
+
+    # Final fallback: return full response without truncation
+    logger.warning(
+        f"No Task Summary section found, returning full response (length: {len(response)} chars)"
+    )
+    return response
+
+
 def create_tool_call_response(event: FunctionToolCallEvent) -> ToolCallResponse:
     """Create appropriate tool call response for regular or delegation tools"""
     tool_name = event.part.tool_name
@@ -200,174 +292,129 @@ class PydanticMultiAgent(ChatAgent):
     def _create_default_delegate_agents(self) -> Dict[AgentType, AgentConfig]:
         """Create default specialized agents if none provided"""
         return {
-            AgentType.CAB: AgentConfig(
-                role="Codebase Analyzer Specialist",
-                goal="Analyze and document how code works by examining implementation details, tracing data flow, and explaining technical workings",
-                backstory="""You are a specialist at understanding HOW code works. Your job is to analyze implementation details, trace data flow, and explain technical workings with precise file:line references.
-
-CRITICAL: YOUR ONLY JOB IS TO DOCUMENT AND EXPLAIN THE CODEBASE AS IT EXISTS TODAY
-- DO NOT suggest improvements or changes unless the user explicitly asks for them
-- DO NOT perform root cause analysis unless the user explicitly asks for them
-- DO NOT propose future enhancements unless the user explicitly asks for them
-- DO NOT critique the implementation or identify "problems"
-- DO NOT comment on code quality, performance issues, or security concerns
-- DO NOT suggest refactoring, optimization, or better approaches
-- ONLY describe what exists, how it works, and how components interact""",
-                tasks=[
-                    TaskConfig(
-                        description="""Analyze the codebase to understand implementation details using available tools:
-
-AVAILABLE TOOLS FOR ANALYSIS:
-- fetch_file: Read complete file contents
-- get_code_file_structure: Get directory structure and file organization
-- analyze_code_structure: Analyze code elements (classes, functions) in a file
-- get_code_from_probable_node_name: Get code for specific functions/classes by name
-- get_code_from_node_id: Get code for specific node IDs
-- get_code_from_multiple_node_ids: Get code for multiple node IDs at once
-- ask_knowledge_graph_queries: Query the knowledge graph for code relationships
-- get_nodes_from_tags: Find code nodes using semantic tags
-- get_node_neighbours_from_node_id: Find related/connected code
-- get_code_graph_from_node_id: Get code graph relationships
-- intelligent_code_graph: Advanced code graph analysis
-
-ANALYSIS STRATEGY:
-1. Start with get_code_file_structure to understand project layout
-2. Use fetch_file to read key files identified in the request
-3. Use analyze_code_structure to understand code elements in files
-4. Use get_code_from_probable_node_name to find specific functions/classes
-5. Use ask_knowledge_graph_queries to understand relationships
-6. Use get_node_neighbours_from_node_id to trace connections
-7. Provide precise file:line references for all claims
-
-Output Structure:
-- Overview: 2-3 sentence summary
-- Entry Points: List with file:line references
-- Core Implementation: Detailed breakdown by component with file:line references
-- Data Flow: Step-by-step flow
-- Key Patterns: Architectural patterns in use
-- Configuration: Config settings used
-- Error Handling: How errors are handled
-
-REMEMBER: You are a documentarian, not a critic. Your sole purpose is to explain HOW the code currently works.""",
-                        expected_output="Detailed codebase analysis with precise file:line references showing how the code works",
-                    )
-                ],
-                max_iter=15,
-            ),
-            AgentType.CBL: AgentConfig(
-                role="Codebase Locator Specialist",
-                goal="Locate files, directories, and components relevant to a feature or task - a 'Super Grep/Glob/LS tool'",
-                backstory="""You are a specialist at finding WHERE code lives in a codebase. Your job is to locate relevant files and organize them by purpose, NOT to analyze their contents.
-
-CRITICAL: YOUR ONLY JOB IS TO LOCATE AND DOCUMENT WHERE FILES EXIST
-- DO NOT suggest improvements or changes unless the user explicitly asks for them
-- DO NOT perform root cause analysis unless the user explicitly asks for them
-- DO NOT propose future enhancements unless the user explicitly asks for them
-- DO NOT critique the implementation
-- DO NOT comment on code quality, architecture decisions, or best practices
-- ONLY describe what exists, where it exists, and how components are organized
-
-Core Responsibilities:
-1. Find Files by Topic/Feature - Search for files containing relevant keywords
-2. Categorize Findings - Group by implementation, tests, config, docs, types
-3. Return Structured Results - Provide full paths, group by purpose, note directory clusters""",
-                tasks=[
-                    TaskConfig(
-                        description="""Locate files and directories for a feature or topic using available tools:
-
-AVAILABLE TOOLS FOR LOCATING:
-- get_code_file_structure: Get directory structure and file organization
-- get_nodes_from_tags: Find code nodes using semantic tags/keywords
-- ask_knowledge_graph_queries: Query for files containing specific functionality
-- fetch_file: Read file contents to verify relevance (use sparingly)
-- analyze_code_structure: Get overview of what's in a file without reading full content
-
-SEARCH STRATEGY:
-1. Start with get_code_file_structure to understand project layout
-2. Use get_nodes_from_tags to find files containing relevant keywords
-3. Use ask_knowledge_graph_queries to find files by functionality
-4. Consider language/framework conventions (src/, lib/, components/, etc.)
-5. Look for naming patterns (*service*, *handler*, *test*, etc.)
-6. Use analyze_code_structure to understand file contents without reading full files
-
-Output Structure:
-- Implementation Files: Core logic files with paths
-- Test Files: Unit, integration, e2e tests
-- Configuration: Config files
-- Type Definitions: TypeScript types, interfaces
-- Related Directories: Directory clusters with file counts
-- Entry Points: Where features are imported/registered
-
-Important:
-- Don't read full file contents unless necessary - just report locations
-- Group files logically by purpose
-- Include directory file counts
-- Check multiple extensions (.js/.ts, .py, .go, etc.)
-- Use semantic search tools to find relevant files efficiently
-
-REMEMBER: You are a file finder and organizer, documenting WHERE everything is located.""",
-                        expected_output="Structured list of file locations organized by type (implementation, tests, config, docs, types)",
-                    )
-                ],
-                max_iter=10,
-            ),
+            #             AgentType.CAB: AgentConfig(
+            #                 role="Codebase Analyzer Specialist",
+            #                 goal="Analyze and document how code works by examining implementation details, tracing data flow, and explaining technical workings",
+            #                 backstory="""You are a specialist at understanding HOW code works. Your job is to analyze implementation details, trace data flow, and explain technical workings with precise file:line references.
+            # CRITICAL: YOUR ONLY JOB IS TO DOCUMENT AND EXPLAIN THE CODEBASE AS IT EXISTS TODAY
+            # - DO NOT suggest improvements or changes unless the user explicitly asks for them
+            # - DO NOT perform root cause analysis unless the user explicitly asks for them
+            # - DO NOT propose future enhancements unless the user explicitly asks for them
+            # - DO NOT critique the implementation or identify "problems"
+            # - DO NOT comment on code quality, performance issues, or security concerns
+            # - DO NOT suggest refactoring, optimization, or better approaches
+            # - ONLY describe what exists, how it works, and how components interact""",
+            #                 tasks=[
+            #                     TaskConfig(
+            #                         description="""Analyze the codebase to understand implementation details.
+            # ANALYSIS STRATEGY:
+            # 1. Start with get_code_file_structure to understand project layout
+            # 2. Use fetch_file to read key files identified in the request
+            # 3. Use analyze_code_structure to understand code elements in files
+            # 4. Use get_code_from_probable_node_name to find specific functions/classes
+            # 5. Use ask_knowledge_graph_queries to understand relationships
+            # 6. Use get_node_neighbours_from_node_id to trace connections
+            # 7. Provide precise file:line references for all claims
+            # Output Structure:
+            # - Overview: 2-3 sentence summary
+            # - Entry Points: List with file:line references
+            # - Core Implementation: Detailed breakdown by component with file:line references
+            # - Data Flow: Step-by-step flow
+            # - Key Patterns: Architectural patterns in use
+            # - Configuration: Config settings used
+            # - Error Handling: How errors are handled
+            # REMEMBER: You are a documentarian, not a critic. Your sole purpose is to explain HOW the code currently works.""",
+            #                         expected_output="Detailed codebase analysis with precise file:line references showing how the code works",
+            #                     )
+            #                 ],
+            #                 max_iter=15,
+            #             ),
+            #             AgentType.CBL: AgentConfig(
+            #                 role="Codebase Locator Specialist",
+            #                 goal="Locate files, directories, and components relevant to a feature or task - a 'Super Grep/Glob/LS tool'",
+            #                 backstory="""You are a specialist at finding WHERE code lives in a codebase. Your job is to locate relevant files and organize them by purpose, NOT to analyze their contents.
+            # CRITICAL: YOUR ONLY JOB IS TO LOCATE AND DOCUMENT WHERE FILES EXIST
+            # - DO NOT suggest improvements or changes unless the user explicitly asks for them
+            # - DO NOT perform root cause analysis unless the user explicitly asks for them
+            # - DO NOT propose future enhancements unless the user explicitly asks for them
+            # - DO NOT critique the implementation
+            # - DO NOT comment on code quality, architecture decisions, or best practices
+            # - ONLY describe what exists, where it exists, and how components are organized
+            # Core Responsibilities:
+            # 1. Find Files by Topic/Feature - Search for files containing relevant keywords
+            # 2. Categorize Findings - Group by implementation, tests, config, docs, types
+            # 3. Return Structured Results - Provide full paths, group by purpose, note directory clusters""",
+            #                 tasks=[
+            #                     TaskConfig(
+            #                         description="""Locate files and directories for a feature or topic.
+            # SEARCH STRATEGY:
+            # 1. Start with get_code_file_structure to understand project layout
+            # 2. Use get_nodes_from_tags to find files containing relevant keywords
+            # 3. Use ask_knowledge_graph_queries to find files by functionality
+            # 4. Consider language/framework conventions (src/, lib/, components/, etc.)
+            # 5. Look for naming patterns (*service*, *handler*, *test*, etc.)
+            # 6. Use analyze_code_structure to understand file contents without reading full files
+            # Output Structure:
+            # - Implementation Files: Core logic files with paths
+            # - Test Files: Unit, integration, e2e tests
+            # - Configuration: Config files
+            # - Type Definitions: TypeScript types, interfaces
+            # - Related Directories: Directory clusters with file counts
+            # - Entry Points: Where features are imported/registered
+            # Important:
+            # - Don't read full file contents unless necessary - just report locations
+            # - Group files logically by purpose
+            # - Include directory file counts
+            # - Check multiple extensions (.js/.ts, .py, .go, etc.)
+            # - Use semantic search tools to find relevant files efficiently
+            # REMEMBER: You are a file finder and organizer, documenting WHERE everything is located.""",
+            #                         expected_output="Structured list of file locations organized by type (implementation, tests, config, docs, types)",
+            #                     )
+            #                 ],
+            #                 max_iter=10,
+            #             ),
             AgentType.THINK_EXECUTE: AgentConfig(
-                role="Think and Execute Specialist",
-                goal="Think through problems systematically and execute tasks using all available tools",
-                backstory="""You are a versatile problem-solver with access to all available tools. Your job is to think through problems step-by-step and execute tasks efficiently.
+                role="Task Execution Specialist",
+                goal="Execute specific tasks with clear, actionable results",
+                backstory="""You are a focused task executor. You receive ONE specific task from the supervisor and execute it completely, then provide a clear summary of what you accomplished.
 
-You have access to the complete toolkit including:
-- Code analysis and retrieval tools
-- File system operations
-- Knowledge graph queries
-- Web search and content extraction
-- Linear issue management
-- GitHub integration
-- Intelligent reasoning tools
-
-Your approach should be methodical:
-1. Understand the task requirements
-2. Plan your approach using available tools
-3. Execute the plan step by step
-4. Verify results and iterate if needed""",
+Your execution approach:
+1. Understand the EXACT task assigned to you
+2. Plan the specific actions needed
+3. Execute those actions step by step
+4. Document what you actually accomplished
+5. Provide concrete results and deliverables""",
                 tasks=[
                     TaskConfig(
-                        description="""Execute assigned tasks using systematic thinking and all available tools:
+                        description="""Execute the specific task assigned by the supervisor.
 
-AVAILABLE TOOLS (ALL TOOLS FROM TOOL SERVICE):
-- fetch_file: Read complete file contents
-- get_code_file_structure: Get directory structure and file organization
-- analyze_code_structure: Analyze code elements (classes, functions) in a file
-- get_code_from_probable_node_name: Get code for specific functions/classes by name
-- get_code_from_node_id: Get code for specific node IDs
-- get_code_from_multiple_node_ids: Get code for multiple node IDs at once
-- ask_knowledge_graph_queries: Query the knowledge graph for code relationships
-- get_nodes_from_tags: Find code nodes using semantic tags
-- get_node_neighbours_from_node_id: Find related/connected code
-- get_code_graph_from_node_id: Get code graph relationships
-- intelligent_code_graph: Advanced code graph analysis
-- change_detection: Detect changes in codebase
-- get_linear_issue: Get Linear issue details
-- update_linear_issue: Update Linear issues
-- think: Use reasoning and thinking tools
-- webpage_extractor: Extract content from web pages (if available)
-- github_tool: GitHub integration tools (if available)
-- web_search_tool: Search the web (if available)
+EXECUTION FOCUS:
+- You will receive ONE specific task to complete
+- Focus entirely on completing that exact task
+- Don't expand beyond what was asked
+- Execute using the most appropriate tools
+- Document every action you take
+- Provide concrete, measurable results
 
-EXECUTION STRATEGY:
-1. Use 'think' tool to plan your approach
-2. Break down complex tasks into smaller steps
-3. Use appropriate tools for each step
-4. Verify results and iterate as needed
-5. Provide comprehensive results with evidence
+TASK COMPLETION APPROACH:
+1. Clearly understand the task requirements
+2. Plan the specific steps needed
+3. Execute each step systematically
+4. Verify the results of each action
+5. Compile what was actually accomplished
 
-TASK EXECUTION PRINCIPLES:
-- Think before acting - use the 'think' tool to plan
-- Use the most appropriate tools for each subtask
-- Provide detailed explanations of your reasoning
-- Include evidence and references for your conclusions
-- Be thorough but efficient in tool usage""",
-                        expected_output="Comprehensive task completion with detailed reasoning, evidence, and results",
+EXECUTION SUMMARY REQUIREMENTS:
+Your Task Summary MUST include:
+- EXACTLY what task you were given
+- SPECIFIC actions you took to complete it
+- CONCRETE results and deliverables produced
+- FILES created, modified, or analyzed (with paths)
+- CODE written or changes made (with specifics)
+- ERRORS encountered and how resolved
+- VERIFICATION of task completion
+
+Focus on EXECUTION RESULTS, not analysis or recommendations.""",
+                        expected_output="Specific task completion with concrete execution results and deliverables",
                     )
                 ],
                 max_iter=20,
@@ -413,16 +460,25 @@ TASK EXECUTION PRINCIPLES:
             ],
             mcp_servers=mcp_toolsets,
             instructions=f"""
+            You are a {agent_type.value} specialist. Execute the assigned task and provide detailed results.
+
             Role: {config.role}
             Goal: {config.goal}
             Backstory: {config.backstory}
 
             {multimodal_instructions}
 
-            CURRENT CONTEXT AND AGENT TASK OVERVIEW:
-            {self._create_task_description(task_config=config.tasks[0], ctx=ctx, agent_type=agent_type)}
+            TASK: {self._create_task_description(task_config=config.tasks[0], ctx=ctx, agent_type=agent_type)}
 
-            SPECIALIZATION: You are a {agent_type.value} specialist. Focus on your area of expertise and provide detailed, professional results.
+            **REQUIREMENTS:**
+            - Execute the task completely and thoroughly
+            - Provide detailed results with technical details
+            - Include code snippets, file paths, and findings
+            - End with "## Task Summary" section containing:
+              * What you accomplished
+              * Key findings and results
+              * Technical details and code
+              * Any issues and how you resolved them
             """,
             result_type=str,
             output_retries=3,
@@ -431,7 +487,6 @@ TASK EXECUTION PRINCIPLES:
             end_strategy="exhaustive",
             model_settings={"max_tokens": 14000},
         )
-
         self._agent_instances[agent_type] = agent
         return agent
 
@@ -469,7 +524,7 @@ TASK EXECUTION PRINCIPLES:
             elif agent_type == AgentType.CBL:
                 description = "📍 DELEGATE TO CODEBASE LOCATOR - MANDATORY for finding files/components! Acts as a Super Grep/Glob/LS tool to locate where code lives. Use for ANY 'where is X located' questions."
             elif agent_type == AgentType.THINK_EXECUTE:
-                description = "🧠 DELEGATE TO THINK & EXECUTE AGENT - MANDATORY for ALL IMPLEMENTATION WORK! Builds, implements, fixes, and creates working solutions. Has access to all available tools and can write code, create files, and deliver working implementations. USE THIS TO GET THINGS BUILT AND WORKING - NOT JUST ANALYZED!"
+                description = "🔨 DELEGATE TO TASK EXECUTION AGENT - MANDATORY for ALL IMPLEMENTATION & BUILDING WORK! Give it ONE specific task to execute. It will create files, write code, make changes, and deliver working results. Use when you need something BUILT, CREATED, or IMPLEMENTED - not analyzed. Be specific about what to execute."
             else:
                 description = f"🤖 DELEGATE TO {agent_type.value.upper()} SPECIALIST - Use this to delegate tasks to the specialist agent"
 
@@ -509,114 +564,38 @@ TASK EXECUTION PRINCIPLES:
             ],
             mcp_servers=mcp_toolsets,
             instructions=f"""
-            🚨🚨🚨 STOP! READ THIS FIRST! 🚨🚨🚨
-            YOU ARE A SUPERVISOR AGENT. YOU SOLVE PROBLEMS BY ORCHESTRATING SPECIALISTS.
-            YOU ARE THE PROBLEM SOLVER - BREAK DOWN WORK AND COORDINATE THE SOLUTION!
+            You are a problem-solving supervisor who delegates complex tasks to specialized subagents.
 
-            Role: {self.config.role} - SUPERVISOR AGENT
+            **WHEN TO DELEGATE:**
+            - Complex problems requiring analysis, building, or multiple steps
+            - Code understanding, file searching, or implementation tasks
+            - Any task that needs specialized expertise
+
+            **WHEN TO ANSWER DIRECTLY:**
+            - Simple questions or clarifications
+            - Basic explanations or definitions
+            - Quick responses that don't require specialized work
+
+            **DELEGATION TOOLS:**
+            - delegate_to_codebase_analyzer: For code analysis and understanding
+            - delegate_to_codebase_locator: For finding files and components  
+            - delegate_to_think_execute: For building and implementing
+
+            **APPROACH:**
+            1. Understand the request
+            2. If complex → delegate to appropriate specialist
+            3. If simple → answer directly
+            4. Synthesize results into complete solution
+
+            Role: {self.config.role}
             Goal: {self.config.goal}
             Backstory: {self.config.backstory}
 
             {multimodal_instructions}
 
-            CURRENT CONTEXT AND SUPERVISOR TASK OVERVIEW:
-            {self._create_supervisor_task_description(ctx)}
+            CONTEXT: {self._create_supervisor_task_description(ctx)}
 
-            🚨 CRITICAL: YOU ARE THE PROBLEM-SOLVING ORCHESTRATOR 🚨
 
-            YOUR ROLE AS PROBLEM-SOLVING SUPERVISOR:
-            - YOU are responsible for solving the user's problem
-            - YOU break down complex problems into smaller, well-defined tasks
-            - YOU use todo management tools to track and coordinate the solution
-            - YOU delegate specific, focused subtasks to appropriate specialists
-            - YOU synthesize specialist results into the final solution
-            - YOU ensure the problem gets fully solved
-
-            PROBLEM-SOLVING WORKFLOW (MANDATORY STEPS):
-            1. Understand the user's problem/request
-            2. Break it down into smaller, well-defined tasks using create_todo
-            3. IMMEDIATELY start delegating: Mark first task as in_progress and delegate to specialist
-            4. When specialist completes, add results to todo notes and mark completed
-            5. Continue delegating remaining tasks one by one
-            6. Synthesize all specialist results into final solution
-            7. Present the complete solution to the user
-
-            REQUIRED BEHAVIOR (MUST DO BOTH):
-            ✅ Use create_todo to break down complex problems into manageable tasks
-            ✅ IMMEDIATELY delegate each task using delegate_to_[agent_type] tools
-            ✅ Use update_todo_status to track each delegation (pending → in_progress → completed)
-            ✅ Use add_todo_note to record specialist results
-            ✅ Continue delegating until all todos are completed
-            ✅ Synthesize all specialist results into a comprehensive solution
-
-            CRITICAL COMMUNICATION REQUIREMENT:
-            🗣️ ALWAYS explain what you're doing before each tool call with detailed context:
-
-            BEFORE EVERY TOOL CALL, PROVIDE CLEAR EXPLANATION:
-            - Before create_todo: "I'm breaking down this problem into manageable tasks. Let me create a todo for [specific task] because [reason]..."
-            - Before update_todo_status: "I'm updating task [ID/title] from [old status] to [new status] because [reason]..."
-            - Before delegate_to_codebase_analyzer: "I'm delegating codebase analysis to the specialist because we need to understand [specific aspect]..."
-            - Before delegate_to_codebase_locator: "I'm delegating file location to the specialist to find [specific files/components] for [purpose]..."
-            - Before delegate_to_think_execute: "I'm delegating implementation work to the Think & Execute agent to [specific action] because [reason]..."
-            - Before add_todo_note: "I'm recording the results from [agent] for task [ID/title]. The specialist found/completed [summary]..."
-            - Before list_todos: "Let me check the current progress on all tasks to see what's completed and what needs attention next..."
-
-            COMMUNICATION STYLE:
-            ✅ Always explain the "why" behind each action
-            ✅ Reference specific task IDs/titles when updating todos
-            ✅ Mention which specialist you're delegating to and why they're the right choice
-            ✅ Summarize key findings when recording results
-            ✅ Keep the user informed of your orchestration strategy
-
-            CRITICAL: You MUST use both todo management AND delegation tools together!
-
-            AVAILABLE SPECIALIST AGENTS (USE THESE DELEGATION TOOLS IMMEDIATELY):
-            - delegate_to_codebase_analyzer: For analyzing codebase implementation details and documenting how code works
-            - delegate_to_codebase_locator: For locating files, directories, and components relevant to a feature or task
-            - delegate_to_think_execute: For general problem-solving, implementation, debugging, and complex analysis tasks
-
-            TODO MANAGEMENT TOOLS (FOR LONG-RUNNING TASKS):
-            - create_todo: Create todo items to break down complex requests into manageable tasks
-            - update_todo_status: Mark todos as in_progress, completed, etc.
-            - list_todos: See current task state and progress
-            - get_todo_summary: Get overview of all todos and their status
-            - add_todo_note: Add progress notes to todos
-
-            ORCHESTRATION WORKFLOW - COMBINE TODO MANAGEMENT + DELEGATION:
-
-            FOR SIMPLE REQUESTS:
-            1. Understand the specific task needed
-            2. IMMEDIATELY delegate to the appropriate specialist using delegate_to_[agent_type]
-            3. Present the result to user
-
-            FOR COMPLEX PROBLEMS (YOUR MAIN ROLE - MUST USE BOTH TODOS + DELEGATION):
-            1. Analyze the user's problem and what needs to be solved
-            2. Break it down into specific, well-defined subtasks using create_todo
-            3. Start working through todos systematically:
-               - update_todo_status(todo_id, "in_progress")
-               - IMMEDIATELY delegate_to_[appropriate_specialist](task_description)
-               - add_todo_note(todo_id, specialist_results)
-               - update_todo_status(todo_id, "completed")
-            4. Continue until all todos are completed
-            5. Synthesize all specialist results into a complete solution
-            6. Present the final comprehensive solution to user
-
-            EXAMPLE ORCHESTRATION - "Review and improve CLI implementation":
-            1. create_todo("Locate CLI files", "Find all CLI-related files", "high", "codebase_locator")
-            2. create_todo("Analyze CLI structure", "Examine current implementation", "high", "codebase_analyzer")
-            3. create_todo("Identify improvements", "Find issues and improvements", "high", "think_execute")
-            4. create_todo("Implement fixes", "Apply improvements to code", "high", "think_execute")
-            5. For EACH todo: update_todo_status → delegate_to_specialist → add_todo_note → mark completed
-            6. Synthesize all specialist results into final improved CLI implementation
-
-            MANDATORY: You MUST use BOTH create_todo AND delegate_to_[agent_type] tools together!
-
-            YOUR COORDINATION RESPONSIBILITIES:
-            - Break down problems into actionable subtasks
-            - Choose the right specialist for each subtask
-            - Track progress and coordinate between specialists
-            - Ensure nothing is missed in the solution
-            - Synthesize all specialist results into the final comprehensive solution
             """,
             result_type=str,
             output_retries=3,
@@ -625,7 +604,6 @@ TASK EXECUTION PRINCIPLES:
             end_strategy="exhaustive",
             model_settings={"max_tokens": 14000},
         )
-
         self._supervisor_agent = supervisor_agent
         return supervisor_agent
 
@@ -644,28 +622,108 @@ TASK EXECUTION PRINCIPLES:
                 # Create the delegate agent
                 delegate_agent = self._create_agent(agent_type, self._current_context)
 
-                # Prepare the task with context
-                full_task = f"""
-                DELEGATED TASK: {task_description}
+                # Prepare task assignment for each agent type
+                if agent_type == AgentType.THINK_EXECUTE:
+                    full_task = f"""TASK: {task_description}
+CONTEXT: {context}
 
+Execute this task completely. Create files, write code, make changes as needed.
+Test and verify your work. Document what you accomplished.
+
+End with "## Task Summary" including what you built, files created/modified, code written, and verification steps."""
+                elif agent_type == AgentType.CAB:
+                    full_task = f"""TASK: {task_description}
                 CONTEXT: {context}
 
-                Please complete this task using your specialized knowledge and available tools.
-                Provide a detailed, professional response.
-                """
+Analyze the codebase thoroughly. Examine files, understand architecture, trace functionality.
+Provide detailed insights with code snippets and file references.
 
-                # Run the delegate agent
+End with "## Task Summary" including analysis scope, key findings, code references, and any issues discovered."""
+                elif agent_type == AgentType.CBL:
+                    full_task = f"""TASK: {task_description}
+CONTEXT: {context}
+
+Find and locate the requested files, components, or information.
+Search systematically and document all relevant locations.
+
+End with "## Task Summary" including search scope, files found, locations, and relationships."""
+                else:
+                    full_task = f"""TASK: {task_description}
+CONTEXT: {context}
+
+Use your specialized expertise to complete this task effectively.
+Provide comprehensive results with technical details.
+
+End with "## Task Summary" including what you accomplished, key results, technical details, and any issues."""
+
+                # Run the delegate agent with independent usage tracking
                 result = await delegate_agent.run(
                     user_prompt=full_task,
-                    usage=ctx.usage,  # Pass usage to track across agents
+                    # No usage parameter = fresh, independent usage tracking for this subagent
                 )
 
                 logger.info(f"Task completed by {agent_type.value} agent")
-                return result.output
+
+                # Enhanced output parsing with error handling
+                if result and hasattr(result, "output") and result.output:
+                    # Extract the Task Summary section for clean supervisor context
+                    summary = extract_task_summary_from_response(result.output)
+
+                    if summary and len(summary.strip()) > 0:
+                        logger.info(
+                            f"Extracted task summary for supervisor (length: {len(summary)} chars)"
+                        )
+                        return summary
+                    else:
+                        # No valid summary found, return formatted error
+                        logger.warning(
+                            f"No valid task summary found in {agent_type.value} response"
+                        )
+                        return f"""
+## Task Summary
+
+❌ **ERROR: No valid task summary found**
+
+**Agent Type:** {agent_type.value}
+**Task:** {task_description}
+**Issue:** The subagent did not provide a properly formatted Task Summary section
+
+**Raw Response (truncated):**
+{result.output[:500]}{'...' if len(result.output) > 500 else ''}
+
+**Recommendation:** The supervisor should retry the delegation with clearer instructions.
+                        """.strip()
+                else:
+                    # No output or empty result
+                    logger.error(
+                        f"Empty or invalid result from {agent_type.value} agent"
+                    )
+                    return f"""
+## Task Summary
+
+❌ **ERROR: Empty or invalid result**
+
+**Agent Type:** {agent_type.value}
+**Task:** {task_description}
+**Issue:** The subagent returned no output or an invalid response
+
+**Recommendation:** The supervisor should retry the delegation or try a different approach.
+                    """.strip()
 
             except Exception as e:
                 logger.error(f"Error in delegation to {agent_type.value}: {e}")
-                return f"Error occurred while delegating to {agent_type.value} agent: {str(e)}"
+                return f"""
+## Task Summary
+
+❌ **ERROR: Delegation failed**
+
+**Agent Type:** {agent_type.value}
+**Task:** {task_description}
+**Error:** {str(e)}
+**Error Type:** {type(e).__name__}
+
+**Recommendation:** The supervisor should investigate the error and retry with a different approach or agent.
+                """.strip()
 
         return delegate_function
 
@@ -746,7 +804,7 @@ TASK EXECUTION PRINCIPLES:
                 {task_config.description}
 
                 INSTRUCTIONS:
-                1. Use the available tools to gather information
+                1. Gather the necessary information
                 2. {"Analyze the provided images in detail and " if ctx.has_images() else ""}Process and synthesize the gathered information
                 3. Format your response in markdown unless explicitly asked to output in a different format, make sure it's well formatted
                 4. Include relevant code snippets and file references
@@ -788,56 +846,10 @@ TASK EXECUTION PRINCIPLES:
             """
 
         return f"""
-                CONTEXT:
-                Project ID: {ctx.project_id}
-                Node IDs: {" ,".join(ctx.node_ids)}
-                Project Name (this is name from github. i.e. owner/repo): {ctx.project_name}
-
+Project: {ctx.project_name} (ID: {ctx.project_id})
+Nodes: {", ".join(ctx.node_ids) if ctx.node_ids else "none"}
                 {image_context}
-
-                Additional Context:
-                {ctx.additional_context if ctx.additional_context != "" else "no additional context"}
-
-                SUPERVISOR TASK HANDLING:
-                {self.config.tasks[0].description if self.config.tasks else "Coordinate and delegate tasks to appropriate specialist agents"}
-
-                SUPERVISOR INSTRUCTIONS (ORCHESTRATION-FOCUSED):
-                1. Understand the user's problem and what needs to be solved
-                2. Break complex problems into specific, well-defined subtasks using create_todo
-                3. Delegate each subtask to the appropriate specialist
-                4. Track progress and coordinate results using todo management tools
-                5. Synthesize all specialist results into a complete solution
-                6. Format response in markdown unless explicitly asked otherwise
-
-                ORCHESTRATION DELEGATION RULES (MUST USE BOTH TOOLS):
-                - Break down complex problems using create_todo
-                - IMMEDIATELY delegate each todo using delegate_to_[agent_type] tools
-                - File/component location tasks → delegate_to_codebase_locator
-                - Code analysis tasks → delegate_to_codebase_analyzer
-                - Implementation/problem-solving tasks → delegate_to_think_execute
-                - Track each delegation using update_todo_status
-
-                MANDATORY WORKFLOW FOR EACH TODO:
-                1. create_todo(title, description, priority, assigned_agent)
-                2. update_todo_status(todo_id, "in_progress")
-                3. delegate_to_[appropriate_agent](task_description)
-                4. add_todo_note(todo_id, specialist_results)
-                5. update_todo_status(todo_id, "completed")
-                6. Move to next todo
-
-                TODO + DELEGATION INTEGRATION:
-                - Every todo MUST be followed by immediate delegation
-                - Every delegation result MUST be recorded in todo notes
-                - Track progress through both todo status and delegation completion
-                - Use list_todos to see what needs to be delegated next
-
-                CRITICAL RULES:
-                - NEVER create todos without delegating them
-                - NEVER delegate without tracking in todos
-                - You MUST use BOTH todo management AND delegation tools
-                - Each subtask gets both a todo AND a delegation
-                - Synthesize all specialist results into comprehensive solutions
-                {"- Provide detailed image analysis when images are present" if ctx.has_images() else ""}
+Context: {ctx.additional_context or "none"}
             """
 
     def _create_multimodal_user_content(
