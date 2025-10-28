@@ -22,9 +22,7 @@ from .chat_agents.system_agents import (
     unit_test_agent,
 )
 from app.modules.intelligence.provider.provider_service import ProviderService
-from app.modules.intelligence.agents.chat_agents.adaptive_agent import (
-    PromptService,
-)
+from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.intelligence.agents.chat_agents.supervisor_agent import (
     SupervisorAgent,

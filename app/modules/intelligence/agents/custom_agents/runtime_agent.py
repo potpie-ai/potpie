@@ -1,10 +1,12 @@
 from pydantic import BaseModel
-from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
-from app.modules.intelligence.provider.provider_service import (
-    ProviderService,
+from app.modules.intelligence.agents.chat_agents.agent_config import (
+    AgentConfig,
+    TaskConfig,
 )
+from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
+from app.modules.intelligence.provider.exceptions import UnsupportedProviderError
+from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
-from ..chat_agents.crewai_agent import AgentConfig, CrewAIAgent, TaskConfig
 from ..chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from app.modules.utils.logger import setup_logger
 from typing import Any, AsyncGenerator, Dict, List, Union
@@ -76,16 +78,15 @@ class RuntimeCustomAgent(ChatAgent):
             )
             mcp_servers = []
 
-        if self.llm_provider.is_current_model_supported_by_pydanticai(
-            config_type="chat"
-        ):
+        if self.llm_provider.supports_pydantic("chat"):
             agent = PydanticRagAgent(
                 self.llm_provider, agent_config, tools, mcp_servers
             )
             self._pydantic_agent = agent  # Store reference for status access
             return agent
-        else:
-            return CrewAIAgent(self.llm_provider, agent_config, tools)
+        raise UnsupportedProviderError(
+            f"Model '{self.llm_provider.chat_config.model}' does not support Pydantic-based agents."
+        )
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if ctx.node_ids and len(ctx.node_ids) > 0:
