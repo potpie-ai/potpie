@@ -520,13 +520,13 @@ Focus on EXECUTION RESULTS, not analysis or recommendations.""",
         for agent_type in self.delegate_agents.keys():
             # Create highly attractive descriptions for each delegation tool
             if agent_type == AgentType.CAB:
-                description = "🔍 DELEGATE TO CODEBASE ANALYZER - MANDATORY for understanding how code works! Analyzes implementation details, traces data flow, documents technical workings with precise file:line references. Use for ANY 'how does X work' questions."
+                description = "🔍 DELEGATE TO CODEBASE ANALYZER - For understanding how code works! Analyzes implementation details, traces data flow, documents technical workings with precise file:line references. Use for 'how does X work' questions. DELEGATE ONE FOCUSED ANALYSIS TASK AT A TIME."
             elif agent_type == AgentType.CBL:
-                description = "📍 DELEGATE TO CODEBASE LOCATOR - MANDATORY for finding files/components! Acts as a Super Grep/Glob/LS tool to locate where code lives. Use for ANY 'where is X located' questions."
+                description = "📍 DELEGATE TO CODEBASE LOCATOR - For finding files/components! Acts as a Super Grep/Glob/LS tool to locate where code lives. Use for 'where is X located' questions. DELEGATE ONE FOCUSED SEARCH TASK AT A TIME."
             elif agent_type == AgentType.THINK_EXECUTE:
-                description = "🔨 DELEGATE TO TASK EXECUTION AGENT - MANDATORY for ALL IMPLEMENTATION & BUILDING WORK! Give it ONE specific task to execute. It will create files, write code, make changes, and deliver working results. Use when you need something BUILT, CREATED, or IMPLEMENTED - not analyzed. Be specific about what to execute."
+                description = "🔨 DELEGATE TO TASK EXECUTION AGENT - For implementation & building work! Give it ONE specific, focused task to execute. It will create files, write code, make changes, and deliver working results. Use when you need something BUILT, CREATED, or IMPLEMENTED - not analyzed. DELEGATE ONE FOCUSED IMPLEMENTATION TASK AT A TIME."
             else:
-                description = f"🤖 DELEGATE TO {agent_type.value.upper()} SPECIALIST - Use this to delegate tasks to the specialist agent"
+                description = f"🤖 DELEGATE TO {agent_type.value.upper()} SPECIALIST - Use this to delegate ONE FOCUSED TASK to the specialist agent"
 
             delegation_tools.append(
                 Tool(
@@ -581,9 +581,22 @@ Focus on EXECUTION RESULTS, not analysis or recommendations.""",
             - delegate_to_codebase_locator: For finding files and components  
             - delegate_to_think_execute: For building and implementing
 
+            **CRITICAL DELEGATION RULES:**
+            1. **ONE TASK AT A TIME**: Always delegate ONE focused, specific task to each subagent
+            2. **SINGULAR FOCUS**: Each delegation should have a single, clear objective
+            3. **NO MULTI-PART TASKS**: Break complex requests into separate, focused delegations
+            4. **CLEAR TASK DESCRIPTION**: Provide specific, actionable task descriptions
+            5. **SEQUENTIAL DELEGATION**: Delegate tasks one by one, not all at once
+
+            **TASK BREAKDOWN STRATEGY:**
+            - If a request has multiple parts, delegate each part separately
+            - Each delegation should be self-contained and focused
+            - Wait for one task to complete before delegating the next
+            - Use results from previous delegations to inform subsequent ones
+
             **APPROACH:**
             1. Understand the request
-            2. If complex → delegate to appropriate specialist
+            2. If complex → break into focused tasks → delegate ONE at a time
             3. If simple → answer directly
             4. Synthesize results into complete solution
 
@@ -622,39 +635,12 @@ Focus on EXECUTION RESULTS, not analysis or recommendations.""",
                 # Create the delegate agent
                 delegate_agent = self._create_agent(agent_type, self._current_context)
 
-                # Prepare task assignment for each agent type
-                if agent_type == AgentType.THINK_EXECUTE:
-                    full_task = f"""TASK: {task_description}
+                full_task = f"""Execute the following task:
+
+TASK: {task_description}
 CONTEXT: {context}
 
-Execute this task completely. Create files, write code, make changes as needed.
-Test and verify your work. Document what you accomplished.
-
-End with "## Task Summary" including what you built, files created/modified, code written, and verification steps."""
-                elif agent_type == AgentType.CAB:
-                    full_task = f"""TASK: {task_description}
-                CONTEXT: {context}
-
-Analyze the codebase thoroughly. Examine files, understand architecture, trace functionality.
-Provide detailed insights with code snippets and file references.
-
-End with "## Task Summary" including analysis scope, key findings, code references, and any issues discovered."""
-                elif agent_type == AgentType.CBL:
-                    full_task = f"""TASK: {task_description}
-CONTEXT: {context}
-
-Find and locate the requested files, components, or information.
-Search systematically and document all relevant locations.
-
-End with "## Task Summary" including search scope, files found, locations, and relationships."""
-                else:
-                    full_task = f"""TASK: {task_description}
-CONTEXT: {context}
-
-Use your specialized expertise to complete this task effectively.
-Provide comprehensive results with technical details.
-
-End with "## Task Summary" including what you accomplished, key results, technical details, and any issues."""
+Please execute this task and provide your result in a "## Task Summary" section at the end of your response."""
 
                 # Run the delegate agent with independent usage tracking
                 result = await delegate_agent.run(
