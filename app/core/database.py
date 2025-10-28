@@ -4,7 +4,8 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, AsyncEngine
+from sqlalchemy.pool import NullPool
 
 load_dotenv(override=True)
 
@@ -38,7 +39,7 @@ async_engine = create_async_engine(
     max_overflow=10,
     pool_timeout=30,
     pool_recycle=1800,
-    pool_pre_ping=True,
+    pool_pre_ping=False,  # Disabled: causes event loop issues in Celery workers
     echo=False,
 )
 
@@ -49,6 +50,45 @@ AsyncSessionLocal = sessionmaker(
     autoflush=False,
     expire_on_commit=False,  # Good practice for async sessions
 )
+
+# Special async session factory for Celery tasks
+# Creates sessions with fresh connections to avoid cross-task Future binding issues
+def create_celery_async_session() -> tuple[AsyncSession, AsyncEngine]:
+    """
+    Creates an async session with a fresh connection for Celery tasks.
+
+    This bypasses the connection pool to avoid asyncpg Future objects being
+    bound to different coroutine contexts across tasks in the same worker.
+
+    Usage:
+        async_db, engine = create_celery_async_session()
+        try:
+            # Use session
+            result = await async_db.execute(query)
+        finally:
+            await async_db.close()  # Closes connection completely
+            await engine.dispose()  # Dispose the engine
+
+    Returns:
+        Tuple of (AsyncSession with a fresh, non-pooled connection, Engine)
+    """
+    # Create engine without pooling for this specific connection
+    engine = create_async_engine(
+        ASYNC_DATABASE_URL,
+        poolclass=NullPool,  # No pooling - fresh connection each time
+        echo=False,
+    )
+
+    # Create session bound to this engine
+    session_factory = sessionmaker(
+        bind=engine,
+        class_=AsyncSession,
+        autocommit=False,
+        autoflush=False,
+        expire_on_commit=False,
+    )
+
+    return session_factory(), engine
 
 # Base class for all ORM models
 Base = declarative_base()

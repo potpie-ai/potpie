@@ -45,8 +45,9 @@ def execute_agent_background(
             )
             from app.modules.conversations.message.message_store import MessageStore
 
+            # Use BaseTask's context manager to get a fresh, non-pooled async session
+            # This avoids asyncpg Future binding issues across tasks sharing the same event loop
             async with self.async_db() as async_db:
-
                 # Get user email for service creation
                 user_service = UserService(self.db)
                 user = user_service.get_user_by_uid(user_id)
@@ -134,7 +135,7 @@ def execute_agent_background(
                         },
                     )
 
-            return True  # Indicate successful completion
+                return True  # Indicate successful completion
 
         # Run the async agent execution on the worker's long-lived loop
         completed = self.run_async(run_agent())
@@ -215,6 +216,8 @@ def execute_regenerate_background(
             )
             from app.modules.conversations.message.message_store import MessageStore
 
+            # Use BaseTask's context manager to get a fresh, non-pooled async session
+            # This avoids asyncpg Future binding issues across tasks sharing the same event loop
             async with self.async_db() as async_db:
                 # Get user email for service creation
                 user_service = UserService(self.db)
@@ -303,7 +306,7 @@ def execute_regenerate_background(
                         f"No chunks received during regeneration for conversation {conversation_id}"
                     )
 
-            return True  # Indicate successful completion
+                return True  # Indicate successful completion
 
         # Run the async regeneration on the worker's long-lived loop
         completed = self.run_async(run_regeneration())

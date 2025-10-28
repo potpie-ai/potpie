@@ -20,13 +20,40 @@ class BaseTask(Task):
     @asynccontextmanager
     async def async_db(self):
         """
-        Provides an async session that is automatically created and closed.
+        Provides an async session with a fresh connection for Celery tasks.
+
+        This creates a non-pooled connection to avoid asyncpg Future binding issues
+        when tasks share the same event loop but have different coroutine contexts.
+
+        Usage:
+            async with self.async_db() as session:
+                result = await session.execute(query)
+                await session.commit()
         """
-        async_session = AsyncSessionLocal()
+        from app.core.database import create_celery_async_session
+
+        try:
+            task_id = self.request.id if self.request else 'test'
+        except (AttributeError, TypeError):
+            task_id = 'test'
+
+        logger.debug(f"[Task {task_id}] Creating fresh async DB connection")
+        async_session, engine = create_celery_async_session()
+
         try:
             yield async_session
+            logger.debug(f"[Task {task_id}] Async DB session operation completed successfully")
+        except Exception as e:
+            logger.error(f"[Task {task_id}] Error during async DB operation: {e}", exc_info=True)
+            raise
         finally:
-            await async_session.close()
+            try:
+                await async_session.close()
+                if engine is not None:
+                    await engine.dispose()
+                logger.debug(f"[Task {task_id}] Async DB connection closed and engine disposed")
+            except Exception as cleanup_error:
+                logger.error(f"[Task {task_id}] Error during connection cleanup: {cleanup_error}", exc_info=True)
 
     def _get_event_loop(self):
         """
