@@ -602,7 +602,7 @@ Focus on EXECUTION RESULTS, not analysis or recommendations.""",
             output_type=str,
             defer_model_check=True,
             end_strategy="exhaustive",
-            model_settings={"max_tokens": 14000},
+            # model_settings={"max_tokens": 14000},
         )
         self._supervisor_agent = supervisor_agent
         return supervisor_agent

@@ -56,6 +56,10 @@ def get_tool_run_message(tool_name: str):
             return "Listing todos"
         case "get_todo_summary":
             return "Getting todo summary"
+        case tool_name if tool_name.startswith("delegate_to_"):
+            # Handle delegation tools - extract agent type and return appropriate message
+            agent_type = tool_name[12:]  # Remove "delegate_to_" prefix
+            return get_delegation_call_message(agent_type)
         case _:
             return "Querying data"
 
@@ -98,6 +102,10 @@ def get_tool_response_message(tool_name: str):
             return "Todos listed successfully"
         case "get_todo_summary":
             return "Todo summary generated successfully"
+        case tool_name if tool_name.startswith("delegate_to_"):
+            # Handle delegation tools - extract agent type and return appropriate message
+            agent_type = tool_name[12:]  # Remove "delegate_to_" prefix
+            return get_delegation_response_message(agent_type)
         case _:
             return "Data queried successfully"
 
@@ -163,6 +171,12 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             return "-> listing all todos\n"
         case "get_todo_summary":
             return "-> generating todo summary\n"
+        case tool_name if tool_name.startswith("delegate_to_"):
+            # Handle delegation tools - extract agent type and return appropriate info
+            agent_type = tool_name[12:]  # Remove "delegate_to_" prefix
+            task_description = args.get("task_description", "")
+            context = args.get("context", "")
+            return get_delegation_info_content(agent_type, task_description, context)
         case _:
             return ""
 
@@ -288,6 +302,11 @@ description:
             if isinstance(content, str):
                 return content
             return str(content)
+        case tool_name if tool_name.startswith("delegate_to_"):
+            # Handle delegation tools - extract agent type and return appropriate result content
+            agent_type = tool_name[12:]  # Remove "delegate_to_" prefix
+            result_content = str(content) if content else ""
+            return get_delegation_result_content(agent_type, result_content)
         case _:
             return ""
 
