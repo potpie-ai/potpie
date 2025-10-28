@@ -78,6 +78,6 @@ Start-Process -NoNewWindow powershell -ArgumentList "uvicorn app.main:app --host
 
 # Start Celery worker
 Write-Host "Starting Celery worker"
-Start-Process -NoNewWindow powershell -ArgumentList "celery -A app.celery.celery_app worker --loglevel=debug -Q ${Env:CELERY_QUEUE_NAME}_process_repository -E --pool=solo"
+Start-Process -NoNewWindow powershell -ArgumentList "celery -A app.celery.celery_app worker --loglevel=debug -Q ${Env:CELERY_QUEUE_NAME}_process_repository,${Env:CELERY_QUEUE_NAME}_agent_tasks -E --pool=solo"
 
 Write-Host "All services started successfully!"
