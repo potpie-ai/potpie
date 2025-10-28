@@ -2,7 +2,7 @@ import logging
 import asyncio
 from celery import Task
 from contextlib import asynccontextmanager
-from app.core.database import SessionLocal, AsyncSessionLocal
+from app.core.database import SessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -33,27 +33,36 @@ class BaseTask(Task):
         from app.core.database import create_celery_async_session
 
         try:
-            task_id = self.request.id if self.request else 'test'
+            task_id = self.request.id if self.request else "test"
         except (AttributeError, TypeError):
-            task_id = 'test'
+            task_id = "test"
 
         logger.debug(f"[Task {task_id}] Creating fresh async DB connection")
         async_session, engine = create_celery_async_session()
 
         try:
             yield async_session
-            logger.debug(f"[Task {task_id}] Async DB session operation completed successfully")
+            logger.debug(
+                f"[Task {task_id}] Async DB session operation completed successfully"
+            )
         except Exception as e:
-            logger.error(f"[Task {task_id}] Error during async DB operation: {e}", exc_info=True)
+            logger.error(
+                f"[Task {task_id}] Error during async DB operation: {e}", exc_info=True
+            )
             raise
         finally:
             try:
                 await async_session.close()
                 if engine is not None:
                     await engine.dispose()
-                logger.debug(f"[Task {task_id}] Async DB connection closed and engine disposed")
+                logger.debug(
+                    f"[Task {task_id}] Async DB connection closed and engine disposed"
+                )
             except Exception as cleanup_error:
-                logger.error(f"[Task {task_id}] Error during connection cleanup: {cleanup_error}", exc_info=True)
+                logger.error(
+                    f"[Task {task_id}] Error during connection cleanup: {cleanup_error}",
+                    exc_info=True,
+                )
 
     def _get_event_loop(self):
         """

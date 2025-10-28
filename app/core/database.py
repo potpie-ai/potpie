@@ -51,6 +51,7 @@ AsyncSessionLocal = sessionmaker(
     expire_on_commit=False,  # Good practice for async sessions
 )
 
+
 # Special async session factory for Celery tasks
 # Creates sessions with fresh connections to avoid cross-task Future binding issues
 def create_celery_async_session() -> tuple[AsyncSession, AsyncEngine]:
@@ -89,6 +90,7 @@ def create_celery_async_session() -> tuple[AsyncSession, AsyncEngine]:
     )
 
     return session_factory(), engine
+
 
 # Base class for all ORM models
 Base = declarative_base()
