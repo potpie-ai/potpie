@@ -11,54 +11,66 @@ MODEL_CONFIG_MAP = {
     "openai/gpt-4.1-mini": {
         "provider": "openai",
         "default_params": {"temperature": 0.3},
+        "context_window": 128000,
     },
     "openai/gpt-4.1": {
         "provider": "openai",
         "default_params": {"temperature": 0.3},
+        "context_window": 128000,
     },
     "openai/gpt-4o": {
         "provider": "openai",
         "default_params": {"temperature": 0.3},
+        "context_window": 128000,
     },
     # Anthropic Models
     "anthropic/claude-haiku-4-5-20251001": {
         "provider": "anthropic",
         "default_params": {"temperature": 0.2, "max_tokens": 8000},
+        "context_window": 200000,
     },
     "anthropic/claude-sonnet-4-5-20250929": {
         "provider": "anthropic",
         "default_params": {"temperature": 0.3, "max_tokens": 8000},
+        "context_window": 200000,
     },
     "anthropic/claude-sonnet-4-20250514": {
         "provider": "anthropic",
         "default_params": {"temperature": 0.3, "max_tokens": 8000},
+        "context_window": 200000,
     },
     "anthropic/claude-opus-4-1-20250805": {
         "provider": "anthropic",
         "default_params": {"temperature": 0.3, "max_tokens": 8000},
+        "context_window": 200000,
     },
     "anthropic/claude-3-7-sonnet-20250219": {
         "provider": "anthropic",
         "default_params": {"temperature": 0.3, "max_tokens": 8000},
+        "context_window": 200000,
     },
     "anthropic/claude-3-5-haiku-20241022": {
         "provider": "anthropic",
         "default_params": {"temperature": 0.2, "max_tokens": 8000},
+        "context_window": 200000,
     },
     # DeepSeek Models
     "openrouter/deepseek/deepseek-chat-v3-0324": {
         "provider": "deepseek",
         "default_params": {"temperature": 0.3, "max_tokens": 8000},
+        "context_window": 64000,
     },
     # Meta-Llama Models
     "openrouter/meta-llama/llama-3.3-70b-instruct": {
         "provider": "meta-llama",
         "default_params": {"temperature": 0.3},
+        "context_window": 128000,
     },
     # Gemini Models
     "openrouter/google/gemini-2.0-flash-001": {
         "provider": "gemini",
         "default_params": {"temperature": 0.3},
+        "context_window": 1000000,
     },
 }
 
@@ -144,3 +156,18 @@ def build_llm_provider_config(
         model=full_model_name,
         default_params=config_data["default_params"],
     )
+
+
+
+def get_context_window_for_model(model_string: str) -> int:
+    """
+    Get the context window size for a given model.
+    
+    Args:
+        model_string: Full model string (e.g., 'openai/gpt-4o')
+        
+    Returns:
+        Context window size in tokens. Defaults to 128000 if not found.
+    """
+    config = get_config_for_model(model_string)
+    return config.get("context_window", 128000)
