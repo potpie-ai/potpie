@@ -3,7 +3,6 @@ import json
 import logging
 from datetime import datetime, timezone
 from typing import AsyncGenerator, List, Optional, Dict, Union
-from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -21,11 +20,8 @@ from app.modules.conversations.conversation.conversation_schema import (
     CreateConversationRequest,
 )
 from app.modules.conversations.message.message_model import (
-    Message,
-    MessageStatus,
     MessageType,
 )
-from app.modules.intelligence.agents.custom_agents.custom_agent_model import CustomAgent
 from app.modules.conversations.message.message_schema import (
     MessageRequest,
     MessageResponse,
@@ -44,6 +40,8 @@ from app.modules.utils.posthog_helper import PostHogClient
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.media.media_service import MediaService
+from .conversation_store import ConversationStore, StoreError
+from ..message.message_store import MessageStore
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +72,8 @@ class ConversationService:
         db: Session,
         user_id: str,
         user_email: str,
+        conversation_store: ConversationStore,
+        message_store: MessageStore,
         project_service: ProjectService,
         history_manager: ChatHistoryService,
         provider_service: ProviderService,
@@ -83,9 +83,11 @@ class ConversationService:
         custom_agent_service: CustomAgentService,
         media_service: MediaService,
     ):
-        self.sql_db = db
+        self.db = db
         self.user_id = user_id
         self.user_email = user_email
+        self.conversation_store = conversation_store
+        self.message_store = message_store
         self.project_service = project_service
         self.history_manager = history_manager
         self.provider_service = provider_service
@@ -96,7 +98,14 @@ class ConversationService:
         self.media_service = media_service
 
     @classmethod
-    def create(cls, db: Session, user_id: str, user_email: str):
+    def create(
+        cls,
+        conversation_store: ConversationStore,
+        message_store: MessageStore,
+        db: Session,
+        user_id: str,
+        user_email: str,
+    ):
         project_service = ProjectService(db)
         history_manager = ChatHistoryService(db)
         provider_service = ProviderService(db, user_id)
@@ -107,10 +116,13 @@ class ConversationService:
         )
         custom_agent_service = CustomAgentService(db, provider_service, tool_service)
         media_service = MediaService(db)
+
         return cls(
             db,
             user_id,
             user_email,
+            conversation_store,
+            message_store,
             project_service,
             history_manager,
             provider_service,
@@ -136,9 +148,8 @@ class ConversationService:
             user_id = user_service.get_user_id_by_email(user_email)
 
         # Retrieve the conversation
-        conversation = (
-            self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
-        )
+        conversation = await self.conversation_store.get_by_id(conversation_id)
+
         if not conversation:
             logger.warning(f"Conversation {conversation_id} not found in database")
             return (
@@ -170,8 +181,6 @@ class ConversationService:
                 return ConversationAccessType.READ  # Shared users can only read
             else:
                 return ConversationAccessType.NOT_FOUND
-        else:
-            return ConversationAccessType.NOT_FOUND
 
         return ConversationAccessType.NOT_FOUND
 
@@ -199,12 +208,12 @@ class ConversationService:
                 else project_name
             )
 
-            conversation_id = self._create_conversation_record(
+            conversation_id = await self._create_conversation_record(
                 conversation, title, user_id, hidden
             )
 
             asyncio.create_task(
-                CodeProviderService(self.sql_db).get_project_structure_async(
+                CodeProviderService(self.db).get_project_structure_async(
                     conversation.project_ids[0]
                 )
             )
@@ -214,18 +223,16 @@ class ConversationService:
             return conversation_id, "Conversation created successfully."
         except IntegrityError as e:
             logger.error(f"IntegrityError in create_conversation: {e}", exc_info=True)
-            self.sql_db.rollback()
             raise ConversationServiceError(
                 "Failed to create conversation due to a database integrity error."
             ) from e
         except Exception as e:
             logger.error(f"Unexpected error in create_conversation: {e}", exc_info=True)
-            self.sql_db.rollback()
             raise ConversationServiceError(
                 "An unexpected error occurred while creating the conversation."
             ) from e
 
-    def _create_conversation_record(
+    async def _create_conversation_record(
         self,
         conversation: CreateConversationRequest,
         title: str,
@@ -243,8 +250,8 @@ class ConversationService:
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
-        self.sql_db.add(new_conversation)
-        self.sql_db.commit()
+        await self.conversation_store.create(new_conversation)
+
         logger.info(
             f"Project id : {conversation.project_ids[0]} Created new conversation with ID: {conversation_id}, title: {title}, user_id: {user_id}, agent_id: {conversation.agent_ids[0]}, hidden: {hidden}"
         )
@@ -377,24 +384,7 @@ class ConversationService:
     async def _get_conversation_with_message_count(
         self, conversation_id: str
     ) -> Conversation:
-        result = (
-            self.sql_db.query(
-                Conversation,
-                func.count(Message.id)
-                .filter(Message.type == MessageType.HUMAN)
-                .label("human_message_count"),
-            )
-            .outerjoin(Message, Conversation.id == Message.conversation_id)
-            .filter(Conversation.id == conversation_id)
-            .group_by(Conversation.id)
-            .first()
-        )
-
-        if result:
-            conversation, human_message_count = result
-            setattr(conversation, "human_message_count", human_message_count)
-            return conversation
-        return None
+        return await self.conversation_store.get_with_message_count(conversation_id)
 
     async def _generate_title(
         self, conversation: Conversation, message_content: str
@@ -423,10 +413,7 @@ class ConversationService:
         return generated_title
 
     async def _update_conversation_title(self, conversation_id: str, new_title: str):
-        self.sql_db.query(Conversation).filter_by(id=conversation_id).update(
-            {"title": new_title, "updated_at": datetime.now(timezone.utc)}
-        )
-        self.sql_db.commit()
+        await self.conversation_store.update_title(conversation_id, new_title)
 
     async def regenerate_last_message(
         self,
@@ -586,12 +573,8 @@ class ConversationService:
             raise ConversationServiceError(f"Failed to regenerate message: {str(e)}")
 
     async def _get_last_human_message(self, conversation_id: str):
-        message = (
-            self.sql_db.query(Message)
-            .filter_by(conversation_id=conversation_id, type=MessageType.HUMAN)
-            .order_by(Message.created_at.desc())
-            .first()
-        )
+        message = await self.message_store.get_last_human_message(conversation_id)
+
         if not message:
             logger.warning(f"No human message found in conversation {conversation_id}")
         return message
@@ -600,13 +583,8 @@ class ConversationService:
         self, conversation_id: str, timestamp: datetime
     ):
         try:
-            self.sql_db.query(Message).filter(
-                Message.conversation_id == conversation_id,
-                Message.created_at > timestamp,
-            ).update(
-                {Message.status: MessageStatus.ARCHIVED}, synchronize_session="fetch"
-            )
-            self.sql_db.commit()
+            await self.message_store.archive_messages_after(conversation_id, timestamp)
+
             logger.info(
                 f"Archived subsequent messages in conversation {conversation_id}"
             )
@@ -615,7 +593,6 @@ class ConversationService:
                 f"Failed to archive messages in conversation {conversation_id}: {e}",
                 exc_info=True,
             )
-            self.sql_db.rollback()
             raise ConversationServiceError(
                 "Failed to archive subsequent messages."
             ) from e
@@ -644,9 +621,7 @@ class ConversationService:
         node_ids: List[NodeContext],
         attachment_ids: Optional[List[str]] = None,
     ) -> AsyncGenerator[ChatMessageResponse, None]:
-        conversation = (
-            self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
-        )
+        conversation = await self.conversation_store.get_by_id(conversation_id)
         if not conversation:
             raise ConversationNotFoundError(
                 f"Conversation with id {conversation_id} not found"
@@ -849,15 +824,9 @@ class ConversationService:
         try:
             # Get the most recent human message with attachments
             latest_human_message = (
-                self.sql_db.query(Message)
-                .filter_by(
-                    conversation_id=conversation_id,
-                    type=MessageType.HUMAN,
-                    status=MessageStatus.ACTIVE,
+                await self.message_store.get_latest_human_message_with_attachments(
+                    conversation_id
                 )
-                .filter(Message.has_attachments == True)
-                .order_by(Message.created_at.desc())
-                .first()
             )
 
             if not latest_human_message:
@@ -895,28 +864,19 @@ class ConversationService:
             )
             if access_level == ConversationAccessType.READ:
                 raise AccessTypeReadError("Access denied.")
-            # Use a nested transaction if one is already in progress
-            with self.sql_db.begin_nested():
-                # Delete related messages first
-                deleted_messages = (
-                    self.sql_db.query(Message)
-                    .filter(Message.conversation_id == conversation_id)
-                    .delete(synchronize_session="fetch")
+
+            # Delete related messages first
+            deleted_messages = await self.message_store.delete_for_conversation(
+                conversation_id
+            )
+
+            # Delete the conversation
+            deleted_conversation = await self.conversation_store.delete(conversation_id)
+
+            if deleted_conversation == 0:
+                raise ConversationNotFoundError(
+                    f"Conversation with id {conversation_id} not found"
                 )
-
-                deleted_conversation = (
-                    self.sql_db.query(Conversation)
-                    .filter(Conversation.id == conversation_id)
-                    .delete(synchronize_session="fetch")
-                )
-
-                if deleted_conversation == 0:
-                    raise ConversationNotFoundError(
-                        f"Conversation with id {conversation_id} not found"
-                    )
-
-            # If we get here, commit the transaction
-            self.sql_db.commit()
 
             PostHogClient().send_event(
                 user_id,
@@ -935,21 +895,16 @@ class ConversationService:
 
         except ConversationNotFoundError as e:
             logger.warning(str(e))
-            self.sql_db.rollback()
             raise
         except AccessTypeReadError:
             raise
-
         except SQLAlchemyError as e:
             logger.error(f"Database error in delete_conversation: {e}", exc_info=True)
-            self.sql_db.rollback()
             raise ConversationServiceError(
                 f"Failed to delete conversation {conversation_id} due to a database error"
             ) from e
-
         except Exception as e:
             logger.error(f"Unexpected error in delete_conversation: {e}", exc_info=True)
-            self.sql_db.rollback()
             raise ConversationServiceError(
                 f"Failed to delete conversation {conversation_id} due to an unexpected error"
             ) from e
@@ -959,9 +914,11 @@ class ConversationService:
     ) -> ConversationInfoResponse:
 
         try:
-            conversation = (
-                self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
+            print(
+                "[conversation_service] Getting info for conversation:", conversation_id
             )
+            conversation = await self.conversation_store.get_by_id(conversation_id)
+
             if not conversation:
                 logger.warning(f"Conversation {conversation_id} not found in database")
                 raise ConversationNotFoundError(
@@ -980,10 +937,8 @@ class ConversationService:
                 )
                 raise AccessTypeNotFoundError("Access type not found")
 
-            total_messages = (
-                self.sql_db.query(Message)
-                .filter_by(conversation_id=conversation_id, status=MessageStatus.ACTIVE)
-                .count()
+            total_messages = await self.message_store.count_active_for_conversation(
+                conversation_id
             )
 
             agent_id = conversation.agent_ids[0] if conversation.agent_ids else None
@@ -996,9 +951,10 @@ class ConversationService:
                 if agent_id in system_agents.keys():
                     agent_ids = conversation.agent_ids
                 else:
-                    custom_agent = (
-                        self.sql_db.query(CustomAgent).filter_by(id=agent_id).first()
+                    custom_agent = await self.custom_agent_service.get_agent_model(
+                        agent_id
                     )
+
                     if custom_agent:
                         agent_ids = [custom_agent.role]
 
@@ -1044,24 +1000,15 @@ class ConversationService:
                 )
                 raise AccessTypeNotFoundError("Access denied.")
 
-            conversation = (
-                self.sql_db.query(Conversation).filter_by(id=conversation_id).first()
-            )
+            conversation = await self.conversation_store.get_by_id(conversation_id)
             if not conversation:
                 logger.warning(f"Conversation {conversation_id} not found in database")
                 raise ConversationNotFoundError(
                     f"Conversation with id {conversation_id} not found"
                 )
 
-            messages = (
-                self.sql_db.query(Message)
-                .filter_by(conversation_id=conversation_id)
-                .filter_by(status=MessageStatus.ACTIVE)
-                .filter(Message.type != MessageType.SYSTEM_GENERATED)
-                .order_by(Message.created_at)
-                .offset(start)
-                .limit(limit)
-                .all()
+            messages = await self.message_store.get_active_for_conversation(
+                conversation_id, start, limit
             )
 
             message_responses = []
@@ -1143,19 +1090,15 @@ class ConversationService:
             )
             if access_level == ConversationAccessType.READ:
                 raise AccessTypeReadError("Access denied.")
-            conversation = (
-                self.sql_db.query(Conversation)
-                .filter_by(id=conversation_id, user_id=user_id)
-                .first()
-            )
-            if not conversation:
+
+            conversation = await self.conversation_store.get_by_id(conversation_id)
+
+            if not conversation or conversation.user_id != user_id:
                 raise ConversationNotFoundError(
                     f"Conversation with id {conversation_id} not found"
                 )
 
-            conversation.title = new_title
-            conversation.updated_at = datetime.now(timezone.utc)
-            self.sql_db.commit()
+            await self.conversation_store.update_title(conversation_id, new_title)
 
             logger.info(
                 f"Renamed conversation {conversation_id} to '{new_title}' by user {user_id}"
@@ -1167,7 +1110,6 @@ class ConversationService:
 
         except SQLAlchemyError as e:
             logger.error(f"Database error in rename_conversation: {e}", exc_info=True)
-            self.sql_db.rollback()
             raise ConversationServiceError(
                 "Failed to rename conversation due to a database error"
             ) from e
@@ -1175,7 +1117,45 @@ class ConversationService:
             raise
         except Exception as e:
             logger.error(f"Unexpected error in rename_conversation: {e}", exc_info=True)
-            self.sql_db.rollback()
             raise ConversationServiceError(
                 "Failed to rename conversation due to an unexpected error"
+            ) from e
+
+    async def get_conversations_with_projects_for_user(
+        self,
+        user_id: str,
+        start: int,
+        limit: int,
+        sort: str = "updated_at",
+        order: str = "desc",
+    ) -> List[Conversation]:
+        """
+        Orchestrates the retrieval of conversations for a user by delegating to the store.
+        """
+        try:
+            # The service's job is now just to call the store.
+            # All the complex query logic is gone.
+            return await self.conversation_store.get_for_user(
+                user_id=user_id,
+                start=start,
+                limit=limit,
+                sort=sort,
+                order=order,
+            )
+        except StoreError as e:
+            # Catch the specific error from the store and wrap it in a
+            # service-level exception, which is a good practice.
+            logger.error(
+                f"Store layer failed to get conversations for user {user_id}: {e}"
+            )
+            raise ConversationServiceError(
+                f"Failed to retrieve conversations for user {user_id}"
+            ) from e
+        except Exception as e:
+            logger.error(
+                f"Unexpected error while getting conversations for user {user_id}: {e}",
+                exc_info=True,
+            )
+            raise ConversationServiceError(
+                f"An unexpected error occurred while retrieving conversations for user {user_id}"
             ) from e
