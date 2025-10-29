@@ -12,6 +12,7 @@ from app.api.router import get_api_key_user
 
 from .sentry_oauth_v2 import SentryOAuthV2
 from .linear_oauth import LinearOAuth
+from .jira_oauth import JiraOAuth
 from .integrations_service import IntegrationsService
 from .integrations_schema import (
     OAuthInitiateRequest,
@@ -22,6 +23,9 @@ from .integrations_schema import (
     LinearIntegrationStatus,
     LinearSaveRequest,
     LinearSaveResponse,
+    JiraIntegrationStatus,
+    JiraSaveRequest,
+    JiraSaveResponse,
     IntegrationCreateRequest,
     IntegrationUpdateRequest,
     IntegrationResponse,
@@ -45,6 +49,12 @@ def get_linear_oauth() -> LinearOAuth:
     """Dependency to get Linear OAuth integration instance"""
     config = Config()
     return LinearOAuth(config)
+
+
+def get_jira_oauth() -> JiraOAuth:
+    """Dependency to get Jira OAuth integration instance"""
+    config = Config()
+    return JiraOAuth(config)
 
 
 def get_integrations_service(db: Session = Depends(get_db)) -> IntegrationsService:
@@ -419,6 +429,288 @@ async def save_linear_integration(
             success=False,
             data=None,
             error=f"Failed to save Linear integration: {str(e)}",
+        )
+
+
+@router.post("/jira/initiate")
+async def initiate_jira_oauth(
+    request: OAuthInitiateRequest,
+    jira_oauth: JiraOAuth = Depends(get_jira_oauth),
+) -> Dict[str, Any]:
+    """Initiate Jira OAuth flow."""
+    try:
+        logging.info(
+            "Initiating Jira OAuth flow with redirect_uri=%s state=%s",
+            request.redirect_uri,
+            request.state,
+        )
+
+        auth_url = jira_oauth.get_authorization_url(
+            redirect_uri=request.redirect_uri, state=request.state
+        )
+
+        return {
+            "status": "success",
+            "authorization_url": auth_url,
+            "message": "Jira OAuth flow initiated successfully",
+            "debug_info": {
+                "redirect_uri": request.redirect_uri,
+                "state": request.state,
+                "auth_url": auth_url,
+            },
+        }
+    except Exception as exc:
+        logging.error("Jira OAuth initiation failed: %s", exc)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to initiate Jira OAuth flow: {str(exc)}",
+        )
+
+
+@router.get("/jira/callback")
+async def jira_oauth_callback(
+    request: Request,
+    user_id: Optional[str] = None,
+    jira_oauth: JiraOAuth = Depends(get_jira_oauth),
+) -> Dict[str, Any]:
+    """Handle Jira OAuth callback."""
+    try:
+        # Extract OAuth params
+        code = request.query_params.get("code")
+        state = request.query_params.get("state")
+        error = request.query_params.get("error")
+        error_description = request.query_params.get("error_description")
+
+        # Determine user_id: prefer explicit param, fall back to state or a default
+        if not user_id:
+            if state and state != "SECURE_RANDOM":
+                user_id = state
+            else:
+                user_id = "default_user"
+
+        # If we have an authorization code, exchange it for tokens and save to database
+        if code:
+            try:
+                # Create DB session and service
+                from app.core.database import SessionLocal
+
+                db = SessionLocal()
+                integrations_service = IntegrationsService(db)
+
+                from .integrations_schema import JiraSaveRequest
+                from datetime import datetime
+
+                # Prefer configured redirect URI so it exactly matches what's registered
+                config = Config()
+                redirect_uri = config("JIRA_REDIRECT_URI", default=None)
+
+                # If not configured, build a fallback using the incoming request's scheme/host/port
+                if not redirect_uri:
+                    scheme = request.url.scheme or "http"
+                    host = request.url.hostname or "localhost"
+                    port = request.url.port
+
+                    # Include port when it's non-standard for the scheme
+                    if port and not ((scheme == "http" and port == 80) or (scheme == "https" and port == 443)):
+                        host = f"{host}:{port}"
+
+                    redirect_uri = f"{scheme}://{host}/api/v1/integrations/jira/callback"
+
+                logging.info(f"Using Jira redirect_uri for token exchange: {redirect_uri}")
+
+                save_request = JiraSaveRequest(
+                    code=code,
+                    redirect_uri=redirect_uri,
+                    instance_name="Jira Integration",
+                    user_id=user_id,
+                    integration_type="jira",
+                    timestamp=datetime.utcnow().isoformat() + "Z",
+                )
+
+                # Save the integration (this will exchange the code and persist tokens)
+                save_result = await integrations_service.save_jira_integration(
+                    save_request
+                )
+
+                db.close()
+
+                # Redirect to frontend with success info
+                config = Config()
+                frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
+
+                # Ensure frontend_url has protocol
+                if frontend_url and not frontend_url.startswith(("http://", "https://")):
+                    frontend_url = f"https://{frontend_url}"
+
+                redirect_url = f"{frontend_url}/integrations/jira/redirect?success=true&integration_id={save_result.get('integration_id')}&user_name={save_result.get('user_name','')}"
+
+                return RedirectResponse(url=redirect_url)
+
+            except Exception as e:
+                logging.error(f"Failed to save Jira integration: {str(e)}")
+
+                # Redirect to frontend with error
+                config = Config()
+                frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
+
+                if frontend_url and not frontend_url.startswith(("http://", "https://")):
+                    frontend_url = f"https://{frontend_url}"
+
+                error_message = urllib.parse.quote(str(e), safe="")
+                redirect_url = f"{frontend_url}/integrations/jira/redirect?error={error_message}&user_id={user_id}"
+
+                return RedirectResponse(url=redirect_url)
+
+        else:
+            # No code provided — redirect to frontend with error
+            config = Config()
+            frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
+
+            if frontend_url and not frontend_url.startswith(("http://", "https://")):
+                frontend_url = f"https://{frontend_url}"
+
+            error_msg = "No authorization code received from Jira"
+            if error:
+                error_msg = f"OAuth error: {error}"
+            elif error_description:
+                error_msg = f"OAuth error: {error_description}"
+
+            error_message = urllib.parse.quote(error_msg, safe="")
+            redirect_url = f"{frontend_url}/integrations/jira/redirect?error={error_message}&user_id={user_id}"
+
+            return RedirectResponse(url=redirect_url)
+
+    except Exception as exc:
+        logging.error("Jira OAuth callback failed: %s", exc)
+        raise HTTPException(
+            status_code=400, detail=f"Jira OAuth callback failed: {str(exc)}"
+        )
+
+
+@router.get("/jira/status/{user_id}")
+async def get_jira_status(
+    user_id: str,
+    integrations_service: IntegrationsService = Depends(get_integrations_service),
+) -> JiraIntegrationStatus:
+    """Get Jira integration status for a user"""
+    return await integrations_service.get_jira_integration_status(user_id)
+
+
+@router.delete("/jira/revoke/{user_id}")
+async def revoke_jira_access(
+    user_id: str,
+    jira_oauth: JiraOAuth = Depends(get_jira_oauth),
+    integrations_service: IntegrationsService = Depends(get_integrations_service),
+) -> Dict[str, Any]:
+    """Revoke Jira OAuth access for a user"""
+    tokens_removed = jira_oauth.revoke_access(user_id)
+    deactivated = await integrations_service.deactivate_jira_integrations_for_user(
+        user_id
+    )
+
+    if tokens_removed or deactivated:
+        return {
+            "status": "success",
+            "message": "Jira access revoked successfully",
+            "user_id": user_id,
+            "deactivated_integrations": deactivated,
+        }
+
+    raise HTTPException(status_code=500, detail="Failed to revoke Jira access")
+
+
+@router.get("/jira/{integration_id}/resources")
+async def get_jira_resources(
+    integration_id: str,
+    integrations_service: IntegrationsService = Depends(get_integrations_service),
+) -> Dict[str, Any]:
+    """List Jira accessible resources for an integration."""
+    try:
+        result = await integrations_service.get_jira_accessible_resources(
+            integration_id
+        )
+        return {
+            "status": "success",
+            "integration_id": integration_id,
+            "resources": result.get("resources", []),
+            "site_id": result.get("site_id"),
+            "site_url": result.get("site_url"),
+        }
+    except Exception as exc:
+        logging.error("Error fetching Jira accessible resources: %s", exc)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch Jira accessible resources: {str(exc)}",
+        )
+
+
+@router.get("/jira/{integration_id}/projects")
+async def get_jira_projects(
+    integration_id: str,
+    start_at: int = 0,
+    max_results: int = 50,
+    integrations_service: IntegrationsService = Depends(get_integrations_service),
+) -> Dict[str, Any]:
+    """Fetch Jira projects for an integration."""
+    try:
+        result = await integrations_service.get_jira_projects(
+            integration_id, start_at=start_at, max_results=max_results
+        )
+        return {
+            "status": "success",
+            "integration_id": integration_id,
+            "site_id": result.get("site_id"),
+            "site_url": result.get("site_url"),
+            "site_name": result.get("site_name"),
+            "projects": result,
+        }
+    except Exception as exc:
+        logging.error("Error fetching Jira projects: %s", exc)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch Jira projects: {str(exc)}",
+        )
+
+
+@router.get("/jira/{integration_id}/projects/{project_key}")
+async def get_jira_project_details(
+    integration_id: str,
+    project_key: str,
+    integrations_service: IntegrationsService = Depends(get_integrations_service),
+) -> Dict[str, Any]:
+    """Fetch details for a specific Jira project."""
+    try:
+        result = await integrations_service.get_jira_project_details(
+            integration_id, project_key
+        )
+        return {
+            "status": "success",
+            "integration_id": integration_id,
+            "project": result,
+        }
+    except Exception as exc:
+        logging.error("Error fetching Jira project details: %s", exc)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch Jira project details: {str(exc)}",
+        )
+
+
+@router.post("/jira/save")
+async def save_jira_integration(
+    request: JiraSaveRequest,
+    integrations_service: IntegrationsService = Depends(get_integrations_service),
+) -> JiraSaveResponse:
+    """Save Jira integration after OAuth callback"""
+    try:
+        result = await integrations_service.save_jira_integration(request)
+        return JiraSaveResponse(success=True, data=result, error=None)
+    except Exception as e:
+        logging.error(f"Error saving Jira integration: {str(e)}")
+        return JiraSaveResponse(
+            success=False,
+            data=None,
+            error=f"Failed to save Jira integration: {str(e)}",
         )
 
 
