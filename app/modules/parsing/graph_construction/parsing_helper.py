@@ -452,15 +452,15 @@ class ParseHelper:
                     branch_details = repo_details.get_branch(branch)
                     latest_commit_sha = branch_details.commit.sha
             except ParsingFailedError as e:
-                logger.error(f"Failed to download repository: {e}")
+                logger.exception("Failed to download repository")
                 raise HTTPException(
                     status_code=500, detail=f"Repository download failed: {e}"
-                )
+                ) from e
             except Exception as e:
-                logger.error(f"Unexpected error during repository download: {e}")
+                logger.exception("Unexpected error during repository download")
                 raise HTTPException(
                     status_code=500, detail=f"Repository download failed: {e}"
-                )
+                ) from e
 
         repo_metadata = ParseHelper.extract_repository_metadata(repo_details)
         repo_metadata["error_message"] = None

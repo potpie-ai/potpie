@@ -254,8 +254,13 @@ class CodeProviderFactory:
             logger.info(f"GitHub App is configured, trying App auth first for {repo_name}")
             try:
                 return CodeProviderFactory.create_github_app_provider(repo_name)
-            except Exception as e:
+            except (ValueError, KeyError) as e:
+                # Credentials missing or malformed response
                 logger.warning(f"GitHub App authentication failed for {repo_name}: {e}, falling back to PAT")
+                # Continue to PAT fallback below
+            except Exception as e:
+                # Network errors, HTTP errors, or other unexpected issues
+                logger.error(f"Unexpected error during GitHub App authentication for {repo_name}: {e}", exc_info=True)
                 # Continue to PAT fallback below
 
         # Try PAT authentication (for all providers, or as fallback for GitHub)
