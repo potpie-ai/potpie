@@ -156,7 +156,11 @@ class GitHubProvider(ICodeProvider):
         """Get repository structure recursively."""
         self._ensure_authenticated()
 
-        repo = self.client.get_repo(repo_name)
+        try:
+            repo = self.client.get_repo(repo_name)
+        except GithubException as e:
+            logger.error(f"GitHubProvider: Failed to get repo {repo_name}: {e}")
+            raise
 
         def _recurse(current_path: str, depth: int) -> List[Dict[str, Any]]:
             if depth > max_depth:
@@ -164,7 +168,20 @@ class GitHubProvider(ICodeProvider):
 
             result = []
             try:
-                contents = repo.get_contents(current_path, ref=ref)
+                # Don't pass ref parameter if it's None - let PyGithub use default branch
+                if ref is not None:
+                    contents = repo.get_contents(current_path, ref=ref)
+                else:
+                    contents = repo.get_contents(current_path)
+
+                # Check if contents is None
+                if contents is None:
+                    logger.error(
+                        f"GitHubProvider: get_contents returned None for path '{current_path}', ref={ref}. "
+                        f"This usually means the path doesn't exist or auth failed."
+                    )
+                    return []
+
                 if not isinstance(contents, list):
                     contents = [contents]
 
@@ -183,7 +200,9 @@ class GitHubProvider(ICodeProvider):
                         entry["children"] = _recurse(item.path, depth + 1)
 
             except GithubException as e:
-                logger.warning(f"Failed to get contents for {current_path}: {e}")
+                logger.warning(f"GitHubProvider: Failed to get contents for {current_path}: {e}")
+            except Exception as e:
+                logger.error(f"GitHubProvider: Unexpected error getting contents for {current_path}: {e}", exc_info=True)
 
             return result
 

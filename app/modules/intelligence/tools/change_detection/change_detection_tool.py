@@ -242,6 +242,7 @@ class ChangeDetectionTool:
                 from app.modules.parsing.utils.repo_name_normalizer import (
                     get_actual_repo_name_for_lookup,
                 )
+                from app.modules.code_provider.provider_factory import CodeProviderFactory
                 import os
 
                 provider_type = os.getenv("CODE_PROVIDER", "github").lower()
@@ -252,8 +253,11 @@ class ChangeDetectionTool:
                     f"[CHANGE_DETECTION] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}"
                 )
 
+                # Create provider with proper auth for this specific repo
+                provider = CodeProviderFactory.create_provider_with_fallback(actual_repo_name)
+
                 # Get default branch first
-                github_client = code_service.service_instance.provider.client
+                github_client = provider.client
                 repo = github_client.get_repo(actual_repo_name)
                 default_branch = repo.default_branch
                 logging.info(
@@ -261,7 +265,6 @@ class ChangeDetectionTool:
                 )
 
                 # Use provider's compare_branches method
-                provider = code_service.service_instance.provider
                 logging.info(
                     "[CHANGE_DETECTION] Using provider's compare_branches method"
                 )

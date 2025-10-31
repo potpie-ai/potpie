@@ -12,14 +12,21 @@ logger = logging.getLogger(__name__)
 class ProviderWrapper:
     """Wrapper to make ICodeProvider compatible with existing service interface."""
 
-    def __init__(self, provider, sql_db=None):
-        self.provider = provider
+    def __init__(self, sql_db=None):
+        # Don't create provider here - create it per-request with proper auth
         self.sql_db = sql_db
 
     def get_repo(self, repo_name):
-        """Get repository using the provider."""
+        """
+        Get repository using the provider.
+        Uses create_provider_with_fallback to ensure proper auth method for the specific repo.
+        """
+        # Use fallback logic to get the right provider for this specific repo
+        # This handles GitHub App vs PAT authentication based on repo access
+        provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+
         # Get repository details and return a mock object that matches the expected interface
-        repo_info = self.provider.get_repository(repo_name)
+        repo_info = provider.get_repository(repo_name)
 
         # Create a mock repository object that matches the expected interface
         class MockRepo:
@@ -155,7 +162,7 @@ class ProviderWrapper:
                 return MockBranch(branch_info)
 
         # Return the provider client and mock repo
-        return self.provider.client, MockRepo(repo_info, self.provider)
+        return provider.client, MockRepo(repo_info, provider)
 
     def get_file_content(
         self,
@@ -167,8 +174,11 @@ class ProviderWrapper:
         project_id,
         commit_id,
     ):
-        """Get file content using the provider."""
-        return self.provider.get_file_content(
+        """Get file content using the provider with fallback authentication."""
+        # Use fallback logic to get the right provider for this specific repo
+        provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+
+        return provider.get_file_content(
             repo_name=repo_name,
             file_path=file_path,
             ref=branch_name if not commit_id else commit_id,
@@ -199,8 +209,11 @@ class ProviderWrapper:
                 f"Retrieved repository name '{repo_name}' for project_id '{project_id}'"
             )
 
+            # Use fallback logic to get the right provider for this specific repo
+            provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+
             # Use the provider to get repository structure
-            structure = self.provider.get_repository_structure(
+            structure = provider.get_repository_structure(
                 repo_name=repo_name, path=path or "", max_depth=4
             )
 
@@ -219,17 +232,8 @@ class CodeProviderService:
         if os.getenv("isDevelopmentMode") == "enabled":
             return LocalRepoService(self.sql_db)
         else:
-            # Use provider factory to get the configured provider (GitHub, GitBucket, etc.)
-            try:
-                provider = CodeProviderFactory.create_provider()
-                # Wrap the provider in a service-like interface for backward compatibility
-                return ProviderWrapper(provider, self.sql_db)
-            except Exception as e:
-                # Fallback to GitHub service if provider factory fails
-                print(
-                    f"Failed to create provider from factory: {e}, falling back to GitHub"
-                )
-                return GithubService(self.sql_db)
+            # Return ProviderWrapper which will create providers per-request with proper auth
+            return ProviderWrapper(self.sql_db)
 
     def get_repo(self, repo_name):
         return self.service_instance.get_repo(repo_name)

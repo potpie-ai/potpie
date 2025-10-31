@@ -215,13 +215,14 @@ class CodeProviderFactory:
     @staticmethod
     def create_provider_with_fallback(repo_name: str) -> ICodeProvider:
         """
-        Create provider with authentication fallback (PAT-first, then App auth).
+        Create provider with authentication fallback strategy.
 
-        This method implements the PAT-first strategy:
-        1. Try CODE_PROVIDER_TOKEN (new PAT config)
-        2. Try GH_TOKEN_LIST (legacy PAT pool)
-        3. Try GitHub App authentication (if configured)
-        4. Raise error if all methods fail
+        For GitHub provider:
+        - If GitHub App is configured: Try GitHub App first, fallback to PAT
+        - If GitHub App is NOT configured: Use PAT only
+
+        For other providers (GitBucket, etc.):
+        - Use PAT authentication only
 
         Args:
             repo_name: Repository name (needed for App auth)
@@ -241,11 +242,26 @@ class CodeProviderFactory:
             )
             return LocalProvider(default_repo_path=local_repo_path)
 
-        # Try PAT authentication first (new config)
+        provider_type = os.getenv("CODE_PROVIDER", "github").lower()
+
+        # Check if GitHub App is configured (only relevant for GitHub provider)
+        app_id = os.getenv("GITHUB_APP_ID")
+        private_key = config_provider.get_github_key() if provider_type == ProviderType.GITHUB else None
+        is_github_app_configured = bool(app_id and private_key)
+
+        # For GitHub with App configured: Try GitHub App first, then PAT
+        if provider_type == ProviderType.GITHUB and is_github_app_configured:
+            logger.info(f"GitHub App is configured, trying App auth first for {repo_name}")
+            try:
+                return CodeProviderFactory.create_github_app_provider(repo_name)
+            except Exception as e:
+                logger.warning(f"GitHub App authentication failed for {repo_name}: {e}, falling back to PAT")
+                # Continue to PAT fallback below
+
+        # Try PAT authentication (for all providers, or as fallback for GitHub)
         token = os.getenv("CODE_PROVIDER_TOKEN")
         if token:
             logger.info("Using CODE_PROVIDER_TOKEN for authentication")
-            # Use the configured provider type instead of hardcoded GitHubProvider
             provider = CodeProviderFactory.create_provider()
             provider.authenticate({"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN)
             return provider
@@ -258,7 +274,6 @@ class CodeProviderFactory:
             tokens = [t.strip() for t in token_list_str.split(",") if t.strip()]
             if tokens:
                 logger.info("Using GH_TOKEN_LIST for authentication")
-                # Use the configured provider type instead of hardcoded GitHubProvider
                 provider = CodeProviderFactory.create_provider()
                 token = random.choice(tokens)
                 provider.authenticate(
@@ -266,16 +281,7 @@ class CodeProviderFactory:
                 )
                 return provider
 
-        # Try GitHub App authentication as fallback
-        app_id = os.getenv("GITHUB_APP_ID")
-        private_key = config_provider.get_github_key()
-        if app_id and private_key:
-            logger.info("Using GitHub App authentication as fallback")
-            try:
-                return CodeProviderFactory.create_github_app_provider(repo_name)
-            except Exception as e:
-                logger.warning(f"GitHub App authentication failed: {e}")
-
+        # If we get here and it's GitHub without App configured, we have no auth method
         raise ValueError(
             "No authentication method available. "
             "Please configure CODE_PROVIDER_TOKEN, GH_TOKEN_LIST, or GitHub App credentials."

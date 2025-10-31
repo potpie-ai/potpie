@@ -60,8 +60,16 @@ class ParseHelper:
             try:
                 github, repo = self.github_service.get_repo(repo_details.repo_name)
                 owner = repo.owner.login
-                if hasattr(github, "get_app_auth"):
+
+                # Extract auth from the Github client
+                # The auth is stored in the _Github__requester.auth attribute
+                if hasattr(github, "_Github__requester") and hasattr(github._Github__requester, "auth"):
+                    auth = github._Github__requester.auth
+                elif hasattr(github, "get_app_auth"):
+                    # Fallback for older method
                     auth = github.get_app_auth()
+                else:
+                    logger.warning(f"Could not extract auth from GitHub client for {repo_details.repo_name}")
             except HTTPException as he:
                 raise he
             except Exception as e:
@@ -179,14 +187,14 @@ class ParseHelper:
             response.raise_for_status()
 
         except requests.exceptions.RequestException as e:
-            logger.exception(f"ParsingHelper: Error fetching tarball: {e}")
+            logger.exception("ParsingHelper: Error fetching tarball")
             logger.error(
                 f"ParsingHelper: Request details - URL: {tarball_url}, Headers: {headers}"
             )
             raise ParsingFailedError("Failed to download repository archive") from e
         except Exception as e:
             logger.exception(
-                f"ParsingHelper: Unexpected error in tarball download: {e}"
+                "ParsingHelper: Unexpected error in tarball download"
             )
             logger.error(f"ParsingHelper: Error type: {type(e)}, Value: {e}")
             raise ParsingFailedError(

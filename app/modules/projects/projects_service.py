@@ -93,7 +93,7 @@ class ProjectService:
                 self.db.commit()
                 self.db.refresh(existing_project)
             except Exception as e:
-                logger.exception(f"Error updating existing project {project_id}: {e}")
+                logger.exception(f"Error updating existing project {project_id}")
                 self.db.rollback()
                 raise
             message = f"Project id '{project_id}' for repo '{repo_name}' and branch '{branch_name}' updated successfully."
@@ -162,7 +162,7 @@ class ProjectService:
                 f"Project with ID {project_id} has now been updated with status {status}."
             )
         except Exception as e:
-            logger.exception(f"Error updating project status for {project_id}: {e}")
+            logger.exception(f"Error updating project status for {project_id}")
             self.db.rollback()
             raise
 
@@ -357,11 +357,11 @@ class ProjectService:
             return project
         except IntegrityError as e:
             db.rollback()
-            logger.exception(f"IntegrityError creating project {project.id}: {e}")
+            logger.exception(f"IntegrityError creating project {project.id}")
             raise
         except Exception as e:
             db.rollback()
-            logger.exception(f"Error creating project {project.id}: {e}")
+            logger.exception(f"Error creating project {project.id}")
             raise
 
     def update_project(db: Session, project_id: int, **kwargs):
