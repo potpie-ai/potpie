@@ -7,9 +7,13 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
+from aiohttp import ClientTimeout, ClientConnectorError
 import chardet
 import git
 import requests
+import ssl
+import socket
+import certifi
 from fastapi import HTTPException
 from github import Github
 from github.Auth import AppAuth
@@ -21,6 +25,9 @@ from app.core.config_provider import config_provider
 from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_service import ProjectService
 from app.modules.users.user_model import User
+from app.modules.code_provider.github.github_provider import GitHubProvider
+from app.modules.code_provider.provider_factory import CodeProviderFactory
+from app.modules.code_provider.base.code_provider_interface import AuthMethod
 
 logger = logging.getLogger(__name__)
 
@@ -80,40 +87,18 @@ class GithubService:
         return github, response.json(), owner
 
     def get_github_app_client(self, repo_name: str) -> Github:
+        """
+        Get GitHub client using provider abstraction.
+        Maintains backward compatibility with existing code.
+        """
         try:
-            # Try authenticated access first
-            private_key = (
-                "-----BEGIN RSA PRIVATE KEY-----\n"
-                + config_provider.get_github_key()
-                + "\n-----END RSA PRIVATE KEY-----\n"
+            provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+            return provider.client
+        except Exception as e:
+            logger.error(f"Failed to get GitHub client for {repo_name}: {str(e)}")
+            raise Exception(
+                f"Repository {repo_name} not found or inaccessible on GitHub"
             )
-            app_id = os.environ["GITHUB_APP_ID"]
-            auth = AppAuth(app_id=app_id, private_key=private_key)
-            jwt = auth.create_jwt()
-
-            # Get installation ID
-            url = f"https://api.github.com/repos/{repo_name}/installation"
-            headers = {
-                "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {jwt}",
-                "X-GitHub-Api-Version": "2022-11-28",
-            }
-            response = requests.get(url, headers=headers)
-            if response.status_code != 200:
-                raise Exception(f"Failed to get installation ID for {repo_name}")
-
-            app_auth = auth.get_installation_auth(response.json()["id"])
-            return Github(auth=app_auth)
-        except Exception as private_error:
-            logging.info(f"Failed to access private repo: {str(private_error)}")
-            # If authenticated access fails, try public access
-            try:
-                return self.get_public_github_instance()
-            except Exception as public_error:
-                logging.error(f"Failed to access public repo: {str(public_error)}")
-                raise Exception(
-                    f"Repository {repo_name} not found or inaccessible on GitHub"
-                )
 
     def get_file_content(
         self,
@@ -269,33 +254,58 @@ class GithubService:
                 "X-GitHub-Api-Version": "2022-11-28",
             }
 
-            async with aiohttp.ClientSession() as session:
+            ssl_context = ssl.create_default_context(cafile=certifi.where())
+            connector = aiohttp.TCPConnector(
+                ssl=ssl_context,
+                ttl_dns_cache=300,
+                family=socket.AF_INET,
+            )
+            timeout = ClientTimeout(total=20)
+
+            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
                 # Get first page to determine total pages
-                async with session.get(
-                    f"{base_url}?per_page=100", headers=headers
-                ) as response:
-                    if response.status != 200:
-                        error_text = await response.text()
-                        logger.error(
-                            f"Failed to get installations. Response: {error_text}"
-                        )
-                        raise HTTPException(
-                            status_code=response.status,
-                            detail=f"Failed to get installations: {error_text}",
-                        )
+                first_url = f"{base_url}?per_page=100"
+                attempt = 0
+                max_attempts = 3
+                backoff = 1
+                while True:
+                    try:
+                        async with session.get(first_url, headers=headers) as response:
+                            if response.status != 200:
+                                error_text = await response.text()
+                                logger.error(
+                                    f"Failed to get installations. Response: {error_text}"
+                                )
+                                raise HTTPException(
+                                    status_code=response.status,
+                                    detail=f"Failed to get installations: {error_text}",
+                                )
 
-                    # Extract last page number from Link header
-                    last_page = 1
-                    if "Link" in response.headers:
-                        links = self._parse_link_header(response.headers["Link"])
-                        if "last" in links:
-                            last_url = links["last"]
-                            match = re.search(r"[?&]page=(\d+)", last_url)
-                            if match:
-                                last_page = int(match.group(1))
+                            # Extract last page number from Link header
+                            last_page = 1
+                            if "Link" in response.headers:
+                                links = self._parse_link_header(response.headers["Link"])
+                                if "last" in links:
+                                    last_url = links["last"]
+                                    match = re.search(r"[?&]page=(\d+)", last_url)
+                                    if match:
+                                        last_page = int(match.group(1))
 
-                    first_page_data = await response.json()
-                    all_installations.extend(first_page_data)
+                            first_page_data = await response.json()
+                            all_installations.extend(first_page_data)
+                            break
+                    except (ClientConnectorError, asyncio.TimeoutError) as net_err:
+                        attempt += 1
+                        if attempt >= max_attempts:
+                            logger.error(
+                                f"Network error contacting GitHub installations API: {net_err}"
+                            )
+                            raise HTTPException(
+                                status_code=503,
+                                detail="Unable to reach GitHub API (installations). Please check network/proxy settings and try again.",
+                            )
+                        await asyncio.sleep(backoff)
+                        backoff *= 2
 
                 # Generate remaining page URLs (skip page 1)
                 page_urls = [
@@ -305,20 +315,28 @@ class GithubService:
 
                 # Process URLs in batches of 10
                 async def fetch_page(url):
-                    try:
-                        async with session.get(url, headers=headers) as response:
-                            if response.status == 200:
-                                installations = await response.json()
-                                return installations
-                            else:
+                    attempt = 0
+                    max_attempts = 3
+                    backoff = 1
+                    while True:
+                        try:
+                            async with session.get(url, headers=headers) as response:
+                                if response.status == 200:
+                                    return await response.json()
                                 error_text = await response.text()
                                 logger.error(
                                     f"Failed to fetch page {url}. Response: {error_text}"
                                 )
                                 return []
-                    except Exception as e:
-                        logger.error(f"Error fetching page {url}: {str(e)}")
-                        return []
+                        except (ClientConnectorError, asyncio.TimeoutError) as net_err:
+                            attempt += 1
+                            if attempt >= max_attempts:
+                                logger.error(
+                                    f"Network error fetching {url}: {net_err}"
+                                )
+                                return []
+                            await asyncio.sleep(backoff)
+                            backoff *= 2
 
                 # Process URLs in batches of 10
                 for i in range(0, len(page_urls), 10):
@@ -537,35 +555,72 @@ class GithubService:
 
     @classmethod
     def get_public_github_instance(cls):
+        """
+        Get public GitHub instance using PAT from token pool.
+        Uses new provider factory with PAT-first strategy.
+        """
+        # Initialize legacy token list if needed
         if not cls.gh_token_list:
             cls.initialize_tokens()
+
+        # Use factory to create provider with PAT
+
         token = random.choice(cls.gh_token_list)
-        return Github(token)
+        provider = GitHubProvider()
+        provider.authenticate({"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN)
+        return provider.client
 
     def get_repo(self, repo_name: str) -> Tuple[Github, Any]:
-        try:
-            # Try authenticated access first
-            github, _, _ = self.get_github_repo_details(repo_name)
-            repo = github.get_repo(repo_name)
+        """
+        Get repository using provider abstraction.
+        Returns (Github client, Repository) for backward compatibility.
 
-            return github, repo
-        except Exception as private_error:
-            logger.info(
-                f"Failed to access private repo {repo_name}: {str(private_error)}"
+        Strategy:
+        1. Try create_provider_with_fallback (which handles App-first or PAT-first based on config)
+        2. If that fails with 404 and we haven't tried PAT yet, try PAT explicitly
+        """
+        try:
+            # Try to create provider with authentication fallback
+            provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+
+            # For backward compatibility, return the PyGithub client and repo
+            github_client = provider.client
+            repo = github_client.get_repo(repo_name)
+
+            return github_client, repo
+        except HTTPException as he:
+            # Re-raise HTTPException as-is
+            raise he
+        except Exception as e:
+            error_str = str(e)
+            is_not_found = "404" in error_str or "Not Found" in error_str
+
+            # If it's a 404 and we might have tried App auth first, try PAT as final fallback
+            if is_not_found:
+                app_id = os.getenv("GITHUB_APP_ID")
+                private_key = config_provider.get_github_key()
+
+                # Only retry with PAT if App was configured (meaning it was tried first)
+                if app_id and private_key:
+                    logger.info(
+                        f"GitHub App auth failed with 404 for {repo_name}, "
+                        f"attempting final fallback to PAT pool"
+                    )
+                    try:
+                        # Force PAT authentication by using the public instance method
+                        github_client = self.get_public_github_instance()
+                        repo = github_client.get_repo(repo_name)
+                        logger.info(f"Successfully accessed {repo_name} using PAT after App auth failed")
+                        return github_client, repo
+                    except Exception as pat_error:
+                        logger.warning(f"PAT fallback also failed for {repo_name}: {str(pat_error)}")
+
+            # If all methods failed, raise the original error
+            logger.error(f"Failed to access repository {repo_name}: {error_str}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Repository {repo_name} not found or inaccessible on GitHub",
             )
-            # If authenticated access fails, try public access
-            try:
-                github = self.get_public_github_instance()
-                repo = github.get_repo(repo_name)
-                return github, repo
-            except Exception as public_error:
-                logger.error(
-                    f"Failed to access public repo {repo_name}: {str(public_error)}"
-                )
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Repository {repo_name} not found or inaccessible on GitHub",
-                )
 
     async def get_project_structure_async(
         self, project_id: str, path: Optional[str] = None
