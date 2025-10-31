@@ -238,7 +238,6 @@ class JiraOAuth:
         # Use the dynamic registration format required for OAuth2/Connect apps:
         # { "url": "https://app/webhook", "webhooks": [ { "events": [...], "jqlFilter": "..." } ] }
         # Note: OAuth webhooks require a non-empty JQL filter with supported operators only
-        # Supported operators: =, !=, IN, NOT IN
         # Supported fields: project, issueKey, issuetype, status, priority, assignee, reporter
         webhook_entry: Dict[str, Any] = {"events": events}
         
@@ -300,20 +299,28 @@ class JiraOAuth:
         if not cloud_id or not webhook_id:
             raise Exception("cloud_id and webhook_id are required to delete webhook")
 
-        url = f"{self.API_BASE_URL}/ex/jira/{cloud_id}/rest/api/3/webhook/{webhook_id}"
+        # OAuth apps must use bulk delete endpoint
+        url = f"{self.API_BASE_URL}/ex/jira/{cloud_id}/rest/api/3/webhook"
 
         headers = {
             "Authorization": f"Bearer {access_token}",
             "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+
+        # Webhook IDs must be sent as an array in the request body
+        payload = {
+            "webhookIds": [int(webhook_id)]
         }
 
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.delete(url, headers=headers)
+            response = await client.request("DELETE", url, headers=headers, json=payload)
 
-        if response.status_code not in (200, 204):
+        if response.status_code not in (200, 202, 204):
             logging.error(
                 "Failed to delete Jira webhook (%s): %s", response.status_code, response.text
             )
             return False
 
+        logging.info(f"Successfully deleted webhook {webhook_id} for site {cloud_id}")
         return True

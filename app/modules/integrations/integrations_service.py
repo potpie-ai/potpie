@@ -959,21 +959,23 @@ class IntegrationsService:
                 logging.info("No webhooks to clean up for Jira integration")
                 return
             
-            # Get access token and site_id
-            auth_data = metadata.get("auth_data", {})
+            # Get access token and site_id from auth_data column (not metadata)
+            auth_data = db_integration.auth_data or {}
             access_token = auth_data.get("access_token")
-            site_id = auth_data.get("site_id") or metadata.get("site_id")
+            
+            # Get site_id from scope_data or metadata
+            scope_data = db_integration.scope_data or {}
+            site_id = scope_data.get("org_slug") or metadata.get("site_id")
             
             if not access_token or not site_id:
                 logging.warning(
                     f"Cannot cleanup webhooks: missing access_token or site_id for integration {db_integration.integration_id}"
                 )
+                logging.debug(f"auth_data: {auth_data}, scope_data: {scope_data}, metadata: {metadata}")
                 return
             
-            # Decrypt token if needed
-            if access_token.startswith("enc:"):
-                access_token = decrypt_token(access_token)
-            
+            access_token = decrypt_token(access_token)
+
             # Delete each webhook
             deleted_count = 0
             failed_count = 0
@@ -1771,6 +1773,7 @@ class IntegrationsService:
             )
 
             access_token = tokens.get("access_token")
+
             if not access_token:
                 raise Exception("Failed to obtain access token from OAuth exchange")
 
