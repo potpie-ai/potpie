@@ -44,6 +44,7 @@ from pydantic_ai.exceptions import ModelRetry, AgentRunError, UserError
 from langchain_core.tools import StructuredTool
 from app.modules.intelligence.memory.compression_service import CompressionService
 from app.modules.intelligence.provider.llm_config import get_context_window_for_model
+from app.modules.intelligence.memory.token_counter import TokenCounterService
 
 logger = setup_logger(__name__)
 
@@ -94,6 +95,9 @@ class PydanticRagAgent(ChatAgent):
         
         # Safety limit: Maximum compression cycles before breaking out
         self.max_compression_cycles = 5
+        
+        # Token counting support
+        self.token_counter = TokenCounterService(llm_provider=llm_provider)
 
     def _create_agent(self, ctx: ChatContext) -> Agent:
         config = self.config
@@ -129,7 +133,7 @@ class PydanticRagAgent(ChatAgent):
         
         if self.compression_summary:  # If we have a compression summary from previous cycle
             # Extract key sections for top-level warning
-            compression_prefix = f"""
+            compression_prefix = """
             🛑🛑🛑 STOP - READ THIS FIRST - YOU ARE IN A CONTINUATION CYCLE 🛑🛑🛑
             
             DO NOT say "Let me first explore..." or "Let me examine..."
@@ -185,6 +189,7 @@ class PydanticRagAgent(ChatAgent):
             "defer_model_check": True,
             "end_strategy": "exhaustive",
             "model_settings": {"max_tokens": 14000},
+            "instrument": True,  # Enable Phoenix tracing for this agent
         }
 
         if not allow_parallel_tools:
@@ -470,6 +475,67 @@ class PydanticRagAgent(ChatAgent):
         )
         return content
 
+    def _get_system_instructions_text(self) -> str:
+        """
+        Extract the system instructions text that will be sent to the agent.
+        This extracts the EXACT instructions used in _create_agent() for token counting.
+        
+        IMPORTANT: This is READ-ONLY extraction for token counting purposes.
+        It does NOT modify agent behavior or instructions in any way.
+        
+        Includes:
+        - Compression summary (if present)
+        - Role, goal, backstory
+        
+        Note: Task description and multimodal instructions are request-specific
+        and counted separately via current message content.
+        """
+        try:
+            config = self.config
+            
+            # Build compression context if available (matches lines 127-151 EXACTLY)
+            compression_prefix = ""
+            compression_context = ""
+            
+            if self.compression_summary:
+                compression_prefix = """
+            🛑🛑🛑 STOP - READ THIS FIRST - YOU ARE IN A CONTINUATION CYCLE 🛑🛑🛑
+            
+            DO NOT say "Let me first explore..." or "Let me examine..."
+            DO NOT call fetch_file or get_file_content for files already read
+            DO NOT ask questions that were already answered
+            
+            YOU MUST READ THE SUMMARY BELOW BEFORE DOING ANYTHING.
+            
+            ═══════════════════════════════════════════════════════════════
+            """
+                
+                compression_context = f"""
+            {self.compression_summary}
+            
+            ═══════════════════════════════════════════════════════════════
+            ⚡ YOU ARE CONTINUING FROM WHERE YOU LEFT OFF ⚡
+            ═══════════════════════════════════════════════════════════════
+            
+            """
+            
+            # Reconstruct instructions (matches lines 168-176 EXACTLY)
+            instructions = f"""
+        {compression_prefix}
+        {compression_context}
+        
+        Role: {config.role}
+        Goal: {config.goal}
+        Backstory:
+        {config.backstory}
+        """
+            
+            return instructions.strip()
+            
+        except Exception as e:
+            logger.error(f"Failed to extract system instructions: {e}")
+            return ""
+
     async def _prepare_multimodal_message_history(
         self, ctx: ChatContext
     ) -> List[ModelMessage]:
@@ -600,49 +666,64 @@ class PydanticRagAgent(ChatAgent):
 
     def _check_token_threshold(
         self, 
-        run, 
+        message_history: list,
+        current_query: str,
         context_window: int, 
         token_threshold: int
     ) -> tuple[bool, int]:
         """
-        Check if token usage exceeds threshold.
+        Check if token usage exceeds threshold by using TokenCounterService.
+        
+        This method now delegates to the token counter service which handles:
+        - Provider-specific token counting
+        - Context window lookup
+        - Threshold calculation
+        
+        Args:
+            message_history: List of messages that have been sent (including tool results!)
+            current_query: The current user query being processed
+            context_window: Context window size (not used, kept for compatibility)
+            token_threshold: Token threshold (not used, kept for compatibility)
         
         Returns:
             tuple: (should_compress: bool, total_tokens: int)
         """
         try:
-            current_usage = run.usage()
+            # Build complete message list including current query
+            # Combine history with current query for accurate count
+            all_messages = list(message_history)
+            if current_query:
+                # Add current query as a user message
+                all_messages.append(ModelResponse([TextPart(content=current_query)]))
             
-            # Check if total_tokens attribute exists and is not None
-            if not hasattr(current_usage, 'total_tokens'):
-                logger.debug("Usage object has no total_tokens attribute")
+            if not all_messages:
+                logger.debug("No messages to count")
                 return (False, 0)
             
-            total_tokens = current_usage.total_tokens
+            # Extract system instructions for token counting (READ-ONLY extraction)
+            system_instructions = self._get_system_instructions_text()
             
-            # Handle case where total_tokens is None (no usage data yet)
-            if total_tokens is None:
-                logger.debug("total_tokens is None - no usage data yet")
-                return (False, 0)
+            # Get tools for token counting
+            tools_list = self.tools  # List of StructuredTool objects
             
-            # Log progress periodically (every ~1000 tokens)
-            if total_tokens % 1000 < 100:
-                usage_pct = (total_tokens / context_window) * 100
-                logger.debug(
-                    f"📊 Tokens: {total_tokens:,}/{context_window:,} ({usage_pct:.1f}%)"
-                )
+            # Use token counter service to check threshold
+            # Pass context_window and token_threshold from caller to use their calculated values
+            should_compress, token_count, actual_context_window = self.token_counter.check_token_threshold(
+                messages=all_messages,
+                system_instructions=system_instructions,
+                tools=tools_list,
+                model_name=None,  # Let service use configured model
+                threshold_percentage=self.compression_threshold_percentage,
+                config_type="chat",
+                context_window=context_window,
+                token_threshold=token_threshold
+            )
             
-            # Check if compression threshold exceeded
-            if total_tokens > token_threshold:
-                logger.warning(
-                    f"⚠️  Threshold exceeded: {total_tokens:,} > {token_threshold:,}"
-                )
-                return (True, total_tokens)
-            
-            return (False, total_tokens)
+            return (should_compress, token_count)
             
         except Exception as e:
-            logger.debug(f"Could not check token usage: {e}")
+            logger.error(f"Token threshold check failed: {e}", exc_info=True)
+            # Don't trigger compression on error - continue execution
             return (False, 0)
     
     async def _perform_compression(
@@ -676,11 +757,9 @@ class PydanticRagAgent(ChatAgent):
         try:
             # Use the message_history directly (list of ModelResponse objects)
             # This is what the agent has been working with
-            current_messages = message_history
-            
             # Call compression service with retries
             summary = await self.compression_service.compress_message_history(
-                messages=current_messages,
+                messages=message_history,
                 original_user_query=ctx.query,
                 project_id=ctx.project_id,
                 max_retries=2
@@ -919,7 +998,6 @@ You are continuing a task that was started earlier. Here's what you already acco
                 )
             
             compression_needed = False
-            run = None
             
             try:
                 # Try to initialize MCP servers with timeout handling
@@ -930,23 +1008,16 @@ You are continuing a task that was started earlier. Here's what you already acco
                             message_history=message_history,
                         ) as run:
                             async for node in run:
-                                # Check if compression needed before processing this node
-                                should_compress, current_tokens = self._check_token_threshold(
-                                    run, context_window, token_threshold
-                                )
-                                
-                                if should_compress:
-                                    compression_needed = True
-                                    break  # Exit node loop to trigger compression
-                                
                                 if Agent.is_model_request_node(node):
                                     # A model request node => We can stream tokens from the model's request
+                                    model_response_text = []  # Track model's text output
                                     try:
                                         async with node.stream(run.ctx) as request_stream:
                                             async for event in request_stream:
                                                 if isinstance(
                                                     event, PartStartEvent
                                                 ) and isinstance(event.part, TextPart):
+                                                    model_response_text.append(event.part.content)
                                                     yield ChatAgentResponse(
                                                         response=event.part.content,
                                                         tool_calls=[],
@@ -957,11 +1028,19 @@ You are continuing a task that was started earlier. Here's what you already acco
                                                 ) and isinstance(
                                                     event.delta, TextPartDelta
                                                 ):
+                                                    model_response_text.append(event.delta.content_delta)
                                                     yield ChatAgentResponse(
                                                         response=event.delta.content_delta,
                                                         tool_calls=[],
                                                         citations=[],
                                                     )
+                                        
+                                        # Add model's text response to message_history for cumulative tracking
+                                        if model_response_text:
+                                            full_response = "".join(model_response_text)
+                                            message_history.append(
+                                                ModelResponse([TextPart(content=full_response)])
+                                            )
                                     except (
                                         ModelRetry,
                                         AgentRunError,
@@ -993,6 +1072,7 @@ You are continuing a task that was started earlier. Here's what you already acco
                                         continue
 
                                 elif Agent.is_call_tools_node(node):
+                                    tool_results_in_this_cycle = []
                                     try:
                                         async with node.stream(run.ctx) as handle_stream:
                                             async for event in handle_stream:
@@ -1022,6 +1102,10 @@ You are continuing a task that was started earlier. Here's what you already acco
                                                 if isinstance(
                                                     event, FunctionToolResultEvent
                                                 ):
+                                                    # Track tool result content for token counting
+                                                    result_content = str(event.result.content) if event.result.content else ""
+                                                    tool_results_in_this_cycle.append(result_content)
+                                                    
                                                     yield ChatAgentResponse(
                                                         response="",
                                                         tool_calls=[
@@ -1046,6 +1130,23 @@ You are continuing a task that was started earlier. Here's what you already acco
                                                         ],
                                                         citations=[],
                                                     )
+                                        
+                                        # Check tokens AFTER tool execution completes
+                                        # Add tool results to message_history for cumulative tracking
+                                        for result_content in tool_results_in_this_cycle:
+                                            message_history.append(
+                                                ModelResponse([TextPart(content=result_content)])
+                                            )
+                                        
+                                        # Now check tokens on the accumulated history
+                                        should_compress, current_tokens = self._check_token_threshold(
+                                            message_history, ctx.query, context_window, token_threshold
+                                        )
+                                        
+                                        if should_compress:
+                                            compression_needed = True
+                                            break  # Exit node loop to trigger compression
+                                            
                                     except (
                                         ModelRetry,
                                         AgentRunError,
@@ -1121,30 +1222,15 @@ You are continuing a task that was started earlier. Here's what you already acco
                             message_history=message_history,
                         ) as run:
                             async for node in run:
-                                # Check if compression needed before processing this node
-                                should_compress, current_tokens = self._check_token_threshold(
-                                    run, context_window, token_threshold
-                                )
-                                
-                                # Log token usage after each node (fallback path)
-                                if current_tokens > 0:
-                                    usage_pct = (current_tokens / context_window) * 100
-                                    logger.info(
-                                        f"📊 [Fallback] Token usage after node: {current_tokens:,}/{context_window:,} "
-                                        f"({usage_pct:.1f}%) - Node type: {type(node).__name__}"
-                                    )
-                                
-                                if should_compress:
-                                    compression_needed = True
-                                    break  # Exit node loop to trigger compression
-                                
                                 if Agent.is_model_request_node(node):
+                                    model_response_text = []  # Track model's text output
                                     try:
                                         async with node.stream(run.ctx) as request_stream:
                                             async for event in request_stream:
                                                 if isinstance(
                                                     event, PartStartEvent
                                                 ) and isinstance(event.part, TextPart):
+                                                    model_response_text.append(event.part.content)
                                                     yield ChatAgentResponse(
                                                         response=event.part.content,
                                                         tool_calls=[],
@@ -1155,11 +1241,19 @@ You are continuing a task that was started earlier. Here's what you already acco
                                                 ) and isinstance(
                                                     event.delta, TextPartDelta
                                                 ):
+                                                    model_response_text.append(event.delta.content_delta)
                                                     yield ChatAgentResponse(
                                                         response=event.delta.content_delta,
                                                         tool_calls=[],
                                                         citations=[],
                                                     )
+                                        
+                                        # Add model's text response to message_history for cumulative tracking
+                                        if model_response_text:
+                                            full_response = "".join(model_response_text)
+                                            message_history.append(
+                                                ModelResponse([TextPart(content=full_response)])
+                                            )
                                     except (
                                         ModelRetry,
                                         AgentRunError,
@@ -1191,6 +1285,7 @@ You are continuing a task that was started earlier. Here's what you already acco
                                         continue
 
                                 elif Agent.is_call_tools_node(node):
+                                    tool_results_in_this_cycle = []
                                     try:
                                         async with node.stream(run.ctx) as handle_stream:
                                             async for event in handle_stream:
@@ -1220,6 +1315,10 @@ You are continuing a task that was started earlier. Here's what you already acco
                                                 if isinstance(
                                                     event, FunctionToolResultEvent
                                                 ):
+                                                    # Track tool result content for token counting
+                                                    result_content = str(event.result.content) if event.result.content else ""
+                                                    tool_results_in_this_cycle.append(result_content)
+                                                    
                                                     yield ChatAgentResponse(
                                                         response="",
                                                         tool_calls=[
@@ -1244,6 +1343,23 @@ You are continuing a task that was started earlier. Here's what you already acco
                                                         ],
                                                         citations=[],
                                                     )
+                                        
+                                        # Check tokens AFTER tool execution completes
+                                        # Add tool results to message_history for cumulative tracking
+                                        for result_content in tool_results_in_this_cycle:
+                                            message_history.append(
+                                                ModelResponse([TextPart(content=result_content)])
+                                            )
+                                        
+                                        # Now check tokens on the accumulated history
+                                        should_compress, current_tokens = self._check_token_threshold(
+                                            message_history, ctx.query, context_window, token_threshold
+                                        )
+                                        
+                                        if should_compress:
+                                            compression_needed = True
+                                            break  # Exit node loop to trigger compression
+                                            
                                     except (
                                         ModelRetry,
                                         AgentRunError,

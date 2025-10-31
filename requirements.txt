@@ -64,8 +64,13 @@ newrelic==9.0.0
 tiktoken==0.7.0
 agentops==0.3.26
 pydantic[email]==2.10.3
+arize-phoenix>=6.0.0
+arize-phoenix-otel>=0.1.0
+openinference-instrumentation-pydantic-ai>=0.1.0
+openinference-instrumentation-litellm>=0.1.0
 firecrawl-py==1.11.1
 pydantic_ai==0.4.3
+anthropic>=0.39.0
 pathspec==0.12.1
 pytest
 pytest-asyncio

@@ -130,6 +130,13 @@ class MainApp:
             }
 
     async def startup_event(self):
+        # Initialize Phoenix tracing for LLM monitoring
+        try:
+            from app.modules.intelligence.tracing.phoenix_tracer import initialize_phoenix_tracing
+            initialize_phoenix_tracing()
+        except Exception as e:
+            logging.warning(f"Phoenix tracing initialization failed (non-fatal): {e}")
+        
         db = SessionLocal()
         try:
             system_prompt_setup = SystemPromptSetup(db)

@@ -139,7 +139,7 @@ MODEL_CONFIG_MAP = {
         },
         "base_url": "https://openrouter.ai/api/v1",
         "api_version": None,
-        "context_window": 64000,
+        "context_window": 128000,
     },
     # Meta-Llama Models
     "openrouter/meta-llama/llama-3.3-70b-instruct": {
@@ -169,6 +169,7 @@ MODEL_CONFIG_MAP = {
         },
         "base_url": "https://openrouter.ai/api/v1",
         "api_version": None,
+        "context_window": 1000000,
     },
     "openrouter/google/gemini-2.5-pro-preview": {
         "provider": "gemini",

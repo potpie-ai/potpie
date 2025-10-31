@@ -80,6 +80,13 @@ def configure_celery(queue_prefix: str):
 
 configure_celery(queue_name)
 
+# Initialize Phoenix tracing for LLM monitoring in Celery workers
+try:
+    from app.modules.intelligence.tracing.phoenix_tracer import initialize_phoenix_tracing
+    initialize_phoenix_tracing()
+except Exception as e:
+    logger.warning(f"Phoenix tracing initialization failed in Celery worker (non-fatal): {e}")
+
 # Import the lock decorator
 
 # Import the lock decorator

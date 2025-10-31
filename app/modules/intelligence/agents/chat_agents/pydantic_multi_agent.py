@@ -50,6 +50,7 @@ from ..chat_agent import (
 # Compression support
 from app.modules.intelligence.memory.compression_service import CompressionService
 from app.modules.intelligence.provider.llm_config import get_context_window_for_model
+from app.modules.intelligence.memory.token_counter import TokenCounterService
 
 logger = setup_logger(__name__)
 
@@ -301,10 +302,13 @@ class PydanticMultiAgent(ChatAgent):
         )
         # Compression threshold: 90% allows better utilization before compression
         # For 200K context window: triggers at 180K tokens
-        self.compression_threshold_percentage = 0.60
+        self.compression_threshold_percentage = 0.30
         
         # Safety limit: Maximum compression cycles before breaking out
-        self.max_compression_cycles = 5
+        self.max_compression_cycles = 3
+        
+        # Token counting support (for supervisor)
+        self.token_counter = TokenCounterService(llm_provider=llm_provider)
 
     def _create_default_delegate_agents(self) -> Dict[AgentType, AgentConfig]:
         """Create default specialized agents if none provided"""
@@ -503,6 +507,7 @@ Focus on EXECUTION RESULTS, not analysis or recommendations.""",
             defer_model_check=True,
             end_strategy="exhaustive",
             model_settings={"max_tokens": 14000},
+            instrument=True,  # Enable Phoenix tracing for this agent
         )
         self._agent_instances[agent_type] = agent
         return agent
@@ -566,7 +571,7 @@ Focus on EXECUTION RESULTS, not analysis or recommendations.""",
         compression_context = ""
         
         if self.compression_summary:  # If we have a compression summary from previous cycle
-            compression_prefix = f"""
+            compression_prefix = """
             🛑🛑🛑 STOP - READ THIS FIRST - YOU ARE IN A CONTINUATION CYCLE 🛑🛑🛑
             
             DO NOT say "Let me first delegate..." or "Let's start by..."
@@ -586,27 +591,8 @@ Focus on EXECUTION RESULTS, not analysis or recommendations.""",
             ═══════════════════════════════════════════════════════════════
             """
 
-        supervisor_agent = Agent(
-            model=self.llm_provider.get_pydantic_model(),
-            tools=[
-                Tool(
-                    name=tool.name,
-                    description=tool.description,
-                    function=handle_exception(tool.func),  # type: ignore
-                )
-                for tool in self.tools
-            ]
-            + delegation_tools
-            + [
-                Tool(
-                    name=todo_tool.name,
-                    description=todo_tool.description,
-                    function=handle_exception(todo_tool.func),  # type: ignore
-                )
-                for todo_tool in todo_tools
-            ],
-            mcp_servers=mcp_toolsets,
-            instructions=f"""
+        # Prepare full instructions
+        full_instructions = f"""
             {compression_prefix}
             {compression_context}
             
@@ -640,17 +626,39 @@ Focus on EXECUTION RESULTS, not analysis or recommendations.""",
             {multimodal_instructions}
 
             CONTEXT: {self._create_supervisor_task_description(ctx)}
-
-
-            """,
+            """
+        
+        supervisor_agent = Agent(
+            model=self.llm_provider.get_pydantic_model(),
+            tools=[
+                Tool(
+                    name=tool.name,
+                    description=tool.description,
+                    function=handle_exception(tool.func),  # type: ignore
+                )
+                for tool in self.tools
+            ]
+            + delegation_tools
+            + [
+                Tool(
+                    name=todo_tool.name,
+                    description=todo_tool.description,
+                    function=handle_exception(todo_tool.func),  # type: ignore
+                )
+                for todo_tool in todo_tools
+            ],
+            mcp_servers=mcp_toolsets,
+            instructions=full_instructions,
             result_type=str,
             output_retries=3,
             output_type=str,
             defer_model_check=True,
             end_strategy="exhaustive",
             # model_settings={"max_tokens": 14000},
+            instrument=True,  # Enable Phoenix tracing for supervisor agent
         )
         self._supervisor_agent = supervisor_agent
+        
         return supervisor_agent
 
     def _create_delegation_function(self, agent_type: AgentType):
@@ -708,6 +716,7 @@ End with "## Task Summary" including what you accomplished, key results, technic
                     # No usage parameter = fresh, independent usage tracking for this subagent
                 )
 
+
                 logger.info(f"Task completed by {agent_type.value} agent")
 
                 # Enhanced output parsing with error handling
@@ -716,9 +725,6 @@ End with "## Task Summary" including what you accomplished, key results, technic
                     summary = extract_task_summary_from_response(result.output)
 
                     if summary and len(summary.strip()) > 0:
-                        logger.info(
-                            f"Extracted task summary for supervisor (length: {len(summary)} chars)"
-                        )
                         return summary
                     else:
                         # No valid summary found, return formatted error
@@ -1038,6 +1044,88 @@ Context: {ctx.additional_context or "none"}
         )
         return content
 
+    def _get_supervisor_system_instructions_text(self) -> str:
+        """
+        Extract the supervisor system instructions text for token counting.
+        This extracts the EXACT instructions used in _create_supervisor_agent().
+        
+        IMPORTANT: This is READ-ONLY extraction for token counting purposes.
+        It does NOT modify supervisor behavior or instructions in any way.
+        
+        Includes:
+        - Compression summary (if present)
+        - Role, goal, backstory
+        - Delegation strategy
+        
+        Note: Context and task descriptions are request-specific and counted separately.
+        """
+        try:
+            config = self.config
+            
+            # Build compression context if available (matches lines 565-588 EXACTLY)
+            compression_prefix = ""
+            compression_context = ""
+            
+            if self.compression_summary:
+                compression_prefix = """
+            🛑🛑🛑 STOP - READ THIS FIRST - YOU ARE IN A CONTINUATION CYCLE 🛑🛑🛑
+            
+            DO NOT say "Let me first delegate..." or "Let's start by..."
+            DO NOT delegate tasks that were already completed
+            DO NOT restart from the beginning
+            
+            YOU MUST READ THE SUMMARY BELOW BEFORE DOING ANYTHING.
+            
+            ═══════════════════════════════════════════════════════════════
+            """
+                
+                compression_context = f"""
+            {self.compression_summary}
+            
+            ═══════════════════════════════════════════════════════════════
+            ⚡ YOU ARE CONTINUING FROM WHERE YOU LEFT OFF ⚡
+            ═══════════════════════════════════════════════════════════════
+            """
+            
+            # Reconstruct supervisor instructions (matches lines 591-621 EXACTLY)
+            instructions = f"""
+        {compression_prefix}
+        {compression_context}
+        
+        You are a problem-solving supervisor who delegates complex tasks to specialized subagents.
+
+        **WHEN TO DELEGATE:**
+        - Complex problems requiring analysis, building, or multiple steps
+        - Code understanding, file searching, or implementation tasks
+        - Any task that needs specialized expertise
+
+        **WHEN TO ANSWER DIRECTLY:**
+        - Simple questions or clarifications
+        - Basic explanations or definitions
+        - Quick responses that don't require specialized work
+
+        **DELEGATION TOOLS:**
+        - delegate_to_codebase_analyzer: For code analysis and understanding
+        - delegate_to_codebase_locator: For finding files and components  
+        - delegate_to_think_execute: For building and implementing
+
+        **APPROACH:**
+        1. Understand the request
+        2. If complex → delegate to appropriate specialist
+        3. If simple → answer directly
+        4. Synthesize results into complete solution
+
+        Role: {config.role}
+        Goal: {config.goal}
+        Backstory: {config.backstory}
+        """
+            
+            return instructions.strip()
+            
+        except Exception as e:
+            logger.error(f"[Supervisor] Failed to extract system instructions: {e}")
+            return ""
+
     async def _prepare_multimodal_message_history(
         self, ctx: ChatContext
     ) -> List[ModelMessage]:
@@ -1053,49 +1141,62 @@ Context: {ctx.additional_context or "none"}
 
     def _check_token_threshold(
         self, 
-        run, 
+        message_history: list,
+        current_query: str,
         context_window: int, 
         token_threshold: int
     ) -> tuple[bool, int]:
         """
         Check if token usage exceeds threshold for supervisor agent.
+        Uses TokenCounterService for accurate, provider-specific counting.
+        
+        Args:
+            message_history: List of messages that have been sent (including tool results!)
+            current_query: The current user query being processed
+            context_window: Context window size (not used, kept for compatibility)
+            token_threshold: Token threshold (not used, kept for compatibility)
         
         Returns:
             tuple: (should_compress: bool, total_tokens: int)
         """
         try:
-            current_usage = run.usage()
+            # Build complete message list including current query
+            # Combine history with current query for accurate count
+            all_messages = list(message_history)
+            if current_query:
+                # Add current query as a user message
+                all_messages.append(ModelResponse([TextPart(content=current_query)]))
             
-            # Check if total_tokens attribute exists and is not None
-            if not hasattr(current_usage, 'total_tokens'):
-                logger.debug("Usage object has no total_tokens attribute")
+            if not all_messages:
+                logger.debug("[Supervisor] No messages to count")
                 return (False, 0)
             
-            total_tokens = current_usage.total_tokens
+            # Extract system instructions for token counting (READ-ONLY extraction)
+            system_instructions = self._get_supervisor_system_instructions_text()
             
-            # Handle case where total_tokens is None (no usage data yet)
-            if total_tokens is None:
-                logger.debug("total_tokens is None - no usage data yet")
-                return (False, 0)
+            # Get supervisor's base tools for token counting
+            # Note: Delegation tools and TODO tools are created dynamically in _create_supervisor_agent
+            # but add minimal overhead (~200-300 tokens), so we count base tools only
+            tools_list = self.tools  # List of StructuredTool objects
             
-            # Log progress periodically (every ~1000 tokens)
-            if total_tokens % 1000 < 100:
-                usage_pct = (total_tokens / context_window) * 100
-                logger.debug(
-                    f"📊 [Supervisor] Tokens: {total_tokens:,}/{context_window:,} ({usage_pct:.1f}%)"
-                )
+            # Use token counter service to check threshold
+            # Pass context_window and token_threshold from caller to use their calculated values
+            should_compress, token_count, actual_context_window = self.token_counter.check_token_threshold(
+                messages=all_messages,
+                system_instructions=system_instructions,
+                tools=tools_list,
+                model_name=None,  # Let service use configured model
+                threshold_percentage=self.compression_threshold_percentage,
+                config_type="chat",
+                context_window=context_window,
+                token_threshold=token_threshold
+            )
             
-            # Check if compression threshold exceeded
-            if total_tokens > token_threshold:
-                logger.warning(
-                    f"⚠️  [Supervisor] Threshold exceeded: {total_tokens:,} > {token_threshold:,}"
-                )
-                return (True, total_tokens)
-            
-            return (False, total_tokens)
+            return (should_compress, token_count)
             
         except Exception as e:
-            logger.debug(f"Could not check token usage: {e}")
+            logger.error(f"[Supervisor] Token threshold check failed: {e}", exc_info=True)
+            # Don't trigger compression on error - continue execution
             return (False, 0)
     
     async def _perform_compression(
@@ -1120,20 +1221,14 @@ Context: {ctx.additional_context or "none"}
             tuple: (success: bool, new_message_history: list, new_cycle: int)
         """
         label = f"{path_label} " if path_label else ""
-        logger.info(
-            f"🗜️  {label}[Supervisor] Starting compression process...\n"
-            f"  Current cycle: {compression_cycle}\n"
-            f"  Message history size: {len(message_history)}"
-        )
+        logger.info(f"Starting compression (cycle {compression_cycle}, {len(message_history)} messages)")
         
         try:
             # Use the message_history directly (list of ModelResponse objects)
             # This is what the supervisor has been working with
-            current_messages = message_history
-            
             # Call compression service with retries
             summary = await self.compression_service.compress_message_history(
-                messages=current_messages,
+                messages=message_history,
                 original_user_query=ctx.query,
                 project_id=ctx.project_id,
                 max_retries=2
@@ -1197,11 +1292,7 @@ You are a supervisor continuing a multi-agent task that was started earlier. Her
             new_message_history = recent_history
             
             logger.info(
-                f"✅ {label}[Supervisor] Compression complete:\n"
-                f"  Old history size: {len(message_history)}\n"
-                f"  New history size: {len(new_message_history)}\n"
-                f"  Summary length: {len(self.compression_summary)} chars\n"
-                f"  New cycle: {compression_cycle + 1}"
+                f"✅ Compression complete: {len(message_history)} → {len(new_message_history)} messages, cycle {compression_cycle + 1}"
             )
             
             return (True, new_message_history, compression_cycle + 1)
@@ -1415,10 +1506,7 @@ You are a supervisor continuing a multi-agent task that was started earlier. Her
         token_threshold = int(context_window * self.compression_threshold_percentage)
         
         logger.info(
-            f"🚀 Starting supervisor with compression enabled:\n"
-            f"  Model: {model_name}\n"
-            f"  Context window: {context_window:,} tokens\n"
-            f"  Compression threshold: {token_threshold:,} tokens"
+            f"Starting supervisor: {model_name}, threshold: {token_threshold:,}/{context_window:,} tokens"
         )
         
         # Initialize message history from context
@@ -1447,9 +1535,8 @@ You are a supervisor continuing a multi-agent task that was started earlier. Her
             # Create supervisor agent (includes compression summary if exists)
             supervisor_agent = self._create_supervisor_agent(ctx)
             
-            logger.info(
-                f"🔄 Supervisor cycle #{compression_cycle + 1}/{self.max_compression_cycles}. "
-                f"Compression summary length: {len(self.compression_summary)} chars"
+            logger.debug(
+                f"Supervisor cycle {compression_cycle + 1}/{self.max_compression_cycles}"
             )
             
             # Warn if approaching limit
@@ -1460,7 +1547,6 @@ You are a supervisor continuing a multi-agent task that was started earlier. Her
                 )
             
             compression_needed = False
-            run = None
             
             try:
                 # Try to initialize MCP servers with timeout handling
@@ -1470,23 +1556,16 @@ You are a supervisor continuing a multi-agent task that was started earlier. Her
                             message_history=message_history,
                         ) as run:
                             async for node in run:
-                                # Check if compression needed before processing this node
-                                should_compress, current_tokens = self._check_token_threshold(
-                                    run, context_window, token_threshold
-                                )
-                                
-                                if should_compress:
-                                    compression_needed = True
-                                    break  # Exit node loop to trigger compression
-                                
                                 if Agent.is_model_request_node(node):
                                     # A model request node => We can stream tokens from the model's request
+                                    model_response_text = []  # Track model's text output
                                     try:
                                         async with node.stream(run.ctx) as request_stream:
                                             async for event in request_stream:
                                                 if isinstance(
                                                     event, PartStartEvent
                                                 ) and isinstance(event.part, TextPart):
+                                                    model_response_text.append(event.part.content)
                                                     yield ChatAgentResponse(
                                                         response=event.part.content,
                                                         tool_calls=[],
@@ -1497,11 +1576,19 @@ You are a supervisor continuing a multi-agent task that was started earlier. Her
                                                 ) and isinstance(
                                                     event.delta, TextPartDelta
                                                 ):
+                                                    model_response_text.append(event.delta.content_delta)
                                                     yield ChatAgentResponse(
                                                         response=event.delta.content_delta,
                                                         tool_calls=[],
                                                         citations=[],
                                                     )
+                                        
+                                        # Add model's text response to message_history for cumulative tracking
+                                        if model_response_text:
+                                            full_response = "".join(model_response_text)
+                                            message_history.append(
+                                                ModelResponse([TextPart(content=full_response)])
+                                            )
                                     except (
                                         ModelRetry,
                                         AgentRunError,
@@ -1533,6 +1620,7 @@ You are a supervisor continuing a multi-agent task that was started earlier. Her
                                         continue
 
                                 elif Agent.is_call_tools_node(node):
+                                    tool_results_in_this_cycle = []
                                     try:
                                         async with node.stream(run.ctx) as handle_stream:
                                             async for event in handle_stream:
@@ -1547,6 +1635,10 @@ You are a supervisor continuing a multi-agent task that was started earlier. Her
                                                 if isinstance(
                                                     event, FunctionToolResultEvent
                                                 ):
+                                                    # Track tool result content for token counting
+                                                    result_content = str(event.result.content) if event.result.content else ""
+                                                    tool_results_in_this_cycle.append(result_content)
+                                                    
                                                     yield ChatAgentResponse(
                                                         response="",
                                                         tool_calls=[
@@ -1556,6 +1648,23 @@ You are a supervisor continuing a multi-agent task that was started earlier. Her
                                                         ],
                                                         citations=[],
                                                     )
+                                        
+                                        # Check tokens AFTER tool execution completes
+                                        # Add tool results to message_history for cumulative tracking
+                                        for result_content in tool_results_in_this_cycle:
+                                            message_history.append(
+                                                ModelResponse([TextPart(content=result_content)])
+                                            )
+                                        
+                                        # Now check tokens on the accumulated history
+                                        should_compress, current_tokens = self._check_token_threshold(
+                                            message_history, ctx.query, context_window, token_threshold
+                                        )
+                                        
+                                        if should_compress:
+                                            compression_needed = True
+                                            break  # Exit node loop to trigger compression
+                                            
                                     except (
                                         ModelRetry,
                                         AgentRunError,
@@ -1626,27 +1735,22 @@ You are a supervisor continuing a multi-agent task that was started earlier. Her
 
                 # Fallback: run without MCP servers (with same compression logic)
                 try:
+                    logger.debug(f"Fallback: Sending without MCP servers ({len(message_history)} messages)")
+                    
                     async with supervisor_agent.iter(
                             user_prompt=ctx.query,
                             message_history=message_history,
                         ) as run:
                             async for node in run:
-                                # Check if compression needed before processing this node
-                                should_compress, current_tokens = self._check_token_threshold(
-                                    run, context_window, token_threshold
-                                )
-                                
-                                if should_compress:
-                                    compression_needed = True
-                                    break  # Exit node loop to trigger compression
-                                
                                 if Agent.is_model_request_node(node):
+                                    model_response_text = []  # Track model's text output
                                     try:
                                         async with node.stream(run.ctx) as request_stream:
                                             async for event in request_stream:
                                                 if isinstance(
                                                     event, PartStartEvent
                                                 ) and isinstance(event.part, TextPart):
+                                                    model_response_text.append(event.part.content)
                                                     yield ChatAgentResponse(
                                                         response=event.part.content,
                                                         tool_calls=[],
@@ -1657,11 +1761,19 @@ You are a supervisor continuing a multi-agent task that was started earlier. Her
                                                 ) and isinstance(
                                                     event.delta, TextPartDelta
                                                 ):
+                                                    model_response_text.append(event.delta.content_delta)
                                                     yield ChatAgentResponse(
                                                         response=event.delta.content_delta,
                                                         tool_calls=[],
                                                         citations=[],
                                                     )
+                                        
+                                        # Add model's text response to message_history for cumulative tracking
+                                        if model_response_text:
+                                            full_response = "".join(model_response_text)
+                                            message_history.append(
+                                                ModelResponse([TextPart(content=full_response)])
+                                            )
                                     except (
                                         ModelRetry,
                                         AgentRunError,
@@ -1693,6 +1805,7 @@ You are a supervisor continuing a multi-agent task that was started earlier. Her
                                         continue
 
                                 elif Agent.is_call_tools_node(node):
+                                    tool_results_in_this_cycle = []
                                     try:
                                         async with node.stream(run.ctx) as handle_stream:
                                             async for event in handle_stream:
@@ -1707,6 +1820,10 @@ You are a supervisor continuing a multi-agent task that was started earlier. Her
                                                 if isinstance(
                                                     event, FunctionToolResultEvent
                                                 ):
+                                                    # Track tool result content for token counting
+                                                    result_content = str(event.result.content) if event.result.content else ""
+                                                    tool_results_in_this_cycle.append(result_content)
+                                                    
                                                     yield ChatAgentResponse(
                                                         response="",
                                                         tool_calls=[
@@ -1716,6 +1833,23 @@ You are a supervisor continuing a multi-agent task that was started earlier. Her
                                                         ],
                                                         citations=[],
                                                     )
+                                        
+                                        # Check tokens AFTER tool execution completes
+                                        # Add tool results to message_history for cumulative tracking
+                                        for result_content in tool_results_in_this_cycle:
+                                            message_history.append(
+                                                ModelResponse([TextPart(content=result_content)])
+                                            )
+                                        
+                                        # Now check tokens on the accumulated history
+                                        should_compress, current_tokens = self._check_token_threshold(
+                                            message_history, ctx.query, context_window, token_threshold
+                                        )
+                                        
+                                        if should_compress:
+                                            compression_needed = True
+                                            break  # Exit node loop to trigger compression
+                                            
                                     except (
                                         ModelRetry,
                                         AgentRunError,
