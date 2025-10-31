@@ -842,7 +842,7 @@ class IntegrationsService:
             db_integration = (
                 self.db.query(Integration)
                 .filter(Integration.integration_type == "linear")
-                .filter(Integration.active == True)
+                .filter(Integration.active == True)  # noqa: E712
                 .filter(Integration.unique_identifier == organization_id)
                 .first()
             )
@@ -954,32 +954,34 @@ class IntegrationsService:
         try:
             metadata = db_integration.integration_metadata or {}
             webhooks = metadata.get("webhooks", [])
-            
+
             if not webhooks:
                 logging.info("No webhooks to clean up for Jira integration")
                 return
-            
+
             # Get access token and site_id from auth_data column (not metadata)
             auth_data = db_integration.auth_data or {}
             access_token = auth_data.get("access_token")
-            
+
             # Get site_id from scope_data or metadata
             scope_data = db_integration.scope_data or {}
             site_id = scope_data.get("org_slug") or metadata.get("site_id")
-            
+
             if not access_token or not site_id:
                 logging.warning(
                     f"Cannot cleanup webhooks: missing access_token or site_id for integration {db_integration.integration_id}"
                 )
-                logging.debug(f"auth_data: {auth_data}, scope_data: {scope_data}, metadata: {metadata}")
+                logging.debug(
+                    f"auth_data: {auth_data}, scope_data: {scope_data}, metadata: {metadata}"
+                )
                 return
-            
+
             access_token = decrypt_token(access_token)
 
             # Delete each webhook
             deleted_count = 0
             failed_count = 0
-            
+
             for webhook in webhooks:
                 webhook_id = webhook.get("id")
                 if webhook_id:
@@ -987,23 +989,29 @@ class IntegrationsService:
                         success = await self.jira_oauth.delete_webhook(
                             cloud_id=site_id,
                             access_token=access_token,
-                            webhook_id=str(webhook_id)
+                            webhook_id=str(webhook_id),
                         )
                         if success:
                             deleted_count += 1
-                            logging.info(f"Deleted Jira webhook {webhook_id} for integration {db_integration.integration_id}")
+                            logging.info(
+                                f"Deleted Jira webhook {webhook_id} for integration {db_integration.integration_id}"
+                            )
                         else:
                             failed_count += 1
-                            logging.warning(f"Failed to delete Jira webhook {webhook_id}")
+                            logging.warning(
+                                f"Failed to delete Jira webhook {webhook_id}"
+                            )
                     except Exception as e:
                         failed_count += 1
-                        logging.error(f"Error deleting Jira webhook {webhook_id}: {str(e)}")
-            
+                        logging.error(
+                            f"Error deleting Jira webhook {webhook_id}: {str(e)}"
+                        )
+
             logging.info(
                 f"Webhook cleanup complete for integration {db_integration.integration_id}: "
                 f"{deleted_count} deleted, {failed_count} failed"
             )
-            
+
         except Exception as e:
             logging.error(f"Error during webhook cleanup: {str(e)}")
             # Don't raise - we still want to delete the integration even if webhook cleanup fails
@@ -1397,7 +1405,7 @@ class IntegrationsService:
             db_integration = (
                 self.db.query(Integration)
                 .filter(Integration.integration_type == "jira")
-                .filter(Integration.active == True)
+                .filter(Integration.active == True)  # noqa: E712
                 .filter(Integration.unique_identifier == site_id)
                 .first()
             )
@@ -1409,9 +1417,7 @@ class IntegrationsService:
                 )
                 return self._db_to_dict(db_integration)
 
-            logging.warning(
-                f"No Jira integration found for site {site_id}"
-            )
+            logging.warning(f"No Jira integration found for site {site_id}")
             return None
 
         except Exception as e:
@@ -1906,10 +1912,11 @@ class IntegrationsService:
                     # Try to build based on API host if configured
                     api_host = config("API_BASE_URL", default=None)
                     if api_host:
-                        webhook_callback = f"{api_host}/api/v1/integrations/jira/webhook"
+                        webhook_callback = (
+                            f"{api_host}/api/v1/integrations/jira/webhook"
+                        )
 
                 # Only create webhook if we have a callback URL
-                created_webhook = None
                 if webhook_callback and site_id and access_token:
                     try:
                         logging.info(
@@ -1928,31 +1935,46 @@ class IntegrationsService:
                             ],
                             name=f"Potpie webhook for {instance_name}",
                         )
-                        created_webhook = webhook_resp
 
                         # persist webhook id in metadata if available
                         webhook_id = None
                         if isinstance(webhook_resp, dict):
                             # OAuth webhook response format: {"webhookRegistrationResult": [{"createdWebhookId": 1}]}
-                            registration_result = webhook_resp.get("webhookRegistrationResult", [])
-                            if registration_result and isinstance(registration_result, list) and len(registration_result) > 0:
-                                webhook_id = registration_result[0].get("createdWebhookId")
-                            
+                            registration_result = webhook_resp.get(
+                                "webhookRegistrationResult", []
+                            )
+                            if (
+                                registration_result
+                                and isinstance(registration_result, list)
+                                and len(registration_result) > 0
+                            ):
+                                webhook_id = registration_result[0].get(
+                                    "createdWebhookId"
+                                )
+
                             # Fallback to other formats
                             if not webhook_id:
-                                if webhook_resp.get("created") and isinstance(webhook_resp.get("created"), list):
+                                if webhook_resp.get("created") and isinstance(
+                                    webhook_resp.get("created"), list
+                                ):
                                     webhook_id = webhook_resp["created"][0].get("id")
                                 else:
-                                    webhook_id = webhook_resp.get("id") or webhook_resp.get("self")
+                                    webhook_id = webhook_resp.get(
+                                        "id"
+                                    ) or webhook_resp.get("self")
 
                         if webhook_id:
                             metadata_dict.setdefault("webhooks", [])
-                            metadata_dict["webhooks"].append({
-                                "id": webhook_id,
-                                "site_id": site_id,
-                                "url": webhook_callback,
-                            })
-                            logging.info(f"Stored webhook ID {webhook_id} in integration metadata")
+                            metadata_dict["webhooks"].append(
+                                {
+                                    "id": webhook_id,
+                                    "site_id": site_id,
+                                    "url": webhook_callback,
+                                }
+                            )
+                            logging.info(
+                                f"Stored webhook ID {webhook_id} in integration metadata"
+                            )
 
                     except Exception as wh_exc:
                         logging.warning(
@@ -2003,9 +2025,7 @@ class IntegrationsService:
             self.db.rollback()
             raise Exception(f"Failed to save Jira integration: {str(e)}")
 
-    async def _get_jira_context(
-        self, integration_id: str
-    ) -> Dict[str, Any]:
+    async def _get_jira_context(self, integration_id: str) -> Dict[str, Any]:
         """Retrieve decrypted token and site information for a Jira integration."""
         db_integration = (
             self.db.query(Integration)
@@ -2017,9 +2037,7 @@ class IntegrationsService:
             raise Exception(f"Integration not found: {integration_id}")
 
         if db_integration.integration_type != IntegrationType.JIRA.value:
-            raise Exception(
-                f"Integration {integration_id} is not a Jira integration"
-            )
+            raise Exception(f"Integration {integration_id} is not a Jira integration")
 
         auth_data = getattr(db_integration, "auth_data", {}) or {}
         encrypted_token = auth_data.get("access_token")
@@ -2074,9 +2092,7 @@ class IntegrationsService:
         access_token = context["access_token"]
         site_id = context["site_id"]
 
-        url = (
-            f"{self.jira_oauth.API_BASE_URL}/ex/jira/{site_id}/rest/api/3/project/search"
-        )
+        url = f"{self.jira_oauth.API_BASE_URL}/ex/jira/{site_id}/rest/api/3/project/search"
 
         params = {"startAt": start_at, "maxResults": max_results}
 
@@ -2120,9 +2136,7 @@ class IntegrationsService:
         access_token = context["access_token"]
         site_id = context["site_id"]
 
-        url = (
-            f"{self.jira_oauth.API_BASE_URL}/ex/jira/{site_id}/rest/api/3/project/{project_key_or_id}"
-        )
+        url = f"{self.jira_oauth.API_BASE_URL}/ex/jira/{site_id}/rest/api/3/project/{project_key_or_id}"
 
         import httpx
 
@@ -2155,16 +2169,14 @@ class IntegrationsService:
         )
         return data
 
-    async def get_jira_integration_status(
-        self, user_id: str
-    ) -> JiraIntegrationStatus:
+    async def get_jira_integration_status(self, user_id: str) -> JiraIntegrationStatus:
         """Return Jira integration status for a user."""
         try:
             db_integration = (
                 self.db.query(Integration)
                 .filter(Integration.integration_type == IntegrationType.JIRA.value)
                 .filter(Integration.created_by == user_id)
-                .filter(Integration.active == True)
+                .filter(Integration.active == True)  # noqa: E712
                 .order_by(Integration.created_at.desc())
                 .first()
             )
@@ -2209,7 +2221,7 @@ class IntegrationsService:
                 self.db.query(Integration)
                 .filter(Integration.integration_type == IntegrationType.JIRA.value)
                 .filter(Integration.created_by == user_id)
-                .filter(Integration.active == True)
+                .filter(Integration.active == True)  # noqa: E712
                 .all()
             )
 
@@ -2217,7 +2229,9 @@ class IntegrationsService:
             for db_integration in integrations_to_deactivate:
                 try:
                     await self._cleanup_jira_webhooks(db_integration)
-                    logging.info(f"Cleaned up webhooks for integration {db_integration.integration_id}")
+                    logging.info(
+                        f"Cleaned up webhooks for integration {db_integration.integration_id}"
+                    )
                 except Exception as webhook_error:
                     logging.error(
                         f"Failed to cleanup webhooks for integration {db_integration.integration_id}: {str(webhook_error)}"
@@ -2229,7 +2243,7 @@ class IntegrationsService:
                 self.db.query(Integration)
                 .filter(Integration.integration_type == IntegrationType.JIRA.value)
                 .filter(Integration.created_by == user_id)
-                .filter(Integration.active == True)
+                .filter(Integration.active == True)  # noqa: E712
                 .update(
                     {
                         "active": False,
@@ -2243,6 +2257,8 @@ class IntegrationsService:
             self.db.commit()
             return updated or 0
         except Exception as e:
-            logging.error(f"Error deactivating Jira integrations for {user_id}: {str(e)}")
+            logging.error(
+                f"Error deactivating Jira integrations for {user_id}: {str(e)}"
+            )
             self.db.rollback()
             return 0
