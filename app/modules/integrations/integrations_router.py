@@ -986,7 +986,6 @@ def verify_jira_webhook_jwt(authorization_header: Optional[str], client_secret: 
             }
         )
         
-        logging.info(f"JWT verified successfully. Claims: {decoded}")
         return True, decoded
         
     except jwt.ExpiredSignatureError:
@@ -1022,7 +1021,6 @@ async def jira_webhook(
                     status_code=403,
                     detail="Invalid or missing webhook authentication"
                 )
-            logging.info("Jira webhook JWT verified successfully")
         else:
             logging.warning("JIRA_CLIENT_SECRET not configured - skipping JWT verification (INSECURE!)")
 

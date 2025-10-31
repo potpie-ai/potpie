@@ -1388,6 +1388,38 @@ class IntegrationsService:
         """Get Linear token information for a user (for debugging)"""
         return self.linear_oauth.token_store.get_tokens(user_id)
 
+    async def get_jira_integration_by_site_id(
+        self, site_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get Jira integration by site ID (cloud ID) using unique_identifier"""
+        try:
+            # Query for integration using site_id as unique_identifier
+            db_integration = (
+                self.db.query(Integration)
+                .filter(Integration.integration_type == "jira")
+                .filter(Integration.active == True)
+                .filter(Integration.unique_identifier == site_id)
+                .first()
+            )
+
+            if db_integration:
+                logging.info(
+                    f"Found Jira integration {db_integration.integration_id} "
+                    f"by site_id {site_id}"
+                )
+                return self._db_to_dict(db_integration)
+
+            logging.warning(
+                f"No Jira integration found for site {site_id}"
+            )
+            return None
+
+        except Exception as e:
+            logging.error(
+                f"Error looking up Jira integration by site ID {site_id}: {str(e)}"
+            )
+            return None
+
     async def check_existing_linear_integration(
         self, org_id: str
     ) -> Optional[Dict[str, Any]]:
@@ -2170,8 +2202,29 @@ class IntegrationsService:
             return JiraIntegrationStatus(user_id=user_id, is_connected=False)
 
     async def deactivate_jira_integrations_for_user(self, user_id: str) -> int:
-        """Deactivate Jira integrations created by the user."""
+        """Deactivate Jira integrations created by the user and cleanup their webhooks."""
         try:
+            # First, get all active integrations to cleanup webhooks
+            integrations_to_deactivate = (
+                self.db.query(Integration)
+                .filter(Integration.integration_type == IntegrationType.JIRA.value)
+                .filter(Integration.created_by == user_id)
+                .filter(Integration.active == True)
+                .all()
+            )
+
+            # Cleanup webhooks for each integration
+            for db_integration in integrations_to_deactivate:
+                try:
+                    await self._cleanup_jira_webhooks(db_integration)
+                    logging.info(f"Cleaned up webhooks for integration {db_integration.integration_id}")
+                except Exception as webhook_error:
+                    logging.error(
+                        f"Failed to cleanup webhooks for integration {db_integration.integration_id}: {str(webhook_error)}"
+                    )
+                    # Continue with deactivation even if webhook cleanup fails
+
+            # Now deactivate the integrations
             updated = (
                 self.db.query(Integration)
                 .filter(Integration.integration_type == IntegrationType.JIRA.value)
