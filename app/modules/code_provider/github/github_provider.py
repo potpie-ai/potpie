@@ -200,9 +200,14 @@ class GitHubProvider(ICodeProvider):
                         entry["children"] = _recurse(item.path, depth + 1)
 
             except GithubException as e:
-                logger.warning(f"GitHubProvider: Failed to get contents for {current_path}: {e}")
+                logger.warning(
+                    f"GitHubProvider: Failed to get contents for {current_path}: {e}"
+                )
             except Exception as e:
-                logger.error(f"GitHubProvider: Unexpected error getting contents for {current_path}: {e}", exc_info=True)
+                logger.error(
+                    f"GitHubProvider: Unexpected error getting contents for {current_path}: {e}",
+                    exc_info=True,
+                )
 
             return result
 

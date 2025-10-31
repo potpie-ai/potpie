@@ -31,9 +31,9 @@ class CodeProviderController:
             Dictionary containing branch information
         """
         import logging
-        
+
         logger = logging.getLogger(__name__)
-        
+
         try:
             # Use fallback provider that tries PAT first, then GitHub App for private repos
             provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
@@ -47,12 +47,12 @@ class CodeProviderController:
         except Exception as e:
             # Check if this is a 404 (not found) or 403 (forbidden) - likely PAT doesn't have access
             is_access_error = (
-                "404" in str(e) 
-                or "403" in str(e) 
+                "404" in str(e)
+                or "403" in str(e)
                 or "Not Found" in str(e)
                 or "UnknownObjectException" in str(type(e))
             )
-            
+
             if is_access_error:
                 logger.info(
                     f"PAT authentication failed for {repo_name} (likely no access to private repo): {str(e)}"
@@ -61,7 +61,7 @@ class CodeProviderController:
                 logger.error(
                     f"Error fetching branches for {repo_name}: {str(e)}", exc_info=True
                 )
-            
+
             # If this is a GitHub repo and PAT failed, try GitHub App directly
             provider_type = os.getenv("CODE_PROVIDER", "github").lower()
             if provider_type == "github":
@@ -69,18 +69,26 @@ class CodeProviderController:
                 private_key = config_provider.get_github_key()
                 if app_id and private_key:
                     try:
-                        logger.info(f"Retrying branch fetch for {repo_name} with GitHub App auth")
-                        provider = CodeProviderFactory.create_github_app_provider(repo_name)
+                        logger.info(
+                            f"Retrying branch fetch for {repo_name} with GitHub App auth"
+                        )
+                        provider = CodeProviderFactory.create_github_app_provider(
+                            repo_name
+                        )
                         branches = provider.list_branches(repo_name)
-                        logger.info(f"Successfully fetched {len(branches)} branches for {repo_name} using GitHub App auth")
+                        logger.info(
+                            f"Successfully fetched {len(branches)} branches for {repo_name} using GitHub App auth"
+                        )
                         return {"branches": branches}
                     except Exception as app_error:
                         logger.warning(
                             f"GitHub App auth also failed for {repo_name}: {str(app_error)}"
                         )
                 else:
-                    logger.debug("GitHub App credentials not configured, skipping App auth retry")
-            
+                    logger.debug(
+                        "GitHub App credentials not configured, skipping App auth retry"
+                    )
+
             raise HTTPException(
                 status_code=404,
                 detail=f"Repository {repo_name} not found or error fetching branches: {str(e)}",

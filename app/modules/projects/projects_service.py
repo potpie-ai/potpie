@@ -92,7 +92,7 @@ class ProjectService:
             try:
                 self.db.commit()
                 self.db.refresh(existing_project)
-            except Exception as e:
+            except Exception:
                 logger.exception(f"Error updating existing project {project_id}")
                 self.db.rollback()
                 raise
@@ -161,7 +161,7 @@ class ProjectService:
             logger.info(
                 f"Project with ID {project_id} has now been updated with status {status}."
             )
-        except Exception as e:
+        except Exception:
             logger.exception(f"Error updating project status for {project_id}")
             self.db.rollback()
             raise
@@ -355,11 +355,11 @@ class ProjectService:
             db.commit()
             db.refresh(project)
             return project
-        except IntegrityError as e:
+        except IntegrityError:
             db.rollback()
             logger.exception(f"IntegrityError creating project {project.id}")
             raise
-        except Exception as e:
+        except Exception:
             db.rollback()
             logger.exception(f"Error creating project {project.id}")
             raise
