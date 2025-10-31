@@ -168,10 +168,13 @@ class GetCodeFromProbableNodeNameTool:
 
         relative_file_path = self._get_relative_file_path(file_path)
 
+        # Handle None values for start_line
+        adjusted_start_line = (start_line - 3) if start_line is not None else 0
+
         code_content = CodeProviderService(self.sql_db).get_file_content(
             project.repo_name,
             relative_file_path,
-            start_line - 3,
+            adjusted_start_line,
             end_line,
             project.branch_name,
             project.id,
