@@ -6,6 +6,9 @@ import sentry_sdk
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi.exception_handlers import request_validation_exception_handler
 
 from app.api.router import router as potpie_api_router
 from app.core.base_model import Base
@@ -52,6 +55,27 @@ class MainApp:
             exit(1)
         self.setup_sentry()
         self.app = FastAPI()
+        # Register a validation error handler that converts model validation errors
+        # for the search endpoint into a 400 Bad Request with a clear message.
+        @self.app.exception_handler(RequestValidationError)
+        async def validation_exception_handler(request, exc):
+            # Only convert validation errors for the search endpoint to 400.
+            # This keeps default behavior for other routes.
+            try:
+                path = request.url.path
+            except Exception:
+                path = None
+
+            if path == "/api/v1/search":
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "detail": "Search query cannot be empty or contain only whitespace"
+                    },
+                )
+
+            # Fallback to FastAPI's default handler for other validation errors
+            return await request_validation_exception_handler(request, exc)
         self.setup_cors()
         self.include_routers()
 
