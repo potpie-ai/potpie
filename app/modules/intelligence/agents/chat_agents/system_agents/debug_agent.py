@@ -78,30 +78,6 @@ class DebugAgent(ChatAgent):
             if should_use_multi:
                 logger.info("✅ Using PydanticMultiAgent (multi-agent system)")
                 delegate_agents = {
-                    MultiAgentType.CBL: AgentConfig(
-                        role="Bug Locator Specialist",
-                        goal="Locate bug sources and related code components",
-                        backstory="Expert at finding bug locations, error sources, and related code.",
-                        tasks=[
-                            TaskConfig(
-                                description="Locate and identify bug sources",
-                                expected_output="Bug location analysis",
-                            )
-                        ],
-                        max_iter=10,
-                    ),
-                    MultiAgentType.CAB: AgentConfig(
-                        role="Debug Analysis Specialist",
-                        goal="Analyze bugs and understand root causes",
-                        backstory="Expert at analyzing code to understand bug causes and impacts.",
-                        tasks=[
-                            TaskConfig(
-                                description="Analyze bugs and determine root causes",
-                                expected_output="Root cause analysis",
-                            )
-                        ],
-                        max_iter=15,
-                    ),
                     MultiAgentType.THINK_EXECUTE: AgentConfig(
                         role="Debug Solution Specialist",
                         goal="Provide comprehensive debugging solutions",

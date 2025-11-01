@@ -95,18 +95,6 @@ class CodeGenAgent(ChatAgent):
                 logger.info("✅ Using PydanticMultiAgent (multi-agent system)")
                 # Create specialized delegate agents for code generation using available agent types
                 delegate_agents = {
-                    MultiAgentType.CAB: AgentConfig(
-                        role="Code Analysis Specialist",
-                        goal="Analyze code requirements and existing codebase",
-                        backstory="You are an expert code analyst who understands code structure, patterns, and requirements.",
-                        tasks=[
-                            TaskConfig(
-                                description="Analyze code requirements, existing patterns, and dependencies",
-                                expected_output="Detailed analysis of code requirements and implementation approach",
-                            )
-                        ],
-                        max_iter=10,
-                    ),
                     MultiAgentType.THINK_EXECUTE: AgentConfig(
                         role="Code Implementation and Review Specialist",
                         goal="Implement code solutions and review them for quality",

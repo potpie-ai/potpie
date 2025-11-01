@@ -77,30 +77,6 @@ class LowLevelDesignAgent(ChatAgent):
                 logger.info("✅ Using PydanticMultiAgent (multi-agent system)")
                 # Create specialized delegate agents for low-level design
                 delegate_agents = {
-                    MultiAgentType.CBL: AgentConfig(
-                        role="Architecture Locator Specialist",
-                        goal="Locate existing architectural patterns and design components",
-                        backstory="You are an expert at finding existing architectural patterns, design documents, and related code structures.",
-                        tasks=[
-                            TaskConfig(
-                                description="Locate existing architectural patterns, similar implementations, and design documentation",
-                                expected_output="Comprehensive overview of existing patterns and architectural components",
-                            )
-                        ],
-                        max_iter=10,
-                    ),
-                    MultiAgentType.CAB: AgentConfig(
-                        role="Design Analysis Specialist",
-                        goal="Analyze existing code architecture and design patterns",
-                        backstory="You are an expert software architect who can analyze existing systems and understand their design patterns and architectural decisions.",
-                        tasks=[
-                            TaskConfig(
-                                description="Analyze existing architecture, identify patterns, and understand design decisions",
-                                expected_output="Detailed analysis of current architecture with design pattern identification",
-                            )
-                        ],
-                        max_iter=15,
-                    ),
                     MultiAgentType.THINK_EXECUTE: AgentConfig(
                         role="Design Planning Specialist",
                         goal="Create comprehensive low-level design plans based on analysis",

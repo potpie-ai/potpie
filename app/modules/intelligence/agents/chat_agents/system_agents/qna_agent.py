@@ -81,30 +81,6 @@ class QnAAgent(ChatAgent):
                 logger.info("✅ Using PydanticMultiAgent (multi-agent system)")
                 # Create specialized delegate agents for codebase Q&A using available agent types
                 delegate_agents = {
-                    MultiAgentType.CBL: AgentConfig(
-                        role="Codebase Locator Specialist",
-                        goal="Locate relevant code, files, and components for Q&A queries",
-                        backstory="You are an expert at navigating codebases and finding relevant code snippets, functions, and files based on user queries.",
-                        tasks=[
-                            TaskConfig(
-                                description="Locate and identify relevant code components, files, and functions for the user's question",
-                                expected_output="Precise locations of relevant code with file paths and function names",
-                            )
-                        ],
-                        max_iter=10,
-                    ),
-                    MultiAgentType.CAB: AgentConfig(
-                        role="Codebase Analysis Specialist",
-                        goal="Analyze and understand code functionality for comprehensive Q&A responses",
-                        backstory="You are an expert code analyst who can understand complex code relationships, data flow, and functionality to provide detailed explanations.",
-                        tasks=[
-                            TaskConfig(
-                                description="Analyze code functionality, relationships, and provide detailed technical explanations",
-                                expected_output="Comprehensive analysis of code functionality with clear explanations and examples",
-                            )
-                        ],
-                        max_iter=15,
-                    ),
                     MultiAgentType.THINK_EXECUTE: AgentConfig(
                         role="Q&A Synthesis Specialist",
                         goal="Synthesize findings and provide comprehensive answers to codebase questions",

@@ -155,12 +155,28 @@ class TodoManager:
 
 
 # Global todo manager instance for the session
-_todo_manager = TodoManager()
+# This will be replaced with a new instance for each agent run
+_todo_manager = None
+
+
+def _get_todo_manager() -> TodoManager:
+    """Get the current todo manager, creating a new one if needed"""
+    global _todo_manager
+    if _todo_manager is None:
+        _todo_manager = TodoManager()
+    return _todo_manager
+
+
+def _reset_todo_manager() -> None:
+    """Reset the todo manager for a new agent run"""
+    global _todo_manager
+    _todo_manager = TodoManager()
 
 
 def _format_current_todo_list() -> str:
     """Helper function to format the current todo list for display"""
-    current_todos = _todo_manager.list_todos()
+    todo_manager = _get_todo_manager()
+    current_todos = todo_manager.list_todos()
 
     result = "📋 **Current Todo List:**\n"
     if not current_todos:
@@ -192,7 +208,7 @@ class CreateTodoInput(BaseModel):
     )
     assigned_agent: Optional[str] = Field(
         default=None,
-        description="Agent type this task will be delegated to (e.g., 'think_execute', 'codebase_analyzer')",
+        description="Agent type this task will be delegated to (e.g., 'think_execute')",
     )
     dependencies: Optional[List[str]] = Field(
         default=None, description="List of todo IDs this task depends on"
@@ -226,7 +242,8 @@ class ListTodosInput(BaseModel):
 def create_todo_tool(input_data: CreateTodoInput) -> str:
     """Create a new todo item for task tracking"""
     try:
-        todo_id = _todo_manager.create_todo(
+        todo_manager = _get_todo_manager()
+        todo_id = todo_manager.create_todo(
             title=input_data.title,
             description=input_data.description,
             priority=input_data.priority,
@@ -250,7 +267,8 @@ def update_todo_status_tool(input_data: UpdateTodoStatusInput) -> str:
         except ValueError:
             return f"❌ Invalid status '{input_data.status}'. Valid statuses: {', '.join([s.value for s in TodoStatus])}"
 
-        success = _todo_manager.update_todo_status(
+        todo_manager = _get_todo_manager()
+        success = todo_manager.update_todo_status(
             todo_id=input_data.todo_id, status=status, note=input_data.note
         )
 
@@ -276,7 +294,8 @@ def update_todo_status_tool(input_data: UpdateTodoStatusInput) -> str:
 def add_todo_note_tool(input_data: AddTodoNoteInput) -> str:
     """Add a progress note to a todo item"""
     try:
-        success = _todo_manager.add_note(input_data.todo_id, input_data.note)
+        todo_manager = _get_todo_manager()
+        success = todo_manager.add_note(input_data.todo_id, input_data.note)
 
         if success:
             result = f"📝 Added note to todo {input_data.todo_id}\n\n"
@@ -291,7 +310,8 @@ def add_todo_note_tool(input_data: AddTodoNoteInput) -> str:
 def get_todo_tool(input_data: GetTodoInput) -> str:
     """Get details of a specific todo item"""
     try:
-        todo = _todo_manager.get_todo(input_data.todo_id)
+        todo_manager = _get_todo_manager()
+        todo = todo_manager.get_todo(input_data.todo_id)
 
         if todo:
             status_emoji = {
@@ -336,7 +356,8 @@ def list_todos_tool(input_data: ListTodosInput) -> str:
             except ValueError:
                 return f"❌ Invalid status filter '{input_data.status_filter}'. Valid statuses: {', '.join([s.value for s in TodoStatus])}"
 
-        todos = _todo_manager.list_todos(status_filter)
+        todo_manager = _get_todo_manager()
+        todos = todo_manager.list_todos(status_filter)
 
         if not todos:
             filter_text = (
@@ -380,7 +401,8 @@ def list_todos_tool(input_data: ListTodosInput) -> str:
 def get_todo_summary_tool() -> str:
     """Get a summary of all todo items"""
     try:
-        summary = _todo_manager.get_summary()
+        todo_manager = _get_todo_manager()
+        summary = todo_manager.get_summary()
 
         result = f"📊 **Todo Summary** (Session: {summary['session_id']})\n\n"
         result += f"Total todos: {summary['total_todos']}\n\n"

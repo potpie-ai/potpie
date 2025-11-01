@@ -1,5 +1,7 @@
 import functools
 import re
+import traceback
+import json
 from typing import List, AsyncGenerator, Sequence, Dict, Any, Optional
 from dataclasses import dataclass
 from enum import Enum
@@ -54,8 +56,6 @@ class AgentType(Enum):
     """Types of specialized agents in the multi-agent system"""
 
     SUPERVISOR = "supervisor"
-    CAB = "codebase_analyzer"  # Codebase Analyzer
-    CBL = "codebase_locator"  # Codebase Locator
     THINK_EXECUTE = "think_execute"  # Generic Think and Execute Agent
 
 
@@ -94,17 +94,17 @@ def extract_agent_type_from_delegation_tool(tool_name: str) -> str:
     return tool_name
 
 
-def extract_task_summary_from_response(response: str) -> str:
+def extract_task_result_from_response(response: str) -> str:
     """
-    Extract the Task Summary section from a subagent response.
-    Returns the full Task Summary without truncation - can include detailed content and code snippets.
-    If no Task Summary section is found, return the full response.
+    Extract the Task Result section from a subagent response.
+    Returns the full Task Result without truncation - can include detailed content and code snippets.
+    If no Task Result section is found, return the full response.
     Enhanced to handle error cases and provide better fallbacks.
     """
     import re
 
     if not response or not response.strip():
-        logger.warning("Empty response provided to extract_task_summary_from_response")
+        logger.warning("Empty response provided to extract_task_result_from_response")
         return ""
 
     # Check for error indicators first
@@ -123,14 +123,14 @@ def extract_task_summary_from_response(response: str) -> str:
             logger.info("Error indicators found in response, returning full response")
             return response
 
-    # Pattern to match Task Summary section (case insensitive)
-    # Updated patterns to better capture the end of summary sections
+    # Pattern to match Task Result section (case insensitive)
+    # Updated patterns to better capture the end of result sections
     patterns = [
-        r"(?i)#{1,4}\s*task\s*summary[:\s]*\n(.*?)(?=\n#{1,4}\s*(?!task\s*summary)\w+|\Z)",
-        r"(?i)\*\*task\s*summary[:\s]*\*\*\n(.*?)(?=\n\*\*(?!task\s*summary)\w+|\Z)",
-        r"(?i)task\s*summary[:\s]*\n(.*?)(?=\n\w+:|\n#{1,4}\s*\w+|\Z)",
-        r"(?i)## summary[:\s]*\n(.*?)(?=\n#{1,4}\s*(?!summary)\w+|\Z)",
-        r"(?i)\*\*summary[:\s]*\*\*\n(.*?)(?=\n\*\*(?!summary)\w+|\Z)",
+        r"(?i)#{1,4}\s*task\s*result[:\s]*\n(.*?)(?=\n#{1,4}\s*(?!task\s*result)\w+|\Z)",
+        r"(?i)\*\*task\s*result[:\s]*\*\*\n(.*?)(?=\n\*\*(?!task\s*result)\w+|\Z)",
+        r"(?i)task\s*result[:\s]*\n(.*?)(?=\n\w+:|\n#{1,4}\s*\w+|\Z)",
+        r"(?i)## result[:\s]*\n(.*?)(?=\n#{1,4}\s*(?!result)\w+|\Z)",
+        r"(?i)\*\*result[:\s]*\*\*\n(.*?)(?=\n\*\*(?!result)\w+|\Z)",
     ]
 
     for pattern in patterns:
@@ -139,14 +139,14 @@ def extract_task_summary_from_response(response: str) -> str:
             summary = match.group(1).strip()
             if summary:
                 logger.info(
-                    f"Successfully extracted Task Summary from subagent response (length: {len(summary)} chars)"
+                    f"Successfully extracted Task Result from subagent response (length: {len(summary)} chars)"
                 )
                 return summary
 
-    # If no Task Summary section is found, look for conclusion or final sections
+    # If no Task Result section is found, look for conclusion or final sections
     conclusion_patterns = [
         r"(?i)#{1,4}\s*conclusion[:\s]*\n(.*?)(?=\n#{1,4}\s*\w+|\Z)",
-        r"(?i)#{1,4}\s*result[:\s]*\n(.*?)(?=\n#{1,4}\s*\w+|\Z)",
+        r"(?i)#{1,4}\s*summary[:\s]*\n(.*?)(?=\n#{1,4}\s*\w+|\Z)",
         r"(?i)#{1,4}\s*findings[:\s]*\n(.*?)(?=\n#{1,4}\s*\w+|\Z)",
     ]
 
@@ -156,7 +156,7 @@ def extract_task_summary_from_response(response: str) -> str:
             summary = match.group(1).strip()
             if summary:
                 logger.warning(
-                    f"No Task Summary found, but found conclusion/result section (length: {len(summary)} chars)"
+                    f"No Task Result found, but found conclusion/summary section (length: {len(summary)} chars)"
                 )
                 return summary
 
@@ -190,9 +190,28 @@ def create_tool_call_response(event: FunctionToolCallEvent) -> ToolCallResponse:
     """Create appropriate tool call response for regular or delegation tools"""
     tool_name = event.part.tool_name
 
+    # Safely parse tool arguments with error handling for malformed JSON
+    try:
+        args_dict = event.part.args_as_dict()
+    except (ValueError, json.JSONDecodeError) as json_error:
+        # Handle incomplete/malformed JSON in tool arguments
+        # This can happen when the model generates truncated JSON, often due to:
+        # - Token limits during streaming
+        # - Model stopping mid-generation
+        # - Network issues interrupting the response
+        raw_args = getattr(event.part, "args", "N/A")
+        logger.error(
+            f"JSON parsing error in tool call '{tool_name}': {json_error}. "
+            f"Tool args (raw, first 300 chars): {str(raw_args)[:300]}. "
+            f"This may cause issues when pydantic_ai tries to serialize the message history."
+        )
+        # Return empty args dict to allow processing to continue
+        # Note: This won't prevent errors when pydantic_ai tries to serialize
+        # the message history later, but it allows the current tool call to proceed
+        args_dict = {}
+
     if is_delegation_tool(tool_name):
         agent_type = extract_agent_type_from_delegation_tool(tool_name)
-        args_dict = event.part.args_as_dict()
         task_description = args_dict.get("task_description", "")
         context = args_dict.get("context", "")
 
@@ -214,9 +233,7 @@ def create_tool_call_response(event: FunctionToolCallEvent) -> ToolCallResponse:
             tool_name=tool_name,
             tool_response=get_tool_run_message(tool_name),
             tool_call_details={
-                "summary": get_tool_call_info_content(
-                    tool_name, event.part.args_as_dict()
-                )
+                "summary": get_tool_call_info_content(tool_name, args_dict)
             },
         )
 
@@ -292,128 +309,44 @@ class PydanticMultiAgent(ChatAgent):
     def _create_default_delegate_agents(self) -> Dict[AgentType, AgentConfig]:
         """Create default specialized agents if none provided"""
         return {
-            #             AgentType.CAB: AgentConfig(
-            #                 role="Codebase Analyzer Specialist",
-            #                 goal="Analyze and document how code works by examining implementation details, tracing data flow, and explaining technical workings",
-            #                 backstory="""You are a specialist at understanding HOW code works. Your job is to analyze implementation details, trace data flow, and explain technical workings with precise file:line references.
-            # CRITICAL: YOUR ONLY JOB IS TO DOCUMENT AND EXPLAIN THE CODEBASE AS IT EXISTS TODAY
-            # - DO NOT suggest improvements or changes unless the user explicitly asks for them
-            # - DO NOT perform root cause analysis unless the user explicitly asks for them
-            # - DO NOT propose future enhancements unless the user explicitly asks for them
-            # - DO NOT critique the implementation or identify "problems"
-            # - DO NOT comment on code quality, performance issues, or security concerns
-            # - DO NOT suggest refactoring, optimization, or better approaches
-            # - ONLY describe what exists, how it works, and how components interact""",
-            #                 tasks=[
-            #                     TaskConfig(
-            #                         description="""Analyze the codebase to understand implementation details.
-            # ANALYSIS STRATEGY:
-            # 1. Start with get_code_file_structure to understand project layout
-            # 2. Use fetch_file to read key files identified in the request
-            # 3. Use analyze_code_structure to understand code elements in files
-            # 4. Use get_code_from_probable_node_name to find specific functions/classes
-            # 5. Use ask_knowledge_graph_queries to understand relationships
-            # 6. Use get_node_neighbours_from_node_id to trace connections
-            # 7. Provide precise file:line references for all claims
-            # Output Structure:
-            # - Overview: 2-3 sentence summary
-            # - Entry Points: List with file:line references
-            # - Core Implementation: Detailed breakdown by component with file:line references
-            # - Data Flow: Step-by-step flow
-            # - Key Patterns: Architectural patterns in use
-            # - Configuration: Config settings used
-            # - Error Handling: How errors are handled
-            # REMEMBER: You are a documentarian, not a critic. Your sole purpose is to explain HOW the code currently works.""",
-            #                         expected_output="Detailed codebase analysis with precise file:line references showing how the code works",
-            #                     )
-            #                 ],
-            #                 max_iter=15,
-            #             ),
-            #             AgentType.CBL: AgentConfig(
-            #                 role="Codebase Locator Specialist",
-            #                 goal="Locate files, directories, and components relevant to a feature or task - a 'Super Grep/Glob/LS tool'",
-            #                 backstory="""You are a specialist at finding WHERE code lives in a codebase. Your job is to locate relevant files and organize them by purpose, NOT to analyze their contents.
-            # CRITICAL: YOUR ONLY JOB IS TO LOCATE AND DOCUMENT WHERE FILES EXIST
-            # - DO NOT suggest improvements or changes unless the user explicitly asks for them
-            # - DO NOT perform root cause analysis unless the user explicitly asks for them
-            # - DO NOT propose future enhancements unless the user explicitly asks for them
-            # - DO NOT critique the implementation
-            # - DO NOT comment on code quality, architecture decisions, or best practices
-            # - ONLY describe what exists, where it exists, and how components are organized
-            # Core Responsibilities:
-            # 1. Find Files by Topic/Feature - Search for files containing relevant keywords
-            # 2. Categorize Findings - Group by implementation, tests, config, docs, types
-            # 3. Return Structured Results - Provide full paths, group by purpose, note directory clusters""",
-            #                 tasks=[
-            #                     TaskConfig(
-            #                         description="""Locate files and directories for a feature or topic.
-            # SEARCH STRATEGY:
-            # 1. Start with get_code_file_structure to understand project layout
-            # 2. Use get_nodes_from_tags to find files containing relevant keywords
-            # 3. Use ask_knowledge_graph_queries to find files by functionality
-            # 4. Consider language/framework conventions (src/, lib/, components/, etc.)
-            # 5. Look for naming patterns (*service*, *handler*, *test*, etc.)
-            # 6. Use analyze_code_structure to understand file contents without reading full files
-            # Output Structure:
-            # - Implementation Files: Core logic files with paths
-            # - Test Files: Unit, integration, e2e tests
-            # - Configuration: Config files
-            # - Type Definitions: TypeScript types, interfaces
-            # - Related Directories: Directory clusters with file counts
-            # - Entry Points: Where features are imported/registered
-            # Important:
-            # - Don't read full file contents unless necessary - just report locations
-            # - Group files logically by purpose
-            # - Include directory file counts
-            # - Check multiple extensions (.js/.ts, .py, .go, etc.)
-            # - Use semantic search tools to find relevant files efficiently
-            # REMEMBER: You are a file finder and organizer, documenting WHERE everything is located.""",
-            #                         expected_output="Structured list of file locations organized by type (implementation, tests, config, docs, types)",
-            #                     )
-            #                 ],
-            #                 max_iter=10,
-            #             ),
             AgentType.THINK_EXECUTE: AgentConfig(
                 role="Task Execution Specialist",
                 goal="Execute specific tasks with clear, actionable results",
-                backstory="""You are a focused task executor. You receive ONE specific task from the supervisor and execute it completely, then provide a clear summary of what you accomplished.
+                backstory="""You are a focused task executor for specific, well-defined tasks.
 
-Your execution approach:
-1. Understand the EXACT task assigned to you
-2. Plan the specific actions needed
-3. Execute those actions step by step
-4. Document what you actually accomplished
-5. Provide concrete results and deliverables""",
+You receive tasks that have clear, specific expected outputs. Your job is to provide exactly what the supervisor needs - no more, no less.
+
+CRITICAL: Do ALL your work inside the "## Task Result" section.
+
+Your approach:
+1. Understand exactly what specific information is needed
+2. Start the "## Task Result" section immediately  
+3. Provide the specific answer/information requested
+4. Keep results concise and focused
+5. Include only what the supervisor needs to make a decision
+
+You are used for specific lookups, small implementations, and focused tasks - not broad analysis or context gathering.""",
                 tasks=[
                     TaskConfig(
-                        description="""Execute the specific task assigned by the supervisor.
+                        description="""Execute the specific, well-defined task assigned by the supervisor.
 
-EXECUTION FOCUS:
-- You will receive ONE specific task to complete
-- Focus entirely on completing that exact task
-- Don't expand beyond what was asked
-- Execute using the most appropriate tools
-- Document every action you take
-- Provide concrete, measurable results
+This task has a clear expected output. Provide exactly what the supervisor needs.
 
-TASK COMPLETION APPROACH:
-1. Clearly understand the task requirements
-2. Plan the specific steps needed
-3. Execute each step systematically
-4. Verify the results of each action
-5. Compile what was actually accomplished
+CRITICAL INSTRUCTIONS:
+- Do ALL your work inside the "## Task Result" section
+- Provide the specific information/answer requested
+- Keep results concise and focused
+- Don't provide broad analysis or context gathering
+- Be efficient - supervisor needs specific information
 
-EXECUTION SUMMARY REQUIREMENTS:
-Your Task Summary MUST include:
-- EXACTLY what task you were given
-- SPECIFIC actions you took to complete it
-- CONCRETE results and deliverables produced
-- FILES created, modified, or analyzed (with paths)
-- CODE written or changes made (with specifics)
-- ERRORS encountered and how resolved
-- VERIFICATION of task completion
+TASK RESULT SECTION REQUIREMENTS:
+- Start with "## Task Result" immediately
+- Provide the specific answer/information requested
+- Include any code, files, or data needed
+- Keep it focused on what the supervisor asked for
+- End with the specific result requested
 
-Focus on EXECUTION RESULTS, not analysis or recommendations.""",
+Remember: You are used for specific lookups and focused tasks, not broad analysis.""",
                         expected_output="Specific task completion with concrete execution results and deliverables",
                     )
                 ],
@@ -448,6 +381,13 @@ Focus on EXECUTION RESULTS, not analysis or recommendations.""",
                 )
                 continue
 
+        # Create code changes management tools for delegate agents
+        from app.modules.intelligence.tools.code_changes_manager import (
+            create_code_changes_management_tools,
+        )
+
+        code_changes_tools = create_code_changes_management_tools()
+
         agent = Agent(
             model=self.llm_provider.get_pydantic_model(),
             tools=[
@@ -457,10 +397,33 @@ Focus on EXECUTION RESULTS, not analysis or recommendations.""",
                     function=handle_exception(tool.func),  # type: ignore
                 )
                 for tool in self.tools
+            ]
+            + [
+                Tool(
+                    name=tool.name,
+                    description=tool.description,
+                    function=handle_exception(tool.func),  # type: ignore
+                )
+                for tool in code_changes_tools
             ],
             mcp_servers=mcp_toolsets,
             instructions=f"""
             You are a {agent_type.value} specialist. Execute the assigned task and provide detailed results.
+
+            **CRITICAL CODE MANAGEMENT INSTRUCTIONS:**
+            When writing or modifying code, ALWAYS use the code changes management tools instead of including code in your response text:
+            
+            ✅ **USE CODE CHANGES TOOLS:**
+            - For new files: Use `add_file_to_changes` with file path and content
+            - For targeted updates: Use `update_file_lines`, `replace_in_file`, `insert_lines`, or `delete_lines` instead of full file rewrites
+            - For full file updates: Use `update_file_in_changes` only when necessary
+            - At the end: Use `show_code_changes` to display all changes to the user
+            
+            ❌ **AVOID:**
+            - Including large code blocks directly in your response text
+            - Rewriting entire files when only small changes are needed
+            
+            **WHY:** This dramatically reduces token usage in conversation history and keeps responses concise.
 
             Role: {config.role}
             Goal: {config.goal}
@@ -470,22 +433,13 @@ Focus on EXECUTION RESULTS, not analysis or recommendations.""",
 
             TASK: {self._create_task_description(task_config=config.tasks[0], ctx=ctx, agent_type=agent_type)}
 
-            **REQUIREMENTS:**
-            - Execute the task completely and thoroughly
-            - Provide detailed results with technical details
-            - Include code snippets, file paths, and findings
-            - End with "## Task Summary" section containing:
-              * What you accomplished
-              * Key findings and results
-              * Technical details and code
-              * Any issues and how you resolved them
             """,
             result_type=str,
             output_retries=3,
             output_type=str,
             defer_model_check=True,
             end_strategy="exhaustive",
-            model_settings={"max_tokens": 14000},
+            # model_settings={"max_tokens": 64000},
         )
         self._agent_instances[agent_type] = agent
         return agent
@@ -519,14 +473,10 @@ Focus on EXECUTION RESULTS, not analysis or recommendations.""",
         delegation_tools = []
         for agent_type in self.delegate_agents.keys():
             # Create highly attractive descriptions for each delegation tool
-            if agent_type == AgentType.CAB:
-                description = "🔍 DELEGATE TO CODEBASE ANALYZER - For understanding how code works! Analyzes implementation details, traces data flow, documents technical workings with precise file:line references. Use for 'how does X work' questions. DELEGATE ONE FOCUSED ANALYSIS TASK AT A TIME."
-            elif agent_type == AgentType.CBL:
-                description = "📍 DELEGATE TO CODEBASE LOCATOR - For finding files/components! Acts as a Super Grep/Glob/LS tool to locate where code lives. Use for 'where is X located' questions. DELEGATE ONE FOCUSED SEARCH TASK AT A TIME."
-            elif agent_type == AgentType.THINK_EXECUTE:
-                description = "🔨 DELEGATE TO TASK EXECUTION AGENT - For implementation & building work! Give it ONE specific, focused task to execute. It will create files, write code, make changes, and deliver working results. Use when you need something BUILT, CREATED, or IMPLEMENTED - not analyzed. DELEGATE ONE FOCUSED IMPLEMENTATION TASK AT A TIME."
+            if agent_type == AgentType.THINK_EXECUTE:
+                description = "🔨 DELEGATE TO TASK EXECUTION AGENT - For specific, well-defined implementation tasks with clear expected outputs. Use for: small focused implementations, specific code changes, targeted fixes. NOT for large code generation or comprehensive implementations."
             else:
-                description = f"🤖 DELEGATE TO {agent_type.value.upper()} SPECIALIST - Use this to delegate ONE FOCUSED TASK to the specialist agent"
+                description = f"🤖 DELEGATE TO {agent_type.value.upper()} SPECIALIST - Use for specific, well-defined tasks with clear expected outputs"
 
             delegation_tools.append(
                 Tool(
@@ -540,8 +490,12 @@ Focus on EXECUTION RESULTS, not analysis or recommendations.""",
         from app.modules.intelligence.tools.todo_management_tool import (
             create_todo_management_tools,
         )
+        from app.modules.intelligence.tools.code_changes_manager import (
+            create_code_changes_management_tools,
+        )
 
         todo_tools = create_todo_management_tools()
+        code_changes_tools = create_code_changes_management_tools()
 
         supervisor_agent = Agent(
             model=self.llm_provider.get_pydantic_model(),
@@ -561,44 +515,84 @@ Focus on EXECUTION RESULTS, not analysis or recommendations.""",
                     function=handle_exception(todo_tool.func),  # type: ignore
                 )
                 for todo_tool in todo_tools
+            ]
+            + [
+                Tool(
+                    name=tool.name,
+                    description=tool.description,
+                    function=handle_exception(tool.func),  # type: ignore
+                )
+                for tool in code_changes_tools
             ],
             mcp_servers=mcp_toolsets,
             instructions=f"""
-            You are a problem-solving supervisor who delegates complex tasks to specialized subagents.
+            You are a problem-solving supervisor who uses subagents strategically to reduce context usage.
 
-            **WHEN TO DELEGATE:**
-            - Complex problems requiring analysis, building, or multiple steps
-            - Code understanding, file searching, or implementation tasks
-            - Any task that needs specialized expertise
+            **CORE PRINCIPLE:**
+            Use subagents ONLY for well-defined, focused tasks that produce concise, specific results.
+            The goal is to REDUCE context usage, not increase it.
 
-            **WHEN TO ANSWER DIRECTLY:**
-            - Simple questions or clarifications
-            - Basic explanations or definitions
-            - Quick responses that don't require specialized work
+            **CRITICAL CODE MANAGEMENT INSTRUCTIONS:**
+            When writing or modifying code, ALWAYS use the code changes management tools instead of including code in your response text:
+            
+            ✅ **USE CODE CHANGES TOOLS:**
+            - For new files: Use `add_file_to_changes` with file path and content
+            - For targeted updates: Use `update_file_lines` (line numbers), `replace_in_file` (pattern matching), `insert_lines`, or `delete_lines`
+            - Prefer targeted updates over full file rewrites - they're more efficient and preserve context
+            - For full file updates: Use `update_file_in_changes` only when absolutely necessary
+            - At the end of your response: Use `show_code_changes` to display all changes to the user
+            
+            ❌ **AVOID:**
+            - Including large code blocks directly in your response text
+            - Rewriting entire files when only small changes are needed (use targeted update tools)
+            - Showing code in markdown blocks unless it's a very short snippet for explanation
+            
+            **TOKEN EFFICIENCY:**
+            Code in response text accumulates in conversation history, increasing token usage exponentially.
+            Code stored via tools is NOT included in history, saving 70-85% of tokens!
 
-            **DELEGATION TOOLS:**
-            - delegate_to_codebase_analyzer: For code analysis and understanding
-            - delegate_to_codebase_locator: For finding files and components  
-            - delegate_to_think_execute: For building and implementing
+            **WHEN TO USE SUBAGENTS:**
+            ✅ **GOOD subagent tasks (specific, concise results):**
+            - Find the value of a specific variable/constant
+            - Locate where a particular function is defined
+            - Get the exact file path for a specific component
+            - Extract a specific configuration value
+            - Find the exact line number where something happens
+            - Get a specific error message or status
+            - Retrieve a particular data point or metric
 
-            **CRITICAL DELEGATION RULES:**
-            1. **ONE TASK AT A TIME**: Always delegate ONE focused, specific task to each subagent
-            2. **SINGULAR FOCUS**: Each delegation should have a single, clear objective
-            3. **NO MULTI-PART TASKS**: Break complex requests into separate, focused delegations
-            4. **CLEAR TASK DESCRIPTION**: Provide specific, actionable task descriptions
-            5. **SEQUENTIAL DELEGATION**: Delegate tasks one by one, not all at once
+            ❌ **AVOID subagent tasks (broad, context-heavy results):**
+            - "Analyze the entire codebase" 
+            - "Generate a complete implementation"
+            - "Gather all context around X"
+            - "Understand how the whole system works"
+            - "Create comprehensive documentation"
+            - "Research and explain everything about Y"
 
             **TASK BREAKDOWN STRATEGY:**
-            - If a request has multiple parts, delegate each part separately
-            - Each delegation should be self-contained and focused
-            - Wait for one task to complete before delegating the next
-            - Use results from previous delegations to inform subsequent ones
+            1. Break complex requests into smaller, specific tasks
+            2. Use TODO system to track all tasks
+            3. Execute tasks yourself when you need the full context
+            4. Delegate only when you need a specific, concise answer
+            5. Use subagent results to inform your own work
+            6. When creating/modifying code, use code changes tools
+            7. At the end, use `show_code_changes` to display all changes
+
+            **DELEGATION GUIDELINES:**
+            - Task must have a clear, specific expected output
 
             **APPROACH:**
-            1. Understand the request
-            2. If complex → break into focused tasks → delegate ONE at a time
-            3. If simple → answer directly
-            4. Synthesize results into complete solution
+            1. Understand the request and break it down
+            2. Create TODOs for all tasks
+            3. Execute tasks yourself when you need full context
+            4. Delegate only specific, well-defined tasks to subagents
+            5. Use subagent results to inform your own work
+            6. When writing code, use code changes management tools
+            7. Synthesize everything into the final answer
+            8. Use `show_code_changes` at the end to display all code changes
+            
+            IMPORTANT: Delegation is very important tool to help problem large problems. Try to delegate tasks to
+            subagents wherever possible. Plan you tasks well before hand so we can delegate tasks better
 
             Role: {self.config.role}
             Goal: {self.config.goal}
@@ -615,7 +609,7 @@ Focus on EXECUTION RESULTS, not analysis or recommendations.""",
             output_type=str,
             defer_model_check=True,
             end_strategy="exhaustive",
-            # model_settings={"max_tokens": 14000},
+            # model_settings={"max_tokens": 64000},
         )
         self._supervisor_agent = supervisor_agent
         return supervisor_agent
@@ -635,47 +629,91 @@ Focus on EXECUTION RESULTS, not analysis or recommendations.""",
                 # Create the delegate agent
                 delegate_agent = self._create_agent(agent_type, self._current_context)
 
-                full_task = f"""Execute the following task:
+                full_task = f"""Execute this specific, focused task:
 
 TASK: {task_description}
 CONTEXT: {context}
 
-Please execute this task and provide your result in a "## Task Summary" section at the end of your response."""
+This is a well-defined task that should produce a specific, concise result.
+The supervisor needs this specific information to make a decision.
 
-                # Run the delegate agent with independent usage tracking
-                result = await delegate_agent.run(
-                    user_prompt=full_task,
-                    # No usage parameter = fresh, independent usage tracking for this subagent
+IMPORTANT: Do ALL your work inside the "## Task Result" section.
+
+Process:
+1. Understand exactly what specific information is needed
+2. Start the "## Task Result" section immediately
+3. Provide the specific answer/information requested
+4. Keep the result concise and focused
+5. Include only what the supervisor needs to know
+
+The result should be specific and actionable - not broad analysis or context gathering."""
+
+                # Run the delegate agent with independent usage tracking and streaming
+                logger.info(f"Starting {agent_type.value} agent execution...")
+
+                # Collect streaming response for logging
+                full_response = ""
+                result = None
+
+                # Use Pydantic AI streaming approach
+                async with delegate_agent.iter(user_prompt=full_task) as run:
+                    async for node in run:
+                        if Agent.is_model_request_node(node):
+                            # Stream tokens from the model's request
+                            async with node.stream(run.ctx) as request_stream:
+                                async for event in request_stream:
+                                    if isinstance(event, PartStartEvent) and isinstance(
+                                        event.part, TextPart
+                                    ):
+                                        full_response += event.part.content
+                                        logger.debug(
+                                            f"[{agent_type.value}] Streaming chunk: {event.part.content[:100]}{'...' if len(event.part.content) > 100 else ''}"
+                                        )
+                                    if isinstance(event, PartDeltaEvent) and isinstance(
+                                        event.delta, TextPartDelta
+                                    ):
+                                        full_response += event.delta.content_delta
+                                        logger.debug(
+                                            f"[{agent_type.value}] Streaming delta: {event.delta.content_delta[:100]}{'...' if len(event.delta.content_delta) > 100 else ''}"
+                                        )
+
+                        elif Agent.is_end_node(node):
+                            result = node
+                            break
+
+                logger.info(
+                    f"Task completed by {agent_type.value} agent. Full response length: {len(full_response)} chars"
+                )
+                logger.info(
+                    f"[{agent_type.value}] Full response: {full_response[:10000]}{'...' if len(full_response) > 10000 else ''}"
                 )
 
-                logger.info(f"Task completed by {agent_type.value} agent")
-
                 # Enhanced output parsing with error handling
-                if result and hasattr(result, "output") and result.output:
-                    # Extract the Task Summary section for clean supervisor context
-                    summary = extract_task_summary_from_response(result.output)
+                if full_response and len(full_response.strip()) > 0:
+                    # Extract the Task Result section for clean supervisor context
+                    summary = extract_task_result_from_response(full_response)
 
                     if summary and len(summary.strip()) > 0:
                         logger.info(
-                            f"Extracted task summary for supervisor (length: {len(summary)} chars)"
+                            f"Extracted task result for supervisor (length: {len(summary)} chars)"
                         )
                         return summary
                     else:
-                        # No valid summary found, return formatted error
+                        # No valid result found, return formatted error
                         logger.warning(
-                            f"No valid task summary found in {agent_type.value} response"
+                            f"No valid task result found in {agent_type.value} response"
                         )
                         return f"""
-## Task Summary
+## Task Result
 
-❌ **ERROR: No valid task summary found**
+❌ **ERROR: No valid task result found**
 
 **Agent Type:** {agent_type.value}
 **Task:** {task_description}
-**Issue:** The subagent did not provide a properly formatted Task Summary section
+**Issue:** The subagent did not provide a properly formatted Task Result section
 
 **Raw Response (truncated):**
-{result.output[:500]}{'...' if len(result.output) > 500 else ''}
+{full_response[:500]}{'...' if len(full_response) > 500 else ''}
 
 **Recommendation:** The supervisor should retry the delegation with clearer instructions.
                         """.strip()
@@ -685,7 +723,7 @@ Please execute this task and provide your result in a "## Task Summary" section 
                         f"Empty or invalid result from {agent_type.value} agent"
                     )
                     return f"""
-## Task Summary
+## Task Result
 
 ❌ **ERROR: Empty or invalid result**
 
@@ -699,7 +737,7 @@ Please execute this task and provide your result in a "## Task Summary" section 
             except Exception as e:
                 logger.error(f"Error in delegation to {agent_type.value}: {e}")
                 return f"""
-## Task Summary
+## Task Result
 
 ❌ **ERROR: Delegation failed**
 
@@ -1000,6 +1038,18 @@ Context: {ctx.additional_context or "none"}
         # Store context for delegation functions
         self._current_context = ctx
 
+        # Reset todo manager for this agent run to ensure isolation
+        from app.modules.intelligence.tools.todo_management_tool import (
+            _reset_todo_manager,
+        )
+        from app.modules.intelligence.tools.code_changes_manager import (
+            _reset_code_changes_manager,
+        )
+
+        _reset_todo_manager()
+        _reset_code_changes_manager()
+        logger.info("🔄 Reset todo manager and code changes manager for new agent run")
+
         # Check if we have images and if the model supports vision
         if ctx.has_images() and self.llm_provider.is_vision_model():
             logger.info(
@@ -1031,7 +1081,19 @@ Context: {ctx.additional_context or "none"}
                         message_history=message_history,
                     )
             except (TimeoutError, anyio.WouldBlock, Exception) as mcp_error:
-                logger.warning(f"MCP server initialization failed: {mcp_error}")
+                error_detail = f"{type(mcp_error).__name__}: {str(mcp_error)}"
+                logger.warning(
+                    f"MCP server initialization failed in standard run: {error_detail}",
+                    exc_info=True,
+                )
+                # Check if it's a JSON parsing error
+                if (
+                    "json" in str(mcp_error).lower()
+                    or "parse" in str(mcp_error).lower()
+                ):
+                    logger.error(
+                        f"JSON parsing error during MCP server initialization in standard run - MCP server may be returning malformed or incomplete JSON. Full traceback:\n{traceback.format_exc()}"
+                    )
                 logger.info("Continuing without MCP servers...")
 
                 # Fallback: run without MCP servers
@@ -1246,9 +1308,19 @@ Context: {ctx.additional_context or "none"}
                                     )
                                     continue
                                 except Exception as e:
+                                    error_detail = f"{type(e).__name__}: {str(e)}"
                                     logger.error(
-                                        f"Unexpected error in model request stream: {e}"
+                                        f"Unexpected error in model request stream: {error_detail}",
+                                        exc_info=True,
                                     )
+                                    # Check if it's a JSON parsing error
+                                    if (
+                                        "json" in str(e).lower()
+                                        or "parse" in str(e).lower()
+                                    ):
+                                        logger.error(
+                                            f"JSON parsing error detected - this may indicate incomplete response from model or MCP server. Full traceback:\n{traceback.format_exc()}"
+                                        )
                                     yield ChatAgentResponse(
                                         response="\n\n*An unexpected error occurred. Continuing...*\n\n",
                                         tool_calls=[],
@@ -1300,9 +1372,19 @@ Context: {ctx.additional_context or "none"}
                                     )
                                     continue
                                 except Exception as e:
+                                    error_detail = f"{type(e).__name__}: {str(e)}"
                                     logger.error(
-                                        f"Unexpected error in tool call stream: {e}"
+                                        f"Unexpected error in tool call stream: {error_detail}",
+                                        exc_info=True,
                                     )
+                                    # Check if it's a JSON parsing error
+                                    if (
+                                        "json" in str(e).lower()
+                                        or "parse" in str(e).lower()
+                                    ):
+                                        logger.error(
+                                            f"JSON parsing error detected in tool call stream - this may indicate incomplete response from tool or MCP server. Full traceback:\n{traceback.format_exc()}"
+                                        )
                                     yield ChatAgentResponse(
                                         response="\n\n*An unexpected error occurred during tool execution. Continuing...*\n\n",
                                         tool_calls=[],
@@ -1316,7 +1398,19 @@ Context: {ctx.additional_context or "none"}
                                 )
 
             except (TimeoutError, anyio.WouldBlock, Exception) as mcp_error:
-                logger.warning(f"MCP server initialization failed: {mcp_error}")
+                error_detail = f"{type(mcp_error).__name__}: {str(mcp_error)}"
+                logger.warning(
+                    f"MCP server initialization failed in stream: {error_detail}",
+                    exc_info=True,
+                )
+                # Check if it's a JSON parsing error
+                if (
+                    "json" in str(mcp_error).lower()
+                    or "parse" in str(mcp_error).lower()
+                ):
+                    logger.error(
+                        f"JSON parsing error during MCP server initialization in stream - MCP server may be returning malformed or incomplete JSON. Full traceback:\n{traceback.format_exc()}"
+                    )
                 logger.info("Continuing without MCP servers...")
 
                 # Fallback: run without MCP servers
@@ -1371,9 +1465,19 @@ Context: {ctx.additional_context or "none"}
                                     )
                                     continue
                                 except Exception as e:
+                                    error_detail = f"{type(e).__name__}: {str(e)}"
                                     logger.error(
-                                        f"Unexpected error in fallback model request stream: {e}"
+                                        f"Unexpected error in fallback model request stream: {error_detail}",
+                                        exc_info=True,
                                     )
+                                    # Check if it's a JSON parsing error
+                                    if (
+                                        "json" in str(e).lower()
+                                        or "parse" in str(e).lower()
+                                    ):
+                                        logger.error(
+                                            f"JSON parsing error detected in fallback model request stream - this may indicate incomplete response from model. Full traceback:\n{traceback.format_exc()}"
+                                        )
                                     yield ChatAgentResponse(
                                         response="\n\n*An unexpected error occurred. Continuing...*\n\n",
                                         tool_calls=[],
@@ -1425,9 +1529,19 @@ Context: {ctx.additional_context or "none"}
                                     )
                                     continue
                                 except Exception as e:
+                                    error_detail = f"{type(e).__name__}: {str(e)}"
                                     logger.error(
-                                        f"Unexpected error in fallback tool call stream: {e}"
+                                        f"Unexpected error in fallback tool call stream: {error_detail}",
+                                        exc_info=True,
                                     )
+                                    # Check if it's a JSON parsing error
+                                    if (
+                                        "json" in str(e).lower()
+                                        or "parse" in str(e).lower()
+                                    ):
+                                        logger.error(
+                                            f"JSON parsing error detected in fallback tool call stream - this may indicate incomplete response from tool. Full traceback:\n{traceback.format_exc()}"
+                                        )
                                     yield ChatAgentResponse(
                                         response="\n\n*An unexpected error occurred during tool execution. Continuing...*\n\n",
                                         tool_calls=[],
@@ -1450,7 +1564,16 @@ Context: {ctx.additional_context or "none"}
                         citations=[],
                     )
                 except Exception as e:
-                    logger.error(f"Unexpected error in fallback agent iteration: {e}")
+                    error_detail = f"{type(e).__name__}: {str(e)}"
+                    logger.error(
+                        f"Unexpected error in fallback agent iteration: {error_detail}",
+                        exc_info=True,
+                    )
+                    # Check if it's a JSON parsing error
+                    if "json" in str(e).lower() or "parse" in str(e).lower():
+                        logger.error(
+                            f"JSON parsing error detected in fallback agent iteration - this may indicate incomplete response from agent or MCP server. Full traceback:\n{traceback.format_exc()}"
+                        )
                     yield ChatAgentResponse(
                         response=f"\n\n*An unexpected error occurred: {str(e)}*\n\n",
                         tool_calls=[],

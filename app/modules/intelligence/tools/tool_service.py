@@ -55,6 +55,7 @@ from app.modules.intelligence.provider.provider_service import ProviderService
 from langchain_core.tools import StructuredTool
 from .think_tool import think_tool
 from .todo_management_tool import create_todo_management_tools
+from .code_changes_manager import create_code_changes_management_tools
 
 
 class ToolService:
@@ -114,6 +115,11 @@ class ToolService:
         # Add todo management tools
         todo_tools = create_todo_management_tools()
         for tool in todo_tools:
+            tools[tool.name] = tool
+
+        # Add code changes management tools
+        code_changes_tools = create_code_changes_management_tools()
+        for tool in code_changes_tools:
             tools[tool.name] = tool
 
         if self.webpage_extractor_tool:

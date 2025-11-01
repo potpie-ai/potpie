@@ -82,18 +82,6 @@ class GeneralPurposeAgent(ChatAgent):
                 logger.info("✅ Using PydanticMultiAgent (multi-agent system)")
                 # Create specialized delegate agents for general purpose tasks using available agent types
                 delegate_agents = {
-                    MultiAgentType.CBL: AgentConfig(
-                        role="Information Locator Specialist",
-                        goal="Locate and gather relevant information for general queries",
-                        backstory="You are an expert at finding and organizing information from various sources including web research and codebase exploration.",
-                        tasks=[
-                            TaskConfig(
-                                description="Locate relevant information, gather data, and organize findings",
-                                expected_output="Well-organized information with sources and relevant details",
-                            )
-                        ],
-                        max_iter=10,
-                    ),
                     MultiAgentType.THINK_EXECUTE: AgentConfig(
                         role="Analysis and Execution Specialist",
                         goal="Analyze information, provide insights, and execute tasks",

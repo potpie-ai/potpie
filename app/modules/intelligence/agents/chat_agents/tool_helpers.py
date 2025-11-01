@@ -56,6 +56,36 @@ def get_tool_run_message(tool_name: str):
             return "Listing todos"
         case "get_todo_summary":
             return "Getting todo summary"
+        case "add_file_to_changes":
+            return "Adding file to code changes"
+        case "update_file_in_changes":
+            return "Updating file in code changes"
+        case "update_file_lines":
+            return "Updating specific lines in file"
+        case "replace_in_file":
+            return "Replacing pattern in file"
+        case "insert_lines":
+            return "Inserting lines in file"
+        case "delete_lines":
+            return "Deleting lines from file"
+        case "delete_file_in_changes":
+            return "Marking file for deletion"
+        case "get_file_from_changes":
+            return "Retrieving file from code changes"
+        case "list_files_in_changes":
+            return "Listing files in code changes"
+        case "search_content_in_changes":
+            return "Searching content in code changes"
+        case "clear_file_from_changes":
+            return "Clearing file from code changes"
+        case "clear_all_changes":
+            return "Clearing all code changes"
+        case "get_changes_summary":
+            return "Getting code changes summary"
+        case "export_changes":
+            return "Exporting code changes"
+        case "show_diff":
+            return "Displaying code diff"
         case tool_name if tool_name.startswith("delegate_to_"):
             # Handle delegation tools - extract agent type and return appropriate message
             agent_type = tool_name[12:]  # Remove "delegate_to_" prefix
@@ -102,6 +132,36 @@ def get_tool_response_message(tool_name: str):
             return "Todos listed successfully"
         case "get_todo_summary":
             return "Todo summary generated successfully"
+        case "add_file_to_changes":
+            return "File added to code changes successfully"
+        case "update_file_in_changes":
+            return "File updated in code changes successfully"
+        case "update_file_lines":
+            return "File lines updated successfully"
+        case "replace_in_file":
+            return "Pattern replacement completed successfully"
+        case "insert_lines":
+            return "Lines inserted successfully"
+        case "delete_lines":
+            return "Lines deleted successfully"
+        case "delete_file_in_changes":
+            return "File marked for deletion successfully"
+        case "get_file_from_changes":
+            return "File retrieved from code changes successfully"
+        case "list_files_in_changes":
+            return "Files listed successfully"
+        case "search_content_in_changes":
+            return "Content search completed successfully"
+        case "clear_file_from_changes":
+            return "File cleared from code changes successfully"
+        case "clear_all_changes":
+            return "All code changes cleared successfully"
+        case "get_changes_summary":
+            return "Code changes summary retrieved successfully"
+        case "export_changes":
+            return "Code changes exported successfully"
+        case "show_diff":
+            return "Code diff displayed successfully"
         case tool_name if tool_name.startswith("delegate_to_"):
             # Handle delegation tools - extract agent type and return appropriate message
             agent_type = tool_name[12:]  # Remove "delegate_to_" prefix
@@ -171,6 +231,70 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             return "-> listing all todos\n"
         case "get_todo_summary":
             return "-> generating todo summary\n"
+        case "add_file_to_changes":
+            file_path = args.get("file_path", "")
+            return f"-> adding file to code changes: {file_path}\n"
+        case "update_file_in_changes":
+            file_path = args.get("file_path", "")
+            return f"-> updating file in code changes: {file_path}\n"
+        case "update_file_lines":
+            file_path = args.get("file_path", "")
+            start_line = args.get("start_line", "")
+            end_line = args.get("end_line", "")
+            line_range = f"{start_line}-{end_line}" if end_line else str(start_line)
+            return f"-> updating lines {line_range} in file: {file_path}\n"
+        case "replace_in_file":
+            file_path = args.get("file_path", "")
+            pattern = args.get("pattern", "")
+            return f"-> replacing pattern '{pattern}' in file: {file_path}\n"
+        case "insert_lines":
+            file_path = args.get("file_path", "")
+            line_number = args.get("line_number", "")
+            insert_after = args.get("insert_after", True)
+            position = "after" if insert_after else "before"
+            return f"-> inserting lines {position} line {line_number} in file: {file_path}\n"
+        case "delete_lines":
+            file_path = args.get("file_path", "")
+            start_line = args.get("start_line", "")
+            end_line = args.get("end_line", "")
+            line_range = f"{start_line}-{end_line}" if end_line else str(start_line)
+            return f"-> deleting lines {line_range} from file: {file_path}\n"
+        case "delete_file_in_changes":
+            file_path = args.get("file_path", "")
+            return f"-> marking file for deletion: {file_path}\n"
+        case "get_file_from_changes":
+            file_path = args.get("file_path", "")
+            return f"-> retrieving file from code changes: {file_path}\n"
+        case "list_files_in_changes":
+            change_type = args.get("change_type_filter", "")
+            path_pattern = args.get("path_pattern", "")
+            filters = []
+            if change_type:
+                filters.append(f"type: {change_type}")
+            if path_pattern:
+                filters.append(f"path: {path_pattern}")
+            filter_text = f" ({', '.join(filters)})" if filters else ""
+            return f"-> listing files in code changes{filter_text}\n"
+        case "search_content_in_changes":
+            pattern = args.get("pattern", "")
+            file_pattern = args.get("file_pattern", "")
+            return (
+                f"-> searching content in code changes: pattern '{pattern}'"
+                + (f" in files matching '{file_pattern}'" if file_pattern else "")
+                + "\n"
+            )
+        case "clear_file_from_changes":
+            file_path = args.get("file_path", "")
+            return f"-> clearing file from code changes: {file_path}\n"
+        case "clear_all_changes":
+            return "-> clearing all code changes\n"
+        case "get_changes_summary":
+            return "-> getting code changes summary\n"
+        case "export_changes":
+            format_type = args.get("format", "dict")
+            return f"-> exporting code changes in {format_type} format\n"
+        case "show_diff":
+            return "-> displaying code diff\n"
         case tool_name if tool_name.startswith("delegate_to_"):
             # Handle delegation tools - extract agent type and return appropriate info
             agent_type = tool_name[12:]  # Remove "delegate_to_" prefix
@@ -302,6 +426,27 @@ description:
             if isinstance(content, str):
                 return content
             return str(content)
+        case (
+            "add_file_to_changes"
+            | "update_file_in_changes"
+            | "update_file_lines"
+            | "replace_in_file"
+            | "insert_lines"
+            | "delete_lines"
+            | "delete_file_in_changes"
+            | "get_file_from_changes"
+            | "list_files_in_changes"
+            | "search_content_in_changes"
+            | "clear_file_from_changes"
+            | "clear_all_changes"
+            | "get_changes_summary"
+            | "export_changes"
+            | "show_diff"
+        ):
+            # For code changes manager tools, return the content directly
+            if isinstance(content, str):
+                return content
+            return str(content)
         case tool_name if tool_name.startswith("delegate_to_"):
             # Handle delegation tools - extract agent type and return appropriate result content
             agent_type = tool_name[12:]  # Remove "delegate_to_" prefix
@@ -315,12 +460,6 @@ def get_delegation_call_message(agent_type: str) -> str:
     """Get user-friendly message when delegating to a specialist agent"""
     base_message = ""
     match agent_type:
-        case "codebase_analyzer":
-            base_message = (
-                "🔍 Delegating to Codebase Analyzer to examine how code works"
-            )
-        case "codebase_locator":
-            base_message = "📍 Delegating to Codebase Locator to find relevant files"
         case "think_execute":
             base_message = "🧠 Delegating to Think & Execute Agent for problem-solving and execution"
         case _:
@@ -342,12 +481,6 @@ def get_delegation_response_message(agent_type: str) -> str:
     """Get user-friendly message when delegation completes (now with clean task summary)"""
     base_message = ""
     match agent_type:
-        case "codebase_analyzer":
-            base_message = (
-                "✅ Codebase Analyzer completed analysis - returning clean task summary"
-            )
-        case "codebase_locator":
-            base_message = "✅ Codebase Locator found relevant files - returning clean task summary"
         case "think_execute":
             base_message = (
                 "✅ Think & Execute Agent completed task - returning clean task summary"
@@ -373,14 +506,6 @@ def get_delegation_info_content(
     """Get detailed info about what the specialist agent will do"""
     info = ""
     match agent_type:
-        case "codebase_analyzer":
-            info = f"**Codebase Analyzer Task:**\n{task_description}"
-            if context:
-                info += f"\n\n**Context:**\n{context}"
-        case "codebase_locator":
-            info = f"**Codebase Locator Task:**\n{task_description}"
-            if context:
-                info += f"\n\n**Context:**\n{context}"
         case "think_execute":
             info = f"**Think & Execute Task:**\n{task_description}"
             if context:
@@ -416,16 +541,12 @@ def get_delegation_info_with_todo_context(
 
 
 def get_delegation_result_content(agent_type: str, result: str) -> str:
-    """Get formatted result from specialist agent (now returns detailed task summary)"""
-    # Display the full task summary without truncation - it can be detailed and include code snippets
+    """Get formatted result from specialist agent (now returns detailed task result)"""
+    # Display the full task result without truncation - it can be detailed and include code snippets
     display_result = result
 
     match agent_type:
-        case "codebase_analyzer":
-            return f"**Codebase Analysis Summary:**\n\n{display_result}"
-        case "codebase_locator":
-            return f"**File Location Summary:**\n\n{display_result}"
         case "think_execute":
-            return f"**Task Completion Summary:**\n\n{display_result}"
+            return f"**Task Completion Result:**\n\n{display_result}"
         case _:
-            return f"**{agent_type} Task Summary:**\n\n{display_result}"
+            return f"**{agent_type} Task Result:**\n\n{display_result}"
