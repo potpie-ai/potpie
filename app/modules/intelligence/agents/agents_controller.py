@@ -6,9 +6,7 @@ from sqlalchemy.orm import Session
 from app.modules.intelligence.agents.agents_service import AgentInfo
 from app.modules.intelligence.agents.agents_service import AgentsService
 from app.modules.intelligence.provider.provider_service import ProviderService
-from app.modules.intelligence.agents.chat_agents.adaptive_agent import (
-    PromptService,
-)
+from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.tools.tool_service import ToolService
 
 

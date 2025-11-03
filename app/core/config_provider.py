@@ -1,8 +1,19 @@
 import os
+from typing import Any
 
 from dotenv import load_dotenv
 
+from .storage_strategies import (
+    S3StorageStrategy,
+    GCSStorageStrategy,
+    AzureStorageStrategy,
+)
+
 load_dotenv()
+
+
+class MediaServiceConfigError(Exception):
+    pass
 
 
 class ConfigProvider:
@@ -20,6 +31,21 @@ class ConfigProvider:
         self.google_application_credentials = os.getenv(
             "GOOGLE_APPLICATION_CREDENTIALS"
         )
+        self.object_storage_provider = os.getenv(
+            "OBJECT_STORAGE_PROVIDER", "auto"
+        ).lower()
+
+        self.s3_bucket_name = os.getenv("S3_BUCKET_NAME")
+        self.aws_region = os.getenv("AWS_REGION")
+        self.aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
+        self.aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+
+        # Strategy registry
+        self._storage_strategies = {
+            "s3": S3StorageStrategy(),
+            "gcs": GCSStorageStrategy(),
+            "azure": AzureStorageStrategy(),
+        }
 
     def get_neo4j_config(self):
         return self.neo4j_config
@@ -111,23 +137,46 @@ class ConfigProvider:
         - "enabled": Force enabled (requires GCP vars, will fail if missing)
         - "auto": Automatic detection based on GCP variable presence (default)
         """
+
         if self.is_multimodal_enabled.lower() == "disabled":
             return False
-        elif self.is_multimodal_enabled.lower() == "enabled":
+        if self.is_multimodal_enabled.lower() == "enabled":
             return True
         else:  # "auto" mode
-            return self._detect_gcp_dependencies()
+            return self._detect_object_storage_dependencies()[0]
 
-    def _detect_gcp_dependencies(self) -> bool:
-        """Detect if all required GCP dependencies are available"""
-        return all(
-            [
-                self.gcp_project_id,
-                self.gcp_bucket_name,  # Can use default but check if set
-                self.google_application_credentials
-                and os.path.exists(self.google_application_credentials),
-            ]
-        )
+    def get_media_storage_backend(self) -> str:
+        _, backend = self._detect_object_storage_dependencies()
+        return backend
+
+    def get_object_storage_descriptor(self) -> dict[str, Any]:
+        backend = self.get_media_storage_backend()
+        strategy = self._storage_strategies.get(backend)
+
+        if not strategy:
+            raise MediaServiceConfigError(f"Unsupported storage provider: {backend}")
+
+        try:
+            return strategy.get_descriptor(self)
+        except ValueError as e:
+            raise MediaServiceConfigError(str(e)) from e
+
+    def _detect_object_storage_dependencies(self) -> tuple[bool, str]:
+        # Check explicit provider selection first
+        if (
+            self.object_storage_provider != "auto"
+            and self.object_storage_provider in self._storage_strategies
+        ):
+            strategy = self._storage_strategies[self.object_storage_provider]
+            is_ready = strategy.is_ready(self)
+            return is_ready, self.object_storage_provider
+
+        # Auto-detection: return first ready provider
+        for provider, strategy in self._storage_strategies.items():
+            if strategy.is_ready(self):
+                return True, provider
+
+        return False, "none"
 
     @staticmethod
     def get_stream_ttl_secs() -> int:

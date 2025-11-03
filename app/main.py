@@ -54,8 +54,6 @@ class MainApp:
         self.setup_phoenix_tracing()
         self.app = FastAPI()
         self.setup_cors()
-        self.initialize_database()
-        self.setup_data()
         self.include_routers()
 
     def setup_sentry(self):
@@ -138,6 +136,17 @@ class MainApp:
             }
 
     async def startup_event(self):
+        # Database initialization moved here (runs on app start, not import)
+        logging.info("Initializing database...")
+        self.initialize_database()
+        logging.info("Database initialized successfully")
+
+        # Setup data (Firebase or dummy user)
+        logging.info("Setting up application data...")
+        self.setup_data()
+        logging.info("Application data setup complete")
+
+        # System prompts initialization
         db = SessionLocal()
         try:
             system_prompt_setup = SystemPromptSetup(db)
