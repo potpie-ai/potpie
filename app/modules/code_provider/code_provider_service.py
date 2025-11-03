@@ -6,6 +6,12 @@ from app.modules.code_provider.github.github_service import GithubService
 from app.modules.code_provider.local_repo.local_repo_service import LocalRepoService
 from app.modules.code_provider.provider_factory import CodeProviderFactory
 
+try:
+    from github.GithubException import GithubException, BadCredentialsException
+except ImportError:
+    GithubException = None
+    BadCredentialsException = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,13 +26,55 @@ class ProviderWrapper:
         """
         Get repository using the provider.
         Uses create_provider_with_fallback to ensure proper auth method for the specific repo.
+        Handles authentication failures (401/404) by falling back to unauthenticated access for public repos.
         """
         # Use fallback logic to get the right provider for this specific repo
         # This handles GitHub App vs PAT authentication based on repo access
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
 
         # Get repository details and return a mock object that matches the expected interface
-        repo_info = provider.get_repository(repo_name)
+        try:
+            repo_info = provider.get_repository(repo_name)
+        except Exception as e:
+            # Check if this is a 404 (not found) or 401 (bad credentials) - try unauthenticated access
+            is_404_error = (
+                (GithubException and isinstance(e, GithubException) and e.status == 404)
+                or "404" in str(e) 
+                or "Not Found" in str(e)
+                or (hasattr(e, "status") and e.status == 404)
+            )
+            is_401_error = (
+                (BadCredentialsException and isinstance(e, BadCredentialsException))
+                or (GithubException and isinstance(e, GithubException) and e.status == 401)
+                or "401" in str(e)
+                or "Bad credentials" in str(e)
+                or (hasattr(e, "status") and e.status == 401)
+            )
+            
+            provider_type = os.getenv("CODE_PROVIDER", "github").lower()
+            
+            # If this is a GitHub repo and PAT failed with 404 or 401, try unauthenticated access for public repos
+            if provider_type == "github" and (is_404_error or is_401_error):
+                error_type = "401 (Bad credentials)" if is_401_error else "404"
+                logger.info(
+                    f"PAT authentication failed with {error_type} for {repo_name}, "
+                    "trying unauthenticated access for public repo"
+                )
+                try:
+                    from app.modules.code_provider.github.github_provider import GitHubProvider
+                    provider = GitHubProvider()
+                    provider.set_unauthenticated_client()
+                    repo_info = provider.get_repository(repo_name)
+                    logger.info(f"Successfully accessed {repo_name} without authentication")
+                except Exception as unauth_error:
+                    logger.warning(
+                        f"Unauthenticated access also failed for {repo_name}: {unauth_error}"
+                    )
+                    # Re-raise original error
+                    raise e
+            else:
+                # Not a GitHub repo or not a 401/404 error, re-raise
+                raise
 
         # Create a mock repository object that matches the expected interface
         class MockRepo:
@@ -178,13 +226,59 @@ class ProviderWrapper:
         # Use fallback logic to get the right provider for this specific repo
         provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
 
-        return provider.get_file_content(
-            repo_name=repo_name,
-            file_path=file_path,
-            ref=branch_name if not commit_id else commit_id,
-            start_line=start_line,
-            end_line=end_line,
-        )
+        try:
+            return provider.get_file_content(
+                repo_name=repo_name,
+                file_path=file_path,
+                ref=branch_name if not commit_id else commit_id,
+                start_line=start_line,
+                end_line=end_line,
+            )
+        except Exception as e:
+            # Check if this is a 404 (not found) or 401 (bad credentials) - try unauthenticated access
+            is_404_error = (
+                (GithubException and isinstance(e, GithubException) and e.status == 404)
+                or "404" in str(e) 
+                or "Not Found" in str(e)
+                or (hasattr(e, "status") and e.status == 404)
+            )
+            is_401_error = (
+                (BadCredentialsException and isinstance(e, BadCredentialsException))
+                or (GithubException and isinstance(e, GithubException) and e.status == 401)
+                or "401" in str(e)
+                or "Bad credentials" in str(e)
+                or (hasattr(e, "status") and e.status == 401)
+            )
+            
+            provider_type = os.getenv("CODE_PROVIDER", "github").lower()
+            
+            # If this is a GitHub repo and PAT failed with 404 or 401, try unauthenticated access for public repos
+            if provider_type == "github" and (is_404_error or is_401_error):
+                error_type = "401 (Bad credentials)" if is_401_error else "404"
+                logger.info(
+                    f"PAT authentication failed with {error_type} for {repo_name}, "
+                    "trying unauthenticated access for public repo"
+                )
+                try:
+                    from app.modules.code_provider.github.github_provider import GitHubProvider
+                    provider = GitHubProvider()
+                    provider.set_unauthenticated_client()
+                    return provider.get_file_content(
+                        repo_name=repo_name,
+                        file_path=file_path,
+                        ref=branch_name if not commit_id else commit_id,
+                        start_line=start_line,
+                        end_line=end_line,
+                    )
+                except Exception as unauth_error:
+                    logger.warning(
+                        f"Unauthenticated access also failed for {repo_name}: {unauth_error}"
+                    )
+                    # Re-raise original error
+                    raise e
+            else:
+                # Not a GitHub repo or not a 401/404 error, re-raise
+                raise
 
     async def get_project_structure_async(self, project_id, path: Optional[str] = None):
         """Get project structure using the provider."""
@@ -213,9 +307,52 @@ class ProviderWrapper:
             provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
 
             # Use the provider to get repository structure
-            structure = provider.get_repository_structure(
-                repo_name=repo_name, path=path or "", max_depth=4
-            )
+            try:
+                structure = provider.get_repository_structure(
+                    repo_name=repo_name, path=path or "", max_depth=4
+                )
+            except Exception as e:
+                # Check if this is a 404 (not found) or 401 (bad credentials) - try unauthenticated access
+                is_404_error = (
+                    (GithubException and isinstance(e, GithubException) and e.status == 404)
+                    or "404" in str(e) 
+                    or "Not Found" in str(e)
+                    or (hasattr(e, "status") and e.status == 404)
+                )
+                is_401_error = (
+                    (BadCredentialsException and isinstance(e, BadCredentialsException))
+                    or (GithubException and isinstance(e, GithubException) and e.status == 401)
+                    or "401" in str(e)
+                    or "Bad credentials" in str(e)
+                    or (hasattr(e, "status") and e.status == 401)
+                )
+                
+                provider_type = os.getenv("CODE_PROVIDER", "github").lower()
+                
+                # If this is a GitHub repo and PAT failed with 404 or 401, try unauthenticated access for public repos
+                if provider_type == "github" and (is_404_error or is_401_error):
+                    error_type = "401 (Bad credentials)" if is_401_error else "404"
+                    logger.info(
+                        f"PAT authentication failed with {error_type} for {repo_name}, "
+                        "trying unauthenticated access for public repo"
+                    )
+                    try:
+                        from app.modules.code_provider.github.github_provider import GitHubProvider
+                        provider = GitHubProvider()
+                        provider.set_unauthenticated_client()
+                        structure = provider.get_repository_structure(
+                            repo_name=repo_name, path=path or "", max_depth=4
+                        )
+                        logger.info(f"Successfully accessed {repo_name} without authentication")
+                    except Exception as unauth_error:
+                        logger.warning(
+                            f"Unauthenticated access also failed for {repo_name}: {unauth_error}"
+                        )
+                        # Re-raise original error
+                        raise e
+                else:
+                    # Not a GitHub repo or not a 401/404 error, re-raise
+                    raise
 
             return structure
         except Exception as e:

@@ -8,6 +8,12 @@ from app.modules.code_provider.provider_factory import CodeProviderFactory
 from app.core.config_provider import config_provider
 from app.modules.code_provider.github.github_service import GithubService
 
+try:
+    from github.GithubException import GithubException, BadCredentialsException
+except ImportError:
+    GithubException = None
+    BadCredentialsException = None
+
 
 class CodeProviderController:
     """
@@ -45,25 +51,50 @@ class CodeProviderController:
             return {"branches": branches}
 
         except Exception as e:
-            # Check if this is a 404 (not found) or 403 (forbidden) - likely PAT doesn't have access
-            is_access_error = (
-                "404" in str(e) 
-                or "403" in str(e) 
+            # Check if this is a 404 (not found), 401 (bad credentials), or 403 (forbidden)
+            is_404_error = (
+                (GithubException and isinstance(e, GithubException) and e.status == 404)
+                or "404" in str(e) 
                 or "Not Found" in str(e)
-                or "UnknownObjectException" in str(type(e))
+                or (hasattr(e, "status") and e.status == 404)
+            )
+            is_401_error = (
+                (BadCredentialsException and isinstance(e, BadCredentialsException))
+                or (GithubException and isinstance(e, GithubException) and e.status == 401)
+                or "401" in str(e)
+                or "Bad credentials" in str(e)
+                or (hasattr(e, "status") and e.status == 401)
+            )
+            is_403_error = (
+                (GithubException and isinstance(e, GithubException) and e.status == 403)
+                or "403" in str(e)
+                or (hasattr(e, "status") and e.status == 403)
             )
             
-            if is_access_error:
-                logger.info(
-                    f"PAT authentication failed for {repo_name} (likely no access to private repo): {str(e)}"
-                )
-            else:
-                logger.error(
-                    f"Error fetching branches for {repo_name}: {str(e)}", exc_info=True
-                )
-            
-            # If this is a GitHub repo and PAT failed, try GitHub App directly
             provider_type = os.getenv("CODE_PROVIDER", "github").lower()
+            
+            # If this is a GitHub repo and PAT failed with 404 or 401, try unauthenticated access for public repos
+            # 401 can happen when token is invalid/expired, but repo might still be public
+            if provider_type == "github" and (is_404_error or is_401_error):
+                error_type = "401 (Bad credentials)" if is_401_error else "404"
+                logger.info(
+                    f"PAT authentication failed with {error_type} for {repo_name}, "
+                    "trying unauthenticated access for public repo"
+                )
+                try:
+                    from app.modules.code_provider.github.github_provider import GitHubProvider
+                    provider = GitHubProvider()
+                    provider.set_unauthenticated_client()
+                    branches = provider.list_branches(repo_name)
+                    logger.info(f"Successfully accessed {repo_name} without authentication")
+                    return {"branches": branches}
+                except Exception as unauth_error:
+                    logger.warning(
+                        f"Unauthenticated access also failed for {repo_name}: {unauth_error}"
+                    )
+                    # Continue to try GitHub App below
+            
+            # If GitHub App is configured, try it as fallback
             if provider_type == "github":
                 app_id = os.getenv("GITHUB_APP_ID")
                 private_key = config_provider.get_github_key()
@@ -80,6 +111,16 @@ class CodeProviderController:
                         )
                 else:
                     logger.debug("GitHub App credentials not configured, skipping App auth retry")
+            
+            # Log the error appropriately
+            if is_404_error or is_401_error or is_403_error:
+                logger.info(
+                    f"Authentication failed for {repo_name}: {str(e)}"
+                )
+            else:
+                logger.error(
+                    f"Error fetching branches for {repo_name}: {str(e)}", exc_info=True
+                )
             
             raise HTTPException(
                 status_code=404,

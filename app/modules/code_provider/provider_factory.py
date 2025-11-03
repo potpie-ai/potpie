@@ -10,6 +10,11 @@ from app.modules.code_provider.base.code_provider_interface import (
 from app.modules.code_provider.github.github_provider import GitHubProvider
 from app.core.config_provider import config_provider
 
+try:
+    from github.GithubException import GithubException
+except ImportError:
+    GithubException = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -191,8 +196,17 @@ class CodeProviderFactory:
         }
         response = requests.get(url, headers=headers)
 
-        if response.status_code != 200:
-            raise Exception(f"Failed to get installation ID for {repo_name}")
+        if response.status_code == 404:
+            # App not installed on this repository (likely public repo or no access)
+            raise ValueError(
+                f"GitHub App not installed on repository {repo_name}. "
+                f"This is expected for public repos or repos where the app isn't installed."
+            )
+        elif response.status_code != 200:
+            raise Exception(
+                f"Failed to get installation ID for {repo_name}: "
+                f"HTTP {response.status_code} - {response.text}"
+            )
 
         installation_id = response.json()["id"]
 
@@ -263,7 +277,27 @@ class CodeProviderFactory:
                 logger.error(f"Unexpected error during GitHub App authentication for {repo_name}: {e}", exc_info=True)
                 # Continue to PAT fallback below
 
-        # Try PAT authentication (for all providers, or as fallback for GitHub)
+        # For GitHub: Try GH_TOKEN_LIST first (where GitHub PATs are stored)
+        # For other providers: Try CODE_PROVIDER_TOKEN first
+        if provider_type == ProviderType.GITHUB:
+            # For GitHub, prioritize GH_TOKEN_LIST over CODE_PROVIDER_TOKEN
+            token_list_str = os.getenv("GH_TOKEN_LIST", "")
+            if token_list_str:
+                import random
+
+                tokens = [t.strip() for t in token_list_str.split(",") if t.strip()]
+                if tokens:
+                    logger.info("Using GH_TOKEN_LIST for authentication")
+                    # Create provider directly without auto-authentication
+                    base_url = os.getenv("CODE_PROVIDER_BASE_URL") or "https://api.github.com"
+                    provider = GitHubProvider(base_url=base_url)
+                    token = random.choice(tokens)
+                    provider.authenticate(
+                        {"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN
+                    )
+                    return provider
+
+        # Try CODE_PROVIDER_TOKEN (for non-GitHub providers, or as fallback for GitHub)
         token = os.getenv("CODE_PROVIDER_TOKEN")
         if token:
             logger.info("Using CODE_PROVIDER_TOKEN for authentication")
@@ -271,22 +305,19 @@ class CodeProviderFactory:
             provider.authenticate({"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN)
             return provider
 
-        # Try legacy PAT pool
-        token_list_str = os.getenv("GH_TOKEN_LIST", "")
-        if token_list_str:
-            import random
-
-            tokens = [t.strip() for t in token_list_str.split(",") if t.strip()]
-            if tokens:
-                logger.info("Using GH_TOKEN_LIST for authentication")
-                provider = CodeProviderFactory.create_provider()
-                token = random.choice(tokens)
-                provider.authenticate(
-                    {"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN
-                )
+        # If we get here and it's GitHub without App configured, try unauthenticated access
+        if provider_type == ProviderType.GITHUB:
+            logger.info(f"No PAT configured, trying unauthenticated access for {repo_name}")
+            try:
+                # Create provider directly without auto-authentication
+                base_url = os.getenv("CODE_PROVIDER_BASE_URL") or "https://api.github.com"
+                provider = GitHubProvider(base_url=base_url)
+                provider.set_unauthenticated_client()
                 return provider
+            except Exception as e:
+                logger.warning(f"Failed to create unauthenticated provider: {e}")
 
-        # If we get here and it's GitHub without App configured, we have no auth method
+        # If we get here, we have no auth method
         raise ValueError(
             "No authentication method available. "
             "Please configure CODE_PROVIDER_TOKEN, GH_TOKEN_LIST, or GitHub App credentials."

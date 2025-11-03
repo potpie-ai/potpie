@@ -67,6 +67,12 @@ class GitHubProvider(ICodeProvider):
 
         return self.client
 
+    def set_unauthenticated_client(self) -> Github:
+        """Set unauthenticated client for public repository access."""
+        self.auth_method = None
+        self.client = Github(base_url=self.base_url)
+        return self.client
+
     def get_supported_auth_methods(self) -> List[AuthMethod]:
         return [
             AuthMethod.PERSONAL_ACCESS_TOKEN,
