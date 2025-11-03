@@ -138,6 +138,53 @@ class JiraOAuth:
         logging.info("Received Jira tokens: %s", list(tokens.keys()))
         return tokens
 
+    async def refresh_access_token(self, refresh_token: str) -> Dict[str, Any]:
+        """Refresh an expired access token using the refresh token."""
+        if not self.client_id or not self.client_secret:
+            raise Exception("Jira OAuth credentials not configured")
+
+        token_url = f"{self.AUTH_BASE_URL}/oauth/token"
+        payload = {
+            "grant_type": "refresh_token",
+            "client_id": self.client_id,
+            "client_secret": self.client_secret,
+            "refresh_token": refresh_token,
+        }
+
+        logging.info("Refreshing Jira access token")
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                token_url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+
+        if response.status_code != 200:
+            logging.error(
+                "Jira token refresh failed: %s - %s",
+                response.status_code,
+                response.text,
+            )
+            raise Exception(
+                f"Token refresh failed ({response.status_code}): {response.text}"
+            )
+
+        token_response = response.json()
+        expires_at = time.time() + token_response.get("expires_in", 3600)
+
+        tokens = {
+            "access_token": token_response.get("access_token"),
+            "refresh_token": token_response.get("refresh_token"),
+            "token_type": token_response.get("token_type", "Bearer"),
+            "scope": token_response.get("scope"),
+            "expires_in": token_response.get("expires_in"),
+            "expires_at": expires_at,
+        }
+
+        logging.info("Successfully refreshed Jira access token")
+        return tokens
+
     async def get_accessible_resources(self, access_token: str) -> Dict[str, Any]:
         """Return the list of Atlassian cloud resources the token can access."""
         url = f"{self.API_BASE_URL}/oauth/token/accessible-resources"
