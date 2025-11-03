@@ -126,9 +126,13 @@ class JiraClient:
         return {
             "type": "doc",
             "version": 1,
-            "content": content
-            if content
-            else [{"type": "paragraph", "content": [{"type": "text", "text": text}]}],
+            "content": (
+                content
+                if content
+                else [
+                    {"type": "paragraph", "content": [{"type": "text", "text": text}]}
+                ]
+            ),
         }
 
     @staticmethod
@@ -589,9 +593,11 @@ class JiraClient:
                         "project_type": project.get("projectTypeKey"),
                         "style": project.get("style"),
                         "description": project.get("description", ""),
-                        "lead": project.get("lead", {}).get("displayName")
-                        if project.get("lead")
-                        else None,
+                        "lead": (
+                            project.get("lead", {}).get("displayName")
+                            if project.get("lead")
+                            else None
+                        ),
                         "url": f"{self.server}/browse/{project.get('key')}",
                     }
                 )
