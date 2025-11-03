@@ -50,6 +50,15 @@ from app.modules.intelligence.tools.linear_tools import (
     get_linear_issue_tool,
     update_linear_issue_tool,
 )
+from app.modules.intelligence.tools.jira_tools import (
+    get_jira_issue_tool,
+    search_jira_issues_tool,
+    create_jira_issue_tool,
+    update_jira_issue_tool,
+    add_jira_comment_tool,
+    transition_jira_issue_tool,
+    get_jira_projects_tool,
+)
 from app.modules.intelligence.tools.web_tools.web_search_tool import web_search_tool
 from app.modules.intelligence.provider.provider_service import ProviderService
 from langchain_core.tools import StructuredTool
@@ -100,6 +109,13 @@ class ToolService:
             ),
             "get_linear_issue": get_linear_issue_tool(self.db, self.user_id),
             "update_linear_issue": update_linear_issue_tool(self.db, self.user_id),
+            "get_jira_issue": get_jira_issue_tool(self.db, self.user_id),
+            "search_jira_issues": search_jira_issues_tool(self.db, self.user_id),
+            "create_jira_issue": create_jira_issue_tool(self.db, self.user_id),
+            "update_jira_issue": update_jira_issue_tool(self.db, self.user_id),
+            "add_jira_comment": add_jira_comment_tool(self.db, self.user_id),
+            "transition_jira_issue": transition_jira_issue_tool(self.db, self.user_id),
+            "get_jira_projects": get_jira_projects_tool(self.db, self.user_id),
             "intelligent_code_graph": get_intelligent_code_graph_tool(
                 self.db, self.provider_service, self.user_id
             ),
