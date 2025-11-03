@@ -73,3 +73,8 @@ pytest
 pytest-asyncio
 Pillow==10.0.1
 python-multipart>=0.0.7
+arize-phoenix>=6.0.0
+arize-phoenix-otel>=0.1.0
+openinference-instrumentation-pydantic-ai>=0.1.0
+openinference-instrumentation-litellm>=0.1.0
+anthropic>=0.39.0

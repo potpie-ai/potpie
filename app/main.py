@@ -51,6 +51,7 @@ class MainApp:
             )
             exit(1)
         self.setup_sentry()
+        self.setup_phoenix_tracing()
         self.app = FastAPI()
         self.setup_cors()
         self.initialize_database()
@@ -64,6 +65,13 @@ class MainApp:
                 traces_sample_rate=0.25,
                 profiles_sample_rate=1.0,
             )
+
+    def setup_phoenix_tracing(self):
+        try:
+            from app.modules.intelligence.tracing.phoenix_tracer import initialize_phoenix_tracing
+            initialize_phoenix_tracing()
+        except Exception as e:
+            logging.warning(f"Phoenix tracing initialization failed (non-fatal): {e}")
 
     def setup_cors(self):
         origins = ["*"]

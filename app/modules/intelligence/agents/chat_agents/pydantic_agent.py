@@ -134,6 +134,7 @@ class PydanticRagAgent(ChatAgent):
             defer_model_check=True,
             end_strategy="exhaustive",
             model_settings={"max_tokens": 14000},
+            instrument=True,
         )
 
     def _prepare_multimodal_instructions(self, ctx: ChatContext) -> str:
