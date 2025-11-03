@@ -84,10 +84,15 @@ configure_celery(queue_name)
 def setup_phoenix_tracing():
     """Initialize Phoenix tracing for LLM monitoring in Celery workers."""
     try:
-        from app.modules.intelligence.tracing.phoenix_tracer import initialize_phoenix_tracing
+        from app.modules.intelligence.tracing.phoenix_tracer import (
+            initialize_phoenix_tracing,
+        )
+
         initialize_phoenix_tracing()
     except Exception as e:
-        logger.warning(f"Phoenix tracing initialization failed in Celery worker (non-fatal): {e}")
+        logger.warning(
+            f"Phoenix tracing initialization failed in Celery worker (non-fatal): {e}"
+        )
 
 
 setup_phoenix_tracing()

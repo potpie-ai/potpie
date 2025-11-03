@@ -66,7 +66,10 @@ class MainApp:
 
     def setup_phoenix_tracing(self):
         try:
-            from app.modules.intelligence.tracing.phoenix_tracer import initialize_phoenix_tracing
+            from app.modules.intelligence.tracing.phoenix_tracer import (
+                initialize_phoenix_tracing,
+            )
+
             initialize_phoenix_tracing()
         except Exception as e:
             logging.warning(f"Phoenix tracing initialization failed (non-fatal): {e}")
