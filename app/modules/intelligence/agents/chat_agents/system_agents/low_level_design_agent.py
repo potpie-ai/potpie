@@ -50,6 +50,13 @@ class LowLevelDesignAgent(ChatAgent):
                 "github_tool",
                 "think",
                 "get_linear_issue",
+                "get_jira_issue",
+                "search_jira_issues",
+                "create_jira_issue",
+                "update_jira_issue",
+                "add_jira_comment",
+                "transition_jira_issue",
+                "get_jira_projects",
                 "fetch_file",
                 "analyze_code_structure",
             ]
