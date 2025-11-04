@@ -84,6 +84,8 @@ def get_tool_run_message(tool_name: str):
             return "Getting code changes summary"
         case "export_changes":
             return "Exporting code changes"
+        case "show_updated_file":
+            return "Displaying updated file content"
         case "show_diff":
             return "Displaying code diff"
         case tool_name if tool_name.startswith("delegate_to_"):
@@ -160,6 +162,8 @@ def get_tool_response_message(tool_name: str):
             return "Code changes summary retrieved successfully"
         case "export_changes":
             return "Code changes exported successfully"
+        case "show_updated_file":
+            return "Updated file content displayed successfully"
         case "show_diff":
             return "Code diff displayed successfully"
         case tool_name if tool_name.startswith("delegate_to_"):
@@ -293,6 +297,12 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
         case "export_changes":
             format_type = args.get("format", "dict")
             return f"-> exporting code changes in {format_type} format\n"
+        case "show_updated_file":
+            file_paths = args.get("file_paths", None)
+            if file_paths:
+                return f"-> displaying updated file content: {', '.join(file_paths) if isinstance(file_paths, list) else file_paths}\n"
+            else:
+                return "-> displaying all updated files\n"
         case "show_diff":
             return "-> displaying code diff\n"
         case tool_name if tool_name.startswith("delegate_to_"):
@@ -441,6 +451,7 @@ description:
             | "clear_all_changes"
             | "get_changes_summary"
             | "export_changes"
+            | "show_updated_file"
             | "show_diff"
         ):
             # For code changes manager tools, return the content directly

@@ -18,6 +18,7 @@ from typing import Dict, List, Optional, Any, Union
 from enum import Enum
 from dataclasses import dataclass, asdict
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -89,14 +90,142 @@ class CodeChangesManager:
         )
         return True
 
-    def _get_current_content(self, file_path: str) -> str:
-        """Get current content of a file (from changes or empty if new)"""
+    def _get_current_content(
+        self,
+        file_path: str,
+        project_id: Optional[str] = None,
+        db: Optional[Session] = None,
+    ) -> str:
+        """Get current content of a file (from changes, repository via code provider, filesystem, or empty if new)"""
+        logger.info(
+            f"CodeChangesManager._get_current_content: Getting content for '{file_path}' "
+            f"(project_id={project_id}, db={'provided' if db else 'None'})"
+        )
+
         if file_path in self.changes:
             existing = self.changes[file_path]
             if existing.change_type == ChangeType.DELETE:
+                logger.info(
+                    f"CodeChangesManager._get_current_content: File '{file_path}' is marked as deleted"
+                )
                 return ""  # Deleted file has no content
-            return existing.content or ""
-        return ""  # New file, no content yet
+            content = existing.content or ""
+            logger.info(
+                f"CodeChangesManager._get_current_content: Retrieved '{file_path}' from changes "
+                f"({len(content)} chars, {len(content.split(chr(10)))} lines)"
+            )
+            return content
+
+        # If file not in changes, try to fetch from repository using code provider
+        if project_id and db:
+            logger.info(
+                f"CodeChangesManager._get_current_content: Attempting to fetch '{file_path}' "
+                f"from repository using project_id={project_id}"
+            )
+            try:
+                from app.modules.code_provider.code_provider_service import (
+                    CodeProviderService,
+                )
+                from app.modules.projects.projects_service import ProjectService
+
+                project_service = ProjectService(db)
+                # Project.id is Text (string) in the database, so query directly with the string project_id
+                # Note: get_project_from_db_by_id_sync has incorrect type hint (int), but actually accepts string
+                logger.debug(
+                    f"CodeChangesManager._get_current_content: Fetching project details for project_id={project_id} (type: {type(project_id).__name__})"
+                )
+                try:
+                    # Query directly - Project.id is Text column, so string works fine
+                    # The method type hint says int, but the actual column accepts strings
+                    from app.modules.projects.projects_model import Project
+
+                    project = db.query(Project).filter(Project.id == project_id).first()
+                    if project:
+                        project_details = {
+                            "project_name": project.repo_name,
+                            "id": project.id,
+                            "commit_id": project.commit_id,
+                            "status": project.status,
+                            "branch_name": project.branch_name,
+                            "repo_path": project.repo_path,
+                            "user_id": project.user_id,
+                        }
+                        logger.debug(
+                            f"CodeChangesManager._get_current_content: Project details retrieved: "
+                            f"repo={project_details.get('project_name')}, branch={project_details.get('branch_name')}"
+                        )
+                    else:
+                        logger.warning(
+                            f"CodeChangesManager._get_current_content: Project not found in database for project_id={project_id}"
+                        )
+                        project_details = None
+                except Exception as e:
+                    logger.warning(
+                        f"CodeChangesManager._get_current_content: Error querying project for project_id '{project_id}': {e}",
+                        exc_info=True,
+                    )
+                    project_details = None
+
+                if project_details and "project_name" in project_details:
+                    cp_service = CodeProviderService(db)
+                    logger.debug(
+                        f"CodeChangesManager._get_current_content: Fetching file content from repository "
+                        f"for '{file_path}' in repo '{project_details['project_name']}'"
+                    )
+                    repo_content = cp_service.get_file_content(
+                        repo_name=project_details["project_name"],
+                        file_path=file_path,
+                        branch_name=project_details.get("branch_name"),
+                        start_line=None,
+                        end_line=None,
+                        project_id=project_id,
+                        commit_id=project_details.get("commit_id"),
+                    )
+                    if repo_content:
+                        lines = repo_content.split("\n")
+                        logger.info(
+                            f"CodeChangesManager._get_current_content: Successfully retrieved '{file_path}' "
+                            f"from repository via code provider ({len(repo_content)} chars, {len(lines)} lines)"
+                        )
+                        return repo_content
+                    else:
+                        logger.warning(
+                            f"CodeChangesManager._get_current_content: Repository returned empty content for '{file_path}'"
+                        )
+                else:
+                    logger.warning(
+                        f"CodeChangesManager._get_current_content: Cannot fetch from repository - "
+                        f"project_details={'missing project_name' if project_details else 'None'}"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"CodeChangesManager._get_current_content: Error fetching '{file_path}' from repository: {str(e)}",
+                    exc_info=True,
+                )
+                # Fall through to try filesystem
+
+        # If not available via code provider, try to read from filesystem
+        logger.debug(
+            f"CodeChangesManager._get_current_content: Attempting to read '{file_path}' from filesystem"
+        )
+        codebase_content = self._read_file_from_codebase(file_path)
+        if codebase_content is not None:
+            lines = codebase_content.split("\n")
+            logger.info(
+                f"CodeChangesManager._get_current_content: Retrieved '{file_path}' from filesystem "
+                f"({len(codebase_content)} chars, {len(lines)} lines)"
+            )
+            return codebase_content
+        else:
+            logger.warning(
+                f"CodeChangesManager._get_current_content: File '{file_path}' not found in filesystem"
+            )
+
+        # File doesn't exist in changes, repository, or filesystem - treat as new file
+        logger.warning(
+            f"CodeChangesManager._get_current_content: File '{file_path}' not found anywhere - treating as new file (empty content)"
+        )
+        return ""
 
     def _apply_update(
         self,
@@ -160,6 +289,8 @@ class CodeChangesManager:
         end_line: Optional[int] = None,
         new_content: str = "",
         description: Optional[str] = None,
+        project_id: Optional[str] = None,
+        db: Optional[Session] = None,
     ) -> Dict[str, Any]:
         """
         Update specific lines in a file (1-indexed)
@@ -175,13 +306,28 @@ class CodeChangesManager:
             Dict with success status and information about the change
         """
         logger.info(
-            f"CodeChangesManager.update_file_lines: Updating lines {start_line}-{end_line or start_line} in '{file_path}'"
+            f"CodeChangesManager.update_file_lines: Updating lines {start_line}-{end_line or start_line} in '{file_path}' "
+            f"(project_id={project_id}, db={'provided' if db else 'None'})"
         )
         try:
-            current_content = self._get_current_content(file_path)
+            current_content = self._get_current_content(
+                file_path, project_id=project_id, db=db
+            )
             lines = current_content.split("\n")
+            logger.info(
+                f"CodeChangesManager.update_file_lines: Retrieved content for '{file_path}' - "
+                f"{len(lines)} lines, content length: {len(current_content)} chars"
+            )
+
+            if len(lines) == 1 and lines[0] == "":
+                logger.warning(
+                    f"CodeChangesManager.update_file_lines: WARNING - File '{file_path}' appears to be empty or only contains empty string!"
+                )
 
             # Validate line numbers (1-indexed)
+            logger.debug(
+                f"CodeChangesManager.update_file_lines: Validating start_line={start_line} against file with {len(lines)} lines"
+            )
             if start_line < 1 or start_line > len(lines):
                 return {
                     "success": False,
@@ -222,6 +368,32 @@ class CodeChangesManager:
             change_desc = description or f"Updated lines {start_line}-{end_line}"
             self._apply_update(file_path, updated_content, change_desc)
 
+            # Calculate context around updated area
+            context_lines_before = 3
+            context_lines_after = 3
+
+            # Get context before
+            context_start_idx = max(0, start_idx - context_lines_before)
+            context_lines_before_list = lines[context_start_idx:start_idx]
+
+            # Get context after (in the updated file)
+            context_after_start_idx = start_idx + len(new_lines)
+            context_after_end_idx = min(
+                len(updated_lines), context_after_start_idx + context_lines_after
+            )
+            context_lines_after_list = updated_lines[
+                context_after_start_idx:context_after_end_idx
+            ]
+
+            # Get the updated section with context
+            context_with_updated = (
+                context_lines_before_list + new_lines + context_lines_after_list
+            )
+
+            # Calculate line numbers for context display
+            context_start_line = context_start_idx + 1
+            context_end_line = context_after_end_idx
+
             logger.info(
                 f"CodeChangesManager.update_file_lines: Successfully updated lines {start_line}-{end_line} in '{file_path}' (replaced {len(replaced_lines)} lines with {len(new_lines)} new lines)"
             )
@@ -233,6 +405,9 @@ class CodeChangesManager:
                 "lines_replaced": len(replaced_lines),
                 "lines_added": len(new_lines),
                 "replaced_content": replaced_content,
+                "updated_context": "\n".join(context_with_updated),
+                "context_start_line": context_start_line,
+                "context_end_line": context_end_line,
             }
         except Exception as e:
             logger.error(
@@ -339,6 +514,8 @@ class CodeChangesManager:
         content: str,
         description: Optional[str] = None,
         insert_after: bool = True,
+        project_id: Optional[str] = None,
+        db: Optional[Session] = None,
     ) -> Dict[str, Any]:
         """
         Insert content at a specific line in a file
@@ -355,27 +532,58 @@ class CodeChangesManager:
         """
         position = "after" if insert_after else "before"
         logger.info(
-            f"CodeChangesManager.insert_lines: Inserting {len(content.split(chr(10)))} line(s) {position} line {line_number} in '{file_path}'"
+            f"CodeChangesManager.insert_lines: Inserting {len(content.split(chr(10)))} line(s) {position} line {line_number} in '{file_path}' "
+            f"(project_id={project_id}, db={'provided' if db else 'None'})"
         )
         try:
-            current_content = self._get_current_content(file_path)
+            current_content = self._get_current_content(
+                file_path, project_id=project_id, db=db
+            )
             lines = current_content.split("\n")
+            logger.info(
+                f"CodeChangesManager.insert_lines: Retrieved content for '{file_path}' - "
+                f"{len(lines)} lines, content length: {len(current_content)} chars"
+            )
+
+            if len(lines) == 1 and lines[0] == "":
+                logger.warning(
+                    f"CodeChangesManager.insert_lines: WARNING - File '{file_path}' appears to be empty or only contains empty string!"
+                )
 
             # Validate line number
+            logger.debug(
+                f"CodeChangesManager.insert_lines: Validating line_number={line_number} against file with {len(lines)} lines"
+            )
             if line_number < 1:
                 return {"success": False, "error": "line_number must be >= 1"}
 
-            if line_number > len(lines) + 1:
+            # Calculate max valid line number based on insert mode
+            if insert_after:
+                # Can insert after line 1 through line (len(lines) + 1)
+                max_valid_line = len(lines) + 1
+            else:
+                # Can insert before line 1 through line len(lines)
+                max_valid_line = len(lines)
+
+            if line_number > max_valid_line:
                 return {
                     "success": False,
-                    "error": f"line_number {line_number} is beyond end of file ({len(lines)} lines)",
+                    "error": f"line_number {line_number} is beyond end of file ({len(lines)} lines). "
+                    f"Valid range: 1 to {max_valid_line} when inserting {'after' if insert_after else 'before'}.",
                 }
 
             # Split content into lines
             new_lines = content.split("\n")
 
-            # Convert to 0-indexed
-            insert_idx = line_number if insert_after else line_number - 1
+            # Convert to 0-indexed insertion index
+            # When insert_after=True: insert after line N means insert at index N (0-indexed)
+            # When insert_after=False: insert before line N means insert at index N-1 (0-indexed)
+            if insert_after:
+                # Clamp to valid range: can insert at indices 0 through len(lines)
+                insert_idx = min(line_number, len(lines))
+            else:
+                # Clamp to valid range: can insert at indices 0 through len(lines)-1
+                insert_idx = max(0, min(line_number - 1, len(lines) - 1))
 
             # Insert the lines
             updated_lines = lines[:insert_idx] + new_lines + lines[insert_idx:]
@@ -388,6 +596,32 @@ class CodeChangesManager:
             )
             self._apply_update(file_path, updated_content, change_desc)
 
+            # Calculate context around inserted area
+            context_lines_before = 3
+            context_lines_after = 3
+
+            # Get context before (from original file)
+            context_start_idx = max(0, insert_idx - context_lines_before)
+            context_lines_before_list = lines[context_start_idx:insert_idx]
+
+            # Get context after (in the updated file)
+            context_after_start_idx = insert_idx + len(new_lines)
+            context_after_end_idx = min(
+                len(updated_lines), context_after_start_idx + context_lines_after
+            )
+            context_lines_after_list = updated_lines[
+                context_after_start_idx:context_after_end_idx
+            ]
+
+            # Get the inserted section with context
+            context_with_inserted = (
+                context_lines_before_list + new_lines + context_lines_after_list
+            )
+
+            # Calculate line numbers for context display
+            context_start_line = context_start_idx + 1
+            context_end_line = context_after_end_idx
+
             logger.info(
                 f"CodeChangesManager.insert_lines: Successfully inserted {len(new_lines)} line(s) {position} line {line_number} in '{file_path}'"
             )
@@ -397,6 +631,9 @@ class CodeChangesManager:
                 "line_number": line_number,
                 "position": position,
                 "lines_inserted": len(new_lines),
+                "inserted_context": "\n".join(context_with_inserted),
+                "context_start_line": context_start_line,
+                "context_end_line": context_end_line,
             }
         except Exception as e:
             logger.error(
@@ -826,20 +1063,28 @@ class CodeChangesManager:
                 diffs[fp] = diff
                 continue
 
-            # For updated files, compare with codebase
+            # For updated files, compare with previous_content if available, otherwise codebase
             new_content = change.content or ""
-            old_content = self._read_file_from_codebase(fp)
 
-            # If file doesn't exist in codebase, treat as new file
-            if old_content is None:
-                old_content = ""
-                diff = self._create_unified_diff(
-                    old_content, new_content, "/dev/null", fp, context_lines
-                )
-            else:
+            # Use previous_content if available, otherwise read from filesystem
+            if change.previous_content is not None:
+                old_content = change.previous_content
                 diff = self._create_unified_diff(
                     old_content, new_content, fp, fp, context_lines
                 )
+            else:
+                old_content = self._read_file_from_codebase(fp)
+
+                # If file doesn't exist in codebase, treat as new file
+                if old_content is None:
+                    old_content = ""
+                    diff = self._create_unified_diff(
+                        old_content, new_content, "/dev/null", fp, context_lines
+                    )
+                else:
+                    diff = self._create_unified_diff(
+                        old_content, new_content, fp, fp, context_lines
+                    )
 
             diffs[fp] = diff
 
@@ -1017,6 +1262,11 @@ class UpdateFileLinesInput(BaseModel):
     description: Optional[str] = Field(
         default=None, description="Optional description of the change"
     )
+    project_id: str = Field(
+        ...,
+        description="REQUIRED: Project ID (from context) to fetch file content from repository. "
+        "Use the project_id from the conversation context. Without this, the tool cannot access existing file content.",
+    )
 
 
 class ReplaceInFileInput(BaseModel):
@@ -1049,6 +1299,11 @@ class InsertLinesInput(BaseModel):
     insert_after: bool = Field(
         default=True,
         description="If True, insert after line_number; if False, insert before",
+    )
+    project_id: str = Field(
+        ...,
+        description="REQUIRED: Project ID (from context) to fetch file content from repository. "
+        "Use the project_id from the conversation context. Without this, the tool cannot access existing file content.",
     )
 
 
@@ -1348,23 +1603,47 @@ def get_changes_summary_tool() -> str:
 def update_file_lines_tool(input_data: UpdateFileLinesInput) -> str:
     """Update specific lines in a file using line numbers"""
     logger.info(
-        f"Tool update_file_lines_tool: Updating lines {input_data.start_line}-{input_data.end_line or input_data.start_line} in '{input_data.file_path}'"
+        f"Tool update_file_lines_tool: Updating lines {input_data.start_line}-{input_data.end_line or input_data.start_line} "
+        f"in '{input_data.file_path}' (project_id={input_data.project_id})"
     )
     try:
         manager = _get_code_changes_manager()
+        db = None
+        if input_data.project_id:
+            logger.info(
+                f"Tool update_file_lines_tool: Project ID provided ({input_data.project_id}), fetching database session"
+            )
+            from app.core.database import get_db
+
+            db = next(get_db())
+            logger.debug("Tool update_file_lines_tool: Database session obtained")
+        # project_id is now required, so this shouldn't happen, but keep for safety
+        if not input_data.project_id:
+            logger.error(
+                f"Tool update_file_lines_tool: ERROR - project_id is required but was not provided!"
+            )
+            return "❌ Error: project_id is required to update file lines. Please provide the project_id from the conversation context."
         result = manager.update_file_lines(
             file_path=input_data.file_path,
             start_line=input_data.start_line,
             end_line=input_data.end_line,
             new_content=input_data.new_content,
             description=input_data.description,
+            project_id=input_data.project_id,
+            db=db,
         )
 
         if result.get("success"):
+            context_str = ""
+            if result.get("updated_context"):
+                context_start = result.get("context_start_line", result["start_line"])
+                context_end = result.get("context_end_line", result["end_line"])
+                context_str = f"\nUpdated lines with context (lines {context_start}-{context_end}):\n```{input_data.file_path}\n{result['updated_context']}\n```"
             return (
                 f"✅ Updated lines {result['start_line']}-{result['end_line']} in '{input_data.file_path}'\n\n"
                 + f"Replaced {result['lines_replaced']} lines with {result['lines_added']} new lines\n"
                 + f"Replaced content:\n```\n{result['replaced_content'][:200]}{'...' if len(result['replaced_content']) > 200 else ''}\n```"
+                + context_str
             )
         else:
             return f"❌ Error updating lines: {result.get('error', 'Unknown error')}"
@@ -1415,21 +1694,47 @@ def insert_lines_tool(input_data: InsertLinesInput) -> str:
     """Insert content at a specific line in a file"""
     position = "after" if input_data.insert_after else "before"
     logger.info(
-        f"Tool insert_lines_tool: Inserting lines {position} line {input_data.line_number} in '{input_data.file_path}'"
+        f"Tool insert_lines_tool: Inserting lines {position} line {input_data.line_number} "
+        f"in '{input_data.file_path}' (project_id={input_data.project_id})"
     )
     try:
         manager = _get_code_changes_manager()
+        db = None
+        if input_data.project_id:
+            logger.info(
+                f"Tool insert_lines_tool: Project ID provided ({input_data.project_id}), fetching database session"
+            )
+            from app.core.database import get_db
+
+            db = next(get_db())
+            logger.debug("Tool insert_lines_tool: Database session obtained")
+        # project_id is now required, so this shouldn't happen, but keep for safety
+        if not input_data.project_id:
+            logger.error(
+                f"Tool insert_lines_tool: ERROR - project_id is required but was not provided!"
+            )
+            return "❌ Error: project_id is required to insert lines. Please provide the project_id from the conversation context."
         result = manager.insert_lines(
             file_path=input_data.file_path,
             line_number=input_data.line_number,
             content=input_data.content,
             description=input_data.description,
             insert_after=input_data.insert_after,
+            project_id=input_data.project_id,
+            db=db,
         )
 
         if result.get("success"):
             position = "after" if result["position"] == "after" else "before"
-            return f"✅ Inserted {result['lines_inserted']} line(s) {position} line {input_data.line_number} in '{input_data.file_path}'"
+            context_str = ""
+            if result.get("inserted_context"):
+                context_start = result.get("context_start_line", input_data.line_number)
+                context_end = result.get(
+                    "context_end_line",
+                    input_data.line_number + result["lines_inserted"],
+                )
+                context_str = f"\n\nInserted lines with context (lines {context_start}-{context_end}):\n```{input_data.file_path}\n{result['inserted_context']}\n```"
+            return f"✅ Inserted {result['lines_inserted']} line(s) {position} line {input_data.line_number} in '{input_data.file_path}'{context_str}"
         else:
             return f"❌ Error inserting lines: {result.get('error', 'Unknown error')}"
     except Exception as e:
@@ -1463,6 +1768,13 @@ def delete_lines_tool(input_data: DeleteLinesInput) -> str:
         return f"❌ Error deleting lines: {str(e)}"
 
 
+class ShowUpdatedFileInput(BaseModel):
+    file_paths: Optional[List[str]] = Field(
+        default=None,
+        description="Optional list of file paths to show. If not provided, shows all updated files.",
+    )
+
+
 class ShowDiffInput(BaseModel):
     file_path: Optional[str] = Field(
         default=None,
@@ -1472,6 +1784,81 @@ class ShowDiffInput(BaseModel):
         default=3,
         description="Number of context lines to include around changes in the diff (default: 3)",
     )
+
+
+def show_updated_file_tool(input_data: ShowUpdatedFileInput) -> str:
+    """
+    Display the complete updated content of one or more files. This tool streams the full file content
+    directly into the agent response without going through the LLM, allowing users to see
+    the complete edited files. Use this when the user asks to see the updated file content.
+    If no file_paths are provided, shows all changed files.
+    """
+    logger.info(
+        f"Tool show_updated_file_tool: Showing updated content for '{input_data.file_paths or 'all files'}'"
+    )
+    try:
+        manager = _get_code_changes_manager()
+        summary = manager.get_summary()
+
+        if summary["total_files"] == 0:
+            return "📋 **No files to display**\n\nNo files have been modified yet."
+
+        # Determine which files to show
+        if input_data.file_paths:
+            files_to_show = input_data.file_paths
+        else:
+            # Show all files
+            files_to_show = [f["file_path"] for f in summary["files"]]
+
+        if not files_to_show:
+            return "📋 **No files to display**\n\nNo matching files found."
+
+        change_emoji = {"add": "➕", "update": "✏️", "delete": "🗑️"}
+        result = "\n\n---\n\n## 📝 **Updated Files**\n\n"
+
+        if len(files_to_show) > 1:
+            result += f"Showing {len(files_to_show)} files:\n\n"
+
+        # Display each file
+        for file_path in files_to_show:
+            file_data = manager.get_file(file_path)
+
+            if not file_data:
+                result += f"❌ File '{file_path}' not found in changes\n\n"
+                continue
+
+            if file_data["change_type"] == "delete":
+                result += f"⚠️ **{file_path}** - marked for deletion\n\n"
+                continue
+
+            content = file_data.get("content")
+            if not content:
+                result += f"❌ No content found for '{file_path}'\n\n"
+                continue
+
+            # Format the result with markdown code block
+            change_type = file_data["change_type"]
+            emoji = change_emoji.get(change_type, "📄")
+
+            result += f"{emoji} **Updated File: {file_path}** ({change_type})\n\n"
+            result += f"```\n{content}\n```\n\n"
+
+            logger.info(
+                f"Tool show_updated_file_tool: Successfully formatted file content for '{file_path}' "
+                f"({len(content)} chars)"
+            )
+
+        result += "---\n\n"
+        logger.info(
+            f"Tool show_updated_file_tool: Successfully displayed {len(files_to_show)} file(s)"
+        )
+
+        return result
+    except Exception as e:
+        logger.error(
+            f"Tool show_updated_file_tool: Error showing updated files: {str(e)}"
+        )
+        return f"❌ Error showing updated files: {str(e)}"
 
 
 def show_diff_tool(input_data: ShowDiffInput) -> str:
@@ -1612,7 +1999,7 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
         ),
         SimpleTool(
             name="update_file_lines",
-            description="Update specific lines in a file using line numbers. Use this for targeted line-by-line replacements. Lines are 1-indexed. Specify start_line and optionally end_line to replace a range.",
+            description="Update specific lines in a file using line numbers. Use this for targeted line-by-line replacements. Lines are 1-indexed. Specify start_line and optionally end_line to replace a range. IMPORTANT: You MUST provide project_id from the conversation context to access existing file content from the repository.",
             func=update_file_lines_tool,
             args_schema=UpdateFileLinesInput,
         ),
@@ -1624,7 +2011,7 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
         ),
         SimpleTool(
             name="insert_lines",
-            description="Insert content at a specific line number in a file. Use this to add new code at a specific location. Lines are 1-indexed. Set insert_after=False to insert before the specified line.",
+            description="Insert content at a specific line number in a file. Use this to add new code at a specific location. Lines are 1-indexed. Set insert_after=False to insert before the specified line. IMPORTANT: You MUST provide project_id from the conversation context to access existing file content from the repository.",
             func=insert_lines_tool,
             args_schema=InsertLinesInput,
         ),
@@ -1681,6 +2068,12 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
             description="Export all code changes in various formats (dict, list, or json). Use 'json' format for persistence.",
             func=export_changes_tool,
             args_schema=ExportChangesInput,
+        ),
+        SimpleTool(
+            name="show_updated_file",
+            description="Display the complete updated content of one or more files. This tool streams the full file content directly into the agent response without going through the LLM, allowing users to see the complete edited files. If no file_paths provided, shows ALL changed files. Use when the user asks to see updated files OR to showcase the final result of files you just edited. The content is automatically shown to the user without consuming LLM context.",
+            func=show_updated_file_tool,
+            args_schema=ShowUpdatedFileInput,
         ),
         SimpleTool(
             name="show_diff",

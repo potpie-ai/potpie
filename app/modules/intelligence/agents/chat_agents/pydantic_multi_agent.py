@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
     ModelMessage,
 )
 from pydantic_ai.exceptions import ModelRetry, AgentRunError, UserError
+from pydantic_ai.usage import UsageLimits
 from langchain_core.tools import StructuredTool
 
 from .tool_helpers import (
@@ -355,14 +356,9 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
         }
 
     def _create_agent(self, agent_type: AgentType, ctx: ChatContext) -> Agent:
-        """Create a specialized agent instance"""
+        """Create a generic delegate agent with all tools for focused task execution"""
         if agent_type in self._agent_instances:
             return self._agent_instances[agent_type]
-
-        config = self.delegate_agents[agent_type]
-
-        # Prepare multimodal instructions if images are present
-        multimodal_instructions = self._prepare_multimodal_instructions(ctx)
 
         # Create MCP servers
         mcp_toolsets: List[MCPServerStreamableHTTP] = []
@@ -381,13 +377,6 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
                 )
                 continue
 
-        # Create code changes management tools for delegate agents
-        from app.modules.intelligence.tools.code_changes_manager import (
-            create_code_changes_management_tools,
-        )
-
-        code_changes_tools = create_code_changes_management_tools()
-
         agent = Agent(
             model=self.llm_provider.get_pydantic_model(),
             tools=[
@@ -397,49 +386,26 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
                     function=handle_exception(tool.func),  # type: ignore
                 )
                 for tool in self.tools
-            ]
-            + [
-                Tool(
-                    name=tool.name,
-                    description=tool.description,
-                    function=handle_exception(tool.func),  # type: ignore
-                )
-                for tool in code_changes_tools
             ],
             mcp_servers=mcp_toolsets,
-            instructions=f"""
-            You are a {agent_type.value} specialist. Execute the assigned task and provide detailed results.
+            # Delegate agents get minimal instructions - the full task context comes from delegation
+            instructions="""You are a focused task execution agent with access to all available tools. Execute the assigned task efficiently and provide clear, concise results.
 
-            **CRITICAL CODE MANAGEMENT INSTRUCTIONS:**
-            When writing or modifying code, ALWAYS use the code changes management tools instead of including code in your response text:
-            
-            ✅ **USE CODE CHANGES TOOLS:**
-            - For new files: Use `add_file_to_changes` with file path and content
-            - For targeted updates: Use `update_file_lines`, `replace_in_file`, `insert_lines`, or `delete_lines` instead of full file rewrites
-            - For full file updates: Use `update_file_in_changes` only when necessary
-            - At the end: Use `show_code_changes` to display all changes to the user
-            
-            ❌ **AVOID:**
-            - Including large code blocks directly in your response text
-            - Rewriting entire files when only small changes are needed
-            
-            **WHY:** This dramatically reduces token usage in conversation history and keeps responses concise.
+**CODE MANAGEMENT:**
+- Use code changes tools (add_file_to_changes, update_file_lines, insert_lines, delete_lines) instead of including code in response text
+- Use show_updated_file and show_diff to display changes effectively
+- Keep responses concise and avoid large code blocks in your text
 
-            Role: {config.role}
-            Goal: {config.goal}
-            Backstory: {config.backstory}
-
-            {multimodal_instructions}
-
-            TASK: {self._create_task_description(task_config=config.tasks[0], ctx=ctx, agent_type=agent_type)}
-
-            """,
+**EXECUTION:**
+- Execute tasks completely without asking for clarification unless absolutely critical
+- Make reasonable assumptions and mention them
+- Use tools to gather information and perform actions
+- Return focused, actionable results""",
             result_type=str,
             output_retries=3,
             output_type=str,
             defer_model_check=True,
             end_strategy="exhaustive",
-            # model_settings={"max_tokens": 64000},
         )
         self._agent_instances[agent_type] = agent
         return agent
@@ -474,9 +440,9 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
         for agent_type in self.delegate_agents.keys():
             # Create highly attractive descriptions for each delegation tool
             if agent_type == AgentType.THINK_EXECUTE:
-                description = "🔨 DELEGATE TO TASK EXECUTION AGENT - For specific, well-defined implementation tasks with clear expected outputs. Use for: small focused implementations, specific code changes, targeted fixes. NOT for large code generation or comprehensive implementations."
+                description = "🔨 DELEGATE TO TASK EXECUTION AGENT - Delegate focused work to save your context! Great for: information gathering, code searches, targeted implementations, debugging specific issues, analyzing code sections. The subagent will return clean, focused results. Use this liberally to break down complex tasks!"
             else:
-                description = f"🤖 DELEGATE TO {agent_type.value.upper()} SPECIALIST - Use for specific, well-defined tasks with clear expected outputs"
+                description = f"🤖 DELEGATE TO {agent_type.value.upper()} - Delegate focused work to save your context! The subagent will return clean, focused results. Use this liberally to break down complex tasks!"
 
             delegation_tools.append(
                 Tool(
@@ -529,8 +495,19 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
             You are a problem-solving supervisor who uses subagents strategically to reduce context usage.
 
             **CORE PRINCIPLE:**
-            Use subagents ONLY for well-defined, focused tasks that produce concise, specific results.
-            The goal is to REDUCE context usage, not increase it.
+            🎯 **DELEGATE STRATEGICALLY TO SAVE CONTEXT:**
+            - Subagents perform focused work without loading your context with intermediate steps
+            - They return only clean, specific results via the "## Task Result" format
+            - Use delegation to reduce your token usage and keep your thinking focused
+            - Breaking work into delegated tasks helps you manage complex problems better
+            
+            📋 **EFFECTIVE TODO MANAGEMENT:**
+            - ALWAYS start complex problems by creating a comprehensive TODO list
+            - Use `create_todo` for each major step of the solution
+            - Update todo status with `update_todo_status` as you progress (pending → in_progress → completed)
+            - Add notes with `add_todo_note` when you discover important details
+            - Check `get_todo_summary` periodically to track overall progress
+            - Use TODOs to break down large problems into manageable chunks
 
             **CRITICAL CODE MANAGEMENT INSTRUCTIONS:**
             When writing or modifying code, ALWAYS use the code changes management tools instead of including code in your response text:
@@ -540,7 +517,12 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
             - For targeted updates: Use `update_file_lines` (line numbers), `replace_in_file` (pattern matching), `insert_lines`, or `delete_lines`
             - Prefer targeted updates over full file rewrites - they're more efficient and preserve context
             - For full file updates: Use `update_file_in_changes` only when absolutely necessary
-            - At the end of your response: Use `show_code_changes` to display all changes to the user
+            
+            ✅ **DISPLAY CHANGES EFFECTIVELY:**
+            - **Use `show_updated_file`** (with no parameters) to display ALL changed files with their complete content - perfect for showing the final result
+            - **Use `show_diff`** at the end to display ALL changes with diffs showing what was added/removed vs original files
+            - Use both tools together when you make changes: `show_updated_file` for complete files, `show_diff` for change details
+            - Both tools stream results directly to the user - they don't count as LLM context!
             
             ❌ **AVOID:**
             - Including large code blocks directly in your response text
@@ -552,47 +534,30 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
             Code stored via tools is NOT included in history, saving 70-85% of tokens!
 
             **WHEN TO USE SUBAGENTS:**
-            ✅ **GOOD subagent tasks (specific, concise results):**
-            - Find the value of a specific variable/constant
-            - Locate where a particular function is defined
-            - Get the exact file path for a specific component
-            - Extract a specific configuration value
-            - Find the exact line number where something happens
-            - Get a specific error message or status
-            - Retrieve a particular data point or metric
-
-            ❌ **AVOID subagent tasks (broad, context-heavy results):**
-            - "Analyze the entire codebase" 
-            - "Generate a complete implementation"
-            - "Gather all context around X"
-            - "Understand how the whole system works"
-            - "Create comprehensive documentation"
-            - "Research and explain everything about Y"
+            ✅ **EXCELLENT subagent tasks (delegate these to save context!):**
+            - **Information gathering:** Find specific variables, functions, file paths, line numbers, config values
+            - **Code exploration:** Search for patterns, locate implementations, check how things are structured
+            - **Targeted analysis:** Understand a specific piece of code, trace a particular flow, debug a focused issue
+            - **Research tasks:** Look up specific information, check dependencies, verify facts
+            - **Implementation slices:** Write a specific function, update a targeted section, create focused features
+            
+            **DELEGATION GUIDELINES:**
+            - Break complex tasks into focused subagent work - this REDUCES your token usage
+            - Each delegated task should have clear success criteria
+            - Subagents return results in "## Task Result" format - clean and focused
+            - Use TODO to identify what can be delegated vs what you need to orchestrate yourself
 
             **TASK BREAKDOWN STRATEGY:**
-            1. Break complex requests into smaller, specific tasks
-            2. Use TODO system to track all tasks
-            3. Execute tasks yourself when you need the full context
-            4. Delegate only when you need a specific, concise answer
-            5. Use subagent results to inform your own work
-            6. When creating/modifying code, use code changes tools
-            7. At the end, use `show_code_changes` to display all changes
-
-            **DELEGATION GUIDELINES:**
-            - Task must have a clear, specific expected output
-
-            **APPROACH:**
-            1. Understand the request and break it down
-            2. Create TODOs for all tasks
-            3. Execute tasks yourself when you need full context
-            4. Delegate only specific, well-defined tasks to subagents
-            5. Use subagent results to inform your own work
-            6. When writing code, use code changes management tools
-            7. Synthesize everything into the final answer
-            8. Use `show_code_changes` at the end to display all code changes
-            
-            IMPORTANT: Delegation is very important tool to help problem large problems. Try to delegate tasks to
-            subagents wherever possible. Plan you tasks well before hand so we can delegate tasks better
+            1. Understand the request completely
+            2. **Create TODOs for all tasks using the todo system**
+            3. Identify which tasks can be delegated vs which need your coordination
+            4. **Delegate liberally** - if a task can be done independently, delegate it!
+            5. Make reasonable assumptions and state them explicitly
+            6. Use subagent results to inform your next steps
+            7. When creating/modifying code, use code changes tools (or delegate to a subagent!)
+            8. Update todo status as you complete each step
+            9. Synthesize everything into the final answer
+            10. **IMPORTANT:** Show ALL code changes using BOTH `show_updated_file` (complete files) AND `show_diff` (change details)
 
             Role: {self.config.role}
             Goal: {self.config.goal}
@@ -601,7 +566,18 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
             {multimodal_instructions}
 
             CONTEXT: {self._create_supervisor_task_description(ctx)}
-
+            
+            **IMPORTANT: PROACTIVE PROBLEM SOLVING:**
+            🚀 **ALWAYS TRY TO SOLVE IN ONE SHOT:**
+            - Solve problems completely without asking for user input unless absolutely necessary
+            - Make reasonable assumptions based on context and mention them explicitly
+            - If you need to choose between options, pick the most reasonable one and state your choice
+            - Only ask the user when: critical information is missing, there are conflicting requirements, or the decision has major consequences
+            - Don't ask for permissions to continue, just try solving the task end to end
+            - If there are multiple way of going about problem, choose the best step
+            - If there are multiple steps then add them to todo and do the tasks one by one
+            
+            **🎯 REMEMBER:** Your job is to orchestrate. Don't do all the work yourself! Break tasks down into focused pieces and delegate them to subagents. This keeps your context clean and your reasoning focused.
 
             """,
             result_type=str,
@@ -629,24 +605,40 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
                 # Create the delegate agent
                 delegate_agent = self._create_agent(agent_type, self._current_context)
 
-                full_task = f"""Execute this specific, focused task:
+                # Build comprehensive context for the subagent
+                project_context = self._create_project_context_info(
+                    self._current_context
+                )
 
-TASK: {task_description}
-CONTEXT: {context}
+                # Combine all context
+                full_context_parts = [project_context]
+                if context and context.strip():
+                    full_context_parts.append(f"Task-specific context: {context}")
 
-This is a well-defined task that should produce a specific, concise result.
-The supervisor needs this specific information to make a decision.
+                full_context = "\n\n".join(full_context_parts)
 
-IMPORTANT: Do ALL your work inside the "## Task Result" section.
+                full_task = f"""Execute this focused task for the supervisor:
 
-Process:
-1. Understand exactly what specific information is needed
-2. Start the "## Task Result" section immediately
-3. Provide the specific answer/information requested
-4. Keep the result concise and focused
-5. Include only what the supervisor needs to know
+**TASK:**
+{task_description}
 
-The result should be specific and actionable - not broad analysis or context gathering."""
+**PROJECT CONTEXT:**
+{full_context}
+
+**YOUR MISSION:**
+Execute the task above and return ONLY the specific, actionable result the supervisor needs.
+
+**OUTPUT FORMAT:**
+Start your response with "## Task Result" and then provide the focused answer.
+
+**CRITICAL GUIDELINES:**
+1. Use tools to gather information, analyze code, or perform actions as needed
+2. Be specific and concise - avoid broad explanations or context gathering
+3. Focus on answering the exact question or completing the exact task
+4. If you make code changes, use show_updated_file and show_diff to display them
+5. Don't restate the problem - just solve it and report the result
+
+**RESULT:** Should be specific, actionable, and immediately usable by the supervisor."""
 
                 # Run the delegate agent with independent usage tracking and streaming
                 logger.info(f"Starting {agent_type.value} agent execution...")
@@ -656,7 +648,12 @@ The result should be specific and actionable - not broad analysis or context gat
                 result = None
 
                 # Use Pydantic AI streaming approach
-                async with delegate_agent.iter(user_prompt=full_task) as run:
+                async with delegate_agent.iter(
+                    user_prompt=full_task,
+                    usage_limits=UsageLimits(
+                        request_limit=None
+                    ),  # No request limit for long-running tasks
+                ) as run:
                     async for node in run:
                         if Agent.is_model_request_node(node):
                             # Stream tokens from the model's request
@@ -842,8 +839,8 @@ The result should be specific and actionable - not broad analysis or context gat
                 {"- Provide detailed image analysis when images are present" if ctx.has_images() else ""}
             """
 
-    def _create_supervisor_task_description(self, ctx: ChatContext) -> str:
-        """Create a task description for the supervisor agent"""
+    def _create_project_context_info(self, ctx: ChatContext) -> str:
+        """Create project context information for both supervisor and subagents"""
         if ctx.node_ids is None:
             ctx.node_ids = []
         if isinstance(ctx.node_ids, str):
@@ -860,21 +857,37 @@ The result should be specific and actionable - not broad analysis or context gat
                 image_details.append(f"- {file_name} ({file_size} bytes)")
 
             image_context = f"""
-            ATTACHED IMAGES:
-            {chr(10).join(image_details)}
+ATTACHED IMAGES:
+{chr(10).join(image_details)}
 
-            Image Analysis Notes:
-            - These images are provided for visual analysis and debugging
-            - Reference specific details from the images in your response
-            - Correlate visual evidence with the user's query
-            """
+Image Analysis Notes:
+- These images are provided for visual analysis and debugging
+- Reference specific details from the images in your response
+- Correlate visual evidence with the user's query"""
 
-        return f"""
-Project: {ctx.project_name} (ID: {ctx.project_id})
-Nodes: {", ".join(ctx.node_ids) if ctx.node_ids else "none"}
-                {image_context}
-Context: {ctx.additional_context or "none"}
-            """
+        context_parts = []
+
+        # Project information
+        if ctx.project_id:
+            context_parts.append(f"Project: {ctx.project_name} (ID: {ctx.project_id})")
+
+        # Node information
+        if ctx.node_ids:
+            context_parts.append(f"Nodes: {', '.join(ctx.node_ids)}")
+
+        # Image context
+        if image_context:
+            context_parts.append(image_context.strip())
+
+        # Additional context
+        if ctx.additional_context:
+            context_parts.append(f"Additional Context: {ctx.additional_context}")
+
+        return "\n".join(context_parts) if context_parts else "No additional context"
+
+    def _create_supervisor_task_description(self, ctx: ChatContext) -> str:
+        """Create a task description for the supervisor agent"""
+        return self._create_project_context_info(ctx)
 
     def _create_multimodal_user_content(
         self, ctx: ChatContext
@@ -1194,6 +1207,9 @@ Context: {ctx.additional_context or "none"}
             async with supervisor_agent.iter(
                 user_prompt=multimodal_content,
                 message_history=message_history,
+                usage_limits=UsageLimits(
+                    request_limit=None
+                ),  # No request limit for long-running tasks
             ) as run:
                 async for node in run:
                     if Agent.is_model_request_node(node):
@@ -1227,11 +1243,29 @@ Context: {ctx.additional_context or "none"}
                                         citations=[],
                                     )
                                 if isinstance(event, FunctionToolResultEvent):
-                                    yield ChatAgentResponse(
-                                        response="",
-                                        tool_calls=[create_tool_result_response(event)],
-                                        citations=[],
-                                    )
+                                    tool_name = event.result.tool_name or "unknown"
+                                    # For show_updated_file, append content directly to response
+                                    # instead of going through tool_result_info
+                                    if tool_name == "show_updated_file":
+                                        tool_result = create_tool_result_response(event)
+                                        content = (
+                                            str(event.result.content)
+                                            if event.result.content
+                                            else ""
+                                        )
+                                        yield ChatAgentResponse(
+                                            response=content,
+                                            tool_calls=[tool_result],
+                                            citations=[],
+                                        )
+                                    else:
+                                        yield ChatAgentResponse(
+                                            response="",
+                                            tool_calls=[
+                                                create_tool_result_response(event)
+                                            ],
+                                            citations=[],
+                                        )
 
                     elif Agent.is_end_node(node):
                         logger.info(
@@ -1263,6 +1297,9 @@ Context: {ctx.additional_context or "none"}
                             ModelResponse([TextPart(content=msg)])
                             for msg in ctx.history
                         ],
+                        usage_limits=UsageLimits(
+                            request_limit=None
+                        ),  # No request limit for long-running tasks
                     ) as run:
                         async for node in run:
                             if Agent.is_model_request_node(node):
@@ -1307,6 +1344,31 @@ Context: {ctx.additional_context or "none"}
                                         "Model request stream would block - continuing..."
                                     )
                                     continue
+                                except ValueError as json_error:
+                                    # Catch JSON parsing errors specifically
+                                    # This often happens when pydantic_ai tries to serialize
+                                    # message history containing malformed tool call arguments
+                                    error_str = str(json_error)
+                                    if (
+                                        "json" in error_str.lower()
+                                        or "parse" in error_str.lower()
+                                        or "EOF" in error_str
+                                    ):
+                                        logger.error(
+                                            f"JSON parsing error in model request stream (likely from malformed tool call in message history): {json_error}. "
+                                            f"This may indicate a truncated or incomplete tool call from a previous iteration. "
+                                            f"Full traceback:\n{traceback.format_exc()}"
+                                        )
+                                        yield ChatAgentResponse(
+                                            response="\n\n*Encountered a parsing error. Skipping this step and continuing...*\n\n",
+                                            tool_calls=[],
+                                            citations=[],
+                                        )
+                                        # Continue to next node instead of breaking
+                                        continue
+                                    else:
+                                        # Re-raise if it's a different ValueError
+                                        raise
                                 except Exception as e:
                                     error_detail = f"{type(e).__name__}: {str(e)}"
                                     logger.error(
@@ -1343,15 +1405,37 @@ Context: {ctx.additional_context or "none"}
                                             if isinstance(
                                                 event, FunctionToolResultEvent
                                             ):
-                                                yield ChatAgentResponse(
-                                                    response="",
-                                                    tool_calls=[
+                                                tool_name = (
+                                                    event.result.tool_name or "unknown"
+                                                )
+                                                # For show_updated_file, append content directly to response
+                                                # instead of going through tool_result_info
+                                                if tool_name == "show_updated_file":
+                                                    tool_result = (
                                                         create_tool_result_response(
                                                             event
                                                         )
-                                                    ],
-                                                    citations=[],
-                                                )
+                                                    )
+                                                    content = (
+                                                        str(event.result.content)
+                                                        if event.result.content
+                                                        else ""
+                                                    )
+                                                    yield ChatAgentResponse(
+                                                        response=content,
+                                                        tool_calls=[tool_result],
+                                                        citations=[],
+                                                    )
+                                                else:
+                                                    yield ChatAgentResponse(
+                                                        response="",
+                                                        tool_calls=[
+                                                            create_tool_result_response(
+                                                                event
+                                                            )
+                                                        ],
+                                                        citations=[],
+                                                    )
                                 except (
                                     ModelRetry,
                                     AgentRunError,
@@ -1421,6 +1505,9 @@ Context: {ctx.additional_context or "none"}
                             ModelResponse([TextPart(content=msg)])
                             for msg in ctx.history
                         ],
+                        usage_limits=UsageLimits(
+                            request_limit=None
+                        ),  # No request limit for long-running tasks
                     ) as run:
                         async for node in run:
                             if Agent.is_model_request_node(node):
@@ -1464,6 +1551,31 @@ Context: {ctx.additional_context or "none"}
                                         "Model request stream would block - continuing..."
                                     )
                                     continue
+                                except ValueError as json_error:
+                                    # Catch JSON parsing errors specifically
+                                    # This often happens when pydantic_ai tries to serialize
+                                    # message history containing malformed tool call arguments
+                                    error_str = str(json_error)
+                                    if (
+                                        "json" in error_str.lower()
+                                        or "parse" in error_str.lower()
+                                        or "EOF" in error_str
+                                    ):
+                                        logger.error(
+                                            f"JSON parsing error in fallback model request stream (likely from malformed tool call in message history): {json_error}. "
+                                            f"This may indicate a truncated or incomplete tool call from a previous iteration. "
+                                            f"Full traceback:\n{traceback.format_exc()}"
+                                        )
+                                        yield ChatAgentResponse(
+                                            response="\n\n*Encountered a parsing error. Skipping this step and continuing...*\n\n",
+                                            tool_calls=[],
+                                            citations=[],
+                                        )
+                                        # Continue to next node instead of breaking
+                                        continue
+                                    else:
+                                        # Re-raise if it's a different ValueError
+                                        raise
                                 except Exception as e:
                                     error_detail = f"{type(e).__name__}: {str(e)}"
                                     logger.error(
@@ -1500,15 +1612,37 @@ Context: {ctx.additional_context or "none"}
                                             if isinstance(
                                                 event, FunctionToolResultEvent
                                             ):
-                                                yield ChatAgentResponse(
-                                                    response="",
-                                                    tool_calls=[
+                                                tool_name = (
+                                                    event.result.tool_name or "unknown"
+                                                )
+                                                # For show_updated_file, append content directly to response
+                                                # instead of going through tool_result_info
+                                                if tool_name == "show_updated_file":
+                                                    tool_result = (
                                                         create_tool_result_response(
                                                             event
                                                         )
-                                                    ],
-                                                    citations=[],
-                                                )
+                                                    )
+                                                    content = (
+                                                        str(event.result.content)
+                                                        if event.result.content
+                                                        else ""
+                                                    )
+                                                    yield ChatAgentResponse(
+                                                        response=content,
+                                                        tool_calls=[tool_result],
+                                                        citations=[],
+                                                    )
+                                                else:
+                                                    yield ChatAgentResponse(
+                                                        response="",
+                                                        tool_calls=[
+                                                            create_tool_result_response(
+                                                                event
+                                                            )
+                                                        ],
+                                                        citations=[],
+                                                    )
                                 except (
                                     ModelRetry,
                                     AgentRunError,
