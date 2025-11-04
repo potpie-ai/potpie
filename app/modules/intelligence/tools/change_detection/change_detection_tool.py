@@ -242,7 +242,9 @@ class ChangeDetectionTool:
                 from app.modules.parsing.utils.repo_name_normalizer import (
                     get_actual_repo_name_for_lookup,
                 )
-                from app.modules.code_provider.provider_factory import CodeProviderFactory
+                from app.modules.code_provider.provider_factory import (
+                    CodeProviderFactory,
+                )
                 import os
 
                 provider_type = os.getenv("CODE_PROVIDER", "github").lower()
@@ -254,7 +256,9 @@ class ChangeDetectionTool:
                 )
 
                 # Create provider with proper auth for this specific repo
-                provider = CodeProviderFactory.create_provider_with_fallback(actual_repo_name)
+                provider = CodeProviderFactory.create_provider_with_fallback(
+                    actual_repo_name
+                )
 
                 # Get default branch first
                 github_client = provider.client

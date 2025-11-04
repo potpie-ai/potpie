@@ -262,7 +262,9 @@ class GithubService:
             )
             timeout = ClientTimeout(total=20)
 
-            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+            async with aiohttp.ClientSession(
+                connector=connector, timeout=timeout
+            ) as session:
                 # Get first page to determine total pages
                 first_url = f"{base_url}?per_page=100"
                 attempt = 0
@@ -284,7 +286,9 @@ class GithubService:
                             # Extract last page number from Link header
                             last_page = 1
                             if "Link" in response.headers:
-                                links = self._parse_link_header(response.headers["Link"])
+                                links = self._parse_link_header(
+                                    response.headers["Link"]
+                                )
                                 if "last" in links:
                                     last_url = links["last"]
                                     match = re.search(r"[?&]page=(\d+)", last_url)
@@ -331,9 +335,7 @@ class GithubService:
                         except (ClientConnectorError, asyncio.TimeoutError) as net_err:
                             attempt += 1
                             if attempt >= max_attempts:
-                                logger.error(
-                                    f"Network error fetching {url}: {net_err}"
-                                )
+                                logger.error(f"Network error fetching {url}: {net_err}")
                                 return []
                             await asyncio.sleep(backoff)
                             backoff *= 2
@@ -610,10 +612,14 @@ class GithubService:
                         # Force PAT authentication by using the public instance method
                         github_client = self.get_public_github_instance()
                         repo = github_client.get_repo(repo_name)
-                        logger.info(f"Successfully accessed {repo_name} using PAT after App auth failed")
+                        logger.info(
+                            f"Successfully accessed {repo_name} using PAT after App auth failed"
+                        )
                         return github_client, repo
                     except Exception as pat_error:
-                        logger.warning(f"PAT fallback also failed for {repo_name}: {str(pat_error)}")
+                        logger.warning(
+                            f"PAT fallback also failed for {repo_name}: {str(pat_error)}"
+                        )
 
             # If all methods failed, raise the original error
             logger.error(f"Failed to access repository {repo_name}: {error_str}")

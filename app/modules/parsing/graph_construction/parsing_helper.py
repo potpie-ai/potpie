@@ -63,13 +63,17 @@ class ParseHelper:
 
                 # Extract auth from the Github client
                 # The auth is stored in the _Github__requester.auth attribute
-                if hasattr(github, "_Github__requester") and hasattr(github._Github__requester, "auth"):
+                if hasattr(github, "_Github__requester") and hasattr(
+                    github._Github__requester, "auth"
+                ):
                     auth = github._Github__requester.auth
                 elif hasattr(github, "get_app_auth"):
                     # Fallback for older method
                     auth = github.get_app_auth()
                 else:
-                    logger.warning(f"Could not extract auth from GitHub client for {repo_details.repo_name}")
+                    logger.warning(
+                        f"Could not extract auth from GitHub client for {repo_details.repo_name}"
+                    )
             except HTTPException as he:
                 raise he
             except Exception as e:
@@ -193,9 +197,7 @@ class ParseHelper:
             )
             raise ParsingFailedError("Failed to download repository archive") from e
         except Exception as e:
-            logger.exception(
-                "ParsingHelper: Unexpected error in tarball download"
-            )
+            logger.exception("ParsingHelper: Unexpected error in tarball download")
             logger.error(f"ParsingHelper: Error type: {type(e)}, Value: {e}")
             raise ParsingFailedError(
                 "Unexpected error during repository download"

@@ -2,7 +2,6 @@ import os
 import logging
 from typing import Optional
 
-from app.modules.code_provider.github.github_service import GithubService
 from app.modules.code_provider.local_repo.local_repo_service import LocalRepoService
 from app.modules.code_provider.provider_factory import CodeProviderFactory
 

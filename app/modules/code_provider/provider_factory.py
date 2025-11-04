@@ -260,21 +260,24 @@ class CodeProviderFactory:
 
         # Check if GitHub App is configured (only relevant for GitHub provider)
         app_id = os.getenv("GITHUB_APP_ID")
-        private_key = config_provider.get_github_key() if provider_type == ProviderType.GITHUB else None
+        private_key = (
+            config_provider.get_github_key()
+            if provider_type == ProviderType.GITHUB
+            else None
+        )
         is_github_app_configured = bool(app_id and private_key)
 
         # For GitHub with App configured: Try GitHub App first, then PAT
         if provider_type == ProviderType.GITHUB and is_github_app_configured:
-            logger.info(f"GitHub App is configured, trying App auth first for {repo_name}")
+            logger.info(
+                f"GitHub App is configured, trying App auth first for {repo_name}"
+            )
             try:
                 return CodeProviderFactory.create_github_app_provider(repo_name)
-            except (ValueError, KeyError) as e:
-                # Credentials missing or malformed response
-                logger.warning(f"GitHub App authentication failed for {repo_name}: {e}, falling back to PAT")
-                # Continue to PAT fallback below
             except Exception as e:
-                # Network errors, HTTP errors, or other unexpected issues
-                logger.error(f"Unexpected error during GitHub App authentication for {repo_name}: {e}", exc_info=True)
+                logger.warning(
+                    f"GitHub App authentication failed for {repo_name}: {e}, falling back to PAT"
+                )
                 # Continue to PAT fallback below
 
         # For GitHub: Try GH_TOKEN_LIST first (where GitHub PATs are stored)
