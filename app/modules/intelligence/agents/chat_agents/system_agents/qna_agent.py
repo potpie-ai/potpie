@@ -59,6 +59,8 @@ class QnAAgent(ChatAgent):
                 "search_jira_issues",
                 "create_jira_issue",
                 "update_jira_issue",
+                "get_jira_project_details",
+                "link_jira_issues",
                 "add_jira_comment",
                 "transition_jira_issue",
                 "get_jira_projects",

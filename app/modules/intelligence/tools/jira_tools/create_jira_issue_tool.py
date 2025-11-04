@@ -23,11 +23,11 @@ class CreateJiraIssueInput(BaseModel):
     description: str = Field(description="Detailed description of the issue")
     issue_type: str = Field(
         default="To Do",
-        description="Type of issue: 'To Do', 'In Progress', 'Completed'. (default: 'To Do')",
+        description="Type of issue (e.g., 'To Do', 'In Progress', 'Completed', 'Task', 'Bug', 'Story'). Use 'Get Jira Project Details' tool to see valid types for the project. (default: 'To Do')",
     )
     priority: Optional[str] = Field(
         default=None,
-        description="Priority: 'Highest', 'High', 'Medium', 'Low', 'Lowest' (optional)",
+        description="Priority level (e.g., 'High', 'Medium', 'Low'). Use 'Get Jira Project Details' tool to see valid priorities. (optional)",
     )
     labels: Optional[List[str]] = Field(
         default=None, description="List of labels to add to the issue (optional)"
@@ -40,6 +40,11 @@ class CreateJiraIssueTool:
     name = "Create Jira Issue"
     description = """Create a new issue in Jira.
     
+    IMPORTANT: Before using this tool, use 'Get Jira Project Details' tool to discover:
+    - Valid issue types for the project (Task, Bug, Story, Epic, etc.)
+    - Valid priority levels (Highest, High, Medium, Low, Lowest)
+    - Existing labels you can use
+
     Use this tool when you need to:
     - Create a bug report from error logs or user reports
     - Create a task for work that needs to be done
@@ -53,8 +58,8 @@ class CreateJiraIssueTool:
     - description: Detailed description
     
     Optional fields:
-    - issue_type: To Do, In Progress, Done (default: To Do)
-    - priority: Highest, High, Medium, Low, Lowest
+    - issue_type: Type of issue (default: 'To Do')
+    - priority: Priority level
     - labels: Tags for categorization
     
     Returns the created issue with its key and details.
@@ -122,7 +127,7 @@ class CreateJiraIssueTool:
         project_key: str,
         summary: str,
         description: str,
-        issue_type: str = "Task",
+        issue_type: str = "To Do",
         priority: Optional[str] = None,
         labels: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
@@ -150,6 +155,9 @@ def create_jira_issue_tool(db: Session, user_id: str) -> StructuredTool:
         name="Create Jira Issue",
         description="""Create a new issue in Jira with summary, description, and optional fields.
         
+        IMPORTANT: Use 'Get Jira Project Details' tool FIRST to discover valid issue types and priorities.
+        If assigning to a user, use 'Get Jira Project Users' tool to get their account_id.
+        
         Use this when you need to:
         - Create bug reports from errors or issues found
         - Create tasks for work that needs to be done
@@ -160,8 +168,8 @@ def create_jira_issue_tool(db: Session, user_id: str) -> StructuredTool:
         - project_key (str): Project key (e.g., 'PROJ', 'BUG')
         - summary (str): Brief title of the issue
         - description (str): Detailed description
-        - issue_type (str): 'Task', 'Bug', 'Story', 'Epic' (default: 'Task')
-        - priority (str, optional): 'Highest', 'High', 'Medium', 'Low', 'Lowest'
+        - issue_type (str): Type of issue (default: 'To Do') (Eg: 'To Do', 'In Progress', 'Done', 'Bug', 'Task'). Get valid types from project details.
+        - priority (str, optional): Priority level. Get valid priorities from project details.
         - labels (list, optional): List of labels/tags
         
         Returns the created issue with its key and URL.""",

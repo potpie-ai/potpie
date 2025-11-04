@@ -26,15 +26,16 @@ class UpdateJiraIssueInput(BaseModel):
     )
     priority: Optional[str] = Field(
         default=None,
-        description="New priority: 'Highest', 'High', 'Medium', 'Low', 'Lowest' (optional)",
+        description="New priority level. Use 'Get Jira Project Details' tool to see valid priorities. (optional)",
     )
-
 
 class UpdateJiraIssueTool:
     """Tool for updating existing Jira issues."""
 
     name = "Update Jira Issue"
     description = """Update fields of an existing Jira issue.
+    
+    TIP: Use 'Get Jira Project Details' tool to discover valid priority levels.
     
     Use this tool when you need to:
     - Change the summary or description of an issue
@@ -135,6 +136,8 @@ def update_jira_issue_tool(db: Session, user_id: str) -> StructuredTool:
         name="Update Jira Issue",
         description="""Update fields of an existing Jira issue.
         
+        TIP: Use 'Get Jira Project Details' to discover valid priorities.
+        
         Use this when you need to:
         - Change the summary or description
         - Update the priority level
@@ -144,7 +147,7 @@ def update_jira_issue_tool(db: Session, user_id: str) -> StructuredTool:
         - issue_key (str): The issue key (e.g., 'PROJ-123')
         - summary (str, optional): New summary/title
         - description (str, optional): New description
-        - priority (str, optional): 'Highest', 'High', 'Medium', 'Low', 'Lowest'
+        - priority (str, optional): New priority level (see project details for valid values, Eg: 'High', 'Medium', 'Low')
         
         Provide only the fields you want to update. Returns updated issue details.""",
         args_schema=UpdateJiraIssueInput,

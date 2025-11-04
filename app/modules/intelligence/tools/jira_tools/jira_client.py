@@ -243,6 +243,7 @@ class JiraClient:
         max_results: int = 50,
         next_page_token: Optional[str] = None,
         fields: Optional[List[str]] = None,
+        include_comments: bool = False,
     ) -> Dict[str, Any]:
         """
         Search for issues using JQL with the enhanced search API.
@@ -252,6 +253,7 @@ class JiraClient:
             max_results: Maximum number of results to return (default: 50)
             next_page_token: Token for pagination to get the next page of results
             fields: Optional list of field names to retrieve
+            include_comments: If True, include comments in the results (default: False)
 
         Returns:
             Dictionary with search results including:
@@ -298,10 +300,45 @@ class JiraClient:
             is_last = results.get("isLast", True)
             next_token = results.get("nextPageToken")
 
+            # Convert issues to dict format
+            converted_issues = []
+            for issue in issues:
+                issue_dict = self._issue_to_dict(issue)
+
+                # Add comments if requested
+                if include_comments:
+                    try:
+                        comments_response = self.client.get(
+                            f"/rest/api/3/issue/{issue.get('key')}/comment"
+                        )
+                        if comments_response.status_code == 200:
+                            comments_data = comments_response.json()
+                            comments = []
+                            for comment in comments_data.get("comments", []):
+                                comments.append(
+                                    {
+                                        "id": comment.get("id"),
+                                        "body": self._adf_to_text(comment.get("body")),
+                                        "author": comment.get("author", {}).get(
+                                            "displayName"
+                                        ),
+                                        "created": comment.get("created"),
+                                        "updated": comment.get("updated"),
+                                    }
+                                )
+                            issue_dict["comments"] = comments
+                    except Exception as e:
+                        logging.warning(
+                            f"Could not fetch comments for {issue.get('key')}: {str(e)}"
+                        )
+                        issue_dict["comments"] = []
+
+                converted_issues.append(issue_dict)
+
             result = {
                 "max_results": max_results,
                 "is_last": is_last,
-                "issues": [self._issue_to_dict(issue) for issue in issues],
+                "issues": converted_issues,
             }
 
             # Only include next_page_token if there are more pages
@@ -336,7 +373,7 @@ class JiraClient:
             summary: Issue summary/title
             description: Issue description
             issue_type: Issue type (default: 'Task')
-            **kwargs: Additional fields (priority, assignee, labels, etc.)
+            **kwargs: Additional fields (priority, labels, etc.)
 
         Returns:
             Dictionary containing the created issue details
@@ -354,7 +391,8 @@ class JiraClient:
             if "priority" in kwargs:
                 fields["priority"] = {"name": kwargs["priority"]}
             if "assignee" in kwargs:
-                fields["assignee"] = {"id": kwargs["assignee"]}
+                # Support legacy assignee in kwargs
+                fields["assignee"] = {"accountId": kwargs["assignee"]}
             if "labels" in kwargs:
                 fields["labels"] = kwargs["labels"]
             if "parent" in kwargs:
@@ -560,6 +598,270 @@ class JiraClient:
         except Exception as e:
             logging.error(f"Failed to assign issue {issue_key}: {str(e)}")
             raise Exception(f"Failed to assign issue: {str(e)}")
+
+    def get_project_details(self, project_key: str) -> Dict[str, Any]:
+        """
+        Get comprehensive details about a Jira project including metadata.
+
+        Args:
+            project_key: The project key (e.g., 'PROJ')
+
+        Returns:
+            Dictionary containing:
+            - Project basic info (id, key, name, description, lead)
+            - Issue types available in the project
+            - Priority schemes
+            - Statuses/workflows
+            - Issue link types
+            - Project labels
+        """
+        try:
+            # Get basic project info
+            response = self.client.get(f"/rest/api/3/project/{project_key}")
+            response.raise_for_status()
+            project = response.json()
+
+            # Extract issue types
+            issue_types = []
+            for it in project.get("issueTypes", []):
+                issue_types.append(
+                    {
+                        "id": it.get("id"),
+                        "name": it.get("name"),
+                        "description": it.get("description", ""),
+                        "subtask": it.get("subtask", False),
+                    }
+                )
+
+            # Get priorities (from project or global)
+            priorities = []
+            try:
+                priority_response = self.client.get("/rest/api/3/priorityscheme?expand=priorities")
+                priority_response.raise_for_status()
+                priority_data = priority_response.json()
+                logging.info(f"Priority data: {priority_data}")
+                default_priority_scheme = priority_data.get("values")[0].get(
+                    "priorities", []
+                )
+                priority_values = default_priority_scheme.get("values", [])
+                for p in priority_values:
+                    priorities.append(
+                        {
+                            "id": p.get("id"),
+                            "name": p.get("name"),
+                            "description": p.get("description", ""),
+                        }
+                    )
+                logging.info(f"Parsed priorities: {priorities}")
+            except Exception as e:
+                logging.warning(f"Could not fetch priorities: {str(e)}")
+
+            # Get statuses for the project
+            statuses = []
+            try:
+                status_response = self.client.get(
+                    f"/rest/api/3/project/{project_key}/statuses"
+                )
+                status_response.raise_for_status()
+                status_data = status_response.json()
+
+                # Extract unique statuses across all issue types
+                seen_statuses = set()
+                for issue_type_statuses in status_data:
+                    for status in issue_type_statuses.get("statuses", []):
+                        status_name = status.get("name")
+                        if status_name and status_name not in seen_statuses:
+                            seen_statuses.add(status_name)
+                            statuses.append(
+                                {
+                                    "id": status.get("id"),
+                                    "name": status_name,
+                                    "description": status.get("description", ""),
+                                }
+                            )
+            except Exception as e:
+                logging.warning(f"Could not fetch statuses: {str(e)}")
+
+            # Get issue link types
+            link_types = []
+            try:
+                link_response = self.client.get("/rest/api/3/issueLinkType")
+                link_response.raise_for_status()
+                link_data = link_response.json()
+                for lt in link_data.get("issueLinkTypes", []):
+                    link_types.append(
+                        {
+                            "id": lt.get("id"),
+                            "name": lt.get("name"),
+                            "inward": lt.get("inward"),
+                            "outward": lt.get("outward"),
+                        }
+                    )
+            except Exception as e:
+                logging.warning(f"Could not fetch link types: {str(e)}")
+
+            # Get project labels
+            labels = []
+            try:
+                # Search for issues in project to get labels (Jira doesn't have a direct labels endpoint)
+                label_response = self.client.post(
+                    "/rest/api/3/search/jql",
+                    json={
+                        "jql": f"project = {project_key} AND labels is not EMPTY",
+                        "fields": ["labels"],
+                        "maxResults": 100,
+                    },
+                )
+                if label_response.status_code == 200:
+                    label_data = label_response.json()
+                    label_set = set()
+                    for issue in label_data.get("issues", []):
+                        issue_labels = issue.get("fields", {}).get("labels", [])
+                        label_set.update(issue_labels)
+                    labels = sorted(list(label_set))
+            except Exception as e:
+                logging.warning(f"Could not fetch labels: {str(e)}")
+
+            # Build the response
+            result = {
+                "id": project.get("id"),
+                "key": project.get("key"),
+                "name": project.get("name"),
+                "description": project.get("description", ""),
+                "lead": project.get("lead", {}).get("displayName"),
+                "lead_account_id": project.get("lead", {}).get("accountId"),
+                "project_type": project.get("projectTypeKey"),
+                "url": f"{self.server}/browse/{project.get('key')}",
+                "issue_types": issue_types,
+                "priorities": priorities,
+                "statuses": statuses,
+                "link_types": link_types,
+                "labels": labels,
+            }
+
+            logging.info(f"Retrieved details for project {project_key}")
+            return result
+
+        except httpx.HTTPStatusError as e:
+            logging.error(
+                f"Failed to fetch project details for {project_key}: {e.response.status_code} - {e.response.text}"
+            )
+            raise Exception(
+                f"Failed to fetch project details: {e.response.status_code} {e.response.text}"
+            )
+        except Exception as e:
+            logging.error(
+                f"Failed to fetch project details for {project_key}: {str(e)}"
+            )
+            raise Exception(f"Failed to fetch project details: {str(e)}")
+
+    def get_project_users(
+        self, project_key: str, query: Optional[str] = None, max_results: int = 50
+    ) -> Dict[str, Any]:
+        # This is currently not working as the Jira API for this is wrong!!
+        """
+        Get users who can be assigned to issues in a project.
+
+        Args:
+            project_key: The project key (e.g., 'PROJ')
+            query: Optional search string to filter users by name or email
+            max_results: Maximum number of users to return (default: 50)
+
+        Returns:
+            Dictionary containing list of users with account IDs
+        """
+        try:
+            params = {
+                "project": project_key,
+                "maxResults": max_results,
+            }
+            if query:
+                params["query"] = query
+
+            response = self.client.get(
+                "/rest/api/3/user/assignable/search", params=params
+            )
+            response.raise_for_status()
+            users_data = response.json()
+
+            users = []
+            for user in users_data:
+                users.append({
+                    "account_id": user.get("accountId"),
+                    "display_name": user.get("displayName"),
+                    "email_address": user.get("emailAddress"),
+                    "active": user.get("active", True),
+                    "avatar_url": user.get("avatarUrls", {}).get("48x48"),
+                })
+
+            logging.info(
+                f"Retrieved {len(users)} assignable users for project {project_key}"
+            )
+            return {
+                "project_key": project_key,
+                "total": len(users),
+                "users": users,
+            }
+
+        except httpx.HTTPStatusError as e:
+            logging.error(
+                f"Failed to fetch project users for {project_key}: {e.response.status_code} - {e.response.text}"
+            )
+            raise Exception(
+                f"Failed to fetch project users: {e.response.status_code} {e.response.text}"
+            )
+        except Exception as e:
+            logging.error(
+                f"Failed to fetch project users for {project_key}: {str(e)}"
+            )
+            raise Exception(f"Failed to fetch project users: {str(e)}")
+
+    def link_issues(
+        self, issue_key: str, linked_issue_key: str, link_type: str
+    ) -> Dict[str, Any]:
+        """
+        Create a link between two issues.
+
+        Args:
+            issue_key: The source issue key
+            linked_issue_key: The target issue key to link to
+            link_type: The type of link (e.g., 'Blocks', 'Relates', 'Duplicates')
+
+        Returns:
+            Dictionary containing the link details
+        """
+        try:
+            payload = {
+                "type": {"name": link_type},
+                "inwardIssue": {"key": issue_key},
+                "outwardIssue": {"key": linked_issue_key},
+            }
+
+            response = self.client.post("/rest/api/3/issueLink", json=payload)
+            response.raise_for_status()
+
+            logging.info(f"Created link: {issue_key} {link_type} {linked_issue_key}")
+            return {
+                "success": True,
+                "message": f"Successfully linked {issue_key} to {linked_issue_key} with type '{link_type}'",
+                "source_issue": issue_key,
+                "linked_issue": linked_issue_key,
+                "link_type": link_type,
+            }
+
+        except httpx.HTTPStatusError as e:
+            error_msg = e.response.text
+            logging.error(
+                f"Failed to link issues {issue_key} -> {linked_issue_key}: {e.response.status_code} - {error_msg}"
+            )
+            raise Exception(
+                f"Failed to link issues: {e.response.status_code} {error_msg}"
+            )
+        except Exception as e:
+            logging.error(
+                f"Failed to link issues {issue_key} -> {linked_issue_key}: {str(e)}"
+            )
+            raise Exception(f"Failed to link issues: {str(e)}")
 
     def get_projects(self, start_at: int = 0, max_results: int = 50) -> Dict[str, Any]:
         """

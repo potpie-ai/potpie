@@ -62,6 +62,8 @@ class DebugAgent(ChatAgent):
                 "add_jira_comment",
                 "transition_jira_issue",
                 "get_jira_projects",
+                "get_jira_project_details",
+                "link_jira_issues",
                 "fetch_file",
                 "analyze_code_structure",
             ]

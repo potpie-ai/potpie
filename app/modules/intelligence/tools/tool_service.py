@@ -58,6 +58,8 @@ from app.modules.intelligence.tools.jira_tools import (
     add_jira_comment_tool,
     transition_jira_issue_tool,
     get_jira_projects_tool,
+    get_jira_project_details_tool,
+    link_jira_issues_tool,
 )
 from app.modules.intelligence.tools.web_tools.web_search_tool import web_search_tool
 from app.modules.intelligence.provider.provider_service import ProviderService
@@ -116,6 +118,8 @@ class ToolService:
             "add_jira_comment": add_jira_comment_tool(self.db, self.user_id),
             "transition_jira_issue": transition_jira_issue_tool(self.db, self.user_id),
             "get_jira_projects": get_jira_projects_tool(self.db, self.user_id),
+            "get_jira_project_details": get_jira_project_details_tool(self.db, self.user_id),
+            "link_jira_issues": link_jira_issues_tool(self.db, self.user_id),
             "intelligent_code_graph": get_intelligent_code_graph_tool(
                 self.db, self.provider_service, self.user_id
             ),

@@ -55,6 +55,8 @@ class GeneralPurposeAgent(ChatAgent):
                 "add_jira_comment",
                 "transition_jira_issue",
                 "get_jira_projects",
+                "get_jira_project_details",
+                "link_jira_issues",
                 "web_search_tool",
             ]
         )

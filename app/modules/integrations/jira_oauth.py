@@ -53,7 +53,7 @@ class JiraOAuth:
         self.client_secret = config("JIRA_CLIENT_SECRET", default="")
         self.default_scope = config(
             "JIRA_OAUTH_SCOPE",
-            default="read:jira-user read:jira-work write:jira-work manage:jira-webhook offline_access",
+            default="read:jira-user read:jira-work write:jira-work manage:jira-webhook offline_access manage:jira-configuration",
         )
 
         if not self.client_id or not self.client_secret:
