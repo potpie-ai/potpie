@@ -307,6 +307,376 @@ class PydanticMultiAgent(ChatAgent):
         self._agent_instances: Dict[AgentType, Agent] = {}
         self._supervisor_agent: Optional[Agent] = None
 
+    # Constants for agent instructions
+    DELEGATE_AGENT_INSTRUCTIONS = """You are a focused task execution agent with access to all available tools. Execute the assigned task efficiently and provide clear, concise results.
+
+**CODE MANAGEMENT:**
+- Use code changes tools (add_file_to_changes, update_file_lines, insert_lines, delete_lines) instead of including code in response text
+- Use show_updated_file and show_diff to display changes effectively
+- Keep responses concise and avoid large code blocks in your text
+
+**EXECUTION:**
+- Execute tasks completely without asking for clarification unless absolutely critical
+- Make reasonable assumptions and mention them
+- Use tools to gather information and perform actions
+- Return focused, actionable results"""
+
+    # Tool name constants
+    TOOL_NAME_SHOW_UPDATED_FILE = "show_updated_file"
+    TOOL_NAME_SHOW_DIFF = "show_diff"
+
+    @staticmethod
+    def _create_error_response(message: str) -> ChatAgentResponse:
+        """Create a standardized error response"""
+        return ChatAgentResponse(
+            response=f"\n\n{message}\n\n",
+            tool_calls=[],
+            citations=[],
+        )
+
+    @staticmethod
+    async def _yield_text_stream_events(
+        request_stream: Any, agent_type: str = "agent"
+    ) -> AsyncGenerator[ChatAgentResponse, None]:
+        """Yield text streaming events from a request stream"""
+        async for event in request_stream:
+            if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                yield ChatAgentResponse(
+                    response=event.part.content,
+                    tool_calls=[],
+                    citations=[],
+                )
+            if isinstance(event, PartDeltaEvent) and isinstance(
+                event.delta, TextPartDelta
+            ):
+                yield ChatAgentResponse(
+                    response=event.delta.content_delta,
+                    tool_calls=[],
+                    citations=[],
+                )
+
+    @staticmethod
+    def _handle_stream_error(
+        error: Exception, context: str = "model request stream"
+    ) -> Optional[ChatAgentResponse]:
+        """Handle streaming errors and return appropriate response"""
+        if isinstance(error, (ModelRetry, AgentRunError, UserError)):
+            logger.warning(f"Pydantic-ai error in {context}: {error}")
+            return PydanticMultiAgent._create_error_response(
+                "*Encountered an issue while processing your request. Trying to recover...*"
+            )
+        elif isinstance(error, anyio.WouldBlock):
+            logger.warning(f"{context} would block - continuing...")
+            return None  # Signal to continue
+        elif isinstance(error, ValueError):
+            error_str = str(error)
+            if (
+                "json" in error_str.lower()
+                or "parse" in error_str.lower()
+                or "EOF" in error_str
+            ):
+                logger.error(
+                    f"JSON parsing error in {context} (likely from malformed tool call in message history): {error}. "
+                    f"This may indicate a truncated or incomplete tool call from a previous iteration. "
+                    f"Full traceback:\n{traceback.format_exc()}"
+                )
+                return PydanticMultiAgent._create_error_response(
+                    "*Encountered a parsing error. Skipping this step and continuing...*"
+                )
+            else:
+                raise  # Re-raise if it's a different ValueError
+        else:
+            error_detail = f"{type(error).__name__}: {str(error)}"
+            logger.error(
+                f"Unexpected error in {context}: {error_detail}", exc_info=True
+            )
+            if "json" in str(error).lower() or "parse" in str(error).lower():
+                return PydanticMultiAgent._create_error_response(
+                    "*Encountered a parsing error. Skipping this step and continuing...*"
+                )
+            return PydanticMultiAgent._create_error_response(
+                "*An unexpected error occurred. Continuing...*"
+            )
+
+    @staticmethod
+    def _create_delegation_prompt(
+        task_description: str, project_context: str, task_specific_context: str = ""
+    ) -> str:
+        """Create the delegation prompt for subagents"""
+        full_context_parts = [project_context]
+        if task_specific_context and task_specific_context.strip():
+            full_context_parts.append(f"Task-specific context: {task_specific_context}")
+
+        full_context = "\n\n".join(full_context_parts)
+
+        return f"""Execute this focused task for the supervisor:
+
+**TASK:**
+{task_description}
+
+**PROJECT CONTEXT:**
+{full_context}
+
+**YOUR MISSION:**
+Execute the task above and return ONLY the specific, actionable result the supervisor needs.
+
+**OUTPUT FORMAT:**
+Start your response with "## Task Result" and then provide the focused answer.
+
+**CRITICAL GUIDELINES:**
+1. Use tools to gather information, analyze code, or perform actions as needed
+2. Be specific and concise - avoid broad explanations or context gathering
+3. Focus on answering the exact question or completing the exact task
+4. If you make code changes, use show_updated_file and show_diff to display them
+5. Don't restate the problem - just solve it and report the result
+
+**RESULT:** Should be specific, actionable, and immediately usable by the supervisor."""
+
+    @staticmethod
+    def _format_delegation_error(
+        agent_type: AgentType,
+        task_description: str,
+        error_type: str,
+        error_message: str,
+        raw_response: str = "",
+    ) -> str:
+        """Format error responses for delegation failures"""
+        if error_type == "no_result":
+            return f"""
+## Task Result
+
+❌ **ERROR: No valid task result found**
+
+**Agent Type:** {agent_type.value}
+**Task:** {task_description}
+**Issue:** The subagent did not provide a properly formatted Task Result section
+
+**Raw Response (truncated):**
+{raw_response[:500]}{'...' if len(raw_response) > 500 else ''}
+
+**Recommendation:** The supervisor should retry the delegation with clearer instructions.
+            """.strip()
+        elif error_type == "empty_result":
+            return f"""
+## Task Result
+
+❌ **ERROR: Empty or invalid result**
+
+**Agent Type:** {agent_type.value}
+**Task:** {task_description}
+**Issue:** The subagent returned no output or an invalid response
+
+**Recommendation:** The supervisor should retry the delegation or try a different approach.
+            """.strip()
+        else:  # exception
+            return f"""
+## Task Result
+
+❌ **ERROR: Delegation failed**
+
+**Agent Type:** {agent_type.value}
+**Task:** {task_description}
+**Error:** {error_message}
+**Error Type:** {error_type}
+
+**Recommendation:** The supervisor should investigate the error and retry with a different approach or agent.
+            """.strip()
+
+    @staticmethod
+    async def _collect_agent_streaming_response(
+        agent: Agent, user_prompt: str, agent_type: str = "agent"
+    ) -> str:
+        """Collect streaming response from an agent run"""
+        full_response = ""
+
+        async with agent.iter(
+            user_prompt=user_prompt,
+            usage_limits=UsageLimits(request_limit=None),
+        ) as run:
+            async for node in run:
+                if Agent.is_model_request_node(node):
+                    # Stream tokens from the model's request
+                    async with node.stream(run.ctx) as request_stream:
+                        async for event in request_stream:
+                            if isinstance(event, PartStartEvent) and isinstance(
+                                event.part, TextPart
+                            ):
+                                full_response += event.part.content
+                                logger.debug(
+                                    f"[{agent_type}] Streaming chunk: {event.part.content[:100]}{'...' if len(event.part.content) > 100 else ''}"
+                                )
+                            if isinstance(event, PartDeltaEvent) and isinstance(
+                                event.delta, TextPartDelta
+                            ):
+                                full_response += event.delta.content_delta
+                                logger.debug(
+                                    f"[{agent_type}] Streaming delta: {event.delta.content_delta[:100]}{'...' if len(event.delta.content_delta) > 100 else ''}"
+                                )
+                elif Agent.is_end_node(node):
+                    break
+
+        return full_response
+
+    @staticmethod
+    async def _yield_tool_result_event(
+        event: FunctionToolResultEvent,
+    ) -> AsyncGenerator[ChatAgentResponse, None]:
+        """Yield appropriate response for tool result events"""
+        tool_name = event.result.tool_name or "unknown"
+        tool_result = create_tool_result_response(event)
+
+        # For show_updated_file and show_diff, append content directly to response
+        # instead of going through tool_result_info - these stream directly to user
+        if tool_name in (
+            PydanticMultiAgent.TOOL_NAME_SHOW_UPDATED_FILE,
+            PydanticMultiAgent.TOOL_NAME_SHOW_DIFF,
+        ):
+            content = str(event.result.content) if event.result.content else ""
+            yield ChatAgentResponse(
+                response=content,
+                tool_calls=[tool_result],
+                citations=[],
+            )
+        else:
+            yield ChatAgentResponse(
+                response="",
+                tool_calls=[tool_result],
+                citations=[],
+            )
+
+    async def _process_agent_run_nodes(
+        self, run: Any, context: str = "agent"
+    ) -> AsyncGenerator[ChatAgentResponse, None]:
+        """Process nodes from an agent run and yield responses"""
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                # Stream tokens from the model's request
+                try:
+                    async with node.stream(run.ctx) as request_stream:
+                        async for chunk in self._yield_text_stream_events(
+                            request_stream, context
+                        ):
+                            yield chunk
+                except Exception as e:
+                    error_response = self._handle_stream_error(
+                        e, f"{context} model request stream"
+                    )
+                    if error_response:
+                        yield error_response
+                    continue
+
+            elif Agent.is_call_tools_node(node):
+                # Handle tool calls and results
+                async for response in self._process_tool_call_node(node, run.ctx):
+                    yield response
+
+            elif Agent.is_end_node(node):
+                logger.info(f"{context} result streamed successfully!!")
+                break
+
+    async def _process_tool_call_node(
+        self, node: Any, ctx: Any
+    ) -> AsyncGenerator[ChatAgentResponse, None]:
+        """Process tool call nodes and yield responses"""
+        try:
+            async with node.stream(ctx) as handle_stream:
+                async for event in handle_stream:
+                    if isinstance(event, FunctionToolCallEvent):
+                        yield ChatAgentResponse(
+                            response="",
+                            tool_calls=[create_tool_call_response(event)],
+                            citations=[],
+                        )
+                    if isinstance(event, FunctionToolResultEvent):
+                        async for response in self._yield_tool_result_event(event):
+                            yield response
+        except (
+            ModelRetry,
+            AgentRunError,
+            UserError,
+        ) as pydantic_error:
+            logger.warning(f"Pydantic-ai error in tool call stream: {pydantic_error}")
+            yield self._create_error_response(
+                "*Encountered an issue while calling tools. Trying to recover...*"
+            )
+        except anyio.WouldBlock:
+            logger.warning("Tool call stream would block - continuing...")
+        except Exception as e:
+            logger.error(f"Unexpected error in tool call stream: {e}")
+            yield self._create_error_response(
+                "*An unexpected error occurred during tool execution. Continuing...*"
+            )
+
+    def _create_mcp_servers(self) -> List[MCPServerStreamableHTTP]:
+        """Create MCP server instances from configuration"""
+        mcp_toolsets: List[MCPServerStreamableHTTP] = []
+        for mcp_server in self.mcp_servers:
+            try:
+                mcp_server_instance = MCPServerStreamableHTTP(
+                    url=mcp_server["link"], timeout=10.0
+                )
+                mcp_toolsets.append(mcp_server_instance)
+                logger.info(
+                    f"Successfully created MCP server: {mcp_server.get('name', 'unknown')}"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to create MCP server {mcp_server.get('name', 'unknown')}: {e}"
+                )
+                continue
+        return mcp_toolsets
+
+    def _wrap_structured_tools(self, tools: Sequence[Any]) -> List[Tool]:
+        """Convert tool instances (StructuredTool or similar) to PydanticAI Tool instances"""
+        return [
+            Tool(
+                name=tool.name,
+                description=tool.description,
+                function=handle_exception(tool.func),  # type: ignore
+            )
+            for tool in tools
+        ]
+
+    def _build_delegate_agent_tools(self) -> List[Tool]:
+        """Build the tool list for delegate agents"""
+        return self._wrap_structured_tools(self.tools)
+
+    def _build_supervisor_agent_tools(self) -> List[Tool]:
+        """Build the tool list for supervisor agent including delegation, todo, and code changes tools"""
+        # Import tools here to avoid circular imports
+        from app.modules.intelligence.tools.todo_management_tool import (
+            create_todo_management_tools,
+        )
+        from app.modules.intelligence.tools.code_changes_manager import (
+            create_code_changes_management_tools,
+        )
+
+        todo_tools = create_todo_management_tools()
+        code_changes_tools = create_code_changes_management_tools()
+
+        # Create delegation tools
+        delegation_tools = []
+        for agent_type in self.delegate_agents.keys():
+            if agent_type == AgentType.THINK_EXECUTE:
+                description = "🔨 DELEGATE TO TASK EXECUTION AGENT - Delegate focused work to save your context! Great for: information gathering, code searches, targeted implementations, debugging specific issues, analyzing code sections. The subagent will return clean, focused results. Use this liberally to break down complex tasks! IMPORTANT: Use the 'context' parameter to pass already-fetched information (file paths, code snippets, analysis results) to avoid redundant work - this is critical for efficiency!"
+            else:
+                description = f"🤖 DELEGATE TO {agent_type.value.upper()} - Delegate focused work to save your context! The subagent will return clean, focused results. Use this liberally to break down complex tasks! IMPORTANT: Use the 'context' parameter to pass already-fetched information (file paths, code snippets, analysis results) to avoid redundant work - this is critical for efficiency!"
+
+            delegation_tools.append(
+                Tool(
+                    name=f"delegate_to_{agent_type.value}",
+                    description=description,
+                    function=self._create_delegation_function(agent_type),
+                )
+            )
+
+        return (
+            self._wrap_structured_tools(self.tools)
+            + delegation_tools
+            + self._wrap_structured_tools(todo_tools)
+            + self._wrap_structured_tools(code_changes_tools)
+        )
+
     def _create_default_delegate_agents(self) -> Dict[AgentType, AgentConfig]:
         """Create default specialized agents if none provided"""
         return {
@@ -360,48 +730,13 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
         if agent_type in self._agent_instances:
             return self._agent_instances[agent_type]
 
-        # Create MCP servers
-        mcp_toolsets: List[MCPServerStreamableHTTP] = []
-        for mcp_server in self.mcp_servers:
-            try:
-                mcp_server_instance = MCPServerStreamableHTTP(
-                    url=mcp_server["link"], timeout=10.0
-                )
-                mcp_toolsets.append(mcp_server_instance)
-                logger.info(
-                    f"Successfully created MCP server: {mcp_server.get('name', 'unknown')}"
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to create MCP server {mcp_server.get('name', 'unknown')}: {e}"
-                )
-                continue
-
         agent = Agent(
             model=self.llm_provider.get_pydantic_model(),
-            tools=[
-                Tool(
-                    name=tool.name,
-                    description=tool.description,
-                    function=handle_exception(tool.func),  # type: ignore
-                )
-                for tool in self.tools
-            ],
-            mcp_servers=mcp_toolsets,
+            tools=self._build_delegate_agent_tools(),
+            mcp_servers=self._create_mcp_servers(),
             # Delegate agents get minimal instructions - the full task context comes from delegation
-            instructions="""You are a focused task execution agent with access to all available tools. Execute the assigned task efficiently and provide clear, concise results.
-
-**CODE MANAGEMENT:**
-- Use code changes tools (add_file_to_changes, update_file_lines, insert_lines, delete_lines) instead of including code in response text
-- Use show_updated_file and show_diff to display changes effectively
-- Keep responses concise and avoid large code blocks in your text
-
-**EXECUTION:**
-- Execute tasks completely without asking for clarification unless absolutely critical
-- Make reasonable assumptions and mention them
-- Use tools to gather information and perform actions
-- Return focused, actionable results""",
-            result_type=str,
+            instructions=self.DELEGATE_AGENT_INSTRUCTIONS,
+            # result_type=str,
             output_retries=3,
             output_type=str,
             defer_model_check=True,
@@ -418,169 +753,72 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
         # Prepare multimodal instructions if images are present
         multimodal_instructions = self._prepare_multimodal_instructions(ctx)
 
-        # Create MCP servers
-        mcp_toolsets: List[MCPServerStreamableHTTP] = []
-        for mcp_server in self.mcp_servers:
-            try:
-                mcp_server_instance = MCPServerStreamableHTTP(
-                    url=mcp_server["link"], timeout=10.0
-                )
-                mcp_toolsets.append(mcp_server_instance)
-                logger.info(
-                    f"Successfully created MCP server: {mcp_server.get('name', 'unknown')}"
-                )
-            except Exception as e:
-                logger.warning(
-                    f"Failed to create MCP server {mcp_server.get('name', 'unknown')}: {e}"
-                )
-                continue
-
-        # Create delegation tools for each agent type
-        delegation_tools = []
-        for agent_type in self.delegate_agents.keys():
-            # Create highly attractive descriptions for each delegation tool
-            if agent_type == AgentType.THINK_EXECUTE:
-                description = "🔨 DELEGATE TO TASK EXECUTION AGENT - Delegate focused work to save your context! Great for: information gathering, code searches, targeted implementations, debugging specific issues, analyzing code sections. The subagent will return clean, focused results. Use this liberally to break down complex tasks!"
-            else:
-                description = f"🤖 DELEGATE TO {agent_type.value.upper()} - Delegate focused work to save your context! The subagent will return clean, focused results. Use this liberally to break down complex tasks!"
-
-            delegation_tools.append(
-                Tool(
-                    name=f"delegate_to_{agent_type.value}",
-                    description=description,
-                    function=self._create_delegation_function(agent_type),
-                )
-            )
-
-        # Create todo management tools for supervisor
-        from app.modules.intelligence.tools.todo_management_tool import (
-            create_todo_management_tools,
-        )
-        from app.modules.intelligence.tools.code_changes_manager import (
-            create_code_changes_management_tools,
-        )
-
-        todo_tools = create_todo_management_tools()
-        code_changes_tools = create_code_changes_management_tools()
-
         supervisor_agent = Agent(
             model=self.llm_provider.get_pydantic_model(),
-            tools=[
-                Tool(
-                    name=tool.name,
-                    description=tool.description,
-                    function=handle_exception(tool.func),  # type: ignore
-                )
-                for tool in self.tools
-            ]
-            + delegation_tools
-            + [
-                Tool(
-                    name=todo_tool.name,
-                    description=todo_tool.description,
-                    function=handle_exception(todo_tool.func),  # type: ignore
-                )
-                for todo_tool in todo_tools
-            ]
-            + [
-                Tool(
-                    name=tool.name,
-                    description=tool.description,
-                    function=handle_exception(tool.func),  # type: ignore
-                )
-                for tool in code_changes_tools
-            ],
-            mcp_servers=mcp_toolsets,
+            tools=self._build_supervisor_agent_tools(),
+            mcp_servers=self._create_mcp_servers(),
             instructions=f"""
-            You are a problem-solving supervisor who uses subagents strategically to reduce context usage.
+            You are a problem-solving supervisor who orchestrates subagents to efficiently solve complex tasks.
 
-            **CORE PRINCIPLE:**
-            🎯 **DELEGATE STRATEGICALLY TO SAVE CONTEXT:**
-            - Subagents perform focused work without loading your context with intermediate steps
-            - They return only clean, specific results via the "## Task Result" format
-            - Use delegation to reduce your token usage and keep your thinking focused
-            - Breaking work into delegated tasks helps you manage complex problems better
-            
-            📋 **EFFECTIVE TODO MANAGEMENT:**
-            - ALWAYS start complex problems by creating a comprehensive TODO list
-            - Use `create_todo` for each major step of the solution
-            - Update todo status with `update_todo_status` as you progress (pending → in_progress → completed)
-            - Add notes with `add_todo_note` when you discover important details
-            - Check `get_todo_summary` periodically to track overall progress
-            - Use TODOs to break down large problems into manageable chunks
+            **🚀 MANDATORY PLANNING PHASE (DO THIS FIRST):**
+            1. **Analyze:** Understand the request, identify objectives, dependencies, and constraints
+            2. **Break down:** Split into logical, delegable chunks (self-contained, clear outcomes, minimal interdependencies)
+            3. **Create TODOs:** Use `create_todo` for every step (main tasks → subtasks), mark dependencies, set status to "pending"
+            4. **Plan delegation:** Identify what to delegate, determine execution order, plan context needs
+            5. **Document:** Summarize problem, list chunks, explain strategy, note assumptions
 
-            **CRITICAL CODE MANAGEMENT INSTRUCTIONS:**
-            When writing or modifying code, ALWAYS use the code changes management tools instead of including code in your response text:
-            
-            ✅ **USE CODE CHANGES TOOLS:**
-            - For new files: Use `add_file_to_changes` with file path and content
-            - For targeted updates: Use `update_file_lines` (line numbers), `replace_in_file` (pattern matching), `insert_lines`, or `delete_lines`
-            - Prefer targeted updates over full file rewrites - they're more efficient and preserve context
-            - For full file updates: Use `update_file_in_changes` only when absolutely necessary
-            
-            ✅ **DISPLAY CHANGES EFFECTIVELY:**
-            - **Use `show_updated_file`** (with no parameters) to display ALL changed files with their complete content - perfect for showing the final result
-            - **Use `show_diff`** at the end to display ALL changes with diffs showing what was added/removed vs original files
-            - Use both tools together when you make changes: `show_updated_file` for complete files, `show_diff` for change details
-            - Both tools stream results directly to the user - they don't count as LLM context!
-            
-            ❌ **AVOID:**
-            - Including large code blocks directly in your response text
-            - Rewriting entire files when only small changes are needed (use targeted update tools)
-            - Showing code in markdown blocks unless it's a very short snippet for explanation
-            
-            **TOKEN EFFICIENCY:**
-            Code in response text accumulates in conversation history, increasing token usage exponentially.
-            Code stored via tools is NOT included in history, saving 70-85% of tokens!
+            **📋 EXECUTION & ADAPTATION:**
+            - Execute systematically: Follow your plan, delegate tasks with proper context
+            - Track progress: Update todo status (pending → in_progress → completed), add notes as you learn
+            - Adapt: Update plan and TODOs based on discoveries - your plan can evolve!
+            - Verify: Ensure all TODOs complete and objective met
 
-            **WHEN TO USE SUBAGENTS:**
-            ✅ **EXCELLENT subagent tasks (delegate these to save context!):**
-            - **Information gathering:** Find specific variables, functions, file paths, line numbers, config values
-            - **Code exploration:** Search for patterns, locate implementations, check how things are structured
-            - **Targeted analysis:** Understand a specific piece of code, trace a particular flow, debug a focused issue
-            - **Research tasks:** Look up specific information, check dependencies, verify facts
-            - **Implementation slices:** Write a specific function, update a targeted section, create focused features
+            **🎯 INTELLIGENT DELEGATION:**
+            **Why delegate:** Subagents return clean results via "## Task Result" format, saving your context.
             
-            **DELEGATION GUIDELINES:**
-            - Break complex tasks into focused subagent work - this REDUCES your token usage
-            - Each delegated task should have clear success criteria
-            - Subagents return results in "## Task Result" format - clean and focused
-            - Use TODO to identify what can be delegated vs what you need to orchestrate yourself
+            **When to delegate:** targeted analysis, research, implementation slices etc.
+            for information gathering pertaining to the problem don't delegate task since the gathered context might be useful later on aswell
+            
+            **How to delegate effectively:**
+            - Break tasks into focused chunks with clear success criteria
+            - **CRITICAL:** Pass already-fetched context via `context` parameter (file paths, code snippets, analysis results, config values)
+            - Group related tasks to share context efficiently
+            - Example context: "Main function in app/main.py:45-67 uses Config class from app/core/config.py with 'database_url' property. Error at line 52."
+            
+            **Code Management:**
+            - **CRITICAL:** All your code changes for this session are tracked in the code changes manager - it persists throughout the conversation
+            - **ALWAYS use code changes tools** (not response text): `add_file_to_changes`, `update_file_lines`, `replace_in_file`, `insert_lines`, `delete_lines`
+            - **For precise editing, ALWAYS fetch files with line numbers:** Use `fetch_file` with `with_line_numbers=true` to see exact line numbers and indentation before editing. This ensures you know the exact line numbers and indentation to use with `insert_lines`, `delete_lines`, and `update_file_lines`
+            - **CRITICAL: Preserve proper indentation:** When using `insert_lines` or `update_file_lines`, match the indentation of surrounding lines exactly. Fetch the file first to see the exact indentation pattern, then preserve it in your updates
+            - **ALWAYS verify your edits:** After using `insert_lines` or `update_file_lines`, fetch the updated lines in context (with surrounding lines) to verify:
+              * Indentation is correct and matches surrounding code
+              * Content was inserted/updated as expected
+              * Code structure is intact
+              * If verification fails, fix it immediately using the appropriate tool
+            - **Precise line operations:** Use `insert_lines` to add code at specific line numbers, `delete_lines` to remove specific line ranges, and `update_file_lines` to replace specific lines
+            - **Check your progress:** Use `get_session_metadata` to see all files you've modified, timestamps, descriptions, and line counts
+            - **Review changes:** Use `get_file_from_changes` to see file metadata, or `get_file_diff` (with project_id) to see diff against repository branch
+            - **Before making changes:** Check `list_files_in_changes` or `get_session_metadata` to see what's already been modified
+            - Prefer targeted updates over full rewrites - use line numbers for precision
+            - Display changes with BOTH `show_updated_file` (complete files) AND `show_diff` (change details, with project_id for repository diffs)
+            - Why: Code in tools saves 70-85% tokens vs response text that accumulates in history
+            - Write code only once, don't show changes and then update it in the code changes manager
 
-            **TASK BREAKDOWN STRATEGY:**
-            1. Understand the request completely
-            2. **Create TODOs for all tasks using the todo system**
-            3. Identify which tasks can be delegated vs which need your coordination
-            4. **Delegate liberally** - if a task can be done independently, delegate it!
-            5. Make reasonable assumptions and state them explicitly
-            6. Use subagent results to inform your next steps
-            7. When creating/modifying code, use code changes tools (or delegate to a subagent!)
-            8. Update todo status as you complete each step
-            9. Synthesize everything into the final answer
-            10. **IMPORTANT:** Show ALL code changes using BOTH `show_updated_file` (complete files) AND `show_diff` (change details)
+            **🚀 PROACTIVE PROBLEM SOLVING:**
+            - Solve completely without asking unless critical info is missing
+            - Make reasonable assumptions, state them explicitly
+            - Choose best approach when multiple options exist
+            - Add steps to TODO and execute systematically
 
+            Your Identity:
             Role: {self.config.role}
             Goal: {self.config.goal}
-            Backstory: {self.config.backstory}
 
             {multimodal_instructions}
 
             CONTEXT: {self._create_supervisor_task_description(ctx)}
-            
-            **IMPORTANT: PROACTIVE PROBLEM SOLVING:**
-            🚀 **ALWAYS TRY TO SOLVE IN ONE SHOT:**
-            - Solve problems completely without asking for user input unless absolutely necessary
-            - Make reasonable assumptions based on context and mention them explicitly
-            - If you need to choose between options, pick the most reasonable one and state your choice
-            - Only ask the user when: critical information is missing, there are conflicting requirements, or the decision has major consequences
-            - Don't ask for permissions to continue, just try solving the task end to end
-            - If there are multiple way of going about problem, choose the best step
-            - If there are multiple steps then add them to todo and do the tasks one by one
-            
-            **🎯 REMEMBER:** Your job is to orchestrate. Don't do all the work yourself! Break tasks down into focused pieces and delegate them to subagents. This keeps your context clean and your reasoning focused.
-
             """,
-            result_type=str,
+            # result_type=str,
             output_retries=3,
             output_type=str,
             defer_model_check=True,
@@ -596,7 +834,17 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
         async def delegate_function(
             ctx: RunContext[None], task_description: str, context: str = ""
         ) -> str:
-            """Delegate a task to a specialized agent"""
+            """Delegate a task to a specialized agent.
+
+            Args:
+                task_description: The specific task to delegate to the subagent. Should be clear and focused.
+                context: Optional context to pass to the subagent (file paths, code snippets, analysis results,
+                        configuration values, or any relevant information already fetched). This helps avoid
+                        redundant work - pass any context the subagent would otherwise need to fetch.
+
+            Returns:
+                The task result from the subagent in "## Task Result" format.
+            """
             try:
                 logger.info(
                     f"Delegating task to {agent_type.value} agent: {task_description}"
@@ -610,73 +858,18 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
                     self._current_context
                 )
 
-                # Combine all context
-                full_context_parts = [project_context]
-                if context and context.strip():
-                    full_context_parts.append(f"Task-specific context: {context}")
-
-                full_context = "\n\n".join(full_context_parts)
-
-                full_task = f"""Execute this focused task for the supervisor:
-
-**TASK:**
-{task_description}
-
-**PROJECT CONTEXT:**
-{full_context}
-
-**YOUR MISSION:**
-Execute the task above and return ONLY the specific, actionable result the supervisor needs.
-
-**OUTPUT FORMAT:**
-Start your response with "## Task Result" and then provide the focused answer.
-
-**CRITICAL GUIDELINES:**
-1. Use tools to gather information, analyze code, or perform actions as needed
-2. Be specific and concise - avoid broad explanations or context gathering
-3. Focus on answering the exact question or completing the exact task
-4. If you make code changes, use show_updated_file and show_diff to display them
-5. Don't restate the problem - just solve it and report the result
-
-**RESULT:** Should be specific, actionable, and immediately usable by the supervisor."""
+                # Create delegation prompt using helper
+                full_task = self._create_delegation_prompt(
+                    task_description, project_context, context
+                )
 
                 # Run the delegate agent with independent usage tracking and streaming
                 logger.info(f"Starting {agent_type.value} agent execution...")
 
-                # Collect streaming response for logging
-                full_response = ""
-                result = None
-
-                # Use Pydantic AI streaming approach
-                async with delegate_agent.iter(
-                    user_prompt=full_task,
-                    usage_limits=UsageLimits(
-                        request_limit=None
-                    ),  # No request limit for long-running tasks
-                ) as run:
-                    async for node in run:
-                        if Agent.is_model_request_node(node):
-                            # Stream tokens from the model's request
-                            async with node.stream(run.ctx) as request_stream:
-                                async for event in request_stream:
-                                    if isinstance(event, PartStartEvent) and isinstance(
-                                        event.part, TextPart
-                                    ):
-                                        full_response += event.part.content
-                                        logger.debug(
-                                            f"[{agent_type.value}] Streaming chunk: {event.part.content[:100]}{'...' if len(event.part.content) > 100 else ''}"
-                                        )
-                                    if isinstance(event, PartDeltaEvent) and isinstance(
-                                        event.delta, TextPartDelta
-                                    ):
-                                        full_response += event.delta.content_delta
-                                        logger.debug(
-                                            f"[{agent_type.value}] Streaming delta: {event.delta.content_delta[:100]}{'...' if len(event.delta.content_delta) > 100 else ''}"
-                                        )
-
-                        elif Agent.is_end_node(node):
-                            result = node
-                            break
+                # Collect streaming response using helper
+                full_response = await self._collect_agent_streaming_response(
+                    delegate_agent, full_task, agent_type.value
+                )
 
                 logger.info(
                     f"Task completed by {agent_type.value} agent. Full response length: {len(full_response)} chars"
@@ -700,51 +893,31 @@ Start your response with "## Task Result" and then provide the focused answer.
                         logger.warning(
                             f"No valid task result found in {agent_type.value} response"
                         )
-                        return f"""
-## Task Result
-
-❌ **ERROR: No valid task result found**
-
-**Agent Type:** {agent_type.value}
-**Task:** {task_description}
-**Issue:** The subagent did not provide a properly formatted Task Result section
-
-**Raw Response (truncated):**
-{full_response[:500]}{'...' if len(full_response) > 500 else ''}
-
-**Recommendation:** The supervisor should retry the delegation with clearer instructions.
-                        """.strip()
+                        return self._format_delegation_error(
+                            agent_type,
+                            task_description,
+                            "no_result",
+                            "No valid task result found",
+                            full_response,
+                        )
                 else:
                     # No output or empty result
                     logger.error(
                         f"Empty or invalid result from {agent_type.value} agent"
                     )
-                    return f"""
-## Task Result
-
-❌ **ERROR: Empty or invalid result**
-
-**Agent Type:** {agent_type.value}
-**Task:** {task_description}
-**Issue:** The subagent returned no output or an invalid response
-
-**Recommendation:** The supervisor should retry the delegation or try a different approach.
-                    """.strip()
+                    return self._format_delegation_error(
+                        agent_type,
+                        task_description,
+                        "empty_result",
+                        "Empty or invalid result",
+                        full_response,
+                    )
 
             except Exception as e:
                 logger.error(f"Error in delegation to {agent_type.value}: {e}")
-                return f"""
-## Task Result
-
-❌ **ERROR: Delegation failed**
-
-**Agent Type:** {agent_type.value}
-**Task:** {task_description}
-**Error:** {str(e)}
-**Error Type:** {type(e).__name__}
-
-**Recommendation:** The supervisor should investigate the error and retry with a different approach or agent.
-                """.strip()
+                return self._format_delegation_error(
+                    agent_type, task_description, type(e).__name__, str(e), ""
+                )
 
         return delegate_function
 
@@ -1211,66 +1384,10 @@ Image Analysis Notes:
                     request_limit=None
                 ),  # No request limit for long-running tasks
             ) as run:
-                async for node in run:
-                    if Agent.is_model_request_node(node):
-                        # A model request node => We can stream tokens from the model's request
-                        async with node.stream(run.ctx) as request_stream:
-                            async for event in request_stream:
-                                if isinstance(event, PartStartEvent) and isinstance(
-                                    event.part, TextPart
-                                ):
-                                    yield ChatAgentResponse(
-                                        response=event.part.content,
-                                        tool_calls=[],
-                                        citations=[],
-                                    )
-                                if isinstance(event, PartDeltaEvent) and isinstance(
-                                    event.delta, TextPartDelta
-                                ):
-                                    yield ChatAgentResponse(
-                                        response=event.delta.content_delta,
-                                        tool_calls=[],
-                                        citations=[],
-                                    )
-
-                    elif Agent.is_call_tools_node(node):
-                        async with node.stream(run.ctx) as handle_stream:
-                            async for event in handle_stream:
-                                if isinstance(event, FunctionToolCallEvent):
-                                    yield ChatAgentResponse(
-                                        response="",
-                                        tool_calls=[create_tool_call_response(event)],
-                                        citations=[],
-                                    )
-                                if isinstance(event, FunctionToolResultEvent):
-                                    tool_name = event.result.tool_name or "unknown"
-                                    # For show_updated_file, append content directly to response
-                                    # instead of going through tool_result_info
-                                    if tool_name == "show_updated_file":
-                                        tool_result = create_tool_result_response(event)
-                                        content = (
-                                            str(event.result.content)
-                                            if event.result.content
-                                            else ""
-                                        )
-                                        yield ChatAgentResponse(
-                                            response=content,
-                                            tool_calls=[tool_result],
-                                            citations=[],
-                                        )
-                                    else:
-                                        yield ChatAgentResponse(
-                                            response="",
-                                            tool_calls=[
-                                                create_tool_result_response(event)
-                                            ],
-                                            citations=[],
-                                        )
-
-                    elif Agent.is_end_node(node):
-                        logger.info(
-                            "multimodal multi-agent result streamed successfully!!"
-                        )
+                async for response in self._process_agent_run_nodes(
+                    run, "multimodal multi-agent"
+                ):
+                    yield response
 
         except Exception as e:
             logger.error(
@@ -1301,185 +1418,10 @@ Image Analysis Notes:
                             request_limit=None
                         ),  # No request limit for long-running tasks
                     ) as run:
-                        async for node in run:
-                            if Agent.is_model_request_node(node):
-                                # A model request node => We can stream tokens from the model's request
-                                try:
-                                    async with node.stream(run.ctx) as request_stream:
-                                        async for event in request_stream:
-                                            if isinstance(
-                                                event, PartStartEvent
-                                            ) and isinstance(event.part, TextPart):
-                                                yield ChatAgentResponse(
-                                                    response=event.part.content,
-                                                    tool_calls=[],
-                                                    citations=[],
-                                                )
-                                            if isinstance(
-                                                event, PartDeltaEvent
-                                            ) and isinstance(
-                                                event.delta, TextPartDelta
-                                            ):
-                                                yield ChatAgentResponse(
-                                                    response=event.delta.content_delta,
-                                                    tool_calls=[],
-                                                    citations=[],
-                                                )
-                                except (
-                                    ModelRetry,
-                                    AgentRunError,
-                                    UserError,
-                                ) as pydantic_error:
-                                    logger.warning(
-                                        f"Pydantic-ai error in model request stream: {pydantic_error}"
-                                    )
-                                    yield ChatAgentResponse(
-                                        response="\n\n*Encountered an issue while processing your request. Trying to recover...*\n\n",
-                                        tool_calls=[],
-                                        citations=[],
-                                    )
-                                    continue
-                                except anyio.WouldBlock:
-                                    logger.warning(
-                                        "Model request stream would block - continuing..."
-                                    )
-                                    continue
-                                except ValueError as json_error:
-                                    # Catch JSON parsing errors specifically
-                                    # This often happens when pydantic_ai tries to serialize
-                                    # message history containing malformed tool call arguments
-                                    error_str = str(json_error)
-                                    if (
-                                        "json" in error_str.lower()
-                                        or "parse" in error_str.lower()
-                                        or "EOF" in error_str
-                                    ):
-                                        logger.error(
-                                            f"JSON parsing error in model request stream (likely from malformed tool call in message history): {json_error}. "
-                                            f"This may indicate a truncated or incomplete tool call from a previous iteration. "
-                                            f"Full traceback:\n{traceback.format_exc()}"
-                                        )
-                                        yield ChatAgentResponse(
-                                            response="\n\n*Encountered a parsing error. Skipping this step and continuing...*\n\n",
-                                            tool_calls=[],
-                                            citations=[],
-                                        )
-                                        # Continue to next node instead of breaking
-                                        continue
-                                    else:
-                                        # Re-raise if it's a different ValueError
-                                        raise
-                                except Exception as e:
-                                    error_detail = f"{type(e).__name__}: {str(e)}"
-                                    logger.error(
-                                        f"Unexpected error in model request stream: {error_detail}",
-                                        exc_info=True,
-                                    )
-                                    # Check if it's a JSON parsing error
-                                    if (
-                                        "json" in str(e).lower()
-                                        or "parse" in str(e).lower()
-                                    ):
-                                        logger.error(
-                                            f"JSON parsing error detected - this may indicate incomplete response from model or MCP server. Full traceback:\n{traceback.format_exc()}"
-                                        )
-                                    yield ChatAgentResponse(
-                                        response="\n\n*An unexpected error occurred. Continuing...*\n\n",
-                                        tool_calls=[],
-                                        citations=[],
-                                    )
-                                    continue
-
-                            elif Agent.is_call_tools_node(node):
-                                try:
-                                    async with node.stream(run.ctx) as handle_stream:
-                                        async for event in handle_stream:
-                                            if isinstance(event, FunctionToolCallEvent):
-                                                yield ChatAgentResponse(
-                                                    response="",
-                                                    tool_calls=[
-                                                        create_tool_call_response(event)
-                                                    ],
-                                                    citations=[],
-                                                )
-                                            if isinstance(
-                                                event, FunctionToolResultEvent
-                                            ):
-                                                tool_name = (
-                                                    event.result.tool_name or "unknown"
-                                                )
-                                                # For show_updated_file, append content directly to response
-                                                # instead of going through tool_result_info
-                                                if tool_name == "show_updated_file":
-                                                    tool_result = (
-                                                        create_tool_result_response(
-                                                            event
-                                                        )
-                                                    )
-                                                    content = (
-                                                        str(event.result.content)
-                                                        if event.result.content
-                                                        else ""
-                                                    )
-                                                    yield ChatAgentResponse(
-                                                        response=content,
-                                                        tool_calls=[tool_result],
-                                                        citations=[],
-                                                    )
-                                                else:
-                                                    yield ChatAgentResponse(
-                                                        response="",
-                                                        tool_calls=[
-                                                            create_tool_result_response(
-                                                                event
-                                                            )
-                                                        ],
-                                                        citations=[],
-                                                    )
-                                except (
-                                    ModelRetry,
-                                    AgentRunError,
-                                    UserError,
-                                ) as pydantic_error:
-                                    logger.warning(
-                                        f"Pydantic-ai error in tool call stream: {pydantic_error}"
-                                    )
-                                    yield ChatAgentResponse(
-                                        response="\n\n*Encountered an issue while calling tools. Trying to recover...*\n\n",
-                                        tool_calls=[],
-                                        citations=[],
-                                    )
-                                    continue
-                                except anyio.WouldBlock:
-                                    logger.warning(
-                                        "Tool call stream would block - continuing..."
-                                    )
-                                    continue
-                                except Exception as e:
-                                    error_detail = f"{type(e).__name__}: {str(e)}"
-                                    logger.error(
-                                        f"Unexpected error in tool call stream: {error_detail}",
-                                        exc_info=True,
-                                    )
-                                    # Check if it's a JSON parsing error
-                                    if (
-                                        "json" in str(e).lower()
-                                        or "parse" in str(e).lower()
-                                    ):
-                                        logger.error(
-                                            f"JSON parsing error detected in tool call stream - this may indicate incomplete response from tool or MCP server. Full traceback:\n{traceback.format_exc()}"
-                                        )
-                                    yield ChatAgentResponse(
-                                        response="\n\n*An unexpected error occurred during tool execution. Continuing...*\n\n",
-                                        tool_calls=[],
-                                        citations=[],
-                                    )
-                                    continue
-
-                            elif Agent.is_end_node(node):
-                                logger.info(
-                                    "multi-agent result streamed successfully!!"
-                                )
+                        async for response in self._process_agent_run_nodes(
+                            run, "multi-agent"
+                        ):
+                            yield response
 
             except (TimeoutError, anyio.WouldBlock, Exception) as mcp_error:
                 error_detail = f"{type(mcp_error).__name__}: {str(mcp_error)}"
@@ -1497,236 +1439,24 @@ Image Analysis Notes:
                     )
                 logger.info("Continuing without MCP servers...")
 
-                # Fallback: run without MCP servers
-                try:
-                    async with supervisor_agent.iter(
-                        user_prompt=ctx.query,
-                        message_history=[
-                            ModelResponse([TextPart(content=msg)])
-                            for msg in ctx.history
-                        ],
-                        usage_limits=UsageLimits(
-                            request_limit=None
-                        ),  # No request limit for long-running tasks
-                    ) as run:
-                        async for node in run:
-                            if Agent.is_model_request_node(node):
-                                try:
-                                    async with node.stream(run.ctx) as request_stream:
-                                        async for event in request_stream:
-                                            if isinstance(
-                                                event, PartStartEvent
-                                            ) and isinstance(event.part, TextPart):
-                                                yield ChatAgentResponse(
-                                                    response=event.part.content,
-                                                    tool_calls=[],
-                                                    citations=[],
-                                                )
-                                            if isinstance(
-                                                event, PartDeltaEvent
-                                            ) and isinstance(
-                                                event.delta, TextPartDelta
-                                            ):
-                                                yield ChatAgentResponse(
-                                                    response=event.delta.content_delta,
-                                                    tool_calls=[],
-                                                    citations=[],
-                                                )
-                                except (
-                                    ModelRetry,
-                                    AgentRunError,
-                                    UserError,
-                                ) as pydantic_error:
-                                    logger.warning(
-                                        f"Pydantic-ai error in fallback model request stream: {pydantic_error}"
-                                    )
-                                    yield ChatAgentResponse(
-                                        response="\n\n*Encountered an issue while processing your request. Trying to recover...*\n\n",
-                                        tool_calls=[],
-                                        citations=[],
-                                    )
-                                    continue
-                                except anyio.WouldBlock:
-                                    logger.warning(
-                                        "Model request stream would block - continuing..."
-                                    )
-                                    continue
-                                except ValueError as json_error:
-                                    # Catch JSON parsing errors specifically
-                                    # This often happens when pydantic_ai tries to serialize
-                                    # message history containing malformed tool call arguments
-                                    error_str = str(json_error)
-                                    if (
-                                        "json" in error_str.lower()
-                                        or "parse" in error_str.lower()
-                                        or "EOF" in error_str
-                                    ):
-                                        logger.error(
-                                            f"JSON parsing error in fallback model request stream (likely from malformed tool call in message history): {json_error}. "
-                                            f"This may indicate a truncated or incomplete tool call from a previous iteration. "
-                                            f"Full traceback:\n{traceback.format_exc()}"
-                                        )
-                                        yield ChatAgentResponse(
-                                            response="\n\n*Encountered a parsing error. Skipping this step and continuing...*\n\n",
-                                            tool_calls=[],
-                                            citations=[],
-                                        )
-                                        # Continue to next node instead of breaking
-                                        continue
-                                    else:
-                                        # Re-raise if it's a different ValueError
-                                        raise
-                                except Exception as e:
-                                    error_detail = f"{type(e).__name__}: {str(e)}"
-                                    logger.error(
-                                        f"Unexpected error in fallback model request stream: {error_detail}",
-                                        exc_info=True,
-                                    )
-                                    # Check if it's a JSON parsing error
-                                    if (
-                                        "json" in str(e).lower()
-                                        or "parse" in str(e).lower()
-                                    ):
-                                        logger.error(
-                                            f"JSON parsing error detected in fallback model request stream - this may indicate incomplete response from model. Full traceback:\n{traceback.format_exc()}"
-                                        )
-                                    yield ChatAgentResponse(
-                                        response="\n\n*An unexpected error occurred. Continuing...*\n\n",
-                                        tool_calls=[],
-                                        citations=[],
-                                    )
-                                    continue
+                # Fallback without MCP servers
+                async with supervisor_agent.iter(
+                    user_prompt=ctx.query,
+                    message_history=[
+                        ModelResponse([TextPart(content=msg)]) for msg in ctx.history
+                    ],
+                    usage_limits=UsageLimits(
+                        request_limit=None
+                    ),  # No request limit for long-running tasks
+                ) as run:
+                    async for response in self._process_agent_run_nodes(
+                        run, "multi-agent"
+                    ):
+                        yield response
 
-                            elif Agent.is_call_tools_node(node):
-                                try:
-                                    async with node.stream(run.ctx) as handle_stream:
-                                        async for event in handle_stream:
-                                            if isinstance(event, FunctionToolCallEvent):
-                                                yield ChatAgentResponse(
-                                                    response="",
-                                                    tool_calls=[
-                                                        create_tool_call_response(event)
-                                                    ],
-                                                    citations=[],
-                                                )
-                                            if isinstance(
-                                                event, FunctionToolResultEvent
-                                            ):
-                                                tool_name = (
-                                                    event.result.tool_name or "unknown"
-                                                )
-                                                # For show_updated_file, append content directly to response
-                                                # instead of going through tool_result_info
-                                                if tool_name == "show_updated_file":
-                                                    tool_result = (
-                                                        create_tool_result_response(
-                                                            event
-                                                        )
-                                                    )
-                                                    content = (
-                                                        str(event.result.content)
-                                                        if event.result.content
-                                                        else ""
-                                                    )
-                                                    yield ChatAgentResponse(
-                                                        response=content,
-                                                        tool_calls=[tool_result],
-                                                        citations=[],
-                                                    )
-                                                else:
-                                                    yield ChatAgentResponse(
-                                                        response="",
-                                                        tool_calls=[
-                                                            create_tool_result_response(
-                                                                event
-                                                            )
-                                                        ],
-                                                        citations=[],
-                                                    )
-                                except (
-                                    ModelRetry,
-                                    AgentRunError,
-                                    UserError,
-                                ) as pydantic_error:
-                                    logger.warning(
-                                        f"Pydantic-ai error in fallback tool call stream: {pydantic_error}"
-                                    )
-                                    yield ChatAgentResponse(
-                                        response="\n\n*Encountered an issue while calling tools. Trying to recover...*\n\n",
-                                        tool_calls=[],
-                                        citations=[],
-                                    )
-                                    continue
-                                except anyio.WouldBlock:
-                                    logger.warning(
-                                        "Tool call stream would block - continuing..."
-                                    )
-                                    continue
-                                except Exception as e:
-                                    error_detail = f"{type(e).__name__}: {str(e)}"
-                                    logger.error(
-                                        f"Unexpected error in fallback tool call stream: {error_detail}",
-                                        exc_info=True,
-                                    )
-                                    # Check if it's a JSON parsing error
-                                    if (
-                                        "json" in str(e).lower()
-                                        or "parse" in str(e).lower()
-                                    ):
-                                        logger.error(
-                                            f"JSON parsing error detected in fallback tool call stream - this may indicate incomplete response from tool. Full traceback:\n{traceback.format_exc()}"
-                                        )
-                                    yield ChatAgentResponse(
-                                        response="\n\n*An unexpected error occurred during tool execution. Continuing...*\n\n",
-                                        tool_calls=[],
-                                        citations=[],
-                                    )
-                                    continue
-
-                            elif Agent.is_end_node(node):
-                                logger.info(
-                                    "fallback multi-agent result streamed successfully!!"
-                                )
-
-                except (ModelRetry, AgentRunError, UserError) as pydantic_error:
-                    logger.error(
-                        f"Pydantic-ai error in fallback agent iteration: {pydantic_error}"
-                    )
-                    yield ChatAgentResponse(
-                        response=f"\n\n*The multi-agent system encountered an error while processing your request: {str(pydantic_error)}*\n\n",
-                        tool_calls=[],
-                        citations=[],
-                    )
-                except Exception as e:
-                    error_detail = f"{type(e).__name__}: {str(e)}"
-                    logger.error(
-                        f"Unexpected error in fallback agent iteration: {error_detail}",
-                        exc_info=True,
-                    )
-                    # Check if it's a JSON parsing error
-                    if "json" in str(e).lower() or "parse" in str(e).lower():
-                        logger.error(
-                            f"JSON parsing error detected in fallback agent iteration - this may indicate incomplete response from agent or MCP server. Full traceback:\n{traceback.format_exc()}"
-                        )
-                    yield ChatAgentResponse(
-                        response=f"\n\n*An unexpected error occurred: {str(e)}*\n\n",
-                        tool_calls=[],
-                        citations=[],
-                    )
-
-        except (ModelRetry, AgentRunError, UserError) as pydantic_error:
-            logger.error(
-                f"Pydantic-ai error in multi-agent run_stream method: {str(pydantic_error)}",
-                exc_info=True,
-            )
-            yield ChatAgentResponse(
-                response=f"\n\n*The multi-agent system encountered an error: {str(pydantic_error)}*\n\n",
-                tool_calls=[],
-                citations=[],
-            )
         except Exception as e:
             logger.error(
-                f"Error in multi-agent run_stream method: {str(e)}", exc_info=True
+                f"Error in standard multi-agent stream: {str(e)}", exc_info=True
             )
             yield ChatAgentResponse(
                 response="\n\n*An error occurred during multi-agent streaming*\n\n",

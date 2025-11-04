@@ -1015,20 +1015,26 @@ class CodeChangesManager:
             return None
 
     def generate_diff(
-        self, file_path: Optional[str] = None, context_lines: int = 3
+        self,
+        file_path: Optional[str] = None,
+        context_lines: int = 3,
+        project_id: Optional[str] = None,
+        db: Optional[Session] = None,
     ) -> Dict[str, str]:
         """
-        Generate unified diff between managed changes and codebase files
+        Generate unified diff between managed changes and repository/base files
 
         Args:
             file_path: Optional specific file path. If None, generate diffs for all files
             context_lines: Number of context lines to include in diff
+            project_id: Optional project ID to fetch original content from repository
+            db: Optional database session for repository access
 
         Returns:
             Dict with file_paths as keys and diff strings as values
         """
         logger.info(
-            f"CodeChangesManager.generate_diff: Generating diff(s) (file_path: {file_path}, context_lines: {context_lines})"
+            f"CodeChangesManager.generate_diff: Generating diff(s) (file_path: {file_path}, context_lines: {context_lines}, project_id: {project_id})"
         )
         diffs = {}
 
@@ -1063,20 +1069,54 @@ class CodeChangesManager:
                 diffs[fp] = diff
                 continue
 
-            # For updated files, compare with previous_content if available, otherwise codebase
+            # For updated files, compare with previous_content if available, otherwise repository/base
             new_content = change.content or ""
 
-            # Use previous_content if available, otherwise read from filesystem
+            # Use previous_content if available, otherwise try repository, then filesystem
             if change.previous_content is not None:
                 old_content = change.previous_content
                 diff = self._create_unified_diff(
                     old_content, new_content, fp, fp, context_lines
                 )
             else:
-                old_content = self._read_file_from_codebase(fp)
+                # Try to get from repository first if project_id/db provided
+                old_content = None
+                if project_id and db:
+                    # Fetch directly from repository, bypassing changes
+                    try:
+                        from app.modules.code_provider.code_provider_service import (
+                            CodeProviderService,
+                        )
+                        from app.modules.projects.projects_model import Project
 
-                # If file doesn't exist in codebase, treat as new file
+                        project = (
+                            db.query(Project).filter(Project.id == project_id).first()
+                        )
+                        if project:
+                            cp_service = CodeProviderService(db)
+                            repo_content = cp_service.get_file_content(
+                                repo_name=project.repo_name,
+                                file_path=fp,
+                                branch_name=project.branch_name,
+                                start_line=None,
+                                end_line=None,
+                                project_id=project_id,
+                                commit_id=project.commit_id,
+                            )
+                            if repo_content:
+                                old_content = repo_content
+                    except Exception as e:
+                        logger.warning(
+                            f"CodeChangesManager.generate_diff: Error fetching from repository: {e}"
+                        )
+                        old_content = None
+
+                # Fallback to filesystem if repository fetch failed
                 if old_content is None:
+                    old_content = self._read_file_from_codebase(fp)
+
+                # If file doesn't exist anywhere, treat as new file
+                if old_content is None or old_content == "":
                     old_content = ""
                     diff = self._create_unified_diff(
                         old_content, new_content, "/dev/null", fp, context_lines
@@ -1410,36 +1450,56 @@ def delete_file_tool(input_data: DeleteFileInput) -> str:
 
 
 def get_file_tool(input_data: GetFileInput) -> str:
-    """Get change information for a specific file"""
+    """Get comprehensive change information and metadata for a specific file"""
     logger.info(f"Tool get_file_tool: Retrieving file '{input_data.file_path}'")
     try:
         manager = _get_code_changes_manager()
         file_data = manager.get_file(input_data.file_path)
 
         if file_data:
-            result = f"📄 **{file_data['file_path']}**\n"
-            result += f"Change Type: {file_data['change_type']}\n"
-            result += f"Updated: {file_data['updated_at']}\n"
+            change_emoji = {"add": "➕", "update": "✏️", "delete": "🗑️"}
+            emoji = change_emoji.get(file_data["change_type"], "📄")
+
+            result = f"{emoji} **{file_data['file_path']}**\n\n"
+            result += f"**Change Type:** {file_data['change_type']}\n"
+            result += f"**Created:** {file_data['created_at']}\n"
+            result += f"**Last Updated:** {file_data['updated_at']}\n"
 
             if file_data.get("description"):
-                result += f"Description: {file_data['description']}\n"
+                result += f"**Description:** {file_data['description']}\n"
 
+            # Line count information
             if file_data["change_type"] == "delete":
-                result += "\n⚠️ File marked for deletion\n"
+                result += "\n⚠️ **File marked for deletion**\n"
                 if file_data.get("previous_content"):
-                    result += f"\nPrevious content (first 200 chars):\n{file_data['previous_content'][:200]}...\n"
+                    prev_lines = file_data["previous_content"].split("\n")
+                    result += f"**Original Lines:** {len(prev_lines)}\n"
+                    result += f"**Original Size:** {len(file_data['previous_content'])} chars\n"
+                    result += f"\n**Previous content preview (first 300 chars):**\n```\n{file_data['previous_content'][:300]}...\n```\n"
             else:
+                lines = []
                 if file_data.get("content"):
+                    lines = file_data["content"].split("\n")
+                    result += f"\n**Current Lines:** {len(lines)}\n"
+                    result += f"**Current Size:** {len(file_data['content'])} chars\n"
                     content_preview = file_data["content"][:500]
-                    result += f"\nContent preview (first 500 chars):\n```\n{content_preview}\n```\n"
+                    result += f"\n**Content preview (first 500 chars):**\n```\n{content_preview}\n```\n"
                     if len(file_data["content"]) > 500:
                         result += f"\n... ({len(file_data['content']) - 500} more characters)\n"
 
-            if (
-                file_data.get("previous_content")
-                and file_data["change_type"] == "update"
-            ):
-                result += f"\nPrevious content preserved ({len(file_data['previous_content'])} chars)\n"
+                if (
+                    file_data.get("previous_content")
+                    and file_data["change_type"] == "update"
+                    and lines
+                ):
+                    prev_lines = file_data["previous_content"].split("\n")
+                    result += f"\n**Previous Lines:** {len(prev_lines)}\n"
+                    result += f"**Previous Size:** {len(file_data['previous_content'])} chars\n"
+                    result += (
+                        f"**Line Change:** {len(lines) - len(prev_lines):+d} lines\n"
+                    )
+
+            result += "\n💡 **Tip:** Use `get_file_diff` to see the diff for this file against the repository branch."
 
             return result
         else:
@@ -1784,6 +1844,10 @@ class ShowDiffInput(BaseModel):
         default=3,
         description="Number of context lines to include around changes in the diff (default: 3)",
     )
+    project_id: Optional[str] = Field(
+        default=None,
+        description="Optional project ID to fetch original content from repository for accurate diffs against the branch. Use project_id from conversation context.",
+    )
 
 
 def show_updated_file_tool(input_data: ShowUpdatedFileInput) -> str:
@@ -1864,12 +1928,13 @@ def show_updated_file_tool(input_data: ShowUpdatedFileInput) -> str:
 def show_diff_tool(input_data: ShowDiffInput) -> str:
     """
     Display unified diffs showing changes between managed code and the actual codebase.
-    This shows what has changed compared to the original files. Use this at the end of your response
-    to show all the code changes you've made. This appends formatted diffs to your response so users
-    can see exactly what was changed.
+    This tool streams the formatted diffs directly into the agent response without going through
+    the LLM, allowing users to see exactly what was changed. Use this at the end of your response
+    to show all the code changes you've made. The content is automatically shown to the user
+    without consuming LLM context.
     """
     logger.info(
-        f"Tool show_diff_tool: Displaying diff(s) (file_path: {input_data.file_path}, context_lines: {input_data.context_lines})"
+        f"Tool show_diff_tool: Displaying diff(s) (file_path: {input_data.file_path}, context_lines: {input_data.context_lines}, project_id: {input_data.project_id})"
     )
     try:
         manager = _get_code_changes_manager()
@@ -1880,9 +1945,22 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
                 "📋 **No code changes to display**\n\nNo files have been modified yet."
             )
 
+        # Get database session if project_id provided
+        db = None
+        if input_data.project_id:
+            logger.info(
+                f"Tool show_diff_tool: Project ID provided ({input_data.project_id}), fetching database session"
+            )
+            from app.core.database import get_db
+
+            db = next(get_db())
+
         # Generate diffs
         diffs = manager.generate_diff(
-            file_path=input_data.file_path, context_lines=input_data.context_lines
+            file_path=input_data.file_path,
+            context_lines=input_data.context_lines,
+            project_id=input_data.project_id,
+            db=db,
         )
 
         if not diffs:
@@ -1932,6 +2010,139 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
     except Exception as e:
         logger.error(f"Tool show_diff_tool: Error displaying diff: {str(e)}")
         return f"❌ Error displaying diff: {str(e)}"
+
+
+class GetFileDiffInput(BaseModel):
+    file_path: str = Field(description="Path to the file to get diff for")
+    context_lines: int = Field(
+        default=3,
+        description="Number of context lines to include around changes in the diff (default: 3)",
+    )
+    project_id: Optional[str] = Field(
+        default=None,
+        description="Optional project ID to fetch original content from repository for accurate diff against the branch. Use project_id from conversation context.",
+    )
+
+
+def get_file_diff_tool(input_data: GetFileDiffInput) -> str:
+    """
+    Get the diff for a specific file against the repository branch.
+    This shows what has changed in this file compared to the original repository version.
+    """
+    logger.info(
+        f"Tool get_file_diff_tool: Getting diff for '{input_data.file_path}' (context_lines: {input_data.context_lines}, project_id: {input_data.project_id})"
+    )
+    try:
+        manager = _get_code_changes_manager()
+        file_data = manager.get_file(input_data.file_path)
+
+        if not file_data:
+            return f"❌ File '{input_data.file_path}' not found in changes"
+
+        # Get database session if project_id provided
+        db = None
+        if input_data.project_id:
+            logger.info(
+                f"Tool get_file_diff_tool: Project ID provided ({input_data.project_id}), fetching database session"
+            )
+            from app.core.database import get_db
+
+            db = next(get_db())
+
+        # Generate diff for this specific file
+        diffs = manager.generate_diff(
+            file_path=input_data.file_path,
+            context_lines=input_data.context_lines,
+            project_id=input_data.project_id,
+            db=db,
+        )
+
+        if not diffs or input_data.file_path not in diffs:
+            return f"❌ No diff generated for '{input_data.file_path}'"
+
+        diff_content = diffs[input_data.file_path]
+        change_emoji = {"add": "➕", "update": "✏️", "delete": "🗑️"}
+        emoji = change_emoji.get(file_data["change_type"], "📄")
+
+        result = f"📝 **Diff for {input_data.file_path}** ({emoji} {file_data['change_type']})\n\n"
+        if file_data.get("description"):
+            result += f"*{file_data['description']}*\n\n"
+        result += f"**Last updated:** {file_data['updated_at']}\n\n"
+        result += "```diff\n"
+        result += diff_content
+        result += "\n```\n"
+
+        return result
+    except Exception as e:
+        logger.error(f"Tool get_file_diff_tool: Error getting file diff: {str(e)}")
+        return f"❌ Error getting file diff: {str(e)}"
+
+
+def get_comprehensive_metadata_tool() -> str:
+    """
+    Get comprehensive metadata about all code changes in the current session.
+    This shows the complete state of all files being managed, including timestamps,
+    descriptions, change types, and line counts. Use this to review your session progress
+    and understand what files have been modified.
+    """
+    logger.info("Tool get_comprehensive_metadata_tool: Getting comprehensive metadata")
+    try:
+        manager = _get_code_changes_manager()
+        summary = manager.get_summary()
+
+        result = (
+            f"📊 **Complete Session State** (Session ID: {summary['session_id']})\n\n"
+        )
+        result += f"**Total Files Changed:** {summary['total_files']}\n\n"
+
+        change_emoji = {"add": "➕", "update": "✏️", "delete": "🗑️"}
+
+        # Summary by change type
+        result += "**Summary by Change Type:**\n"
+        for change_type, count in summary["change_counts"].items():
+            if count > 0:
+                emoji = change_emoji.get(change_type, "📄")
+                result += f"- {emoji} {change_type.title()}: {count}\n"
+        result += "\n"
+
+        # Detailed file information
+        if summary["files"]:
+            result += "**Detailed File Information:**\n\n"
+            for file_info in summary["files"]:
+                emoji = change_emoji.get(file_info["change_type"], "📄")
+                result += f"{emoji} **{file_info['file_path']}**\n"
+                result += f"  - Type: {file_info['change_type']}\n"
+                result += f"  - Last Updated: {file_info['updated_at']}\n"
+                if file_info.get("description"):
+                    result += f"  - Description: {file_info['description']}\n"
+
+                # Get file data for line counts
+                file_data = manager.get_file(file_info["file_path"])
+                if file_data:
+                    if file_data["change_type"] == "delete":
+                        if file_data.get("previous_content"):
+                            lines = file_data["previous_content"].split("\n")
+                            result += f"  - Original Lines: {len(lines)}\n"
+                    else:
+                        if file_data.get("content"):
+                            lines = file_data["content"].split("\n")
+                            result += f"  - Current Lines: {len(lines)}\n"
+                        if file_data.get("previous_content"):
+                            prev_lines = file_data["previous_content"].split("\n")
+                            result += f"  - Original Lines: {len(prev_lines)}\n"
+                result += "\n"
+        else:
+            result += "No files have been modified yet.\n"
+
+        result += "\n💡 **Tip:** Use `get_file_from_changes` to see detailed information about a specific file, "
+        result += "or `get_file_diff` to see the diff for a file against the repository branch."
+
+        return result
+    except Exception as e:
+        logger.error(
+            f"Tool get_comprehensive_metadata_tool: Error getting metadata: {str(e)}"
+        )
+        return f"❌ Error getting metadata: {str(e)}"
 
 
 def export_changes_tool(input_data: ExportChangesInput) -> str:
@@ -1999,7 +2210,7 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
         ),
         SimpleTool(
             name="update_file_lines",
-            description="Update specific lines in a file using line numbers. Use this for targeted line-by-line replacements. Lines are 1-indexed. Specify start_line and optionally end_line to replace a range. IMPORTANT: You MUST provide project_id from the conversation context to access existing file content from the repository.",
+            description="Update specific lines in a file using line numbers. Use this for targeted line-by-line replacements. Lines are 1-indexed. Specify start_line and optionally end_line to replace a range. CRITICAL: You MUST preserve proper indentation - match the indentation of surrounding lines exactly. Fetch the file with line numbers first to see the exact indentation. After updating, always verify the changes by fetching the updated lines to ensure indentation and content are correct. IMPORTANT: You MUST provide project_id from the conversation context to access existing file content from the repository.",
             func=update_file_lines_tool,
             args_schema=UpdateFileLinesInput,
         ),
@@ -2011,7 +2222,7 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
         ),
         SimpleTool(
             name="insert_lines",
-            description="Insert content at a specific line number in a file. Use this to add new code at a specific location. Lines are 1-indexed. Set insert_after=False to insert before the specified line. IMPORTANT: You MUST provide project_id from the conversation context to access existing file content from the repository.",
+            description="Insert content at a specific line number in a file. Use this to add new code at a specific location. Lines are 1-indexed. Set insert_after=False to insert before the specified line. CRITICAL: You MUST preserve proper indentation - match the indentation level of the line you're inserting after/before, or maintain consistent indentation for the code block you're adding. Fetch the file with line numbers first to see the exact indentation. After inserting, always verify the changes by fetching the inserted lines in context to ensure indentation and placement are correct. IMPORTANT: You MUST provide project_id from the conversation context to access existing file content from the repository.",
             func=insert_lines_tool,
             args_schema=InsertLinesInput,
         ),
@@ -2077,9 +2288,21 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
         ),
         SimpleTool(
             name="show_diff",
-            description="Display unified diffs showing changes between managed code and the actual codebase. This shows what has changed compared to the original files. Use this at the end of your response to show all the code changes you've made. This appends formatted diffs to your response so users can see exactly what was changed.",
+            description="Display unified diffs showing changes between managed code and the actual codebase. This tool streams the formatted diffs directly into the agent response without going through the LLM, allowing users to see exactly what was changed. Use this at the end of your response to show all the code changes you've made. The content is automatically shown to the user without consuming LLM context. Optional project_id fetches original content from repository for accurate diffs against the branch.",
             func=show_diff_tool,
             args_schema=ShowDiffInput,
+        ),
+        SimpleTool(
+            name="get_file_diff",
+            description="Get the diff for a specific file against the repository branch. Shows what has changed in this file compared to the original repository version. Use project_id from conversation context to get accurate diffs against the branch.",
+            func=get_file_diff_tool,
+            args_schema=GetFileDiffInput,
+        ),
+        SimpleTool(
+            name="get_session_metadata",
+            description="Get comprehensive metadata about all code changes in the current session. Shows complete state of all files being managed, including timestamps, descriptions, change types, and line counts. Use this to review your session progress and understand what files have been modified. This is your session state - all your work is tracked here.",
+            func=get_comprehensive_metadata_tool,
+            args_schema=None,
         ),
     ]
 
