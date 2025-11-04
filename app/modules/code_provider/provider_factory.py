@@ -292,7 +292,9 @@ class CodeProviderFactory:
                 if tokens:
                     logger.info("Using GH_TOKEN_LIST for authentication")
                     # Create provider directly without auto-authentication
-                    base_url = os.getenv("CODE_PROVIDER_BASE_URL") or "https://api.github.com"
+                    base_url = (
+                        os.getenv("CODE_PROVIDER_BASE_URL") or "https://api.github.com"
+                    )
                     provider = GitHubProvider(base_url=base_url)
                     token = random.choice(tokens)
                     provider.authenticate(
@@ -310,10 +312,14 @@ class CodeProviderFactory:
 
         # If we get here and it's GitHub without App configured, try unauthenticated access
         if provider_type == ProviderType.GITHUB:
-            logger.info(f"No PAT configured, trying unauthenticated access for {repo_name}")
+            logger.info(
+                f"No PAT configured, trying unauthenticated access for {repo_name}"
+            )
             try:
                 # Create provider directly without auto-authentication
-                base_url = os.getenv("CODE_PROVIDER_BASE_URL") or "https://api.github.com"
+                base_url = (
+                    os.getenv("CODE_PROVIDER_BASE_URL") or "https://api.github.com"
+                )
                 provider = GitHubProvider(base_url=base_url)
                 provider.set_unauthenticated_client()
                 return provider

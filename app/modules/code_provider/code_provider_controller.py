@@ -60,7 +60,11 @@ class CodeProviderController:
             )
             is_401_error = (
                 (BadCredentialsException and isinstance(e, BadCredentialsException))
-                or (GithubException and isinstance(e, GithubException) and e.status == 401)
+                or (
+                    GithubException
+                    and isinstance(e, GithubException)
+                    and e.status == 401
+                )
                 or "401" in str(e)
                 or "Bad credentials" in str(e)
                 or (hasattr(e, "status") and e.status == 401)
@@ -72,7 +76,7 @@ class CodeProviderController:
             )
 
             provider_type = os.getenv("CODE_PROVIDER", "github").lower()
-            
+
             # If this is a GitHub repo and PAT failed with 404 or 401, try unauthenticated access for public repos
             # 401 can happen when token is invalid/expired, but repo might still be public
             if provider_type == "github" and (is_404_error or is_401_error):
@@ -82,18 +86,23 @@ class CodeProviderController:
                     "trying unauthenticated access for public repo"
                 )
                 try:
-                    from app.modules.code_provider.github.github_provider import GitHubProvider
+                    from app.modules.code_provider.github.github_provider import (
+                        GitHubProvider,
+                    )
+
                     provider = GitHubProvider()
                     provider.set_unauthenticated_client()
                     branches = provider.list_branches(repo_name)
-                    logger.info(f"Successfully accessed {repo_name} without authentication")
+                    logger.info(
+                        f"Successfully accessed {repo_name} without authentication"
+                    )
                     return {"branches": branches}
                 except Exception as unauth_error:
                     logger.warning(
                         f"Unauthenticated access also failed for {repo_name}: {unauth_error}"
                     )
                     # Continue to try GitHub App below
-            
+
             # If GitHub App is configured, try it as fallback
             if provider_type == "github":
                 app_id = os.getenv("GITHUB_APP_ID")
