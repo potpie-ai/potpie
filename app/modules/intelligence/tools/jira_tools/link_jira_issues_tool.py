@@ -15,9 +15,7 @@ from app.modules.intelligence.tools.jira_tools.jira_client import (
 class LinkJiraIssuesInput(BaseModel):
     """Input schema for linking Jira issues."""
 
-    issue_key: str = Field(
-        description="The source issue key (e.g., 'PROJ-123')"
-    )
+    issue_key: str = Field(description="The source issue key (e.g., 'PROJ-123')")
     linked_issue_key: str = Field(
         description="The target issue key to link to (e.g., 'PROJ-456')"
     )

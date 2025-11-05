@@ -363,6 +363,7 @@ class JiraClient:
         summary: str,
         description: str,
         issue_type: str = "Task",
+        assignee_id: Optional[str] = None,
         **kwargs,
     ) -> Dict[str, Any]:
         """
@@ -373,6 +374,7 @@ class JiraClient:
             summary: Issue summary/title
             description: Issue description
             issue_type: Issue type (default: 'Task')
+            assignee_id: Atlassian account ID to assign the issue to (optional)
             **kwargs: Additional fields (priority, labels, etc.)
 
         Returns:
@@ -390,9 +392,11 @@ class JiraClient:
             # Add optional fields
             if "priority" in kwargs:
                 fields["priority"] = {"name": kwargs["priority"]}
-            if "assignee" in kwargs:
+            if assignee_id:
+                fields["assignee"] = {"id": assignee_id}
+            elif "assignee" in kwargs:
                 # Support legacy assignee in kwargs
-                fields["assignee"] = {"accountId": kwargs["assignee"]}
+                fields["assignee"] = {"id": kwargs["assignee"]}
             if "labels" in kwargs:
                 fields["labels"] = kwargs["labels"]
             if "parent" in kwargs:
@@ -404,6 +408,7 @@ class JiraClient:
                     fields[key] = value
 
             payload = {"fields": fields}
+
             response = self.client.post("/rest/api/3/issue", json=payload)
             response.raise_for_status()
             issue = response.json()
@@ -423,13 +428,16 @@ class JiraClient:
             logging.error(f"Failed to create issue: {str(e)}")
             raise Exception(f"Failed to create issue: {str(e)}")
 
-    def update_issue(self, issue_key: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+    def update_issue(
+        self, issue_key: str, fields: Dict[str, Any], assignee_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Update an existing Jira issue.
 
         Args:
             issue_key: The issue key to update
             fields: Dictionary of fields to update
+            assignee_id: Atlassian account ID to assign the issue to (optional)
 
         Returns:
             Dictionary containing the updated issue details
@@ -438,6 +446,10 @@ class JiraClient:
             # Convert description to ADF format if it's a plain string
             if "description" in fields and isinstance(fields["description"], str):
                 fields["description"] = self._text_to_adf(fields["description"])
+
+            # Add assignee if provided
+            if assignee_id:
+                fields["assignee"] = {"id": assignee_id}
 
             payload = {"fields": fields}
             response = self.client.put(f"/rest/api/3/issue/{issue_key}", json=payload)
@@ -636,10 +648,11 @@ class JiraClient:
             # Get priorities (from project or global)
             priorities = []
             try:
-                priority_response = self.client.get("/rest/api/3/priorityscheme?expand=priorities")
+                priority_response = self.client.get(
+                    "/rest/api/3/priorityscheme?expand=priorities"
+                )
                 priority_response.raise_for_status()
                 priority_data = priority_response.json()
-                logging.info(f"Priority data: {priority_data}")
                 default_priority_scheme = priority_data.get("values")[0].get(
                     "priorities", []
                 )
@@ -652,7 +665,6 @@ class JiraClient:
                             "description": p.get("description", ""),
                         }
                     )
-                logging.info(f"Parsed priorities: {priorities}")
             except Exception as e:
                 logging.warning(f"Could not fetch priorities: {str(e)}")
 
@@ -758,7 +770,6 @@ class JiraClient:
     def get_project_users(
         self, project_key: str, query: Optional[str] = None, max_results: int = 50
     ) -> Dict[str, Any]:
-        # This is currently not working as the Jira API for this is wrong!!
         """
         Get users who can be assigned to issues in a project.
 
@@ -786,13 +797,15 @@ class JiraClient:
 
             users = []
             for user in users_data:
-                users.append({
-                    "account_id": user.get("accountId"),
-                    "display_name": user.get("displayName"),
-                    "email_address": user.get("emailAddress"),
-                    "active": user.get("active", True),
-                    "avatar_url": user.get("avatarUrls", {}).get("48x48"),
-                })
+                users.append(
+                    {
+                        "account_id": user.get("accountId"),
+                        "display_name": user.get("displayName"),
+                        "email_address": user.get("emailAddress"),
+                        "active": user.get("active", True),
+                        "avatar_url": user.get("avatarUrls", {}).get("48x48"),
+                    }
+                )
 
             logging.info(
                 f"Retrieved {len(users)} assignable users for project {project_key}"
@@ -811,9 +824,7 @@ class JiraClient:
                 f"Failed to fetch project users: {e.response.status_code} {e.response.text}"
             )
         except Exception as e:
-            logging.error(
-                f"Failed to fetch project users for {project_key}: {str(e)}"
-            )
+            logging.error(f"Failed to fetch project users for {project_key}: {str(e)}")
             raise Exception(f"Failed to fetch project users: {str(e)}")
 
     def link_issues(

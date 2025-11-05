@@ -23,7 +23,7 @@ class SearchJiraIssuesInput(BaseModel):
     )
     include_comments: bool = Field(
         default=False,
-        description="If True, include all comments for each issue in the results. Set to False for faster searches when comments aren't needed. (default: False)"
+        description="If True, include all comments for each issue in the results. Set to False for faster searches when comments aren't needed. (default: False)",
     )
 
 
@@ -40,7 +40,6 @@ class SearchJiraIssuesTool:
     - Search by labels, components, or custom fields
     - Get unassigned issues
     - Find issues assigned to current user
-    - Get issues with their comments (set include_comments=True)
     
     JQL Examples:
     - "project = PROJ AND status = Open"
@@ -49,8 +48,9 @@ class SearchJiraIssuesTool:
     - "status changed to Done during (-1w, now())"
     - "project = PROJ ORDER BY created DESC"
     
-    Optional: Set include_comments=True to get all comments for each issue.
-    Note: Including comments may slow down the search for large result sets.
+    Optional parameters:
+    - max_results: Limit number of results (default: 50)
+    - include_comments: Set to True to include all comments for each issue (slower)
     
     Returns a list of matching issues with their details.
     """
@@ -59,7 +59,9 @@ class SearchJiraIssuesTool:
         self.db = db
         self.user_id = user_id
 
-    async def arun(self, jql: str, max_results: int = 50, include_comments: bool = False) -> Dict[str, Any]:
+    async def arun(
+        self, jql: str, max_results: int = 50, include_comments: bool = False
+    ) -> Dict[str, Any]:
         """Async version that handles the core logic."""
         try:
             # Check if user has Jira integration
@@ -76,7 +78,10 @@ class SearchJiraIssuesTool:
 
             # Search for issues
             results = await asyncio.to_thread(
-                client.search_issues, jql=jql, max_results=max_results, include_comments=include_comments
+                client.search_issues,
+                jql=jql,
+                max_results=max_results,
+                include_comments=include_comments,
             )
 
             return {
@@ -94,7 +99,9 @@ class SearchJiraIssuesTool:
                 "message": f"Failed to search Jira issues: {str(e)}",
             }
 
-    def run(self, jql: str, max_results: int = 50, include_comments: bool = False) -> Dict[str, Any]:
+    def run(
+        self, jql: str, max_results: int = 50, include_comments: bool = False
+    ) -> Dict[str, Any]:
         """Synchronous version that runs the async version."""
         return asyncio.run(self.arun(jql, max_results, include_comments))
 

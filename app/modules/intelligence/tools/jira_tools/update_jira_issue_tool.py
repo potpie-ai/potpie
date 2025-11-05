@@ -28,6 +28,11 @@ class UpdateJiraIssueInput(BaseModel):
         default=None,
         description="New priority level. Use 'Get Jira Project Details' tool to see valid priorities. (optional)",
     )
+    assignee_id: Optional[str] = Field(
+        default=None,
+        description="Atlassian account ID to assign the issue to. Use 'Get Jira Project Users' tool to find user account IDs. (optional)",
+    )
+
 
 class UpdateJiraIssueTool:
     """Tool for updating existing Jira issues."""
@@ -35,11 +40,14 @@ class UpdateJiraIssueTool:
     name = "Update Jira Issue"
     description = """Update fields of an existing Jira issue.
     
-    TIP: Use 'Get Jira Project Details' tool to discover valid priority levels.
+    TIPS:
+    - Use 'Get Jira Project Details' tool to discover valid priority levels
+    - Use 'Get Jira Project Users' tool to get user account IDs for assignment
     
     Use this tool when you need to:
     - Change the summary or description of an issue
     - Update the priority level
+    - Assign or reassign the issue to a user (requires account_id)
     - Modify issue details based on new information
     - Correct mistakes in issue fields
     
@@ -58,6 +66,7 @@ class UpdateJiraIssueTool:
         summary: Optional[str] = None,
         description: Optional[str] = None,
         priority: Optional[str] = None,
+        assignee_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Async version that handles the core logic."""
         try:
@@ -81,17 +90,19 @@ class UpdateJiraIssueTool:
                 fields["description"] = description
             if priority is not None:
                 fields["priority"] = {"name": priority}
-
-            if not fields:
+            if not fields and not assignee_id:
                 return {
                     "success": False,
                     "error": "No fields provided to update",
-                    "message": "You must provide at least one field to update (summary, description, or priority)",
+                    "message": "You must provide at least one field to update (summary, description, priority, or assignee_id)",
                 }
 
             # Update the issue
             issue = await asyncio.to_thread(
-                client.update_issue, issue_key=issue_key, fields=fields
+                client.update_issue,
+                issue_key=issue_key,
+                fields=fields,
+                assignee_id=assignee_id,
             )
 
             return {
@@ -113,9 +124,12 @@ class UpdateJiraIssueTool:
         summary: Optional[str] = None,
         description: Optional[str] = None,
         priority: Optional[str] = None,
+        assignee_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Synchronous version that runs the async version."""
-        return asyncio.run(self.arun(issue_key, summary, description, priority))
+        return asyncio.run(
+            self.arun(issue_key, summary, description, priority, assignee_id)
+        )
 
 
 def update_jira_issue_tool(db: Session, user_id: str) -> StructuredTool:
@@ -148,6 +162,7 @@ def update_jira_issue_tool(db: Session, user_id: str) -> StructuredTool:
         - summary (str, optional): New summary/title
         - description (str, optional): New description
         - priority (str, optional): New priority level (see project details for valid values, Eg: 'High', 'Medium', 'Low')
+        - assignee_id (str, optional): Atlassian account ID to assign issue to (use 'Get Jira Project Users' to find account IDs)
         
         Provide only the fields you want to update. Returns updated issue details.""",
         args_schema=UpdateJiraIssueInput,

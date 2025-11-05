@@ -22,12 +22,16 @@ class CreateJiraIssueInput(BaseModel):
     summary: str = Field(description="Brief summary/title of the issue (required)")
     description: str = Field(description="Detailed description of the issue")
     issue_type: str = Field(
-        default="To Do",
-        description="Type of issue (e.g., 'To Do', 'In Progress', 'Completed', 'Task', 'Bug', 'Story'). Use 'Get Jira Project Details' tool to see valid types for the project. (default: 'To Do')",
+        default="Task",
+        description="Type of issue (e.g., 'Task', 'Bug', 'Story', 'Epic', 'Subtask'). This defines the KIND of work item, not its status. Use 'Get Jira Project Details' tool to see valid issue types for the project. (default: 'Task')",
     )
     priority: Optional[str] = Field(
         default=None,
         description="Priority level (e.g., 'High', 'Medium', 'Low'). Use 'Get Jira Project Details' tool to see valid priorities. (optional)",
+    )
+    assignee_id: Optional[str] = Field(
+        default=None,
+        description="Account ID of the user to assign this issue to. Use 'Get Jira Project Users' tool to find user account IDs. (optional)",
     )
     labels: Optional[List[str]] = Field(
         default=None, description="List of labels to add to the issue (optional)"
@@ -44,6 +48,8 @@ class CreateJiraIssueTool:
     - Valid issue types for the project (Task, Bug, Story, Epic, etc.)
     - Valid priority levels (Highest, High, Medium, Low, Lowest)
     - Existing labels you can use
+    
+    If assigning to a user, use 'Get Jira Project Users' tool first to get their account_id.
 
     Use this tool when you need to:
     - Create a bug report from error logs or user reports
@@ -58,9 +64,12 @@ class CreateJiraIssueTool:
     - description: Detailed description
     
     Optional fields:
-    - issue_type: Type of issue (default: 'To Do')
-    - priority: Priority level
+    - issue_type: Type of work item (default: 'Task') - e.g., Bug, Story, Epic. Use 'Get Jira Project Details' to see valid types.
+    - priority: Priority level (e.g., 'High', 'Medium', 'Low'). Use 'Get Jira Project Details' to see valid priorities.
+    - assignee_id: Account ID of user to assign to
     - labels: Tags for categorization
+    
+    To change the status after creation, use the 'Transition Jira Issue' tool.
     
     Returns the created issue with its key and details.
     """
@@ -74,8 +83,9 @@ class CreateJiraIssueTool:
         project_key: str,
         summary: str,
         description: str,
-        issue_type: str = "To Do",
+        issue_type: str = "Task",
         priority: Optional[str] = None,
+        assignee_id: Optional[str] = None,
         labels: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Async version that handles the core logic."""
@@ -106,6 +116,7 @@ class CreateJiraIssueTool:
                 summary=summary,
                 description=description,
                 issue_type=issue_type,
+                assignee_id=assignee_id,
                 **kwargs,
             )
 
@@ -127,13 +138,22 @@ class CreateJiraIssueTool:
         project_key: str,
         summary: str,
         description: str,
-        issue_type: str = "To Do",
+        issue_type: str = "Task",
         priority: Optional[str] = None,
+        assignee_id: Optional[str] = None,
         labels: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Synchronous version that runs the async version."""
         return asyncio.run(
-            self.arun(project_key, summary, description, issue_type, priority, labels)
+            self.arun(
+                project_key,
+                summary,
+                description,
+                issue_type,
+                priority,
+                assignee_id,
+                labels,
+            )
         )
 
 
@@ -168,10 +188,11 @@ def create_jira_issue_tool(db: Session, user_id: str) -> StructuredTool:
         - project_key (str): Project key (e.g., 'PROJ', 'BUG')
         - summary (str): Brief title of the issue
         - description (str): Detailed description
-        - issue_type (str): Type of issue (default: 'To Do') (Eg: 'To Do', 'In Progress', 'Done', 'Bug', 'Task'). Get valid types from project details.
+        - issue_type (str): Type of work item (default: 'Task') (e.g., 'Bug', 'Task', 'Story', 'Epic'). Get valid types from project details.
         - priority (str, optional): Priority level. Get valid priorities from project details.
+        - assignee_id (str, optional): User's account ID. Get from project users tool.
         - labels (list, optional): List of labels/tags
         
-        Returns the created issue with its key and URL.""",
+        Returns the created issue with its key and URL. Use 'Transition Jira Issue' tool to change status.""",
         args_schema=CreateJiraIssueInput,
     )

@@ -35,6 +35,7 @@ class TransitionJiraIssueTool:
     - Move an issue back to 'To Do' if work needs to restart
     - Close or resolve an issue
     - Move through any custom workflow states
+    - Change issue status based on external events or conditions
     
     The transition name should match your Jira workflow (case-insensitive).
     Common transitions: 'To Do', 'In Progress', 'Done', 'Closed', 'Resolved'

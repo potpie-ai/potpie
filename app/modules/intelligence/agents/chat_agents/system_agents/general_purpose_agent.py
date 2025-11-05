@@ -57,6 +57,7 @@ class GeneralPurposeAgent(ChatAgent):
                 "get_jira_projects",
                 "get_jira_project_details",
                 "link_jira_issues",
+                "get_jira_project_users",
                 "web_search_tool",
             ]
         )

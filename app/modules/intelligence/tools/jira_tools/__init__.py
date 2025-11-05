@@ -8,6 +8,7 @@ from .add_jira_comment_tool import add_jira_comment_tool
 from .transition_jira_issue_tool import transition_jira_issue_tool
 from .get_jira_projects_tool import get_jira_projects_tool
 from .get_jira_project_details_tool import get_jira_project_details_tool
+from .get_jira_project_users_tool import get_jira_project_users_tool
 from .link_jira_issues_tool import link_jira_issues_tool
 from .jira_client import check_jira_integration_exists
 
@@ -20,6 +21,7 @@ __all__ = [
     "transition_jira_issue_tool",
     "get_jira_projects_tool",
     "get_jira_project_details_tool",
+    "get_jira_project_users_tool",
     "link_jira_issues_tool",
     "check_jira_integration_exists",
 ]

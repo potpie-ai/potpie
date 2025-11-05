@@ -8,10 +8,24 @@ The Jira tools enable agents to perform common Jira operations on behalf of user
 
 - Fetching issue details
 - Searching for issues with JQL
-- Creating new issues
+- Creating new issues (with proper issue types: Task, Bug, Story, etc.)
 - Updating existing issues
 - Adding comments
-- Transitioning issues between statuses
+- Transitioning issues between statuses (To Do, In Progress, Done, etc.)
+
+### Understanding Jira Terminology
+
+**Issue Type** vs **Status** - Two distinct concepts:
+
+- **Issue Type**: The KIND/CATEGORY of work (e.g., Task, Bug, Story, Epic)
+  - Set at creation time
+  - Defines what type of work item it is
+  - Examples: Bug, Task, Story, Epic, Subtask
+  
+- **Status**: The current STATE in the workflow (e.g., To Do, In Progress, Done)
+  - Changes throughout the issue's lifecycle
+  - Represents where the issue is in its workflow
+  - Changed via workflow transitions
 
 ## Jira Integration Agent
 

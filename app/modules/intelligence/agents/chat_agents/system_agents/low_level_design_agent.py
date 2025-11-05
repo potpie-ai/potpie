@@ -59,6 +59,7 @@ class LowLevelDesignAgent(ChatAgent):
                 "get_jira_projects",
                 "get_jira_project_details",
                 "link_jira_issues",
+                "get_jira_project_users",
                 "fetch_file",
                 "analyze_code_structure",
             ]
