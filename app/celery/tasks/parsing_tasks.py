@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from typing import Any, Dict
 
@@ -46,7 +45,8 @@ def process_parsing(
                 f"Parsing process took {elapsed_time:.2f} seconds for project {project_id}"
             )
 
-        asyncio.run(run_parsing())
+        # Use BaseTask's long-lived event loop for consistency
+        self.run_async(run_parsing())
         logger.info(f"Parsing process completed for project {project_id}")
     except Exception as e:
         logger.error(f"Error during parsing for project {project_id}: {str(e)}")

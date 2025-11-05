@@ -72,3 +72,4 @@ pytest
 pytest-asyncio
 Pillow==10.0.1
 python-multipart>=0.0.7
+asyncpg==0.30.0
