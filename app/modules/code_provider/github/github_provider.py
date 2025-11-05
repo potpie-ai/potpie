@@ -1,5 +1,4 @@
 import logging
-import os
 from typing import List, Dict, Any, Optional
 import chardet
 from github import Github
@@ -34,7 +33,9 @@ class GitHubProvider(ICodeProvider):
             if not token:
                 raise ValueError("PAT authentication requires 'token' in credentials")
 
-            logger.info(f"Authenticating with Personal Access Token for GitHub (base URL: {self.base_url})")
+            logger.info(
+                f"Authenticating with Personal Access Token for GitHub (base URL: {self.base_url})"
+            )
             self.client = Github(token, base_url=self.base_url)
 
         elif method == AuthMethod.OAUTH_TOKEN:
@@ -96,7 +97,9 @@ class GitHubProvider(ICodeProvider):
 
         try:
             repo = self.client.get_repo(repo_name)
-            logger.info(f"Successfully fetched repository: {repo_name} (private: {repo.private})")
+            logger.info(
+                f"Successfully fetched repository: {repo_name} (private: {repo.private})"
+            )
             return {
                 "id": repo.id,
                 "name": repo.name,
@@ -109,7 +112,9 @@ class GitHubProvider(ICodeProvider):
                 "language": repo.language,
             }
         except GithubException as e:
-            logger.error(f"Failed to fetch repository {repo_name}: {type(e).__name__} - {str(e)}")
+            logger.error(
+                f"Failed to fetch repository {repo_name}: {type(e).__name__} - {str(e)}"
+            )
             raise
 
     def check_repository_access(self, repo_name: str) -> bool:
