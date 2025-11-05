@@ -42,7 +42,21 @@ from app.modules.intelligence.tools.code_query_tools.get_file_content_by_path im
     fetch_file_tool,
 )
 from app.modules.intelligence.tools.tool_schema import ToolInfo, ToolInfoWithParameters
-from app.modules.intelligence.tools.web_tools.github_tool import github_tool
+from app.modules.intelligence.tools.web_tools.code_provider_tool import (
+    code_provider_tool,
+)
+from app.modules.intelligence.tools.web_tools.code_provider_create_branch import (
+    code_provider_create_branch_tool,
+)
+from app.modules.intelligence.tools.web_tools.code_provider_create_pr import (
+    code_provider_create_pull_request_tool,
+)
+from app.modules.intelligence.tools.web_tools.code_provider_add_pr_comment import (
+    code_provider_add_pr_comments_tool,
+)
+from app.modules.intelligence.tools.web_tools.code_provider_update_file import (
+    code_provider_update_file_tool,
+)
 from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import (
     webpage_extractor_tool,
 )
@@ -62,7 +76,19 @@ class ToolService:
         self.user_id = user_id
         self.webpage_extractor_tool = webpage_extractor_tool(db, user_id)
         self.web_search_tool = web_search_tool(db, user_id)
-        self.github_tool = github_tool(db, user_id)
+        self.code_provider_tool = code_provider_tool(db, user_id)
+        self.code_provider_create_branch_tool = code_provider_create_branch_tool(
+            db, user_id
+        )
+        self.code_provider_create_pr_tool = code_provider_create_pull_request_tool(
+            db, user_id
+        )
+        self.code_provider_add_pr_comments_tool = code_provider_add_pr_comments_tool(
+            db, user_id
+        )
+        self.code_provider_update_file_tool = code_provider_update_file_tool(
+            db, user_id
+        )
         self.get_code_from_multiple_node_ids_tool = GetCodeFromMultipleNodeIdsTool(
             self.db, self.user_id
         )
@@ -113,8 +139,27 @@ class ToolService:
         if self.webpage_extractor_tool:
             tools["webpage_extractor"] = self.webpage_extractor_tool
 
-        if self.github_tool:
-            tools["github_tool"] = self.github_tool
+        if self.code_provider_tool:
+            tools["code_provider_tool"] = self.code_provider_tool
+            tools["github_tool"] = self.code_provider_tool
+
+        if self.code_provider_create_branch_tool:
+            tools["code_provider_create_branch"] = self.code_provider_create_branch_tool
+            tools["github_create_branch"] = self.code_provider_create_branch_tool
+
+        if self.code_provider_create_pr_tool:
+            tools["code_provider_create_pr"] = self.code_provider_create_pr_tool
+            tools["github_create_pull_request"] = self.code_provider_create_pr_tool
+
+        if self.code_provider_add_pr_comments_tool:
+            tools["code_provider_add_pr_comments"] = (
+                self.code_provider_add_pr_comments_tool
+            )
+            tools["github_add_pr_comments"] = self.code_provider_add_pr_comments_tool
+
+        if self.code_provider_update_file_tool:
+            tools["code_provider_update_file"] = self.code_provider_update_file_tool
+            tools["github_update_branch"] = self.code_provider_update_file_tool
 
         if self.web_search_tool:
             tools["web_search_tool"] = self.web_search_tool
