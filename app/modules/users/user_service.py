@@ -29,9 +29,18 @@ class UserService:
             user = self.db.query(User).filter(User.uid == uid).first()
             if user:
                 user.last_login_at = datetime.utcnow()
-                provider_info = user.provider_info.copy()
+
+                # Safely update provider_info with OAuth token
+                if user.provider_info is None:
+                    user.provider_info = {}
+                provider_info = (
+                    user.provider_info.copy()
+                    if isinstance(user.provider_info, dict)
+                    else {}
+                )
                 provider_info["access_token"] = oauth_token
                 user.provider_info = provider_info
+
                 self.db.commit()
                 self.db.refresh(user)
                 error = False

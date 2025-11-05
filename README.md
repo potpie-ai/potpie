@@ -196,6 +196,89 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
       ```
       **`INFERENCE_MODEL`** and **`CHAT_MODEL`** correspond to the models that will be used for generating knowledge graph and for agent reasoning respectively. These model names should be in the format of `provider/model_name` format or as expected by Litellm. For more information, refer to the [Litellm documentation](https://docs.litellm.ai/docs/providers).
       <br>
+
+### GitHub Authentication Setup
+
+Potpie supports multiple authentication methods for accessing GitHub repositories:
+
+#### For GitHub.com Repositories:
+
+**Option 1: GitHub App (Recommended for Production)**
+   - Create a GitHub App in your organization
+   - Set environment variables:
+     ```bash
+     GITHUB_APP_ID=your-app-id
+     GITHUB_PRIVATE_KEY=your-private-key
+     ```
+
+**Option 2: Personal Access Token (PAT) Pool**
+   - Create one or more GitHub PATs with `repo` scope
+   - Set environment variable (comma-separated for multiple tokens):
+     ```bash
+     GH_TOKEN_LIST=ghp_token1,ghp_token2,ghp_token3
+     ```
+   - Potpie will randomly select from the pool for load balancing
+   - **Rate Limit**: 5,000 requests/hour per token (authenticated)
+
+**Option 3: Unauthenticated Access (Public Repos Only)**
+   - No configuration needed
+   - Automatically used as fallback for public repositories
+   - **Rate Limit**: 60 requests/hour per IP (very limited)
+
+#### For Self-Hosted Git Servers (GitBucket, GitLab, etc.):
+
+Set the following environment variables:
+```bash
+CODE_PROVIDER=github  # or gitlab
+CODE_PROVIDER_BASE_URL=http://your-git-server.com/api/v3
+CODE_PROVIDER_TOKEN=your-token
+```
+
+#### Multi-Provider Setup (GitHub.com + GitBucket):
+
+You can use both GitHub.com and a self-hosted instance simultaneously:
+```bash
+# For GitHub.com repositories
+GH_TOKEN_LIST=ghp_your_github_token
+
+# For self-hosted GitBucket/GitLab
+CODE_PROVIDER=github
+CODE_PROVIDER_BASE_URL=http://localhost:8080/api/v3
+CODE_PROVIDER_TOKEN=your-gitbucket-token
+```
+
+**Important**: `GH_TOKEN_LIST` tokens are always used for GitHub.com, regardless of `CODE_PROVIDER_BASE_URL`.
+
+#### Authentication Fallback Behavior:
+
+When parsing a repository, Potpie attempts authentication methods in this order:
+1. GitHub App (if `GITHUB_APP_ID` is configured)
+2. PAT Pool (if `GH_TOKEN_LIST` is configured)
+3. Single PAT (if `CODE_PROVIDER_TOKEN` is configured)
+4. Unauthenticated (for public repositories only)
+
+If an authenticated request fails with 401 (bad credentials), Potpie automatically falls back to unauthenticated access for public repositories.
+
+#### Troubleshooting:
+
+**Rate Limit Exhausted:**
+- Check rate limit: `curl -H "Authorization: token YOUR_TOKEN" https://api.github.com/rate_limit`
+- Solution: Add more tokens to `GH_TOKEN_LIST` or use GitHub App
+
+**Repository Not Found (404):**
+- Verify repository name format: `owner/repo-name` (without github.com)
+- For private repos, ensure token has `repo` scope
+- For self-hosted: ensure `CODE_PROVIDER_BASE_URL` is correct
+
+**Bad Credentials (401):**
+- Verify token is valid: `curl -H "Authorization: token YOUR_TOKEN" https://api.github.com/user`
+- Check for whitespace in token (should be trimmed)
+- Ensure token hasn't expired or been revoked
+
+**GitHub Token Sent to Wrong Server:**
+- This is automatically handled - `GH_TOKEN_LIST` always uses github.com
+- `CODE_PROVIDER_BASE_URL` only applies to `CODE_PROVIDER_TOKEN`
+
    -  Create a Virtual Environment using Python 3.10:
       ```
       python3.10 -m venv venv

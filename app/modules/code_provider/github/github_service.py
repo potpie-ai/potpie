@@ -181,11 +181,37 @@ class GithubService:
 
         return encoding
 
-    def get_github_oauth_token(self, uid: str) -> str:
+    def get_github_oauth_token(self, uid: str) -> Optional[str]:
+        """
+        Get user's GitHub OAuth token from provider_info.
+
+        Returns:
+            OAuth token if available, None otherwise
+
+        Raises:
+            HTTPException: If user not found
+        """
         user = self.db.query(User).filter(User.uid == uid).first()
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
-        return user.provider_info["access_token"]
+
+        # Safely access provider_info and access_token
+        if user.provider_info is None:
+            logger.warning(f"User {uid} has no provider_info")
+            return None
+
+        if not isinstance(user.provider_info, dict):
+            logger.warning(
+                f"User {uid} provider_info is not a dict: {type(user.provider_info)}"
+            )
+            return None
+
+        access_token = user.provider_info.get("access_token")
+        if not access_token:
+            logger.warning(f"User {uid} has no access_token in provider_info")
+            return None
+
+        return access_token
 
     def _parse_link_header(self, link_header: str) -> Dict[str, str]:
         """Parse GitHub Link header to extract pagination URLs."""
@@ -225,11 +251,34 @@ class GithubService:
                     status_code=400, detail="GitHub username not found for this user"
                 )
 
+            # Try to get user's OAuth token first
             github_oauth_token = self.get_github_oauth_token(firebase_uid)
+
+            # Fall back to system tokens if user OAuth token not available
             if not github_oauth_token:
-                raise HTTPException(
-                    status_code=400, detail="GitHub OAuth token not found for this user"
+                logger.info(
+                    f"No user OAuth token for {firebase_uid}, falling back to system tokens"
                 )
+                # Try GH_TOKEN_LIST first
+                token_list_str = os.getenv("GH_TOKEN_LIST", "")
+                if token_list_str:
+                    tokens = [t.strip() for t in token_list_str.split(",") if t.strip()]
+                    if tokens:
+                        github_oauth_token = random.choice(tokens)
+                        logger.info("Using token from GH_TOKEN_LIST as fallback")
+
+                # Fall back to CODE_PROVIDER_TOKEN if GH_TOKEN_LIST not available
+                if not github_oauth_token:
+                    github_oauth_token = os.getenv("CODE_PROVIDER_TOKEN")
+                    if github_oauth_token:
+                        logger.info("Using CODE_PROVIDER_TOKEN as fallback")
+
+                # If still no token, raise error
+                if not github_oauth_token:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="No GitHub authentication available (user OAuth token, GH_TOKEN_LIST, or CODE_PROVIDER_TOKEN)",
+                    )
 
             user_github = Github(github_oauth_token)
 

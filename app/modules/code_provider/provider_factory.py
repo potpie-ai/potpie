@@ -229,20 +229,27 @@ class CodeProviderFactory:
     @staticmethod
     def create_provider_with_fallback(repo_name: str) -> ICodeProvider:
         """
-        Create provider with authentication fallback strategy.
+        Create provider with comprehensive authentication fallback strategy.
 
-        For GitHub provider:
-        - If GitHub App is configured: Try GitHub App first, fallback to PAT
-        - If GitHub App is NOT configured: Use PAT only
+        This method implements the ONLY authentication fallback chain in the codebase.
+        All callers should rely on this method's fallback behavior and NOT implement
+        their own retry logic.
 
-        For other providers (GitBucket, etc.):
-        - Use PAT authentication only
+        Authentication priority order:
+        1. Local repository (if repo_name is a local path)
+        2. GitHub App (if GITHUB_APP_ID configured and provider is GitHub)
+        3. PAT from GH_TOKEN_LIST (GitHub only, random selection for load distribution)
+        4. PAT from CODE_PROVIDER_TOKEN (universal fallback for all providers)
+        5. Unauthenticated access (GitHub only, for public repos)
 
         Args:
-            repo_name: Repository name (needed for App auth)
+            repo_name: Repository name or local path
 
         Returns:
             Authenticated ICodeProvider instance
+
+        Raises:
+            ValueError: If no authentication method is available
         """
         # Handle local repositories without authentication
         local_repo_path = CodeProviderFactory._resolve_local_repo_path(repo_name)
@@ -285,16 +292,31 @@ class CodeProviderFactory:
         if provider_type == ProviderType.GITHUB:
             # For GitHub, prioritize GH_TOKEN_LIST over CODE_PROVIDER_TOKEN
             token_list_str = os.getenv("GH_TOKEN_LIST", "")
+
+            # Debug: Log the raw token list string
+            if token_list_str:
+                token_repr = repr(token_list_str)
+                logger.debug("Raw GH_TOKEN_LIST from environment:")
+                logger.debug(f"  - Length: {len(token_list_str)}")
+                logger.debug(f"  - Has newlines: {chr(10) in token_list_str}")
+                logger.debug(f"  - Has carriage returns: {chr(13) in token_list_str}")
+                logger.debug(f"  - Repr: {token_repr[:50]}...")
+
             if token_list_str:
                 import random
 
                 tokens = [t.strip() for t in token_list_str.split(",") if t.strip()]
+                logger.debug(f"Parsed {len(tokens)} token(s) from GH_TOKEN_LIST")
                 if tokens:
-                    logger.info("Using GH_TOKEN_LIST for authentication")
-                    # Create provider directly without auto-authentication
-                    base_url = os.getenv("CODE_PROVIDER_BASE_URL") or "https://api.github.com"
+                    logger.info(
+                        f"Using GH_TOKEN_LIST for authentication ({len(tokens)} token(s) available)"
+                    )
+                    # GH_TOKEN_LIST is specifically for GitHub.com, not GitBucket or other providers
+                    # Always use GitHub's API endpoint when using GH_TOKEN_LIST
+                    base_url = "https://api.github.com"
                     provider = GitHubProvider(base_url=base_url)
                     token = random.choice(tokens)
+
                     provider.authenticate(
                         {"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN
                     )
@@ -310,10 +332,12 @@ class CodeProviderFactory:
 
         # If we get here and it's GitHub without App configured, try unauthenticated access
         if provider_type == ProviderType.GITHUB:
-            logger.info(f"No PAT configured, trying unauthenticated access for {repo_name}")
+            logger.info(
+                f"No PAT configured, trying unauthenticated access for {repo_name}"
+            )
             try:
-                # Create provider directly without auto-authentication
-                base_url = os.getenv("CODE_PROVIDER_BASE_URL") or "https://api.github.com"
+                # Use GitHub.com API for GitHub provider (not GitBucket or other configured base URLs)
+                base_url = "https://api.github.com"
                 provider = GitHubProvider(base_url=base_url)
                 provider.set_unauthenticated_client()
                 return provider
