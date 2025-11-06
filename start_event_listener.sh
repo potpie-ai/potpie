@@ -6,12 +6,6 @@
 echo "🚀 Starting Event Bus Listener..."
 echo "=================================="
 
-# Check if virtual environment exists
-if [ ! -d ".venv" ]; then
-    echo "❌ Virtual environment not found. Please run from the project root."
-    exit 1
-fi
-
 # Check if Redis is running
 if ! redis-cli ping > /dev/null 2>&1; then
     echo "❌ Redis is not running. Please start Redis first."
@@ -23,7 +17,7 @@ echo "✅ Redis is running"
 
 # Start the event listener in the background
 echo "🎧 Starting event listener in background..."
-nohup .venv/bin/python test_event_listener.py > event_listener.log 2>&1 &
+nohup uv run python test_event_listener.py > event_listener.log 2>&1 &
 LISTENER_PID=$!
 
 echo "✅ Event listener started with PID: $LISTENER_PID"
