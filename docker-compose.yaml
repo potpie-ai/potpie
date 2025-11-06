@@ -8,6 +8,8 @@ services:
       POSTGRES_DB: momentum
     ports:
       - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
     networks:
       - app-network
     healthcheck:
@@ -27,6 +29,9 @@ services:
     ports:
       - "7474:7474"
       - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
     networks:
       - app-network
 
@@ -35,8 +40,16 @@ services:
     container_name: potpie_redis_broker
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
     networks:
       - app-network
+
+volumes:
+  postgres_data:
+  neo4j_data:
+  neo4j_logs:
+  redis_data:
 
 networks:
   app-network:
