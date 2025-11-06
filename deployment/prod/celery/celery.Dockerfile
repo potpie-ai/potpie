@@ -1,27 +1,27 @@
 # Use an official Python runtime as a parent image
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y git procps
+RUN apt-get update && apt-get install -y git procps supervisor && rm -rf /var/lib/apt/lists/*
 
 # Set the working directory in the container
 WORKDIR /app
 
-# Copy the requirements file into the container
-COPY requirements.txt .
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
-# Install any needed packages specified in requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy dependency metadata first for better layer caching
+COPY pyproject.toml uv.lock ./
 
-# Install supervisor
-RUN apt-get update && apt-get install -y supervisor
+# Install project dependencies using uv (creates .venv)
+RUN uv sync --frozen --no-cache
 
-# Install Celery and Flower
-RUN pip install --no-cache-dir celery flower
+# Ensure the virtual environment binaries are on PATH
+ENV VIRTUAL_ENV=/app/.venv
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
-# Install NLTK and download required data
-RUN pip install --no-cache-dir nltk
-RUN python -c "import nltk; nltk.download('punkt');"
+# Download required NLTK data inside the managed environment
+RUN uv run python -c "import nltk; nltk.download('punkt')"
 
 # Copy the entire project directory into the container
 COPY . .
