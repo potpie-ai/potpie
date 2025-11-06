@@ -141,8 +141,7 @@ def initialize_phoenix_tracing(
         _PHOENIX_INITIALIZED = True
 
         logger.info(
-            "✅ Phoenix tracing initialized successfully!\n"
-            "   View traces at: %s",
+            "✅ Phoenix tracing initialized successfully!\n" "   View traces at: %s",
             endpoint,
         )
 
