@@ -38,11 +38,11 @@ from app.modules.utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 # Global flag to track if Phoenix is initialized
-_phoenix_initialized = False
+_PHOENIX_INITIALIZED = False
 
 
 def initialize_phoenix_tracing(
-    project_name: str = "potpie-ai",
+    project_name: Optional[str] = None,
     endpoint: Optional[str] = None,
     api_key: Optional[str] = None,
     auto_instrument: bool = True,
@@ -54,7 +54,8 @@ def initialize_phoenix_tracing(
     before any LLM calls are made.
 
     Args:
-        project_name: Name of the project in Phoenix UI (default: "potpie-ai")
+        project_name: Name of the project in Phoenix UI. If None, reads from PHOENIX_PROJECT_NAME env var
+                     (default: "potpie-ai" if env var not set). Function parameter takes precedence over env var.
         endpoint: Phoenix collector endpoint. If None, reads from PHOENIX_COLLECTOR_ENDPOINT env var
                  (default: http://localhost:6006 for local Phoenix)
         api_key: Phoenix API key. If None, reads from PHOENIX_API_KEY env var
@@ -68,9 +69,9 @@ def initialize_phoenix_tracing(
         PHOENIX_ENABLED: Set to "false" to disable Phoenix tracing (default: "true")
         PHOENIX_COLLECTOR_ENDPOINT: Phoenix collector URL (default: http://localhost:6006)
         PHOENIX_API_KEY: API key for Phoenix Cloud (optional for local)
-        PHOENIX_PROJECT_NAME: Override project name (default: "potpie-ai")
+        PHOENIX_PROJECT_NAME: Project name (used only if project_name parameter is None, default: "potpie-ai")
     """
-    global _phoenix_initialized
+    global _PHOENIX_INITIALIZED
 
     # Check if Phoenix is disabled
     if os.getenv("PHOENIX_ENABLED", "true").lower() == "false":
@@ -78,7 +79,7 @@ def initialize_phoenix_tracing(
         return False
 
     # Check if already initialized
-    if _phoenix_initialized:
+    if _PHOENIX_INITIALIZED:
         logger.info("Phoenix tracing already initialized")
         return True
 
@@ -99,13 +100,17 @@ def initialize_phoenix_tracing(
             "PHOENIX_COLLECTOR_ENDPOINT", "http://localhost:6006"
         )
         api_key = api_key or os.getenv("PHOENIX_API_KEY")
-        project_name = os.getenv("PHOENIX_PROJECT_NAME", project_name)
+        # Function parameter takes precedence over environment variable
+        project_name = project_name or os.getenv("PHOENIX_PROJECT_NAME", "potpie-ai")
 
         logger.info(
-            f"Initializing Phoenix tracing:\n"
-            f"  Project: {project_name}\n"
-            f"  Endpoint: {endpoint}\n"
-            f"  Auto-instrument: {auto_instrument}"
+            "Initializing Phoenix tracing:\n"
+            "  Project: %s\n"
+            "  Endpoint: %s\n"
+            "  Auto-instrument: %s",
+            project_name,
+            endpoint,
+            auto_instrument,
         )
 
         # STEP 1: Create and set up the tracer provider with resource attributes
@@ -133,24 +138,26 @@ def initialize_phoenix_tracing(
         litellm_instrumentor.instrument(tracer_provider=tracer_provider)
         logger.info("✅ Instrumented LiteLLM for Phoenix tracing")
 
-        _phoenix_initialized = True
+        _PHOENIX_INITIALIZED = True
 
         logger.info(
-            f"✅ Phoenix tracing initialized successfully!\n"
-            f"   View traces at: {endpoint}"
+            "✅ Phoenix tracing initialized successfully!\n"
+            "   View traces at: %s",
+            endpoint,
         )
 
         return True
 
     except ImportError as e:
         logger.warning(
-            f"Phoenix tracing not available (missing dependencies): {e}\n"
-            f"Install with: pip install arize-phoenix arize-phoenix-otel openinference-instrumentation-pydantic-ai openinference-instrumentation-litellm"
+            "Phoenix tracing not available (missing dependencies): %s\n"
+            "Install with: pip install arize-phoenix arize-phoenix-otel openinference-instrumentation-pydantic-ai openinference-instrumentation-litellm",
+            e,
         )
         return False
 
     except Exception as e:
-        logger.error(f"Failed to initialize Phoenix tracing: {e}", exc_info=True)
+        logger.error("Failed to initialize Phoenix tracing: %s", e, exc_info=True)
         return False
 
 
@@ -167,14 +174,13 @@ def get_tracer(name: str = __name__):
     Example:
         tracer = get_tracer(__name__)
 
-        @tracer.chain
         def my_function(input: str) -> str:
             return process(input)
     """
     try:
         from opentelemetry import trace
 
-        if not _phoenix_initialized:
+        if not _PHOENIX_INITIALIZED:
             logger.debug("Phoenix not initialized, returning default tracer")
 
         return trace.get_tracer(name)
@@ -186,7 +192,7 @@ def get_tracer(name: str = __name__):
 
 def is_phoenix_enabled() -> bool:
     """Check if Phoenix tracing is enabled and initialized."""
-    return _phoenix_initialized
+    return _PHOENIX_INITIALIZED
 
 
 def shutdown_phoenix_tracing():
@@ -195,9 +201,9 @@ def shutdown_phoenix_tracing():
 
     This should be called on application shutdown to ensure all traces are sent.
     """
-    global _phoenix_initialized
+    global _PHOENIX_INITIALIZED
 
-    if not _phoenix_initialized:
+    if not _PHOENIX_INITIALIZED:
         return
 
     try:
@@ -209,7 +215,7 @@ def shutdown_phoenix_tracing():
             tracer_provider.shutdown()
             logger.info("Phoenix tracing shutdown successfully")
 
-        _phoenix_initialized = False
+        _PHOENIX_INITIALIZED = False
 
     except Exception as e:
-        logger.error(f"Error shutting down Phoenix tracing: {e}")
+        logger.error("Error shutting down Phoenix tracing: %s", e)
