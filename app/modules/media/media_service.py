@@ -18,7 +18,10 @@ from app.modules.media.media_model import (
     StorageProvider,
 )
 from app.modules.media.media_schema import AttachmentInfo, AttachmentUploadResponse
-from app.modules.media.text_extraction_service import TextExtractionService, TextExtractionError
+from app.modules.media.text_extraction_service import (
+    TextExtractionService,
+    TextExtractionError,
+)
 from app.modules.intelligence.provider.token_counter import get_token_counter
 
 logger = logging.getLogger(__name__)
@@ -117,7 +120,7 @@ class MediaService:
         try:
             # Read file data
             # Use duck typing to check if it's an UploadFile-like object
-            if hasattr(file, 'read') and hasattr(file, 'filename'):
+            if hasattr(file, "read") and hasattr(file, "filename"):
                 file_data = await file.read()
                 if not file_name:
                     file_name = file.filename or "unknown"
@@ -205,14 +208,16 @@ class MediaService:
         try:
             # Read file data
             # Use duck typing to check if it's an UploadFile-like object
-            if hasattr(file, 'read') and hasattr(file, 'filename'):
+            if hasattr(file, "read") and hasattr(file, "filename"):
                 file_data = await file.read()
                 if not file_name:
                     file_name = file.filename or "unknown"
                 if not mime_type:
                     mime_type = file.content_type or "application/octet-stream"
                 if not isinstance(file_data, bytes):
-                    raise MediaServiceError(f"Expected bytes from file.read(), got {type(file_data)}")
+                    raise MediaServiceError(
+                        f"Expected bytes from file.read(), got {type(file_data)}"
+                    )
             else:
                 file_data = file
                 if not isinstance(file_data, bytes):
@@ -222,7 +227,7 @@ class MediaService:
             if len(file_data) > self.MAX_IMAGE_SIZE:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"File size ({len(file_data)} bytes) exceeds maximum ({self.MAX_IMAGE_SIZE} bytes)"
+                    detail=f"File size ({len(file_data)} bytes) exceeds maximum ({self.MAX_IMAGE_SIZE} bytes)",
                 )
 
             # Determine attachment type
@@ -230,12 +235,16 @@ class MediaService:
 
             # Extract text
             try:
-                extracted_text, extraction_metadata = self.text_extraction_service.extract_text(
-                    file_data, mime_type, file_name
+                extracted_text, extraction_metadata = (
+                    self.text_extraction_service.extract_text(
+                        file_data, mime_type, file_name
+                    )
                 )
             except TextExtractionError as e:
                 logger.error(f"Text extraction failed for {file_name}: {e}")
-                raise HTTPException(status_code=400, detail=f"Failed to extract text: {str(e)}")
+                raise HTTPException(
+                    status_code=400, detail=f"Failed to extract text: {str(e)}"
+                )
 
             # Count tokens
             token_count = self.token_counter.count_tokens(extracted_text, model)
@@ -267,18 +276,20 @@ class MediaService:
                 # Store in JSONB
                 file_metadata["extracted_text"] = extracted_text
                 file_metadata["text_storage"] = "inline"
-                logger.info(f"Storing extracted text inline for {attachment_id} ({len(extracted_text)} chars)")
+                logger.info(
+                    f"Storing extracted text inline for {attachment_id} ({len(extracted_text)} chars)"
+                )
             else:
                 # Store in S3 as separate file
                 extracted_text_path = f"{storage_path}.extracted.txt"
                 await self._upload_to_cloud(
-                    extracted_text_path,
-                    extracted_text.encode('utf-8'),
-                    "text/plain"
+                    extracted_text_path, extracted_text.encode("utf-8"), "text/plain"
                 )
                 file_metadata["extracted_text_path"] = extracted_text_path
                 file_metadata["text_storage"] = "s3"
-                logger.info(f"Storing extracted text in S3 for {attachment_id} ({len(extracted_text)} chars)")
+                logger.info(
+                    f"Storing extracted text in S3 for {attachment_id} ({len(extracted_text)} chars)"
+                )
 
             # Create database record
             attachment = MessageAttachment(
@@ -296,7 +307,9 @@ class MediaService:
             self.db.add(attachment)
             self.db.commit()
 
-            logger.info(f"Successfully uploaded document {attachment_id} with {token_count} tokens")
+            logger.info(
+                f"Successfully uploaded document {attachment_id} with {token_count} tokens"
+            )
 
             return AttachmentUploadResponse(
                 id=attachment_id,
@@ -315,13 +328,22 @@ class MediaService:
                 raise
             raise MediaServiceError(f"Failed to upload document: {str(e)}")
 
-    def _determine_attachment_type(self, mime_type: str, file_name: str) -> AttachmentType:
+    def _determine_attachment_type(
+        self, mime_type: str, file_name: str
+    ) -> AttachmentType:
         """Determine attachment type from MIME type and filename."""
         if "pdf" in mime_type:
             return AttachmentType.PDF
-        elif "word" in mime_type or "vnd.openxmlformats-officedocument.wordprocessingml" in mime_type:
+        elif (
+            "word" in mime_type
+            or "vnd.openxmlformats-officedocument.wordprocessingml" in mime_type
+        ):
             return AttachmentType.DOCUMENT
-        elif "csv" in mime_type or "spreadsheet" in mime_type or "vnd.openxmlformats-officedocument.spreadsheetml" in mime_type:
+        elif (
+            "csv" in mime_type
+            or "spreadsheet" in mime_type
+            or "vnd.openxmlformats-officedocument.spreadsheetml" in mime_type
+        ):
             return AttachmentType.SPREADSHEET
         elif mime_type.startswith("text/") or self._is_code_file(file_name):
             return AttachmentType.CODE
@@ -331,12 +353,39 @@ class MediaService:
     def _is_code_file(self, file_name: str) -> bool:
         """Check if filename suggests code file."""
         code_extensions = {
-            '.py', '.js', '.ts', '.tsx', '.jsx', '.java', '.cpp', '.c', '.h',
-            '.cs', '.rb', '.go', '.rs', '.php', '.swift', '.kt', '.scala',
-            '.sh', '.bash', '.sql', '.r', '.m', '.mm', '.json', '.xml',
-            '.yaml', '.yml', '.toml', '.ini', '.conf', '.cfg'
+            ".py",
+            ".js",
+            ".ts",
+            ".tsx",
+            ".jsx",
+            ".java",
+            ".cpp",
+            ".c",
+            ".h",
+            ".cs",
+            ".rb",
+            ".go",
+            ".rs",
+            ".php",
+            ".swift",
+            ".kt",
+            ".scala",
+            ".sh",
+            ".bash",
+            ".sql",
+            ".r",
+            ".m",
+            ".mm",
+            ".json",
+            ".xml",
+            ".yaml",
+            ".yml",
+            ".toml",
+            ".ini",
+            ".conf",
+            ".cfg",
         }
-        extension = '.' + file_name.split('.')[-1].lower() if '.' in file_name else ''
+        extension = "." + file_name.split(".")[-1].lower() if "." in file_name else ""
         return extension in code_extensions
 
     async def get_extracted_text(self, attachment_id: str) -> str:
@@ -364,10 +413,12 @@ class MediaService:
                         Key=extracted_text_path,
                     )
                     text_bytes = response["Body"].read()
-                    return text_bytes.decode('utf-8')
+                    return text_bytes.decode("utf-8")
                 except Exception as e:
                     logger.error(f"Failed to fetch extracted text from S3: {e}")
-                    raise MediaServiceError(f"Failed to retrieve extracted text: {str(e)}")
+                    raise MediaServiceError(
+                        f"Failed to retrieve extracted text: {str(e)}"
+                    )
 
             else:
                 # No extracted text available

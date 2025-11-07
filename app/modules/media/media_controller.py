@@ -280,7 +280,9 @@ class MediaController:
             )
             from app.modules.intelligence.prompts.prompt_service import PromptService
             from app.modules.intelligence.tools.tool_service import ToolService
-            from app.modules.intelligence.provider.token_counter import get_token_counter
+            from app.modules.intelligence.provider.token_counter import (
+                get_token_counter,
+            )
 
             controller = ConversationController(
                 self.db, async_db, self.user_id, self.user_email
@@ -309,7 +311,9 @@ class MediaController:
                     agent_id
                 )
                 model = (
-                    provider_service.chat_config.model if custom_agent else "openai/gpt-4o"
+                    provider_service.chat_config.model
+                    if custom_agent
+                    else "openai/gpt-4o"
                 )
             else:
                 model = provider_service.chat_config.model
