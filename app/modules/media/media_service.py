@@ -18,6 +18,8 @@ from app.modules.media.media_model import (
     StorageProvider,
 )
 from app.modules.media.media_schema import AttachmentInfo, AttachmentUploadResponse
+from app.modules.media.text_extraction_service import TextExtractionService, TextExtractionError
+from app.modules.intelligence.provider.token_counter import get_token_counter
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +54,15 @@ class MediaService:
         self.bucket_name = None
         self.object_storage_descriptor: dict[str, Any] | None = None
         self.s3_client = None
+        self.text_extraction_service = TextExtractionService()
+        self.token_counter = get_token_counter()
 
         if self.is_multimodal_enabled:
             descriptor = config_provider.get_object_storage_descriptor()
             provider = descriptor["provider"]
             try:
-                self.storage_provider = StorageProvider(provider)
+                # Convert to uppercase to match enum values (GCS, S3, LOCAL, AZURE)
+                self.storage_provider = StorageProvider(provider.upper())
             except ValueError as exc:  # fall back to safe default
                 logger.error("Unsupported storage provider '%s': %s", provider, exc)
                 raise MediaServiceError(
@@ -111,7 +116,8 @@ class MediaService:
         self._check_multimodal_enabled()
         try:
             # Read file data
-            if isinstance(file, UploadFile):
+            # Use duck typing to check if it's an UploadFile-like object
+            if hasattr(file, 'read') and hasattr(file, 'filename'):
                 file_data = await file.read()
                 if not file_name:
                     file_name = file.filename or "unknown"
@@ -184,6 +190,194 @@ class MediaService:
             if isinstance(e, (MediaServiceError, HTTPException)):
                 raise
             raise MediaServiceError(f"Failed to upload image: {str(e)}")
+
+    async def upload_document(
+        self,
+        file: Union[UploadFile, bytes],
+        file_name: str,
+        mime_type: str,
+        message_id: Optional[str] = None,
+        model: str = "openai/gpt-4o",  # For token counting
+    ) -> AttachmentUploadResponse:
+        """Upload and process a document file (PDF, DOCX, CSV, etc)."""
+        self._check_multimodal_enabled()  # Reuse same feature flag
+
+        try:
+            # Read file data
+            # Use duck typing to check if it's an UploadFile-like object
+            if hasattr(file, 'read') and hasattr(file, 'filename'):
+                file_data = await file.read()
+                if not file_name:
+                    file_name = file.filename or "unknown"
+                if not mime_type:
+                    mime_type = file.content_type or "application/octet-stream"
+                if not isinstance(file_data, bytes):
+                    raise MediaServiceError(f"Expected bytes from file.read(), got {type(file_data)}")
+            else:
+                file_data = file
+                if not isinstance(file_data, bytes):
+                    raise MediaServiceError(f"Expected bytes, got {type(file_data)}")
+
+            # Validate file size (use same limit as images for now: 10MB)
+            if len(file_data) > self.MAX_IMAGE_SIZE:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File size ({len(file_data)} bytes) exceeds maximum ({self.MAX_IMAGE_SIZE} bytes)"
+                )
+
+            # Determine attachment type
+            attachment_type = self._determine_attachment_type(mime_type, file_name)
+
+            # Extract text
+            try:
+                extracted_text, extraction_metadata = self.text_extraction_service.extract_text(
+                    file_data, mime_type, file_name
+                )
+            except TextExtractionError as e:
+                logger.error(f"Text extraction failed for {file_name}: {e}")
+                raise HTTPException(status_code=400, detail=f"Failed to extract text: {str(e)}")
+
+            # Count tokens
+            token_count = self.token_counter.count_tokens(extracted_text, model)
+
+            # Validate against context window (if conversation context provided)
+            # Note: This validation happens AFTER extraction, so file is already processed
+            # Frontend should call /validate-document first to prevent wasted processing
+            logger.info(f"Document {file_name} extracted with {token_count} tokens")
+
+            # Generate unique attachment ID
+            attachment_id = str(uuid7())
+
+            # Generate storage path for original file
+            storage_path = self._generate_storage_path(attachment_id, file_name)
+
+            # Upload original file to cloud storage
+            await self._upload_to_cloud(storage_path, file_data, mime_type)
+
+            # Prepare file metadata
+            file_metadata = {
+                "original_size": len(file_data),
+                "extracted_text_length": len(extracted_text),
+                "token_count": token_count,
+                **extraction_metadata,
+            }
+
+            # Store extracted text based on size
+            if self.text_extraction_service.should_store_inline(extracted_text):
+                # Store in JSONB
+                file_metadata["extracted_text"] = extracted_text
+                file_metadata["text_storage"] = "inline"
+                logger.info(f"Storing extracted text inline for {attachment_id} ({len(extracted_text)} chars)")
+            else:
+                # Store in S3 as separate file
+                extracted_text_path = f"{storage_path}.extracted.txt"
+                await self._upload_to_cloud(
+                    extracted_text_path,
+                    extracted_text.encode('utf-8'),
+                    "text/plain"
+                )
+                file_metadata["extracted_text_path"] = extracted_text_path
+                file_metadata["text_storage"] = "s3"
+                logger.info(f"Storing extracted text in S3 for {attachment_id} ({len(extracted_text)} chars)")
+
+            # Create database record
+            attachment = MessageAttachment(
+                id=attachment_id,
+                message_id=message_id,
+                attachment_type=attachment_type,
+                file_name=file_name,
+                file_size=len(file_data),
+                mime_type=mime_type,
+                storage_path=storage_path,
+                storage_provider=self.storage_provider,
+                file_metadata=file_metadata,
+            )
+
+            self.db.add(attachment)
+            self.db.commit()
+
+            logger.info(f"Successfully uploaded document {attachment_id} with {token_count} tokens")
+
+            return AttachmentUploadResponse(
+                id=attachment_id,
+                attachment_type=attachment_type,
+                file_name=file_name,
+                mime_type=mime_type,
+                file_size=len(file_data),
+            )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Error uploading document: {str(e)}", exc_info=True)
+            if isinstance(e, MediaServiceError):
+                raise
+            raise MediaServiceError(f"Failed to upload document: {str(e)}")
+
+    def _determine_attachment_type(self, mime_type: str, file_name: str) -> AttachmentType:
+        """Determine attachment type from MIME type and filename."""
+        if "pdf" in mime_type:
+            return AttachmentType.PDF
+        elif "word" in mime_type or "vnd.openxmlformats-officedocument.wordprocessingml" in mime_type:
+            return AttachmentType.DOCUMENT
+        elif "csv" in mime_type or "spreadsheet" in mime_type or "vnd.openxmlformats-officedocument.spreadsheetml" in mime_type:
+            return AttachmentType.SPREADSHEET
+        elif mime_type.startswith("text/") or self._is_code_file(file_name):
+            return AttachmentType.CODE
+        else:
+            return AttachmentType.DOCUMENT  # Fallback
+
+    def _is_code_file(self, file_name: str) -> bool:
+        """Check if filename suggests code file."""
+        code_extensions = {
+            '.py', '.js', '.ts', '.tsx', '.jsx', '.java', '.cpp', '.c', '.h',
+            '.cs', '.rb', '.go', '.rs', '.php', '.swift', '.kt', '.scala',
+            '.sh', '.bash', '.sql', '.r', '.m', '.mm', '.json', '.xml',
+            '.yaml', '.yml', '.toml', '.ini', '.conf', '.cfg'
+        }
+        extension = '.' + file_name.split('.')[-1].lower() if '.' in file_name else ''
+        return extension in code_extensions
+
+    async def get_extracted_text(self, attachment_id: str) -> str:
+        """Retrieve extracted text from attachment (JSONB or S3)."""
+        try:
+            attachment = await self.get_attachment(attachment_id)
+            if not attachment:
+                raise HTTPException(status_code=404, detail="Attachment not found")
+
+            metadata = attachment.file_metadata or {}
+
+            # Check inline storage first
+            if metadata.get("text_storage") == "inline":
+                return metadata.get("extracted_text", "")
+
+            # Fetch from S3
+            elif metadata.get("text_storage") == "s3":
+                extracted_text_path = metadata.get("extracted_text_path")
+                if not extracted_text_path:
+                    raise MediaServiceError("Extracted text path not found in metadata")
+
+                try:
+                    response = self.s3_client.get_object(
+                        Bucket=self.bucket_name,
+                        Key=extracted_text_path,
+                    )
+                    text_bytes = response["Body"].read()
+                    return text_bytes.decode('utf-8')
+                except Exception as e:
+                    logger.error(f"Failed to fetch extracted text from S3: {e}")
+                    raise MediaServiceError(f"Failed to retrieve extracted text: {str(e)}")
+
+            else:
+                # No extracted text available
+                return ""
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error getting extracted text for {attachment_id}: {str(e)}")
+            raise MediaServiceError(f"Failed to get extracted text: {str(e)}")
 
     def _validate_image(self, file_data: bytes, mime_type: str) -> None:
         """Validate image file"""
