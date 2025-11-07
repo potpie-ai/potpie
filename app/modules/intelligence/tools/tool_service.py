@@ -5,8 +5,12 @@ from sqlalchemy.orm import Session
 from app.modules.intelligence.tools.change_detection.change_detection_tool import (
     get_change_detection_tool,
 )
-from app.modules.intelligence.tools.change_detection.patch_extraction_tool import get_patch_extraction_tool
-from app.modules.intelligence.tools.change_detection.process_large_pr_tool import get_process_large_pr_tool
+from app.modules.intelligence.tools.change_detection.patch_extraction_tool import (
+    get_patch_extraction_tool,
+)
+from app.modules.intelligence.tools.change_detection.process_large_pr_tool import (
+    get_process_large_pr_tool,
+)
 from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
     get_code_file_structure_tool,
     GetCodeFileStructureTool,
@@ -68,16 +72,8 @@ from app.modules.intelligence.tools.web_tools.web_search_tool import web_search_
 from app.modules.intelligence.provider.provider_service import ProviderService
 from langchain_core.tools import StructuredTool
 from .think_tool import think_tool
-from app.modules.intelligence.tools.file_changes_tools import (
-    file_change_manager,
-    generate_diffs_tool,
-    load_file_for_editing_tool,
-    read_lines_in_changed_file_tool,
-    replace_lines_in_file_tool,
-    insert_lines_in_file_tool,
-    remove_lines_in_file_tool,
-    search_pattern_in_file,
-)
+from .todo_management_tool import create_todo_management_tools
+from .code_changes_manager import create_code_changes_management_tools
 
 
 class ToolService:
@@ -143,12 +139,21 @@ class ToolService:
             ),
             "get_patch_tool": get_patch_extraction_tool(self.user_id),
             "process_large_pr_tool": get_process_large_pr_tool(self.user_id, self.db),
-
             "fetch_file": fetch_file_tool(self.db, self.user_id),
             "analyze_code_structure": universal_analyze_code_tool(
                 self.db, self.user_id
             ),
         }
+
+        # Add todo management tools
+        todo_tools = create_todo_management_tools()
+        for tool in todo_tools:
+            tools[tool.name] = tool
+
+        # Add code changes management tools
+        code_changes_tools = create_code_changes_management_tools()
+        for tool in code_changes_tools:
+            tools[tool.name] = tool
 
         if self.webpage_extractor_tool:
             tools["webpage_extractor"] = self.webpage_extractor_tool
@@ -199,10 +204,9 @@ class ToolService:
     def list_tools_with_parameters(self) -> Dict[str, ToolInfoWithParameters]:
         return {
             tool_id: ToolInfoWithParameters(
-                id=tool_id,
                 name=tool.name,
                 description=tool.description,
-                args_schema=tool.args_schema.schema(),
+                args_schema=tool.args_schema.schema() if tool.args_schema else {},
             )
             for tool_id, tool in self.tools.items()
         }

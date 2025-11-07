@@ -1,4 +1,5 @@
 import functools
+import inspect
 import re
 from typing import List, AsyncGenerator, Sequence
 
@@ -15,7 +16,7 @@ from .tool_helpers import (
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
-from .crewai_agent import AgentConfig, TaskConfig
+from .agent_config import AgentConfig, TaskConfig
 from app.modules.utils.logger import setup_logger
 
 from ..chat_agent import (
@@ -107,9 +108,13 @@ class PydanticRagAgent(ChatAgent):
             f"Created {len(mcp_toolsets)} MCP servers out of {len(self.mcp_servers)} configured"
         )
 
-        return Agent(
-            model=self.llm_provider.get_pydantic_model(),
-            tools=[
+        allow_parallel_tools = self.llm_provider.chat_config.capabilities.get(
+            "supports_tool_parallelism", True
+        )
+
+        agent_kwargs = {
+            "model": self.llm_provider.get_pydantic_model(),
+            "tools": [
                 Tool(
                     name=tool.name,
                     description=tool.description,
@@ -117,8 +122,8 @@ class PydanticRagAgent(ChatAgent):
                 )
                 for tool in self.tools
             ],
-            mcp_servers=mcp_toolsets,
-            instructions=f"""
+            "mcp_servers": mcp_toolsets,
+            "instructions": f"""
             Role: {config.role}
             Goal: {config.goal}
             Backstory:
@@ -129,13 +134,34 @@ class PydanticRagAgent(ChatAgent):
             CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             {self._create_task_description(task_config=config.tasks[0],ctx=ctx)}
             """,
-            result_type=str,
-            output_retries=3,
-            output_type=str,
-            defer_model_check=True,
-            end_strategy="exhaustive",
-            model_settings={"max_tokens": 14000},
-        )
+            "result_type": str,
+            "output_retries": 3,
+            "output_type": str,
+            "defer_model_check": True,
+            "end_strategy": "exhaustive",
+            "model_settings": {"max_tokens": 14000},
+        }
+
+        if not allow_parallel_tools:
+            try:
+                signature = inspect.signature(Agent.__init__)
+                if "allow_parallel_tool_calls" in signature.parameters:
+                    agent_kwargs["allow_parallel_tool_calls"] = False
+                elif "max_parallel_tool_calls" in signature.parameters:
+                    agent_kwargs["max_parallel_tool_calls"] = 1
+                elif "tool_parallelism" in signature.parameters:
+                    agent_kwargs["tool_parallelism"] = False
+                else:
+                    logger.info(
+                        "Parallel tool call disabling not supported by current pydantic-ai Agent signature."
+                    )
+            except Exception as signature_error:
+                logger.warning(
+                    "Failed to inspect Agent signature for parallel tool call support: %s",
+                    signature_error,
+                )
+
+        return Agent(**agent_kwargs)
 
     def _prepare_multimodal_instructions(self, ctx: ChatContext) -> str:
         """Prepare multimodal-specific instructions when images are present"""

@@ -1,16 +1,22 @@
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 from pydantic import BaseModel
-
-from app.modules.intelligence.agents.chat_agents.pydantic_agent import (
-    PydanticRagAgent,
+from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent import (
+    PydanticMultiAgent,
 )
+from app.modules.intelligence.agents.multi_agent_config import MultiAgentConfig
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
+from app.modules.intelligence.agents.chat_agents.agent_config import (
+    AgentConfig,
+    TaskConfig,
+)
+from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
+from app.modules.intelligence.provider.exceptions import UnsupportedProviderError
+from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from ..chat_agent import ChatAgent, ChatAgentResponse, ChatContext
-from ..chat_agents.crewai_agent import AgentConfig, CrewAIAgent, TaskConfig
 from app.modules.utils.logger import setup_logger
 
 
@@ -36,6 +42,7 @@ class CustomAgentConfig(BaseModel):
     system_prompt: str
     tasks: List[CustomTaskConfig]
     project_id: str = ""
+    use_multi_agent: bool = True  # Multi-agent mode is now default
 
 
 class RuntimeCustomAgent(ChatAgent):
@@ -84,41 +91,43 @@ class RuntimeCustomAgent(ChatAgent):
             )
             mcp_servers = []
 
-        if self.llm_provider.is_current_model_supported_by_pydanticai(
-            config_type="chat"
-        ):
-            agent = PydanticRagAgent(
-                self.llm_provider, agent_config, tools, mcp_servers
+        supports_pydantic = self.llm_provider.supports_pydantic("chat")
+        should_use_multi = MultiAgentConfig.should_use_multi_agent("custom_agent")
+
+        logger.info(
+            f"RuntimeCustomAgent: supports_pydantic={supports_pydantic}, should_use_multi_agent={should_use_multi}"
+        )
+        logger.info(f"Current model: {self.llm_provider.chat_config.model}")
+        logger.info(f"Model capabilities: {self.llm_provider.chat_config.capabilities}")
+
+        if supports_pydantic:
+            if should_use_multi:
+                logger.info(
+                    "✅ Using PydanticMultiAgent (multi-agent system) for custom agent"
+                )
+                agent = PydanticMultiAgent(
+                    self.llm_provider, agent_config, tools, mcp_servers
+                )
+                self._pydantic_agent = agent  # Store reference for status access
+                return agent
+            else:
+                logger.info(
+                    "❌ Multi-agent disabled by config for custom agent, using PydanticRagAgent"
+                )
+                from app.modules.intelligence.agents.chat_agents.pydantic_agent import (
+                    PydanticRagAgent,
+                )
+
+                agent = PydanticRagAgent(self.llm_provider, agent_config, tools)
+                self._pydantic_agent = agent
+                return agent
+        else:
+            logger.error(
+                f"❌ Model '{self.llm_provider.chat_config.model}' does not support Pydantic - cannot create custom agent"
             )
-            self._pydantic_agent = agent
-            return agent
-
-        return CrewAIAgent(self.llm_provider, agent_config, tools)
-
-    async def _get_large_pr_context(self, project_id: str) -> Optional[str]:
-        if not project_id:
-            return None
-
-        if project_id in self._project_context_cache:
-            return self._project_context_cache[project_id]
-
-        tool = getattr(self.tools_provider, "process_large_pr_tool", None)
-        if not tool:
-            return None
-
-        payload = {"project_id": project_id}
-        try:
-            logger.info("Fetching large PR context for project %s", project_id)
-            context = await tool.arun(payload)
-        except Exception as exc:
-            logger.warning("Failed to fetch large PR context: %s", exc)
-            return None
-
-        if isinstance(context, str) and context.strip():
-            self._project_context_cache[project_id] = context
-            return context
-
-        return None
+            raise UnsupportedProviderError(
+                f"Model '{self.llm_provider.chat_config.model}' does not support Pydantic-based agents."
+            )
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         project_id = ctx.project_id or self.agent_config.project_id
@@ -137,10 +146,8 @@ class RuntimeCustomAgent(ChatAgent):
 
         if ctx.node_ids:
             try:
-                code_results = await (
-                    self.tools_provider.get_code_from_multiple_node_ids_tool.run_multiple(
-                        ctx.project_id, ctx.node_ids
-                    )
+                code_results = await self.tools_provider.get_code_from_multiple_node_ids_tool.run_multiple(
+                    ctx.project_id, ctx.node_ids
                 )
                 if code_results:
                     if ctx.additional_context:

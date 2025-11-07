@@ -35,7 +35,6 @@ langgraph-sdk==0.1.51
 langchain-postgres==0.0.12
 langgraph==0.2.58
 firebase-admin==6.6.0
-portkey-ai==1.10.3
 gitPython==3.1.43
 PyGithub==2.5.0
 google-cloud-secret-manager==2.21.1

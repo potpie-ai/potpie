@@ -1,19 +1,17 @@
-from app.modules.intelligence.agents.chat_agents.adaptive_agent import AdaptiveAgent
+from app.modules.intelligence.agents.chat_agents.agent_config import (
+    AgentConfig,
+    TaskConfig,
+)
 from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
 from app.modules.intelligence.agents.chat_agents.pydantic_complex_task import (
     PydanticGraphAgent,
 )
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.provider.provider_service import (
-    ProviderService,
-)
+from app.modules.intelligence.provider.exceptions import UnsupportedProviderError
+from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
-from ..crewai_agent import AgentConfig, CrewAIAgent, TaskConfig
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator
-from app.modules.intelligence.prompts.classification_prompts import (
-    AgentType,
-)
 
 
 class UnitTestAgent(ChatAgent):
@@ -51,17 +49,11 @@ class UnitTestAgent(ChatAgent):
                 "analyze_code_structure",
             ]
         )
-        if self.llm_provider.is_current_model_supported_by_pydanticai(
-            config_type="chat"
-        ):
-            return PydanticRagAgent(self.llm_provider, agent_config, tools)
-        else:
-            return AdaptiveAgent(
-                llm_provider=self.llm_provider,
-                prompt_provider=self.prompt_provider,
-                rag_agent=CrewAIAgent(self.llm_provider, agent_config, tools),
-                agent_type=AgentType.UNIT_TEST,
+        if not self.llm_provider.supports_pydantic("chat"):
+            raise UnsupportedProviderError(
+                f"Model '{self.llm_provider.chat_config.model}' does not support Pydantic-based agents."
             )
+        return PydanticRagAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if ctx.node_ids and len(ctx.node_ids) > 0:
