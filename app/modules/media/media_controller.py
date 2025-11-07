@@ -73,6 +73,36 @@ class MediaController:
             logger.error(f"Unexpected error uploading image: {str(e)}")
             raise HTTPException(status_code=500, detail="Failed to upload image")
 
+    async def upload_document(
+        self, file: UploadFile, message_id: Optional[str] = None
+    ) -> AttachmentUploadResponse:
+        """Upload document with feature flag check"""
+        self._check_multimodal_enabled()
+        try:
+            # Validate file
+            if not file.filename:
+                raise HTTPException(status_code=400, detail="No file provided")
+
+            # Upload using media service
+            result = await self.media_service.upload_document(
+                file=file,
+                file_name=file.filename,
+                mime_type=file.content_type or "application/octet-stream",
+                message_id=message_id,
+            )
+
+            logger.info(f"User {self.user_id} uploaded document: {result.id}")
+            return result
+
+        except MediaServiceError as e:
+            logger.error(f"Media service error: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error uploading document: {str(e)}")
+            raise HTTPException(status_code=500, detail="Failed to upload document")
+
     async def get_attachment_access_url(
         self, attachment_id: str, expiration_minutes: int = 60
     ) -> AttachmentAccessResponse:
@@ -223,6 +253,139 @@ class MediaController:
             raise HTTPException(
                 status_code=500, detail="Failed to get message attachments"
             )
+
+    async def validate_document_upload(
+        self,
+        conversation_id: str,
+        file_size: int,
+        file_name: str,
+        mime_type: str,
+        async_db,
+    ) -> dict:
+        """
+        Validate if a document can be uploaded without exceeding context limits.
+
+        This should be called BEFORE uploading the actual file to prevent
+        wasted processing on files that will be rejected.
+        """
+        self._check_multimodal_enabled()
+        try:
+            # Get conversation and model info
+            from app.modules.conversations.conversation.conversation_controller import (
+                ConversationController,
+            )
+            from app.modules.intelligence.agents.agents_service import AgentsService
+            from app.modules.intelligence.provider.provider_service import (
+                ProviderService,
+            )
+            from app.modules.intelligence.prompts.prompt_service import PromptService
+            from app.modules.intelligence.tools.tool_service import ToolService
+            from app.modules.intelligence.provider.token_counter import get_token_counter
+
+            controller = ConversationController(
+                self.db, async_db, self.user_id, self.user_email
+            )
+            conversation_info = await controller.get_conversation_info(conversation_id)
+
+            # Get agent model
+            agent_id = (
+                conversation_info.agent_ids[0] if conversation_info.agent_ids else None
+            )
+            if not agent_id:
+                raise HTTPException(status_code=400, detail="No agent configured")
+
+            # Get model configuration
+            provider_service = ProviderService(self.db, self.user_id)
+            tool_service = ToolService(self.db, self.user_id)
+            prompt_service = PromptService(self.db)
+            agent_service = AgentsService(
+                self.db, provider_service, prompt_service, tool_service
+            )
+
+            # Get model identifier
+            agent_type = await agent_service.validate_agent_id(self.user_id, agent_id)
+            if agent_type == "CUSTOM_AGENT":
+                custom_agent = await agent_service.custom_agent_service.get_agent_model(
+                    agent_id
+                )
+                model = (
+                    provider_service.chat_config.model if custom_agent else "openai/gpt-4o"
+                )
+            else:
+                model = provider_service.chat_config.model
+
+            # Get conversation messages (last 20 for context estimation)
+            messages = await controller.get_conversation_messages(
+                conversation_id, start=0, limit=20
+            )
+
+            # Count tokens
+            token_counter = get_token_counter()
+
+            # Extract message content and count tokens
+            history_content = []
+            attachment_tokens = 0
+
+            for msg in messages:
+                if msg.content:
+                    history_content.append(f"{msg.type}: {msg.content}")
+
+                # Count attachment tokens
+                if msg.has_attachments and msg.attachments:
+                    for attachment in msg.attachments:
+                        if attachment.file_metadata:
+                            token_count = attachment.file_metadata.get("token_count", 0)
+                            if token_count:
+                                attachment_tokens += token_count
+
+            # Calculate current context usage
+            history_tokens = token_counter.count_messages_tokens(history_content, model)
+            current_tokens = history_tokens + attachment_tokens
+
+            # Estimate tokens for new file
+            estimated_tokens = token_counter.estimate_file_tokens(file_size, mime_type)
+
+            # Get model limit
+            context_limit = token_counter.get_context_limit(model)
+
+            # Calculate projected usage
+            projected_total = current_tokens + estimated_tokens
+            can_upload = projected_total <= context_limit
+
+            response = {
+                "can_upload": can_upload,
+                "estimated_tokens": estimated_tokens,
+                "current_context_usage": current_tokens,
+                "model": model,
+                "model_context_limit": context_limit,
+                "remaining_tokens": max(0, context_limit - current_tokens),
+                "projected_total": projected_total,
+            }
+
+            if not can_upload:
+                response["exceeds_limit"] = True
+                response["excess_tokens"] = projected_total - context_limit
+                response["excess_percentage"] = round(
+                    (response["excess_tokens"] / context_limit) * 100, 2
+                )
+            else:
+                response["exceeds_limit"] = False
+                response["usage_after_upload"] = round(
+                    (projected_total / context_limit) * 100, 2
+                )
+
+            logger.info(
+                f"Document validation for conversation {conversation_id}: "
+                f"can_upload={can_upload}, projected_total={projected_total}/{context_limit}"
+            )
+
+            return response
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error validating document upload: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail=str(e))
 
     async def _check_attachment_access(
         self, message_id: str, require_write: bool = False
