@@ -48,10 +48,10 @@ class ParsingController:
         parse_helper = ParseHelper(db)
         parsing_service = ParsingService(db, user_id)
         if config_provider.get_is_development_mode():
-            # In dev mode: if repo_name exists, move it to repo_path and set repo_name to None
-            if repo_details.repo_name:
-                repo_details.repo_path = repo_details.repo_name
+            # In dev mode: if both repo_path and repo_name are provided, prioritize repo_path (local)
+            if repo_details.repo_path and repo_details.repo_name:
                 repo_details.repo_name = None
+            # Otherwise keep whichever one is provided as-is
         else:
             # In non-dev mode: if repo_name is None but repo_path exists, extract repo_name from repo_path
             if not repo_details.repo_name and repo_details.repo_path:

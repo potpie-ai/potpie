@@ -368,10 +368,10 @@ class ParseHelper:
                 extracted_dir = await self.download_and_extract_tarball(
                     repo, branch, os.getenv("PROJECT_PATH"), auth, repo_details, user_id
                 )
-                branch_details = repo_details.get_branch(branch)
+                branch_details = repo.get_branch(branch)
                 latest_commit_sha = branch_details.commit.sha
 
-        repo_metadata = ParseHelper.extract_repository_metadata(repo_details)
+        repo_metadata = ParseHelper.extract_repository_metadata(repo)
         repo_metadata["error_message"] = None
         project_metadata = json.dumps(repo_metadata).encode("utf-8")
         ProjectService.update_project(
