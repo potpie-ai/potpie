@@ -68,6 +68,8 @@ from app.modules.intelligence.tools.web_tools.web_search_tool import web_search_
 from app.modules.intelligence.provider.provider_service import ProviderService
 from langchain_core.tools import StructuredTool
 from .think_tool import think_tool
+from .todo_management_tool import create_todo_management_tools
+from .code_changes_manager import create_code_changes_management_tools
 
 
 class ToolService:
@@ -136,6 +138,16 @@ class ToolService:
             ),
         }
 
+        # Add todo management tools
+        todo_tools = create_todo_management_tools()
+        for tool in todo_tools:
+            tools[tool.name] = tool
+
+        # Add code changes management tools
+        code_changes_tools = create_code_changes_management_tools()
+        for tool in code_changes_tools:
+            tools[tool.name] = tool
+
         if self.webpage_extractor_tool:
             tools["webpage_extractor"] = self.webpage_extractor_tool
 
@@ -179,10 +191,9 @@ class ToolService:
     def list_tools_with_parameters(self) -> Dict[str, ToolInfoWithParameters]:
         return {
             tool_id: ToolInfoWithParameters(
-                id=tool_id,
                 name=tool.name,
                 description=tool.description,
-                args_schema=tool.args_schema.schema(),
+                args_schema=tool.args_schema.schema() if tool.args_schema else {},
             )
             for tool_id, tool in self.tools.items()
         }
