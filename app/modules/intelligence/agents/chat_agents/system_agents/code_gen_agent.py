@@ -63,6 +63,7 @@ class CodeGenAgent(ChatAgent):
                 "get_linear_issue",
                 "fetch_file",
                 "analyze_code_structure",
+                "bash_command",
             ]
         )
         if not self.llm_provider.supports_pydantic("chat"):

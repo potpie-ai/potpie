@@ -67,7 +67,8 @@ class CodeProviderFactory:
             )
 
             logger.debug(f"Using LocalProvider for repository path: {local_repo_path}")
-            return LocalProvider(default_repo_path=local_repo_path)
+            provider = LocalProvider(default_repo_path=local_repo_path)
+            return CodeProviderFactory._wrap_with_repo_manager(provider)
 
         # Determine provider type
         if not provider_type:
@@ -156,7 +157,7 @@ class CodeProviderFactory:
                                 {"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN
                             )
 
-        return provider
+        return CodeProviderFactory._wrap_with_repo_manager(provider)
 
     @staticmethod
     def create_github_app_provider(repo_name: str) -> ICodeProvider:
@@ -219,7 +220,7 @@ class CodeProviderFactory:
             AuthMethod.APP_INSTALLATION,
         )
 
-        return provider
+        return CodeProviderFactory._wrap_with_repo_manager(provider)
 
     @staticmethod
     def get_default_provider() -> ICodeProvider:
@@ -242,11 +243,14 @@ class CodeProviderFactory:
         4. PAT from CODE_PROVIDER_TOKEN (universal fallback for all providers)
         5. Unauthenticated access (GitHub only, for public repos)
 
+        If REPO_MANAGER_ENABLED=true, wraps the provider with RepoManagerCodeProviderWrapper
+        to use local copies when available.
+
         Args:
             repo_name: Repository name or local path
 
         Returns:
-            Authenticated ICodeProvider instance
+            Authenticated ICodeProvider instance (wrapped with RepoManagerCodeProviderWrapper if enabled)
 
         Raises:
             ValueError: If no authentication method is available
@@ -261,7 +265,9 @@ class CodeProviderFactory:
             logger.debug(
                 f"Using LocalProvider (fallback) for repository path: {local_repo_path}"
             )
-            return LocalProvider(default_repo_path=local_repo_path)
+            provider = LocalProvider(default_repo_path=local_repo_path)
+            # Wrap with repo manager if enabled
+            return CodeProviderFactory._wrap_with_repo_manager(provider)
 
         provider_type = os.getenv("CODE_PROVIDER", "github").lower()
 
@@ -280,7 +286,8 @@ class CodeProviderFactory:
                 f"GitHub App is configured, trying App auth first for {repo_name}"
             )
             try:
-                return CodeProviderFactory.create_github_app_provider(repo_name)
+                provider = CodeProviderFactory.create_github_app_provider(repo_name)
+                return CodeProviderFactory._wrap_with_repo_manager(provider)
             except Exception as e:
                 logger.warning(
                     f"GitHub App authentication failed for {repo_name}: {e}, falling back to PAT"
@@ -320,7 +327,7 @@ class CodeProviderFactory:
                     provider.authenticate(
                         {"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN
                     )
-                    return provider
+                    return CodeProviderFactory._wrap_with_repo_manager(provider)
 
         # Try CODE_PROVIDER_TOKEN (for non-GitHub providers, or as fallback for GitHub)
         token = os.getenv("CODE_PROVIDER_TOKEN")
@@ -328,7 +335,7 @@ class CodeProviderFactory:
             logger.info("Using CODE_PROVIDER_TOKEN for authentication")
             provider = CodeProviderFactory.create_provider()
             provider.authenticate({"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN)
-            return provider
+            return CodeProviderFactory._wrap_with_repo_manager(provider)
 
         # If we get here and it's GitHub without App configured, try unauthenticated access
         if provider_type == ProviderType.GITHUB:
@@ -340,7 +347,7 @@ class CodeProviderFactory:
                 base_url = "https://api.github.com"
                 provider = GitHubProvider(base_url=base_url)
                 provider.set_unauthenticated_client()
-                return provider
+                return CodeProviderFactory._wrap_with_repo_manager(provider)
             except Exception as e:
                 logger.warning(f"Failed to create unauthenticated provider: {e}")
 
@@ -349,6 +356,35 @@ class CodeProviderFactory:
             "No authentication method available. "
             "Please configure CODE_PROVIDER_TOKEN, GH_TOKEN_LIST, or GitHub App credentials."
         )
+
+    @staticmethod
+    def _wrap_with_repo_manager(provider: ICodeProvider) -> ICodeProvider:
+        """
+        Wrap provider with RepoManagerCodeProviderWrapper if repo manager is enabled.
+        
+        Args:
+            provider: The ICodeProvider instance to wrap
+            
+        Returns:
+            Wrapped provider if repo manager is enabled, otherwise the original provider
+        """
+        repo_manager_enabled = os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
+        if not repo_manager_enabled:
+            return provider
+        
+        try:
+            from app.modules.repo_manager import RepoManager
+            from app.modules.code_provider.repo_manager_wrapper import (
+                RepoManagerCodeProviderWrapper,
+            )
+            
+            repo_manager = RepoManager()
+            wrapped_provider = RepoManagerCodeProviderWrapper(provider, repo_manager)
+            logger.debug("Wrapped provider with RepoManagerCodeProviderWrapper")
+            return wrapped_provider
+        except Exception as e:
+            logger.warning(f"Failed to wrap provider with repo manager: {e}, using unwrapped provider")
+            return provider
 
     @staticmethod
     def _resolve_local_repo_path(repo_name: Optional[str]) -> Optional[str]:

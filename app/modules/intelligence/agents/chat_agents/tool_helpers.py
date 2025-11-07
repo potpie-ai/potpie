@@ -29,6 +29,8 @@ def get_tool_run_message(tool_name: str):
             return "Searching the web"
         case "analyze_code_structure":
             return "Analyzing code structure"
+        case "bash_command":
+            return "Executing bash command on codebase"
         case _:
             return "Querying data"
 
@@ -59,6 +61,8 @@ def get_tool_response_message(tool_name: str):
             return "Code structure analyzed successfully"
         case "WebSearchTool":
             return "Web search successful"
+        case "bash_command":
+            return "Bash command executed successfully"
         case _:
             return "Data queried successfully"
 
@@ -103,6 +107,13 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             return f"Analyzing file - {args.get('file_path')}\n"
         case "WebSearchTool":
             return f"-> searching the web for {args.get('query')}\n"
+        case "bash_command":
+            command = args.get("command")
+            working_dir = args.get("working_directory")
+            if command:
+                dir_info = f" in directory '{working_dir}'" if working_dir else ""
+                return f"-> executing command: {command}{dir_info}\n"
+            return "-> executing bash command\n"
         case _:
             return ""
 
@@ -211,6 +222,40 @@ description:
                 res = content.get("content")
                 if isinstance(res, str):
                     return res[: min(len(res), 600)] + " ..."
+            return ""
+        case "bash_command":
+            if isinstance(content, Dict):
+                success = content.get("success", False)
+                output = content.get("output", "")
+                error = content.get("error", "")
+                exit_code = content.get("exit_code", -1)
+                
+                if not success:
+                    error_msg = f"Command failed with exit code {exit_code}"
+                    if error:
+                        error_msg += f"\n\nError output:\n```\n{error[:min(len(error), 500)]}"
+                        if len(error) > 500:
+                            error_msg += " ..."
+                        error_msg += "\n```"
+                    if output:
+                        error_msg += f"\n\nStandard output:\n```\n{output[:min(len(output), 500)]}"
+                        if len(output) > 500:
+                            error_msg += " ..."
+                        error_msg += "\n```"
+                    return error_msg
+                else:
+                    result_msg = f"Command executed successfully (exit code: {exit_code})"
+                    if output:
+                        result_msg += f"\n\nOutput:\n```\n{output[:min(len(output), 1000)]}"
+                        if len(output) > 1000:
+                            result_msg += "\n... (output truncated)"
+                        result_msg += "\n```"
+                    if error:
+                        result_msg += f"\n\nWarning/Error output:\n```\n{error[:min(len(error), 500)]}"
+                        if len(error) > 500:
+                            result_msg += " ..."
+                        result_msg += "\n```"
+                    return result_msg
             return ""
         case _:
             return ""

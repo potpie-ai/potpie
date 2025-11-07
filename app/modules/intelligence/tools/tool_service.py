@@ -41,6 +41,9 @@ from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool impo
 from app.modules.intelligence.tools.code_query_tools.get_file_content_by_path import (
     fetch_file_tool,
 )
+from app.modules.intelligence.tools.code_query_tools.bash_command_tool import (
+    bash_command_tool,
+)
 from app.modules.intelligence.tools.tool_schema import ToolInfo, ToolInfoWithParameters
 from app.modules.intelligence.tools.web_tools.code_provider_tool import (
     code_provider_tool,
@@ -135,6 +138,11 @@ class ToolService:
                 self.db, self.user_id
             ),
         }
+
+        # Add bash command tool if repo manager is enabled
+        bash_tool = bash_command_tool(self.db, self.user_id)
+        if bash_tool:
+            tools["bash_command"] = bash_tool
 
         if self.webpage_extractor_tool:
             tools["webpage_extractor"] = self.webpage_extractor_tool
