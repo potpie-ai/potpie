@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y git procps supervisor && rm -rf /var/li
 WORKDIR /app
 
 # Install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.9.6 /uv /uvx /bin/
 
 # Copy dependency metadata first for better layer caching
 COPY pyproject.toml uv.lock ./
