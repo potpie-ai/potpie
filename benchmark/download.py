@@ -32,7 +32,7 @@ def get_unique_repo_and_commits(csv_path: Path | str) -> dict[str, list[str]]:
     df: DataFrame = pd.read_csv(csv_file_path, usecols=required_columns)  # pyright: ignore[reportUnknownMemberType]
     df.dropna(inplace=True)
     df["repo_url"] = df["repo_url"].apply(_normalize_repo_url)  # pyright: ignore[reportUnknownMemberType]
-    repo_commit_dict = df.groupby("repo_url")["commit_id"].apply(list).to_dict()  # pyright: ignore[reportUnknownMemberType]
+    repo_commit_dict = df.groupby("repo_url")["commit_id"].apply(set).to_dict()  # pyright: ignore[reportUnknownMemberType]
     return repo_commit_dict
 
 
@@ -65,7 +65,8 @@ def create_worktree(
     # Remove existing worktree if it exists
     if worktree_path.exists():
         _ = subprocess.run(
-            ["git", "worktree", "remove", "--force", str(worktree_path)],
+            cwd=str(worktree_path.parent),
+            args=["git", "worktree", "remove", "--force", str(worktree_path)],
             check=False,
             capture_output=True,
             text=True,
@@ -102,7 +103,7 @@ def setup_all_worktrees(
         futures_dict: dict[Future[tuple[str, str]], str] = {}
 
         for repo_url in repo_dicts.keys():
-            repo_name = _get_repo_name(repo_url)
+            repo_name = get_repo_name(repo_url)
             bare_repo_path = base_directory / f"{repo_name}.git"
             future = executor.submit(clone_bare_repository, repo_url, bare_repo_path)
             futures_dict[future] = repo_url
@@ -126,7 +127,7 @@ def setup_all_worktrees(
         worktree_futures: dict[Future[tuple[Path, str]], str] = {}
 
         for repo_url in successful_repos:
-            repo_name = _get_repo_name(repo_url)
+            repo_name = get_repo_name(repo_url)
             bare_repo_path = base_directory / f"{repo_name}.git"
 
             for commit_id in repo_dicts[repo_url]:
@@ -154,7 +155,7 @@ def setup_all_worktrees(
     return worktree_map
 
 
-def _get_repo_name(repo_url: str) -> str:
+def get_repo_name(repo_url: str) -> str:
     """
     Get the name of the repository from the URL.
 
