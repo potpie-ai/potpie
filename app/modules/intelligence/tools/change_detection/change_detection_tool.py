@@ -9,8 +9,6 @@ from tree_sitter_languages import get_parser
 
 from app.core.database import get_db
 from app.modules.code_provider.code_provider_service import CodeProviderService
-from app.modules.code_provider.github.github_service import GithubService
-from app.modules.code_provider.local_repo.local_repo_service import LocalRepoService
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     GetCodeFromNodeIdTool,
 )
@@ -100,6 +98,7 @@ class ChangeDetectionTool:
                 tags = RepoMap.get_tags_from_code(relative_file_path, file_content)
 
                 language = RepoMap.get_language_for_file(relative_file_path)
+                root_node = None
                 if language:
                     parser = get_parser(language.name)
                     tree = parser.parse(bytes(file_content, "utf8"))
@@ -112,13 +111,13 @@ class ChangeDetectionTool:
                             node_type = "CLASS"
                         elif tag.type in ["method", "function"]:
                             node_type = "FUNCTION"
-
                         else:
                             node_type = "other"
 
                         node_name = f"{relative_file_path}:{tag.name}"
 
-                        if language:
+                        node = None
+                        if language and root_node:
                             node = RepoMap.find_node_by_range(
                                 root_node, tag.line, node_type
                             )
@@ -194,7 +193,6 @@ class ChangeDetectionTool:
         return entry_points
 
     async def get_code_changes(self, project_id):
-        global patches_dict, repo
         patches_dict = {}
         project_details = await ProjectService(self.sql_db).get_project_from_db_by_id(
             project_id
@@ -213,9 +211,18 @@ class ChangeDetectionTool:
         repo_path = project_details["repo_path"]
         # Use CodeProviderService to get the appropriate service instance
         code_service = CodeProviderService(self.sql_db)
+
+        # Fetch patches from the appropriate source
         try:
-            if isinstance(code_service.service_instance, GithubService):
-                github, _, _ = code_service.service_instance.get_github_repo_details(
+            # Check if project has a local repo_path (local repo) or not (GitHub)
+            if repo_path:
+                # Local repository
+                patches_dict = code_service.local_service.get_local_repo_diff(
+                    repo_path, branch_name
+                )
+            elif code_service.github_service:
+                # GitHub repository
+                github, _, _ = code_service.github_service.get_github_repo_details(
                     repo_name
                 )
                 repo = github.get_repo(repo_name)
@@ -224,77 +231,80 @@ class ChangeDetectionTool:
                 patches_dict = {
                     file.filename: file.patch for file in git_diff.files if file.patch
                 }
-            elif isinstance(code_service.service_instance, LocalRepoService):
-                patches_dict = code_service.service_instance.get_local_repo_diff(
-                    repo_path, branch_name
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Neither local repo path nor GitHub service available",
                 )
+        except HTTPException:
+            raise
         except Exception as e:
+            logging.exception(f"Error while fetching changes for project {project_id}")
             raise HTTPException(
                 status_code=400, detail=f"Error while fetching changes: {str(e)}"
-            )
-        finally:
-            if project_details is not None:
-                identifiers = []
-                node_ids = []
-                try:
-                    identifiers = await self.get_updated_function_list(
-                        patches_dict, project_id
+            ) from e
+
+        # Process the patches to find changed functions
+        identifiers = []
+        node_ids = []
+        try:
+            identifiers = await self.get_updated_function_list(patches_dict, project_id)
+
+            if not identifiers:
+                return ChangeDetectionResponse(patches=patches_dict, changes=[])
+
+            for identifier in identifiers:
+                node_id_query = " ".join(identifier.split(":"))
+                relevance_search = await self.search_service.search_codebase(
+                    project_id, node_id_query
+                )
+                if relevance_search:
+                    node_id = relevance_search[0]["node_id"]
+                    if node_id:
+                        node_ids.append(node_id)
+                else:
+                    node_ids.append(
+                        GetCodeFromNodeIdTool(self.sql_db, self.user_id).run(
+                            project_id, identifier
+                        )["node_id"]
                     )
-                    for identifier in identifiers:
-                        node_id_query = " ".join(identifier.split(":"))
-                        relevance_search = await self.search_service.search_codebase(
-                            project_id, node_id_query
-                        )
-                        if relevance_search:
-                            node_id = relevance_search[0]["node_id"]
-                            if node_id:
-                                node_ids.append(node_id)
-                        else:
-                            node_ids.append(
-                                GetCodeFromNodeIdTool(self.sql_db, self.user_id).run(
-                                    project_id, identifier
-                                )["node_id"]
-                            )
 
-                    # Fetch code for node ids and store in a dict
-                    node_code_dict = {}
-                    for node_id in node_ids:
-                        node_code = GetCodeFromNodeIdTool(
-                            self.sql_db, self.user_id
-                        ).run(project_id, node_id)
-                        node_code_dict[node_id] = {
-                            "code_content": node_code["code_content"],
-                            "file_path": node_code["file_path"],
-                        }
+            # Fetch code for node ids and store in a dict
+            node_code_dict = {}
+            for node_id in node_ids:
+                node_code = GetCodeFromNodeIdTool(self.sql_db, self.user_id).run(
+                    project_id, node_id
+                )
+                node_code_dict[node_id] = {
+                    "code_content": node_code["code_content"],
+                    "file_path": node_code["file_path"],
+                }
 
-                    entry_points = InferenceService(
-                        self.sql_db, "dummy"
-                    ).get_entry_points_for_nodes(node_ids, project_id)
+            entry_points = InferenceService(
+                self.sql_db, "dummy"
+            ).get_entry_points_for_nodes(node_ids, project_id)
 
-                    changes_list = []
-                    for node, entry_point in entry_points.items():
-                        entry_point_code = GetCodeFromNodeIdTool(
-                            self.sql_db, self.user_id
-                        ).run(project_id, entry_point[0])
-                        changes_list.append(
-                            ChangeDetail(
-                                updated_code=node_code_dict[node]["code_content"],
-                                entrypoint_code=entry_point_code["code_content"],
-                                citations=[
-                                    node_code_dict[node]["file_path"],
-                                    entry_point_code["file_path"],
-                                ],
-                            )
-                        )
-
-                    return ChangeDetectionResponse(
-                        patches=patches_dict, changes=changes_list
+            changes_list = []
+            for node, entry_point in entry_points.items():
+                entry_point_code = GetCodeFromNodeIdTool(self.sql_db, self.user_id).run(
+                    project_id, entry_point[0]
+                )
+                changes_list.append(
+                    ChangeDetail(
+                        updated_code=node_code_dict[node]["code_content"],
+                        entrypoint_code=entry_point_code["code_content"],
+                        citations=[
+                            node_code_dict[node]["file_path"],
+                            entry_point_code["file_path"],
+                        ],
                     )
-                except Exception as e:
-                    logging.error(f"project_id: {project_id}, error: {str(e)}")
+                )
 
-                if len(identifiers) == 0:
-                    return []
+            return ChangeDetectionResponse(patches=patches_dict, changes=changes_list)
+        except Exception as e:
+            logging.exception(f"project_id: {project_id}, error: {str(e)}")
+            # Return empty changes if processing fails, but still return patches
+            return ChangeDetectionResponse(patches=patches_dict, changes=[])
 
     async def arun(self, project_id: str) -> str:
         return await self.get_code_changes(project_id)
