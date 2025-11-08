@@ -23,6 +23,7 @@ class ProviderType(str, Enum):
     GITBUCKET = "gitbucket"
     GITLAB = "gitlab"
     BITBUCKET = "bitbucket"
+    LOCAL = "local"
 
 
 class CodeProviderFactory:
@@ -103,6 +104,22 @@ class CodeProviderFactory:
             base_url = base_url or "https://api.bitbucket.org/2.0"
             # provider = BitbucketProvider(base_url=base_url)
             raise NotImplementedError("Bitbucket provider not yet implemented")
+
+        elif provider_type == ProviderType.LOCAL:
+            from app.modules.code_provider.local_repo.local_provider import (
+                LocalProvider,
+            )
+
+            # For local provider, base_url is the repository path
+            if not base_url:
+                raise ValueError(
+                    "Local provider requires CODE_PROVIDER_BASE_URL to be set to repository path. "
+                    "Example: CODE_PROVIDER_BASE_URL=/path/to/repo"
+                )
+
+            provider = LocalProvider(default_repo_path=base_url)
+            logger.info(f"Created LocalProvider for path: {base_url}")
+            return provider  # Return early, no authentication needed
 
         else:
             raise ValueError(f"Unknown provider type: {provider_type}")
