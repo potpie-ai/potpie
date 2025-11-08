@@ -691,7 +691,7 @@ CRITICAL: Do ALL your work inside the "## Task Result" section.
 
 Your approach:
 1. Understand exactly what specific information is needed
-2. Start the "## Task Result" section immediately  
+2. Start the "## Task Result" section immediately
 3. Provide the specific answer/information requested
 4. Keep results concise and focused
 5. Include only what the supervisor needs to make a decision
@@ -775,16 +775,16 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
 
             **🎯 INTELLIGENT DELEGATION:**
             **Why delegate:** Subagents return clean results via "## Task Result" format, saving your context.
-            
+
             **When to delegate:** targeted analysis, research, implementation slices etc.
             for information gathering pertaining to the problem don't delegate task since the gathered context might be useful later on aswell
-            
+
             **How to delegate effectively:**
             - Break tasks into focused chunks with clear success criteria
             - **CRITICAL:** Pass already-fetched context via `context` parameter (file paths, code snippets, analysis results, config values)
             - Group related tasks to share context efficiently
             - Example context: "Main function in app/main.py:45-67 uses Config class from app/core/config.py with 'database_url' property. Error at line 52."
-            
+
             **Code Management:**
             - **CRITICAL:** All your code changes for this session are tracked in the code changes manager - it persists throughout the conversation
             - **ALWAYS use code changes tools** (not response text): `add_file_to_changes`, `update_file_lines`, `replace_in_file`, `insert_lines`, `delete_lines`

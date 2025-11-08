@@ -1680,7 +1680,7 @@ def update_file_lines_tool(input_data: UpdateFileLinesInput) -> str:
         # project_id is now required, so this shouldn't happen, but keep for safety
         if not input_data.project_id:
             logger.error(
-                f"Tool update_file_lines_tool: ERROR - project_id is required but was not provided!"
+                "Tool update_file_lines_tool: ERROR - project_id is required but was not provided!"
             )
             return "❌ Error: project_id is required to update file lines. Please provide the project_id from the conversation context."
         result = manager.update_file_lines(
@@ -1771,7 +1771,7 @@ def insert_lines_tool(input_data: InsertLinesInput) -> str:
         # project_id is now required, so this shouldn't happen, but keep for safety
         if not input_data.project_id:
             logger.error(
-                f"Tool insert_lines_tool: ERROR - project_id is required but was not provided!"
+                "Tool insert_lines_tool: ERROR - project_id is required but was not provided!"
             )
             return "❌ Error: project_id is required to insert lines. Please provide the project_id from the conversation context."
         result = manager.insert_lines(

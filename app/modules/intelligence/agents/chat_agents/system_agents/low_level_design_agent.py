@@ -9,7 +9,6 @@ from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent import (
 )
 from app.modules.intelligence.agents.multi_agent_config import MultiAgentConfig
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.provider.exceptions import UnsupportedProviderError
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext

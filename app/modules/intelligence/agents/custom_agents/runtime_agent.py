@@ -10,9 +10,7 @@ from app.modules.intelligence.agents.chat_agents.agent_config import (
     AgentConfig,
     TaskConfig,
 )
-from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
 from app.modules.intelligence.provider.exceptions import UnsupportedProviderError
-from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from ..chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from app.modules.utils.logger import setup_logger
