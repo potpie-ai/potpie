@@ -53,6 +53,10 @@ class ConfigProvider:
     def get_github_key(self):
         return self.github_key
 
+    def is_github_configured(self):
+        """Check if GitHub credentials are configured."""
+        return bool(self.github_key and os.getenv("GITHUB_APP_ID"))
+
     def get_demo_repo_list(self):
         return [
             {
