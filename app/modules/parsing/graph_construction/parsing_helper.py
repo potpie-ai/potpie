@@ -163,7 +163,11 @@ class ParseHelper:
         self, repo, branch, target_dir, auth, repo_details, user_id
     ):
         # Get repo name for logging - handle both Repo objects and repo objects with full_name
-        repo_name = repo.working_tree_dir if isinstance(repo, Repo) else getattr(repo, 'full_name', 'unknown')
+        repo_name = (
+            repo.working_tree_dir
+            if isinstance(repo, Repo)
+            else getattr(repo, "full_name", "unknown")
+        )
 
         logger.info(
             f"ParsingHelper: Starting tarball download for repo '{repo_name}', branch '{branch}'"
@@ -389,17 +393,23 @@ class ParseHelper:
         if isinstance(repo, Repo):
             # Local repository - use full path from Repo object
             repo_path = repo.working_tree_dir
-            full_name = repo_path.split("/")[-1]  # Extract just the directory name for display
-            logger.info(f"ParsingHelper: Detected local repository at {repo_path} with name {full_name}")
+            full_name = repo_path.split("/")[
+                -1
+            ]  # Extract just the directory name for display
+            logger.info(
+                f"ParsingHelper: Detected local repository at {repo_path} with name {full_name}"
+            )
         elif isinstance(repo_details, Repo):
             # Alternative: repo_details is the Repo object (non-dev mode)
             repo_path = repo_details.working_tree_dir
             full_name = repo_path.split("/")[-1]
-            logger.info(f"ParsingHelper: Detected local repository at {repo_path} with name {full_name}")
+            logger.info(
+                f"ParsingHelper: Detected local repository at {repo_path} with name {full_name}"
+            )
         else:
             # Remote repository - get name from repo_details (ParsingRequest)
             repo_path = None
-            if hasattr(repo_details, 'repo_name'):
+            if hasattr(repo_details, "repo_name"):
                 full_name = repo_details.repo_name
             else:
                 full_name = repo.full_name if hasattr(repo, "full_name") else None

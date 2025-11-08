@@ -1,6 +1,5 @@
 import logging
 import os
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from git import GitCommandError, InvalidGitRepositoryError, NoSuchPathError, Repo
@@ -83,13 +82,15 @@ class LocalProvider(ICodeProvider):
                 patterns = f.read().splitlines()
 
             # Add common exclusions
-            patterns.extend([
-                ".git",
-                "__pycache__",
-                "*.pyc",
-                "node_modules",
-                ".DS_Store",
-            ])
+            patterns.extend(
+                [
+                    ".git",
+                    "__pycache__",
+                    "*.pyc",
+                    "node_modules",
+                    ".DS_Store",
+                ]
+            )
 
             return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
         except Exception as e:
@@ -108,8 +109,21 @@ class LocalProvider(ICodeProvider):
         """
         # Exclude image/media files
         exclude_extensions = {
-            "png", "jpg", "jpeg", "gif", "bmp", "tiff", "webp", "ico", "svg",
-            "mp4", "avi", "mov", "wmv", "flv", "ipynb"
+            "png",
+            "jpg",
+            "jpeg",
+            "gif",
+            "bmp",
+            "tiff",
+            "webp",
+            "ico",
+            "svg",
+            "mp4",
+            "avi",
+            "mov",
+            "wmv",
+            "flv",
+            "ipynb",
         }
 
         ext = os.path.splitext(file_path)[1].lstrip(".").lower()
@@ -128,7 +142,9 @@ class LocalProvider(ICodeProvider):
             Dictionary with repository metadata
         """
         repo = self._get_repo(repo_name)
-        repo_path = os.path.abspath(os.path.expanduser(repo_name or self.default_repo_path))
+        repo_path = os.path.abspath(
+            os.path.expanduser(repo_name or self.default_repo_path)
+        )
 
         return {
             "id": hash(repo_path),  # Generate pseudo-ID from path hash
@@ -188,7 +204,9 @@ class LocalProvider(ICodeProvider):
             file_content = repo.git.show(f"{ref}:{file_path}")
         except GitCommandError as e:
             if "does not exist" in str(e) or "path not in" in str(e):
-                raise FileNotFoundError(f"File not found: {file_path} at ref {ref}") from e
+                raise FileNotFoundError(
+                    f"File not found: {file_path} at ref {ref}"
+                ) from e
             elif "unknown revision" in str(e):
                 raise ValueError(f"Invalid ref: {ref}") from e
             else:
@@ -234,7 +252,9 @@ class LocalProvider(ICodeProvider):
             }]
         """
         repo = self._get_repo(repo_name)
-        repo_path = os.path.abspath(os.path.expanduser(repo_name or self.default_repo_path))
+        repo_path = os.path.abspath(
+            os.path.expanduser(repo_name or self.default_repo_path)
+        )
 
         # Get gitignore spec
         gitignore_spec = self._get_gitignore_spec(repo_path)
@@ -244,11 +264,7 @@ class LocalProvider(ICodeProvider):
 
         # Traverse directory structure
         return self._traverse_directory(
-            full_path,
-            repo_path,
-            gitignore_spec,
-            current_depth=0,
-            max_depth=max_depth
+            full_path, repo_path, gitignore_spec, current_depth=0, max_depth=max_depth
         )
 
     def _traverse_directory(
@@ -488,11 +504,13 @@ class LocalProvider(ICodeProvider):
             if line.startswith("diff --git"):
                 # Save previous file
                 if current_file:
-                    files.append({
-                        "filename": current_file,
-                        "patch": "\n".join(current_patch),
-                        "status": "modified",  # Simplified status detection
-                    })
+                    files.append(
+                        {
+                            "filename": current_file,
+                            "patch": "\n".join(current_patch),
+                            "status": "modified",  # Simplified status detection
+                        }
+                    )
 
                 # Extract filename (a/path/to/file -> path/to/file)
                 parts = line.split()
@@ -504,11 +522,13 @@ class LocalProvider(ICodeProvider):
 
         # Save last file
         if current_file:
-            files.append({
-                "filename": current_file,
-                "patch": "\n".join(current_patch),
-                "status": "modified",
-            })
+            files.append(
+                {
+                    "filename": current_file,
+                    "patch": "\n".join(current_patch),
+                    "status": "modified",
+                }
+            )
 
         return files
 
@@ -603,7 +623,9 @@ class LocalProvider(ICodeProvider):
             Dictionary with commit information
         """
         repo = self._get_repo(repo_name)
-        repo_path = os.path.abspath(os.path.expanduser(repo_name or self.default_repo_path))
+        repo_path = os.path.abspath(
+            os.path.expanduser(repo_name or self.default_repo_path)
+        )
 
         # Checkout target branch
         if branch not in repo.heads:
@@ -638,7 +660,9 @@ class LocalProvider(ICodeProvider):
 
     # ============ User/Organization Operations ============
 
-    def list_user_repositories(self, username: Optional[str] = None) -> List[Dict[str, Any]]:
+    def list_user_repositories(
+        self, username: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
         List user repositories.
 
@@ -650,9 +674,13 @@ class LocalProvider(ICodeProvider):
             "Future enhancement: could scan directory for git repositories."
         )
 
-    def get_user_organizations(self, username: Optional[str] = None) -> List[Dict[str, str]]:
+    def get_user_organizations(
+        self, username: Optional[str] = None
+    ) -> List[Dict[str, str]]:
         """Organizations don't apply to local repositories."""
-        raise NotImplementedError("Organizations are not supported for local repositories.")
+        raise NotImplementedError(
+            "Organizations are not supported for local repositories."
+        )
 
     # ============ Provider Metadata ============
 
