@@ -281,18 +281,37 @@ class ProviderWrapper:
                 logger.error(f"Project not found for project_id: {project_id}")
                 return []
 
-            # Extract repository name from project details
-            repo_name = project.get("project_name")
+            # Extract repository path/name from project details
+            # Prefer repo_path (for local repos) over project_name (for remote repos)
+            repo_path = project.get("repo_path")
+            repo_name = repo_path if repo_path else project.get("project_name")
+
             if not repo_name:
-                logger.error(f"Project {project_id} has no associated repository name")
+                logger.error(f"Project {project_id} has no associated repository name or path")
                 return []
 
             logger.info(
-                f"Retrieved repository name '{repo_name}' for project_id '{project_id}'"
+                f"Retrieved repository {'path' if repo_path else 'name'} '{repo_name}' for project_id '{project_id}'"
+            )
+
+            # Auto-detect local paths (absolute paths, starting with ~, or valid directory)
+            is_local_path = (
+                os.path.isabs(repo_name)
+                or repo_name.startswith(("~", "./", "../"))
+                or os.path.isdir(os.path.expanduser(repo_name))
             )
 
             # Determine provider type to decide which implementation to use
             provider_type = os.getenv("CODE_PROVIDER", "github").lower()
+
+            # For local repos detected by path, always use LocalProvider
+            if is_local_path or provider_type == "local":
+                provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+                # Use the provider to get repository structure
+                structure = provider.get_repository_structure(
+                    repo_name=repo_name, path=path or "", max_depth=4
+                )
+                return structure
 
             # For GitHub repos, use the old GithubService implementation which has better async handling,
             # caching, proper depth tracking, and returns formatted string output
@@ -307,7 +326,7 @@ class ProviderWrapper:
                     project_id, path
                 )
 
-            # For other providers (GitBucket, etc.), use the provider-based approach
+            # For other providers (local, GitBucket, etc.), use the provider-based approach
             provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
 
             # Use the provider to get repository structure
@@ -330,11 +349,10 @@ class CodeProviderService:
         self.service_instance = self._get_service_instance()
 
     def _get_service_instance(self):
-        if os.getenv("isDevelopmentMode") == "enabled":
-            return LocalRepoService(self.sql_db)
-        else:
-            # Return ProviderWrapper which will create providers per-request with proper auth
-            return ProviderWrapper(self.sql_db)
+        # Always use ProviderWrapper for unified provider access
+        # ProviderWrapper handles factory creation and authentication fallback
+        # LocalProvider will be auto-selected for local paths
+        return ProviderWrapper(self.sql_db)
 
     def get_repo(self, repo_name):
         return self.service_instance.get_repo(repo_name)

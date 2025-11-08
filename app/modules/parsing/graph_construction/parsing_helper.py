@@ -56,6 +56,9 @@ class ParseHelper:
                     detail="Local repository does not exist on the given path",
                 )
             repo = Repo(repo_details.repo_path)
+            logger.info(
+                f"ParsingHelper: clone_or_copy_repository created local Repo object for path: {repo_details.repo_path}"
+            )
         else:
             try:
                 github, repo = self.github_service.get_repo(repo_details.repo_name)
@@ -159,13 +162,16 @@ class ParseHelper:
     async def download_and_extract_tarball(
         self, repo, branch, target_dir, auth, repo_details, user_id
     ):
+        # Get repo name for logging - handle both Repo objects and repo objects with full_name
+        repo_name = repo.working_tree_dir if isinstance(repo, Repo) else getattr(repo, 'full_name', 'unknown')
+
         logger.info(
-            f"ParsingHelper: Starting tarball download for repo '{repo.full_name}', branch '{branch}'"
+            f"ParsingHelper: Starting tarball download for repo '{repo_name}', branch '{branch}'"
         )
 
         try:
             logger.info(
-                f"ParsingHelper: Getting archive link for repo '{repo.full_name}', branch '{branch}'"
+                f"ParsingHelper: Getting archive link for repo '{repo_name}', branch '{branch}'"
             )
             tarball_url = repo.get_archive_link("tarball", branch)
             logger.info(f"ParsingHelper: Retrieved tarball URL: {tarball_url}")
@@ -372,21 +378,40 @@ class ParseHelper:
         project_id=None,  # Change type to str
         commit_id=None,
     ):
-        full_name = (
-            repo.working_tree_dir.split("/")[-1]
-            if isinstance(repo_details, Repo)
-            else (
-                repo.full_name if hasattr(repo, "full_name") else repo_details.repo_name
-            )
+        # Check if this is a local repository by examining the repo object
+        # In development mode: repo is Repo object, repo_details is ParsingRequest
+        # In non-development mode: both repo and repo_details can be Repo objects
+        logger.info(
+            f"ParsingHelper: setup_project_directory called with repo type: {type(repo).__name__}, "
+            f"repo_details type: {type(repo_details).__name__}"
         )
-        repo_path = getattr(repo_details, "repo_path", None)
-        if full_name is None:
+
+        if isinstance(repo, Repo):
+            # Local repository - use full path from Repo object
+            repo_path = repo.working_tree_dir
+            full_name = repo_path.split("/")[-1]  # Extract just the directory name for display
+            logger.info(f"ParsingHelper: Detected local repository at {repo_path} with name {full_name}")
+        elif isinstance(repo_details, Repo):
+            # Alternative: repo_details is the Repo object (non-dev mode)
+            repo_path = repo_details.working_tree_dir
             full_name = repo_path.split("/")[-1]
+            logger.info(f"ParsingHelper: Detected local repository at {repo_path} with name {full_name}")
+        else:
+            # Remote repository - get name from repo_details (ParsingRequest)
+            repo_path = None
+            if hasattr(repo_details, 'repo_name'):
+                full_name = repo_details.repo_name
+            else:
+                full_name = repo.full_name if hasattr(repo, "full_name") else None
+            logger.info(f"ParsingHelper: Detected remote repository {full_name}")
+
+        if full_name is None:
+            full_name = repo_path.split("/")[-1] if repo_path else "unknown"
 
         # Normalize repository name for consistent database lookups
         normalized_full_name = normalize_repo_name(full_name)
         logger.info(
-            f"ParsingHelper: Original full_name: {full_name}, Normalized: {normalized_full_name}"
+            f"ParsingHelper: Original full_name: {full_name}, Normalized: {normalized_full_name}, repo_path: {repo_path}"
         )
 
         project = await self.project_manager.get_project_from_db(
@@ -399,14 +424,12 @@ class ParseHelper:
                 user_id,
                 project_id,
                 commit_id=commit_id,
+                repo_path=repo_path,  # Pass repo_path when registering
             )
         if repo_path is not None:
-            if os.getenv("isDevelopmentMode", "false").lower() == "false":
-                raise HTTPException(
-                    status_code=400,
-                    detail="Passing remote repositories is not allowed in development mode",
-                )
-            return repo_details.repo_path, project_id
+            # Local repository detected - return the path directly without downloading tarball
+            logger.info(f"ParsingHelper: Using local repository at {repo_path}")
+            return repo_path, project_id
         if isinstance(repo_details, Repo):
             extracted_dir = repo_details.working_tree_dir
             try:

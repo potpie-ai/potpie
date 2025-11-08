@@ -282,6 +282,20 @@ class CodeProviderFactory:
 
         provider_type = os.getenv("CODE_PROVIDER", "github").lower()
 
+        # For GitHub, validate that repo_name looks like a valid GitHub repo name
+        # GitHub repos must be in "owner/repo" format
+        if provider_type == "github" and "/" not in repo_name:
+            logger.error(
+                f"Invalid GitHub repository name: '{repo_name}'. "
+                f"GitHub repos must be in 'owner/repo' format. "
+                f"If this is a local repository, ensure repo_path is set in the database."
+            )
+            raise ValueError(
+                f"Invalid repository name '{repo_name}'. "
+                f"GitHub repos must be in 'owner/repo' format (e.g., 'facebook/react'). "
+                f"For local repositories, use the full filesystem path."
+            )
+
         # Check if GitHub App is configured (only relevant for GitHub provider)
         app_id = os.getenv("GITHUB_APP_ID")
         private_key = (
