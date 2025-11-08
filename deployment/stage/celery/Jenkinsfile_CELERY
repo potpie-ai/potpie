@@ -19,7 +19,7 @@ pipeline {
                 script {
                     // Determine environment based on branch
                     def branch = env.GIT_BRANCH
-   
+
                     checkout scm
                     // Capture the short Git commit hash to use as the image tag
                     env.GIT_COMMIT_HASH = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
