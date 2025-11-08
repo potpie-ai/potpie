@@ -105,6 +105,7 @@ class GitBucketProvider(ICodeProvider):
         # Convert normalized repo name back to GitBucket format for API calls
         from app.modules.parsing.utils.repo_name_normalizer import (
             get_actual_repo_name_for_lookup,
+            normalize_repo_name,
         )
 
         actual_repo_name = get_actual_repo_name_for_lookup(repo_name, "gitbucket")
@@ -118,11 +119,19 @@ class GitBucketProvider(ICodeProvider):
                 f"GitBucket: Successfully retrieved repository '{repo_name}' - ID: {repo.id}, Default branch: {repo.default_branch}"
             )
 
+            # Normalize full_name and owner to use actual username instead of "root"
+            normalized_full_name = normalize_repo_name(repo.full_name, "gitbucket")
+            normalized_owner = (
+                normalized_full_name.split("/")[0]
+                if "/" in normalized_full_name
+                else repo.owner.login
+            )
+
             repo_data = {
                 "id": repo.id,
                 "name": repo.name,
-                "full_name": repo.full_name,
-                "owner": repo.owner.login,
+                "full_name": normalized_full_name,
+                "owner": normalized_owner,
                 "default_branch": repo.default_branch,
                 "private": repo.private,
                 "url": repo.html_url,
@@ -971,23 +980,35 @@ class GitBucketProvider(ICodeProvider):
         """List user repositories."""
         self._ensure_authenticated()
 
+        from app.modules.parsing.utils.repo_name_normalizer import normalize_repo_name
+
         if user_id:
             user = self.client.get_user(user_id)
             repos = user.get_repos()
         else:
             repos = self.client.get_user().get_repos()
 
-        return [
-            {
-                "id": repo.id,
-                "name": repo.name,
-                "full_name": repo.full_name,
-                "owner": repo.owner.login,
-                "private": repo.private,
-                "url": repo.html_url,
-            }
-            for repo in repos
-        ]
+        result = []
+        for repo in repos:
+            # Normalize full_name and owner to use actual username instead of "root"
+            normalized_full_name = normalize_repo_name(repo.full_name, "gitbucket")
+            normalized_owner = (
+                normalized_full_name.split("/")[0]
+                if "/" in normalized_full_name
+                else repo.owner.login
+            )
+
+            result.append(
+                {
+                    "id": repo.id,
+                    "name": repo.name,
+                    "full_name": normalized_full_name,
+                    "owner": normalized_owner,
+                    "private": repo.private,
+                    "url": repo.html_url,
+                }
+            )
+        return result
 
     def get_user_organizations(self) -> List[Dict[str, Any]]:
         """

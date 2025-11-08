@@ -154,13 +154,22 @@ class ProviderWrapper:
                             if base_url.endswith("/api/v3"):
                                 base_url = base_url[:-7]  # Remove '/api/v3'
 
+                            # Convert normalized repo name back to GitBucket format (root/repo) for URL
+                            from app.modules.parsing.utils.repo_name_normalizer import (
+                                get_actual_repo_name_for_lookup,
+                            )
+
+                            actual_repo_name = get_actual_repo_name_for_lookup(
+                                self.full_name, "gitbucket"
+                            )
+
                             if format_type == "tarball":
                                 archive_url = (
-                                    f"{base_url}/{self.full_name}/archive/{ref}.tar.gz"
+                                    f"{base_url}/{actual_repo_name}/archive/{ref}.tar.gz"
                                 )
                             else:
                                 archive_url = (
-                                    f"{base_url}/{self.full_name}/archive/{ref}.zip"
+                                    f"{base_url}/{actual_repo_name}/archive/{ref}.zip"
                                 )
                         else:
                             # Standard GitHub API format
