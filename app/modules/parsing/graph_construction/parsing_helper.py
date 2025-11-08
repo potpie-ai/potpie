@@ -474,7 +474,10 @@ class ParseHelper:
                         repo_details,
                         user_id,
                     )
-                    branch_details = repo_details.get_branch(branch)
+                    # Use repo.get_branch() instead of repo_details.get_branch()
+                    # repo is the MockRepo object (or PyGithub Repository) with get_branch method
+                    # repo_details can be ParsingRequest in dev mode, which doesn't have get_branch
+                    branch_details = repo.get_branch(branch)
                     latest_commit_sha = branch_details.commit.sha
             except ParsingFailedError as e:
                 logger.exception("Failed to download repository")
@@ -487,7 +490,10 @@ class ParseHelper:
                     status_code=500, detail=f"Repository download failed: {e}"
                 ) from e
 
-        repo_metadata = ParseHelper.extract_repository_metadata(repo_details)
+        # Use repo instead of repo_details for metadata extraction
+        # repo is always the MockRepo (remote) or Repo (local) object with required methods
+        # repo_details can be ParsingRequest in dev mode, which lacks these methods
+        repo_metadata = ParseHelper.extract_repository_metadata(repo)
         repo_metadata["error_message"] = None
         project_metadata = json.dumps(repo_metadata).encode("utf-8")
         ProjectService.update_project(
