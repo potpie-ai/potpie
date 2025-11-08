@@ -1,5 +1,5 @@
 import os
-from typing import Any
+from typing import List, Optional, Any
 
 from dotenv import load_dotenv
 
@@ -193,6 +193,31 @@ class ConfigProvider:
     @staticmethod
     def get_stream_prefix() -> str:
         return os.getenv("REDIS_STREAM_PREFIX", "chat:stream")
+
+    def get_code_provider_type(self) -> str:
+        """Get configured code provider type (default: github)."""
+        return os.getenv("CODE_PROVIDER", "github").lower()
+
+    def get_code_provider_base_url(self) -> Optional[str]:
+        """Get code provider base URL (for self-hosted instances)."""
+        return os.getenv("CODE_PROVIDER_BASE_URL")
+
+    def get_code_provider_token(self) -> Optional[str]:
+        """Get primary code provider token (PAT)."""
+        return os.getenv("CODE_PROVIDER_TOKEN")
+
+    def get_code_provider_token_pool(self) -> List[str]:
+        """Get code provider token pool for rate limit distribution."""
+        token_pool_str = os.getenv("CODE_PROVIDER_TOKEN_POOL", "")
+        return [t.strip() for t in token_pool_str.split(",") if t.strip()]
+
+    def get_code_provider_username(self) -> Optional[str]:
+        """Get code provider username (for Basic Auth)."""
+        return os.getenv("CODE_PROVIDER_USERNAME")
+
+    def get_code_provider_password(self) -> Optional[str]:
+        """Get code provider password (for Basic Auth)."""
+        return os.getenv("CODE_PROVIDER_PASSWORD")
 
 
 config_provider = ConfigProvider()

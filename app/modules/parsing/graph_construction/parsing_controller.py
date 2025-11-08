@@ -19,6 +19,7 @@ from app.modules.parsing.graph_construction.parsing_service import ParsingServic
 from app.modules.parsing.graph_construction.parsing_validator import (
     validate_parsing_input,
 )
+from app.modules.parsing.utils.repo_name_normalizer import normalize_repo_name
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.utils.email_helper import EmailHelper
@@ -47,6 +48,22 @@ class ParsingController:
         project_manager = ProjectService(db)
         parse_helper = ParseHelper(db)
         parsing_service = ParsingService(db, user_id)
+
+        # Auto-detect if repo_name is actually a filesystem path
+        if repo_details.repo_name and not repo_details.repo_path:
+            is_path = (
+                os.path.isabs(repo_details.repo_name)
+                or repo_details.repo_name.startswith(("~", "./", "../"))
+                or os.path.isdir(os.path.expanduser(repo_details.repo_name))
+            )
+            if is_path:
+                # Move from repo_name to repo_path
+                repo_details.repo_path = repo_details.repo_name
+                repo_details.repo_name = repo_details.repo_path.split("/")[-1]
+                logger.info(
+                    f"Auto-detected filesystem path: repo_path={repo_details.repo_path}, repo_name={repo_details.repo_name}"
+                )
+
         if config_provider.get_is_development_mode():
             # In dev mode: if both repo_path and repo_name are provided, prioritize repo_path (local)
             if repo_details.repo_path and repo_details.repo_name:
@@ -90,8 +107,14 @@ class ParsingController:
         ]
 
         try:
+            # Normalize repository name for consistent database lookups
+            normalized_repo_name = normalize_repo_name(repo_name)
+            logger.info(
+                f"Original repo_name: {repo_name}, Normalized: {normalized_repo_name}"
+            )
+
             project = await project_manager.get_project_from_db(
-                repo_name,
+                normalized_repo_name,
                 repo_details.branch_name,
                 user_id,
                 repo_path=repo_details.repo_path,
@@ -101,7 +124,9 @@ class ParsingController:
             # First check if this is a demo project that hasn't been accessed by this user yet
             if not project and repo_details.repo_name in demo_repos:
                 existing_project = await project_manager.get_global_project_from_db(
-                    repo_name, repo_details.branch_name, repo_details.commit_id
+                    normalized_repo_name,
+                    repo_details.branch_name,
+                    repo_details.commit_id,
                 )
 
                 new_project_id = str(uuid7())
@@ -160,7 +185,9 @@ class ParsingController:
             # Handle existing projects (including previously duplicated demo projects)
             if project:
                 project_id = project.id
-                is_latest = await parse_helper.check_commit_status(project_id)
+                is_latest = await parse_helper.check_commit_status(
+                    project_id, requested_commit_id=repo_details.commit_id
+                )
 
                 if not is_latest or project.status != ProjectStatusEnum.READY.value:
                     cleanup_graph = True

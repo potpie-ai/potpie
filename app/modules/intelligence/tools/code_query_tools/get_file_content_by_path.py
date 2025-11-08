@@ -165,8 +165,11 @@ class FetchFileTool:
                     "content": content,
                 }
 
+            # Use repo_path for local repos, project_name for remote repos
+            repo_identifier = details.get("repo_path") or details["project_name"]
+
             content = self.cp_service.get_file_content(
-                repo_name=details["project_name"],
+                repo_name=repo_identifier,
                 file_path=file_path,
                 branch_name=details["branch_name"],
                 start_line=start_line if start_line is not None else None,
