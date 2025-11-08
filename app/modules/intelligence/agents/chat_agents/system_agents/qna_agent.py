@@ -3,12 +3,20 @@ from app.modules.intelligence.agents.chat_agents.agent_config import (
     TaskConfig,
 )
 from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
+from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent import (
+    PydanticMultiAgent,
+    AgentType as MultiAgentType,
+)
+from app.modules.intelligence.agents.multi_agent_config import MultiAgentConfig
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.exceptions import UnsupportedProviderError
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class QnAAgent(ChatAgent):
@@ -59,11 +67,44 @@ class QnAAgent(ChatAgent):
             ]
         )
 
-        if not self.llm_provider.supports_pydantic("chat"):
-            raise UnsupportedProviderError(
-                f"Model '{self.llm_provider.chat_config.model}' does not support Pydantic-based agents."
+        supports_pydantic = self.llm_provider.supports_pydantic("chat")
+        should_use_multi = MultiAgentConfig.should_use_multi_agent("codebase_qna_agent")
+
+        logger.info(
+            f"QnAAgent: supports_pydantic={supports_pydantic}, should_use_multi_agent={should_use_multi}"
+        )
+        logger.info(f"Current model: {self.llm_provider.chat_config.model}")
+        logger.info(f"Model capabilities: {self.llm_provider.chat_config.capabilities}")
+
+        if supports_pydantic:
+            if should_use_multi:
+                logger.info("✅ Using PydanticMultiAgent (multi-agent system)")
+                # Create specialized delegate agents for codebase Q&A using available agent types
+                delegate_agents = {
+                    MultiAgentType.THINK_EXECUTE: AgentConfig(
+                        role="Q&A Synthesis Specialist",
+                        goal="Synthesize findings and provide comprehensive answers to codebase questions",
+                        backstory="You are skilled at combining technical analysis with clear communication to provide comprehensive answers about codebases.",
+                        tasks=[
+                            TaskConfig(
+                                description="Synthesize code analysis and location findings into comprehensive, well-structured answers",
+                                expected_output="Clear, comprehensive answers with code examples, explanations, and relevant context",
+                            )
+                        ],
+                        max_iter=12,
+                    ),
+                }
+                return PydanticMultiAgent(
+                    self.llm_provider, agent_config, tools, None, delegate_agents
+                )
+            else:
+                logger.info("❌ Multi-agent disabled by config, using PydanticRagAgent")
+                return PydanticRagAgent(self.llm_provider, agent_config, tools)
+        else:
+            logger.error(
+                f"❌ Model '{self.llm_provider.chat_config.model}' does not support Pydantic - using fallback PydanticRagAgent"
             )
-        return PydanticRagAgent(self.llm_provider, agent_config, tools)
+            return PydanticRagAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if ctx.node_ids and len(ctx.node_ids) > 0:

@@ -1,4 +1,11 @@
 from pydantic import BaseModel
+from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent import (
+    PydanticMultiAgent,
+)
+from app.modules.intelligence.agents.multi_agent_config import MultiAgentConfig
+from app.modules.intelligence.provider.provider_service import (
+    ProviderService,
+)
 from app.modules.intelligence.agents.chat_agents.agent_config import (
     AgentConfig,
     TaskConfig,
@@ -33,6 +40,7 @@ class CustomAgentConfig(BaseModel):
     system_prompt: str
     tasks: List[CustomTaskConfig]
     project_id: str = ""
+    use_multi_agent: bool = True  # Multi-agent mode is now default
 
 
 class RuntimeCustomAgent(ChatAgent):
@@ -78,15 +86,43 @@ class RuntimeCustomAgent(ChatAgent):
             )
             mcp_servers = []
 
-        if self.llm_provider.supports_pydantic("chat"):
-            agent = PydanticRagAgent(
-                self.llm_provider, agent_config, tools, mcp_servers
-            )
-            self._pydantic_agent = agent  # Store reference for status access
-            return agent
-        raise UnsupportedProviderError(
-            f"Model '{self.llm_provider.chat_config.model}' does not support Pydantic-based agents."
+        supports_pydantic = self.llm_provider.supports_pydantic("chat")
+        should_use_multi = MultiAgentConfig.should_use_multi_agent("custom_agent")
+
+        logger.info(
+            f"RuntimeCustomAgent: supports_pydantic={supports_pydantic}, should_use_multi_agent={should_use_multi}"
         )
+        logger.info(f"Current model: {self.llm_provider.chat_config.model}")
+        logger.info(f"Model capabilities: {self.llm_provider.chat_config.capabilities}")
+
+        if supports_pydantic:
+            if should_use_multi:
+                logger.info(
+                    "✅ Using PydanticMultiAgent (multi-agent system) for custom agent"
+                )
+                agent = PydanticMultiAgent(
+                    self.llm_provider, agent_config, tools, mcp_servers
+                )
+                self._pydantic_agent = agent  # Store reference for status access
+                return agent
+            else:
+                logger.info(
+                    "❌ Multi-agent disabled by config for custom agent, using PydanticRagAgent"
+                )
+                from app.modules.intelligence.agents.chat_agents.pydantic_agent import (
+                    PydanticRagAgent,
+                )
+
+                agent = PydanticRagAgent(self.llm_provider, agent_config, tools)
+                self._pydantic_agent = agent
+                return agent
+        else:
+            logger.error(
+                f"❌ Model '{self.llm_provider.chat_config.model}' does not support Pydantic - cannot create custom agent"
+            )
+            raise UnsupportedProviderError(
+                f"Model '{self.llm_provider.chat_config.model}' does not support Pydantic-based agents."
+            )
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if ctx.node_ids and len(ctx.node_ids) > 0:
