@@ -2,7 +2,6 @@ import os
 import logging
 from typing import Optional
 
-from app.modules.code_provider.local_repo.local_repo_service import LocalRepoService
 from app.modules.code_provider.provider_factory import CodeProviderFactory
 
 try:
@@ -287,7 +286,9 @@ class ProviderWrapper:
             repo_name = repo_path if repo_path else project.get("project_name")
 
             if not repo_name:
-                logger.error(f"Project {project_id} has no associated repository name or path")
+                logger.error(
+                    f"Project {project_id} has no associated repository name or path"
+                )
                 return []
 
             logger.info(

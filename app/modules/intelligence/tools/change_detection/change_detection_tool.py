@@ -76,12 +76,12 @@ class ChangeDetectionTool:
     ) -> Optional[str]:
         """
         Find a node_id in Neo4j by file path and function name.
-        
+
         Args:
             project_id: The project/repo ID
             file_path: The file path (e.g., 'tests/test_sdk.py')
             function_name: The function name (e.g., 'test_document_lifecycle')
-            
+
         Returns:
             The node_id if found, None otherwise
         """
@@ -94,7 +94,7 @@ class ChangeDetectionTool:
             # Strategy 1: File path ends with the relative path
             """
             MATCH (n:NODE {repoId: $project_id})
-            WHERE n.file_path ENDS WITH $file_path 
+            WHERE n.file_path ENDS WITH $file_path
             AND n.name = $function_name
             AND (n:FUNCTION OR n:CLASS)
             RETURN n.node_id AS node_id, n.file_path AS file_path, n.name AS name
@@ -103,7 +103,7 @@ class ChangeDetectionTool:
             # Strategy 2: File path contains the relative path
             """
             MATCH (n:NODE {repoId: $project_id})
-            WHERE n.file_path CONTAINS $file_path 
+            WHERE n.file_path CONTAINS $file_path
             AND n.name = $function_name
             AND (n:FUNCTION OR n:CLASS)
             RETURN n.node_id AS node_id, n.file_path AS file_path, n.name AS name
@@ -128,14 +128,14 @@ class ChangeDetectionTool:
             LIMIT 5
             """,
         ]
-        
+
         # Extract just the filename for strategy 3
         filename = file_path.split("/")[-1] if "/" in file_path else file_path
-        
+
         # Create dot-separated path format for strategy 4
         # Convert 'tests/test_sdk.py' to '.tests.test_sdk.py'
         dot_path = "." + file_path.replace("/", ".")
-        
+
         try:
             with self.neo4j_driver.session() as session:
                 for i, query in enumerate(queries, 1):
@@ -162,12 +162,12 @@ class ChangeDetectionTool:
                             file_path=file_path,
                             function_name=function_name,
                         )
-                    
+
                     records = list(result)
                     if records:
                         # Return the first match
                         return records[0]["node_id"]
-                
+
                 # No matches found with any strategy
                 return None
         except Exception as e:
@@ -200,7 +200,9 @@ class ChangeDetectionTool:
                 pathspec.patterns.GitWildMatchPattern, gitignore_content.splitlines()
             )
         except Exception as e:
-            logging.warning(f"[CHANGE_DETECTION] Error reading .gitignore file: {str(e)}")
+            logging.warning(
+                f"[CHANGE_DETECTION] Error reading .gitignore file: {str(e)}"
+            )
             return None
 
     def _parse_diff_detail(self, patch_details):
@@ -238,12 +240,14 @@ class ChangeDetectionTool:
                 else:
                     # Check if project_name is a local path before using it
                     project_name = project["project_name"]
-                    if os.path.isabs(project_name) or os.path.isdir(os.path.expanduser(project_name)):
+                    if os.path.isabs(project_name) or os.path.isdir(
+                        os.path.expanduser(project_name)
+                    ):
                         repo_identifier = project_name
                     else:
                         # Not a local path, use project_name (will be validated by provider)
                         repo_identifier = project_name
-                
+
                 file_content = code_service.get_file_content(
                     repo_identifier,
                     relative_file_path,
@@ -423,12 +427,15 @@ class ChangeDetectionTool:
                 if repo_path and os.path.isdir(repo_path):
                     # Local repository - use git diff for accurate change detection
                     from git import Repo as GitRepo
+
                     git_repo = GitRepo(actual_repo_name)
 
                     # Get default branch (usually main or master)
                     try:
                         # Try to get the default branch from git config
-                        default_branch = git_repo.git.symbolic_ref("refs/remotes/origin/HEAD").split("/")[-1]
+                        default_branch = git_repo.git.symbolic_ref(
+                            "refs/remotes/origin/HEAD"
+                        ).split("/")[-1]
                     except Exception:
                         # Fallback to common default branch names
                         if "main" in git_repo.heads:
@@ -449,7 +456,7 @@ class ChangeDetectionTool:
                     try:
                         # Load .gitignore patterns to filter out ignored files
                         gitignore_spec = self._get_gitignore_spec(actual_repo_name)
-                        
+
                         # Use git diff <default_branch> to get all changes from that branch
                         # This includes both committed changes on current branch AND uncommitted changes
                         diff_output = git_repo.git.diff(default_branch, unified=3)
@@ -463,8 +470,15 @@ class ChangeDetectionTool:
                                     # Save previous file
                                     if current_file:
                                         # Only add file if it doesn't match .gitignore patterns
-                                        if not gitignore_spec or not gitignore_spec.match_file(current_file):
-                                            patches_dict[current_file] = "\n".join(current_patch)
+                                        if (
+                                            not gitignore_spec
+                                            or not gitignore_spec.match_file(
+                                                current_file
+                                            )
+                                        ):
+                                            patches_dict[current_file] = "\n".join(
+                                                current_patch
+                                            )
                                         else:
                                             logging.debug(
                                                 f"[CHANGE_DETECTION] Excluding ignored file: {current_file}"
@@ -479,8 +493,12 @@ class ChangeDetectionTool:
                             # Save last file
                             if current_file:
                                 # Only add file if it doesn't match .gitignore patterns
-                                if not gitignore_spec or not gitignore_spec.match_file(current_file):
-                                    patches_dict[current_file] = "\n".join(current_patch)
+                                if not gitignore_spec or not gitignore_spec.match_file(
+                                    current_file
+                                ):
+                                    patches_dict[current_file] = "\n".join(
+                                        current_patch
+                                    )
                                 else:
                                     logging.debug(
                                         f"[CHANGE_DETECTION] Excluding ignored file: {current_file}"
@@ -490,7 +508,9 @@ class ChangeDetectionTool:
                             f"[CHANGE_DETECTION] Local repo - found {len(patches_dict)} changed files (diff from {default_branch})"
                         )
                     except Exception as e:
-                        logging.error(f"[CHANGE_DETECTION] Error getting local changes: {e}")
+                        logging.error(
+                            f"[CHANGE_DETECTION] Error getting local changes: {e}"
+                        )
                         patches_dict = {}
                 else:
                     # Remote repository - create provider with proper auth
@@ -670,12 +690,12 @@ class ChangeDetectionTool:
                             # Parse identifier into file_path and function_name
                             if ":" in identifier:
                                 file_path, function_name = identifier.rsplit(":", 1)
-                                
+
                                 # Try to find node by file path and name
                                 found_node_id = self._find_node_by_file_and_name(
                                     project_id, file_path, function_name
                                 )
-                                
+
                                 if found_node_id:
                                     node_ids.append(found_node_id)
                                 else:
@@ -684,14 +704,14 @@ class ChangeDetectionTool:
                                     fallback_result = GetCodeFromNodeIdTool(
                                         self.sql_db, self.user_id
                                     ).run(project_id, identifier)
-                                    
+
                                     # Check if result has an error or missing node_id
                                     if "error" in fallback_result:
                                         logging.warning(
                                             f"[CHANGE_DETECTION] Could not find node for identifier '{identifier}': {fallback_result['error']}"
                                         )
                                         continue
-                                    
+
                                     node_id = fallback_result.get("node_id")
                                     if node_id:
                                         node_ids.append(node_id)
