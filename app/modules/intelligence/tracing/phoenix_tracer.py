@@ -119,10 +119,12 @@ def initialize_phoenix_tracing(
         )
 
         # STEP 1: Create and set up the tracer provider with resource attributes
-        resource = Resource.create({
-            "service.name": project_name,
-            "source": source,
-        })
+        resource = Resource.create(
+            {
+                "service.name": project_name,
+                "source": source,
+            }
+        )
         tracer_provider = TracerProvider(resource=resource)
         trace.set_tracer_provider(tracer_provider)
 
