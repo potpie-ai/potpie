@@ -3,6 +3,7 @@ import logging
 import os
 import shutil
 import tarfile
+import uuid
 from typing import Any, Tuple
 from urllib.parse import urlparse, urlunparse
 
@@ -424,28 +425,34 @@ class ParseHelper:
         """
         Clone repository using git with authentication.
         Fallback method when archive download fails for private repos.
-        
+
         Requires GITBUCKET_USERNAME and GITBUCKET_PASSWORD environment variables.
+
+        This method clones to a temporary directory, filters text files using is_text_file(),
+        and copies only text files to the final directory to prevent binary file parsing errors.
         """
         repo_name = (
             repo.working_tree_dir
             if isinstance(repo, Repo)
             else getattr(repo, "full_name", "unknown")
         )
-        
+
         logger.info(
             f"ParsingHelper: Cloning repository '{repo_name}' branch '{branch}' using git"
         )
-        
+
         final_dir = os.path.join(
             target_dir,
             f"{repo.full_name.replace('/', '-').replace('.', '-')}-{branch.replace('/', '-').replace('.', '-')}-{user_id}",
         )
-        
+
+        # Create temporary clone directory
+        temp_clone_dir = os.path.join(target_dir, f"{uuid.uuid4()}_temp_clone")
+
         # Get credentials from environment variables
         username = os.getenv("GITBUCKET_USERNAME")
         password = os.getenv("GITBUCKET_PASSWORD")
-        
+
         if not username or not password:
             error_msg = (
                 "GITBUCKET_USERNAME and GITBUCKET_PASSWORD environment variables "
@@ -453,18 +460,18 @@ class ParseHelper:
             )
             logger.error(f"ParsingHelper: {error_msg}")
             raise ParsingFailedError(error_msg)
-        
+
         # Construct GitBucket clone URL with embedded credentials
         # Format: http://username:password@hostname/path/owner/repo.git
         base_url = os.getenv("CODE_PROVIDER_BASE_URL", "http://localhost:8080")
         if base_url.endswith("/api/v3"):
             base_url = base_url[:-7]  # Remove '/api/v3'
-        
+
         parsed = urlparse(base_url)
         # Preserve the path component from base URL (e.g., /gitbucket)
         base_path = parsed.path.rstrip('/')  # Remove trailing slash if present
         repo_path = f"{base_path}/{repo.full_name}.git" if base_path else f"/{repo.full_name}.git"
-        
+
         clone_url_with_auth = urlunparse((
             parsed.scheme,
             f"{username}:{password}@{parsed.netloc}",
@@ -473,7 +480,7 @@ class ParseHelper:
             "",
             ""
         ))
-        
+
         # Log URL without credentials for security
         safe_url = urlunparse((
             parsed.scheme,
@@ -484,22 +491,86 @@ class ParseHelper:
             ""
         ))
         logger.info(f"ParsingHelper: Cloning from {safe_url}")
-        
+
         try:
-            # Clone the repository with shallow clone for faster download
+            # Clone the repository to temporary directory with shallow clone for faster download
             repo_obj = Repo.clone_from(
                 clone_url_with_auth,
-                final_dir,
+                temp_clone_dir,
                 branch=branch,
                 depth=1
             )
-            logger.info(f"ParsingHelper: Successfully cloned repository to {final_dir}")
+            logger.info(f"ParsingHelper: Successfully cloned repository to temporary directory: {temp_clone_dir}")
+
+            # Filter and copy only text files to final directory
+            logger.info(f"ParsingHelper: Filtering text files from clone to {final_dir}")
+            os.makedirs(final_dir, exist_ok=True)
+
+            text_files_count = 0
+            for root, dirs, files in os.walk(temp_clone_dir):
+                # Skip .git directory
+                if '.git' in root.split(os.sep):
+                    continue
+
+                # Skip hidden directories
+                if any(part.startswith('.') for part in root.split(os.sep)):
+                    continue
+
+                for file in files:
+                    # Skip hidden files
+                    if file.startswith('.'):
+                        continue
+
+                    file_path = os.path.join(root, file)
+
+                    # Filter using is_text_file check
+                    if self.is_text_file(file_path):
+                        try:
+                            # Calculate relative path from clone root
+                            relative_path = os.path.relpath(file_path, temp_clone_dir)
+                            dest_path = os.path.join(final_dir, relative_path)
+
+                            # Create destination directory structure
+                            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+
+                            # Copy text file to final directory
+                            shutil.copy2(file_path, dest_path)
+                            text_files_count += 1
+                        except (shutil.Error, OSError) as e:
+                            logger.error(
+                                f"ParsingHelper: Error copying file {file_path}: {e}"
+                            )
+
+            logger.info(
+                f"ParsingHelper: Copied {text_files_count} text files from git clone to final directory"
+            )
+
+            # Clean up temporary clone directory
+            try:
+                shutil.rmtree(temp_clone_dir)
+                logger.info(f"ParsingHelper: Cleaned up temporary clone directory: {temp_clone_dir}")
+            except Exception as e:
+                logger.warning(f"ParsingHelper: Failed to clean up temp clone directory: {e}")
+
             return final_dir
+
         except GitCommandError as e:
             logger.error(f"ParsingHelper: Git clone failed: {e}")
+            # Clean up temp directory on error
+            if os.path.exists(temp_clone_dir):
+                try:
+                    shutil.rmtree(temp_clone_dir)
+                except Exception:
+                    pass
             raise ParsingFailedError(f"Failed to clone repository: {e}") from e
         except Exception as e:
             logger.error(f"ParsingHelper: Unexpected error during git clone: {e}")
+            # Clean up temp directory on error
+            if os.path.exists(temp_clone_dir):
+                try:
+                    shutil.rmtree(temp_clone_dir)
+                except Exception:
+                    pass
             raise ParsingFailedError(f"Unexpected error during repository clone: {e}") from e
 
     @staticmethod
