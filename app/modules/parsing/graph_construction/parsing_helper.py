@@ -455,16 +455,20 @@ class ParseHelper:
             raise ParsingFailedError(error_msg)
         
         # Construct GitBucket clone URL with embedded credentials
-        # Format: http://username:password@hostname/owner/repo.git
+        # Format: http://username:password@hostname/path/owner/repo.git
         base_url = os.getenv("CODE_PROVIDER_BASE_URL", "http://localhost:8080")
         if base_url.endswith("/api/v3"):
             base_url = base_url[:-7]  # Remove '/api/v3'
         
         parsed = urlparse(base_url)
+        # Preserve the path component from base URL (e.g., /gitbucket)
+        base_path = parsed.path.rstrip('/')  # Remove trailing slash if present
+        repo_path = f"{base_path}/{repo.full_name}.git" if base_path else f"/{repo.full_name}.git"
+        
         clone_url_with_auth = urlunparse((
             parsed.scheme,
             f"{username}:{password}@{parsed.netloc}",
-            f"/{repo.full_name}.git",
+            repo_path,
             "",
             "",
             ""
@@ -474,7 +478,7 @@ class ParseHelper:
         safe_url = urlunparse((
             parsed.scheme,
             parsed.netloc,
-            f"/{repo.full_name}.git",
+            repo_path,
             "",
             "",
             ""
