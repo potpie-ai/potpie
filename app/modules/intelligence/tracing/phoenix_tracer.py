@@ -70,6 +70,7 @@ def initialize_phoenix_tracing(
         PHOENIX_COLLECTOR_ENDPOINT: Phoenix collector URL (default: http://localhost:6006)
         PHOENIX_API_KEY: API key for Phoenix Cloud (optional for local)
         PHOENIX_PROJECT_NAME: Project name (used only if project_name parameter is None, default: "potpie-ai")
+        ENV: Environment identifier (e.g., "development", "production", "staging", "testing") - used as "source" attribute in traces (default: "local")
     """
     global _PHOENIX_INITIALIZED
 
@@ -102,19 +103,26 @@ def initialize_phoenix_tracing(
         api_key = api_key or os.getenv("PHOENIX_API_KEY")
         # Function parameter takes precedence over environment variable
         project_name = project_name or os.getenv("PHOENIX_PROJECT_NAME", "potpie-ai")
+        # Get the environment/source from ENV variable (defaults to "local" if not set)
+        source = os.getenv("ENV", "local")
 
         logger.info(
             "Initializing Phoenix tracing:\n"
             "  Project: %s\n"
             "  Endpoint: %s\n"
+            "  Source: %s\n"
             "  Auto-instrument: %s",
             project_name,
             endpoint,
+            source,
             auto_instrument,
         )
 
         # STEP 1: Create and set up the tracer provider with resource attributes
-        resource = Resource.create({"service.name": project_name})
+        resource = Resource.create({
+            "service.name": project_name,
+            "source": source,
+        })
         tracer_provider = TracerProvider(resource=resource)
         trace.set_tracer_provider(tracer_provider)
 
