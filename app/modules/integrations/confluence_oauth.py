@@ -58,6 +58,10 @@ class ConfluenceOAuth(AtlassianOAuthBase):
                 "read:confluence-user "
                 "read:confluence-groups "
                 "readonly:content.attachment:confluence "
+                "read:space:confluence "
+                "read:page:confluence "
+                "write:page:confluence "
+                "write:comment:confluence "
                 "offline_access"
             ),
         )
