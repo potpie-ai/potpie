@@ -58,6 +58,13 @@ class GeneralPurposeAgent(ChatAgent):
                 "get_jira_project_details",
                 "link_jira_issues",
                 "get_jira_project_users",
+                "get_confluence_spaces",
+                "get_confluence_page",
+                "search_confluence_pages",
+                "get_confluence_space_pages",
+                "create_confluence_page",
+                "update_confluence_page",
+                "add_confluence_comment",
                 "web_search_tool",
             ]
         )
