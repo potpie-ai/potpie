@@ -143,10 +143,13 @@ def initialize_phoenix_tracing(
         tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
         logger.info("✅ Added OpenInference span processor for Pydantic AI tracing")
 
-        # STEP 4: Instrument LiteLLM (for underlying LLM API calls)
-        litellm_instrumentor = LiteLLMInstrumentor()
-        litellm_instrumentor.instrument(tracer_provider=tracer_provider)
-        logger.info("✅ Instrumented LiteLLM for Phoenix tracing")
+        # STEP 4: Conditionally instrument LiteLLM (for underlying LLM API calls)
+        if auto_instrument:
+            litellm_instrumentor = LiteLLMInstrumentor()
+            litellm_instrumentor.instrument(tracer_provider=tracer_provider)
+            logger.info("✅ Instrumented LiteLLM for Phoenix tracing")
+        else:
+            logger.debug("Skipped LiteLLM instrumentation: auto_instrument=False")
 
         _PHOENIX_INITIALIZED = True
 
