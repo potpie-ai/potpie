@@ -87,3 +87,6 @@ dev = [
 [tool.bandit]
 exclude_dirs = ["tests", "app/alembic"]
 skips = ["B101", "B601"]  # Skip assert_used and shell injection warnings
+
+[tool.ruff]
+exclude = ["tests", "app/alembic"]
