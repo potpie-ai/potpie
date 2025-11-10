@@ -139,6 +139,7 @@ class PydanticRagAgent(ChatAgent):
             "defer_model_check": True,
             "end_strategy": "exhaustive",
             "model_settings": {"max_tokens": 14000},
+            "instrument": True,
         }
 
         if not allow_parallel_tools:
