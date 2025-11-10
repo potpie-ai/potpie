@@ -5,6 +5,10 @@ import traceback
 from asyncio import create_task
 from contextlib import contextmanager
 
+# Apply encoding patch BEFORE importing blar_graph
+from app.modules.parsing.utils.encoding_patch import apply_encoding_patch
+apply_encoding_patch()
+
 from blar_graph.db_managers import Neo4jManager
 from blar_graph.graph_construction.core.graph_builder import GraphConstructor
 from fastapi import HTTPException
