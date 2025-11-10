@@ -21,13 +21,23 @@ class SearchConfluencePagesInput(BaseModel):
 
     cql: str = Field(
         description=(
-            "CQL (Confluence Query Language) query string to search pages. Examples:\n"
-            "- 'type=page AND title~\"API\"' - Search pages with 'API' in title\n"
-            "- 'space=DEMO AND text~\"documentation\"' - Search text in DEMO space\n"
-            "- 'type=page AND label=\"api\"' - Find pages with 'api' label\n"
-            "- 'creator=currentUser() ORDER BY created DESC' - Your recent pages\n"
-            "- 'type=page AND created >= \"2024-01-01\"' - Pages created this year\n"
-            "- 'type=page AND space in (DEMO,PROD)' - Search multiple spaces"
+            "CQL (Confluence Query Language) query string.\n\n"
+            "ESSENTIAL PATTERNS:\n"
+            "Text Search (searches title, body, labels):\n"
+            "  - text ~ \"authentication\"\n"
+            "  - text ~ \"API documentation\"\n"
+            "  - space=DEV AND text ~ \"deploy\"\n\n"
+            "Filter by Space:\n"
+            "  - type=page AND space=DEMO\n"
+            "  - type=page AND space in (DEV,PROD)\n\n"
+            "Search by Title:\n"
+            "  - title ~ \"API\"\n\n"
+            "Filter by Label:\n"
+            "  - label=api\n"
+            "  - label in (backend,frontend)\n\n"
+            "Combine Filters:\n"
+            "  - type=page AND space=DEV AND text ~ \"authentication\"\n"
+            "  - space=PROD AND label=api AND text ~ \"endpoint\""
         )
     )
     limit: int = Field(
@@ -48,30 +58,21 @@ class SearchConfluencePagesTool:
     name = "Search Confluence Pages"
     description = """Search for Confluence pages using CQL (Confluence Query Language).
     
-    This is the PRIMARY tool for finding relevant documentation in Confluence.
+    PRIMARY tool for finding documentation in Confluence.
     
-    Use this tool when you need to:
-    - Find pages by title, content, or keywords
-    - Search for documentation in specific spaces
-    - Find pages created or updated within a time range
-    - Search by labels, creator, or other metadata
-    - Discover pages related to a topic
+    Most common use: text ~ "keyword" to search across titles and page content.
     
-    CQL Query Examples:
-    - 'type=page AND title~"API Documentation"' - Find pages with API Documentation in title
-    - 'space=DEMO AND text~"authentication"' - Search for authentication in DEMO space
-    - 'type=page AND label="backend"' - Find pages tagged with backend
-    - 'creator=currentUser() ORDER BY created DESC' - Your recent pages
-    - 'type=page AND created >= "2024-01-01"' - Pages from this year
-    - 'type=page AND space in (DEMO,PROD) AND text~"deploy"' - Search multiple spaces
+    Examples:
+    - text ~ "authentication" - Find pages about authentication
+    - space=DEV AND text ~ "API" - Search within DEV space
+    - type=page AND space in (DEV,PROD) - Pages in multiple spaces
+    - title ~ "getting started" - Search by title
+    - label=api - Pages tagged with 'api' label
+    - space=PROD AND label=backend - Combine space and label filters
     
-    After finding pages:
-    - Use 'Get Confluence Page' to read full content (using page_id from results)
-    - Use 'Update Confluence Page' to modify content
-    - Use 'Add Confluence Comment' to comment
+    After finding pages, use 'Get Confluence Page' to read full content.
     
-    Returns:
-    - List of matching pages with title, ID, space, author, creation date, excerpt
+    Returns: List of pages with title, ID, space, URL, excerpt
     """
 
     def __init__(self, db: Session, user_id: str):
@@ -128,29 +129,33 @@ class SearchConfluencePagesTool:
                 include_archived=include_archived,
             )
 
-            # Extract page results
+            # Extract page results from v1 API response
+            # v1 API returns results with a different structure than v2
             pages = []
-            for page in response.get("results", []):
+            for result in response.get("results", []):
+                # In v1, content info is in result.content
+                content = result.get("content", {})
+                
                 page_info = {
-                    "id": page.get("id"),
-                    "status": page.get("status"),
-                    "title": page.get("title"),
-                    "space_id": page.get("spaceId"),
-                    "parent_id": page.get("parentId"),
-                    "parent_type": page.get("parentType"),
-                    "author_id": page.get("authorId"),
-                    "created_at": page.get("createdAt"),
-                    "version": page.get("version", {}).get("number"),
+                    "id": content.get("id"),
+                    "status": content.get("status"),
+                    "title": result.get("title") or content.get("title"),
+                    "url": result.get("url"),
+                    "excerpt": result.get("excerpt", ""),
+                    "last_modified": result.get("lastModified"),
+                    "entity_type": result.get("entityType"),
                 }
-
-                # Add excerpt if available
-                body = page.get("body", {})
-                if "storage" in body:
-                    content = body["storage"].get("value", "")
-                    # Get first 200 chars as excerpt
-                    page_info["excerpt"] = (
-                        content[:200] + "..." if len(content) > 200 else content
-                    )
+                
+                # Add space info if available
+                space = result.get("space") or content.get("space", {})
+                if space:
+                    page_info["space_key"] = space.get("key")
+                    page_info["space_name"] = space.get("name")
+                
+                # Add version info if available
+                version = content.get("version", {})
+                if version:
+                    page_info["version"] = version.get("number")
 
                 pages.append(page_info)
 
@@ -159,8 +164,9 @@ class SearchConfluencePagesTool:
             return {
                 "success": True,
                 "pages": pages,
-                "total": len(pages),
-                "has_more": "_links" in response and "next" in response["_links"],
+                "total": response.get("totalSize", len(pages)),
+                "limit": response.get("limit", limit),
+                "has_more": response.get("size", 0) < response.get("totalSize", 0),
                 "query": cql,
             }
 
@@ -195,30 +201,27 @@ def search_confluence_pages_tool(db: Session, user_id: str) -> StructuredTool:
         coroutine=tool_instance.arun,
         func=tool_instance.run,
         name="Search Confluence Pages",
-        description="""Search for Confluence pages using CQL (Confluence Query Language).
+        description="""Search Confluence for documentation using CQL (Confluence Query Language).
         
-        PRIMARY tool for finding documentation in Confluence.
+        Primary use: Finding documentation by searching text content.
         
-        Use this when you need to:
-        - Find pages by title, content, or keywords
-        - Search specific spaces or across all spaces
-        - Find recent pages or pages in a date range
-        - Search by labels, creator, or metadata
+        Common patterns:
+        • text ~ "keyword" - Search page content
+        • space=DEV AND text ~ "API" - Search in specific space
+        • type=page AND space in (DEV,PROD) - Multiple spaces
+        • title ~ "getting started" - Search titles
+        • label=api - Pages with 'api' label
+        • space=PROD AND label=backend - Combine filters
+        
+        The 'text' field searches across page titles, body content, and labels.
         
         Inputs:
-        - cql (str): CQL query (e.g., 'type=page AND text~"keyword"', 'space=DEMO AND title~"API"')
-        - limit (int): Maximum results (default: 25, max: 250)
-        - include_archived (bool): Include archived pages (default: False)
+        - cql: CQL query string
+        - limit: Max results (default: 25, max: 250)
+        - include_archived: Include archived pages (default: False)
         
-        CQL Tips:
-        - Use ~ for contains matching: title~"API"
-        - Use = for exact matching: space=DEMO
-        - Combine with AND, OR: space=DEMO AND label="api"
-        - Order results: ORDER BY created DESC
-        - Date filters: created >= "2024-01-01"
+        Returns: Pages with title, id, space_key, space_name, url, excerpt
         
-        After finding pages, use 'Get Confluence Page' to read full content (needs page_id from results).
-        
-        Returns list of pages with title, ID, space, author, excerpt, and metadata.""",
+        Next step: Use 'Get Confluence Page' with the page id to read full content.""",
         args_schema=SearchConfluencePagesInput,
     )

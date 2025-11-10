@@ -209,10 +209,13 @@ class ConfluenceClient:
         """
         Search for content using CQL (Confluence Query Language).
 
-        API: GET /wiki/api/v2/search
+        API: GET /wiki/rest/api/search (v1 API - CQL search only available in v1)
+
+        Note: CQL search is only available in REST API v1, not v2.
+        This endpoint supports text search across pages and full CQL queries.
 
         Args:
-            cql: CQL query string (e.g., "type=page and space=DEMO")
+            cql: CQL query string (e.g., "type=page and space=DEMO and text~'keyword'")
             limit: Maximum number of results
             cursor: Cursor for pagination
             include_archived: Whether to include archived content
@@ -226,7 +229,8 @@ class ConfluenceClient:
         if include_archived:
             params["includeArchivedSpaces"] = "true"
 
-        response = self.client.get("/wiki/api/v2/search", params=params)
+        # CQL search only available in v1 API
+        response = self.client.get("/wiki/rest/api/search", params=params)
         response.raise_for_status()
         return response.json()
 

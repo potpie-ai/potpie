@@ -62,6 +62,7 @@ class ConfluenceOAuth(AtlassianOAuthBase):
                 "read:page:confluence "
                 "write:page:confluence "
                 "write:comment:confluence "
+                "read:content-details:confluence "
                 "offline_access"
             ),
         )
