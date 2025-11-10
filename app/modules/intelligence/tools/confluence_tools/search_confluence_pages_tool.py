@@ -24,20 +24,20 @@ class SearchConfluencePagesInput(BaseModel):
             "CQL (Confluence Query Language) query string.\n\n"
             "ESSENTIAL PATTERNS:\n"
             "Text Search (searches title, body, labels):\n"
-            "  - text ~ \"authentication\"\n"
-            "  - text ~ \"API documentation\"\n"
-            "  - space=DEV AND text ~ \"deploy\"\n\n"
+            '  - text ~ "authentication"\n'
+            '  - text ~ "API documentation"\n'
+            '  - space=DEV AND text ~ "deploy"\n\n'
             "Filter by Space:\n"
             "  - type=page AND space=DEMO\n"
             "  - type=page AND space in (DEV,PROD)\n\n"
             "Search by Title:\n"
-            "  - title ~ \"API\"\n\n"
+            '  - title ~ "API"\n\n'
             "Filter by Label:\n"
             "  - label=api\n"
             "  - label in (backend,frontend)\n\n"
             "Combine Filters:\n"
-            "  - type=page AND space=DEV AND text ~ \"authentication\"\n"
-            "  - space=PROD AND label=api AND text ~ \"endpoint\""
+            '  - type=page AND space=DEV AND text ~ "authentication"\n'
+            '  - space=PROD AND label=api AND text ~ "endpoint"'
         )
     )
     limit: int = Field(
@@ -135,7 +135,7 @@ class SearchConfluencePagesTool:
             for result in response.get("results", []):
                 # In v1, content info is in result.content
                 content = result.get("content", {})
-                
+
                 page_info = {
                     "id": content.get("id"),
                     "status": content.get("status"),
@@ -145,13 +145,13 @@ class SearchConfluencePagesTool:
                     "last_modified": result.get("lastModified"),
                     "entity_type": result.get("entityType"),
                 }
-                
+
                 # Add space info if available
                 space = result.get("space") or content.get("space", {})
                 if space:
                     page_info["space_key"] = space.get("key")
                     page_info["space_name"] = space.get("name")
-                
+
                 # Add version info if available
                 version = content.get("version", {})
                 if version:
