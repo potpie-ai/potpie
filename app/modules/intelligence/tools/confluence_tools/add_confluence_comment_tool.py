@@ -121,7 +121,7 @@ class AddConfluenceCommentTool:
                 }
 
             # Add comment
-            comment_response = client.add_comment(
+            comment_response = await client.add_comment(
                 page_id=page_id,
                 comment=comment,
                 parent_comment_id=parent_comment_id,
@@ -141,7 +141,7 @@ class AddConfluenceCommentTool:
                 "_links": comment_response.get("_links", {}),
             }
 
-            client.close()
+            await client.close()
 
             comment_type = "reply" if parent_comment_id else "comment"
             return {

@@ -112,7 +112,7 @@ class GetConfluenceSpacePagesTool:
 
             # Get space pages
             status_param = None if status == "any" else status
-            response = client.get_space_pages(
+            response = await client.get_space_pages(
                 space_id=space_id,
                 limit=limit,
                 status=status_param,
@@ -135,7 +135,7 @@ class GetConfluenceSpacePagesTool:
                 }
                 pages.append(page_info)
 
-            client.close()
+            await client.close()
 
             return {
                 "success": True,

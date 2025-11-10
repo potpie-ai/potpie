@@ -65,8 +65,8 @@ class TransitionJiraIssueTool:
             client = await get_jira_client_for_user(self.user_id, self.db)
 
             # Transition the issue
-            issue = await asyncio.to_thread(
-                client.transition_issue, issue_key=issue_key, transition_name=transition
+            issue = await client.transition_issue(
+                issue_key=issue_key, transition_name=transition
             )
 
             return {
@@ -85,8 +85,8 @@ class TransitionJiraIssueTool:
             ):
                 try:
                     client = await get_jira_client_for_user(self.user_id, self.db)
-                    transitions = await asyncio.to_thread(
-                        client.get_transitions, issue_key=issue_key
+                    transitions = await client.get_transitions(
+                        issue_key=issue_key
                     )
                     available = [t["name"] for t in transitions]
                     error_msg = f"{error_msg}\n\nAvailable transitions for {issue_key}: {', '.join(available)}"

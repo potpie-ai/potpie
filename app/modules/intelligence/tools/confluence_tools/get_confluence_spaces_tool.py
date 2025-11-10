@@ -99,7 +99,7 @@ class GetConfluenceSpacesTool:
 
             # Get spaces
             space_type_param = None if space_type == "all" else space_type
-            response = client.get_spaces(limit=limit, type=space_type_param)
+            response = await client.get_spaces(limit=limit, type=space_type_param)
 
             spaces = []
             for space in response.get("results", []):
@@ -122,7 +122,7 @@ class GetConfluenceSpacesTool:
                 }
                 spaces.append(space_info)
 
-            client.close()
+            await client.close()
 
             return {
                 "success": True,

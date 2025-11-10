@@ -66,8 +66,8 @@ class GetJiraProjectDetailsTool:
             client = await get_jira_client_for_user(self.user_id, self.db)
 
             # Fetch project details
-            details = await asyncio.to_thread(
-                client.get_project_details, project_key=project_key
+            details = await client.get_project_details(
+                project_key=project_key
             )
 
             return {

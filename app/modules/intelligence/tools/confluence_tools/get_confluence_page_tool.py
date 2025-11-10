@@ -105,7 +105,7 @@ class GetConfluencePageTool:
                 }
 
             # Get page
-            page = client.get_page(
+            page = await client.get_page(
                 page_id=page_id,
                 body_format=body_format,
                 get_draft=get_draft,
@@ -156,7 +156,7 @@ class GetConfluencePageTool:
                 )
             page_data["labels"] = labels
 
-            client.close()
+            await client.close()
 
             return {
                 "success": True,

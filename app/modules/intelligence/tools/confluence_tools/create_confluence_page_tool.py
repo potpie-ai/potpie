@@ -126,7 +126,7 @@ class CreateConfluencePageTool:
                 }
 
             # Create page
-            page = client.create_page(
+            page = await client.create_page(
                 space_id=space_id,
                 title=title,
                 body=body,
@@ -148,7 +148,7 @@ class CreateConfluencePageTool:
                 "_links": page.get("_links", {}),
             }
 
-            client.close()
+            await client.close()
 
             return {
                 "success": True,

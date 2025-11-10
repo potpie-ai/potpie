@@ -139,7 +139,7 @@ class UpdateConfluencePageTool:
                 }
 
             # Get current page to use existing values if not provided
-            current_page = client.get_page(page_id=page_id)
+            current_page = await client.get_page(page_id=page_id)
 
             # Use provided values or fall back to current
             update_title = title if title is not None else current_page.get("title")
@@ -153,7 +153,7 @@ class UpdateConfluencePageTool:
                     update_body = ""
 
             # Update page
-            page = client.update_page(
+            page = await client.update_page(
                 page_id=page_id,
                 version_number=version_number,
                 title=update_title,
@@ -174,7 +174,7 @@ class UpdateConfluencePageTool:
                 "_links": page.get("_links", {}),
             }
 
-            client.close()
+            await client.close()
 
             return {
                 "success": True,

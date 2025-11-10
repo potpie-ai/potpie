@@ -98,8 +98,7 @@ class UpdateJiraIssueTool:
                 }
 
             # Update the issue
-            issue = await asyncio.to_thread(
-                client.update_issue,
+            issue = await client.update_issue(
                 issue_key=issue_key,
                 fields=fields,
                 assignee_id=assignee_id,

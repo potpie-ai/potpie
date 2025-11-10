@@ -67,8 +67,8 @@ class ConfluenceClient:
         # See: https://developer.atlassian.com/cloud/confluence/rest/v2/intro/
         self.api_base_url = f"https://api.atlassian.com/ex/confluence/{cloud_id}"
 
-        # Create HTTP client with OAuth 2.0 Bearer token
-        self.client = httpx.Client(
+        # Create async HTTP client with OAuth 2.0 Bearer token
+        self.client = httpx.AsyncClient(
             base_url=self.api_base_url,
             headers={
                 "Authorization": f"Bearer {access_token}",
@@ -82,20 +82,20 @@ class ConfluenceClient:
         )
         logging.info(f"Confluence decrypted access token: {access_token}")
 
-    def close(self):
+    async def close(self):
         """Close the HTTP client connection."""
         if hasattr(self, "client") and self.client:
-            self.client.close()
+            await self.client.aclose()
 
-    def __enter__(self):
-        """Context manager entry."""
+    async def __aenter__(self):
+        """Async context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
-        self.close()
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        await self.close()
 
-    def get_spaces(
+    async def get_spaces(
         self, limit: int = 25, cursor: Optional[str] = None, type: Optional[str] = None
     ) -> Dict[str, Any]:
         """
@@ -124,11 +124,11 @@ class ConfluenceClient:
         logging.info(
             f"Access token length: {len(self.access_token) if self.access_token else 0}"
         )
-        response = self.client.get("/wiki/api/v2/spaces", params=params)
+        response = await self.client.get("/wiki/api/v2/spaces", params=params)
         response.raise_for_status()
         return response.json()
 
-    def get_space(self, space_id: str) -> Dict[str, Any]:
+    async def get_space(self, space_id: str) -> Dict[str, Any]:
         """
         Get space by ID.
 
@@ -140,11 +140,11 @@ class ConfluenceClient:
         Returns:
             Space details
         """
-        response = self.client.get(f"/wiki/api/v2/spaces/{space_id}")
+        response = await self.client.get(f"/wiki/api/v2/spaces/{space_id}")
         response.raise_for_status()
         return response.json()
 
-    def get_space_pages(
+    async def get_space_pages(
         self,
         space_id: str,
         limit: int = 25,
@@ -169,13 +169,13 @@ class ConfluenceClient:
         if cursor:
             params["cursor"] = cursor
 
-        response = self.client.get(
+        response = await self.client.get(
             f"/wiki/api/v2/spaces/{space_id}/pages", params=params
         )
         response.raise_for_status()
         return response.json()
 
-    def get_page(
+    async def get_page(
         self, page_id: str, body_format: str = "storage", get_draft: bool = False
     ) -> Dict[str, Any]:
         """
@@ -195,11 +195,11 @@ class ConfluenceClient:
         if get_draft:
             params["get-draft"] = "true"
 
-        response = self.client.get(f"/wiki/api/v2/pages/{page_id}", params=params)
+        response = await self.client.get(f"/wiki/api/v2/pages/{page_id}", params=params)
         response.raise_for_status()
         return response.json()
 
-    def search_pages(
+    async def search_pages(
         self,
         cql: str,
         limit: int = 25,
@@ -230,11 +230,11 @@ class ConfluenceClient:
             params["includeArchivedSpaces"] = "true"
 
         # CQL search only available in v1 API
-        response = self.client.get("/wiki/rest/api/search", params=params)
+        response = await self.client.get("/wiki/rest/api/search", params=params)
         response.raise_for_status()
         return response.json()
 
-    def create_page(
+    async def create_page(
         self,
         space_id: str,
         title: str,
@@ -267,11 +267,11 @@ class ConfluenceClient:
         if parent_id:
             payload["parentId"] = parent_id
 
-        response = self.client.post("/wiki/api/v2/pages", json=payload)
+        response = await self.client.post("/wiki/api/v2/pages", json=payload)
         response.raise_for_status()
         return response.json()
 
-    def update_page(
+    async def update_page(
         self,
         page_id: str,
         version_number: int,
@@ -306,11 +306,11 @@ class ConfluenceClient:
         if body:
             payload["body"] = {"representation": "storage", "value": body}
 
-        response = self.client.put(f"/wiki/api/v2/pages/{page_id}", json=payload)
+        response = await self.client.put(f"/wiki/api/v2/pages/{page_id}", json=payload)
         response.raise_for_status()
         return response.json()
 
-    def add_comment(
+    async def add_comment(
         self,
         page_id: str,
         comment: str,
@@ -341,7 +341,7 @@ class ConfluenceClient:
         if parent_comment_id:
             payload["parentCommentId"] = parent_comment_id
 
-        response = self.client.post("/wiki/api/v2/footer-comments", json=payload)
+        response = await self.client.post("/wiki/api/v2/footer-comments", json=payload)
         response.raise_for_status()
         return response.json()
 

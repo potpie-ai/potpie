@@ -62,8 +62,8 @@ class JiraClient:
         # See: https://developer.atlassian.com/cloud/jira/platform/oauth-2-3lo-apps/
         self.api_base_url = f"https://api.atlassian.com/ex/jira/{cloud_id}"
 
-        # Create HTTP client with OAuth 2.0 Bearer token
-        self.client = httpx.Client(
+        # Create async HTTP client with OAuth 2.0 Bearer token
+        self.client = httpx.AsyncClient(
             base_url=self.api_base_url,
             headers={
                 "Authorization": f"Bearer {access_token}",
@@ -76,18 +76,18 @@ class JiraClient:
             f"Initialized Jira OAuth 2.0 client for {server} (cloud_id: {cloud_id})"
         )
 
-    def close(self):
+    async def close(self):
         """Close the HTTP client connection."""
         if hasattr(self, "client") and self.client:
-            self.client.close()
+            await self.client.aclose()
 
-    def __enter__(self):
-        """Context manager entry."""
+    async def __aenter__(self):
+        """Async context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
-        self.close()
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        await self.close()
 
     @staticmethod
     def _text_to_adf(text: str) -> Dict[str, Any]:
@@ -189,7 +189,7 @@ class JiraClient:
         # Remove trailing newlines and return
         return text.rstrip("\n")
 
-    def get_issue(
+    async def get_issue(
         self, issue_key: str, fields: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
@@ -222,7 +222,7 @@ class JiraClient:
                     "labels",
                 ]
 
-            response = self.client.get(f"/rest/api/3/issue/{issue_key}", params=params)
+            response = await self.client.get(f"/rest/api/3/issue/{issue_key}", params=params)
             response.raise_for_status()
             issue = response.json()
             return self._issue_to_dict(issue)
@@ -237,7 +237,7 @@ class JiraClient:
             logging.error(f"Failed to get issue {issue_key}: {str(e)}")
             raise Exception(f"Failed to get issue {issue_key}: {str(e)}")
 
-    def search_issues(
+    async def search_issues(
         self,
         jql: str,
         max_results: int = 50,
@@ -290,7 +290,7 @@ class JiraClient:
 
             # Use the new /search/jql endpoint with token-based pagination
             # See: https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-search/
-            response = self.client.post("/rest/api/3/search/jql", json=payload)
+            response = await self.client.post("/rest/api/3/search/jql", json=payload)
             response.raise_for_status()
             results = response.json()
 
@@ -308,7 +308,7 @@ class JiraClient:
                 # Add comments if requested
                 if include_comments:
                     try:
-                        comments_response = self.client.get(
+                        comments_response = await self.client.get(
                             f"/rest/api/3/issue/{issue.get('key')}/comment"
                         )
                         if comments_response.status_code == 200:
@@ -357,7 +357,7 @@ class JiraClient:
             logging.error(f"Failed to search issues with JQL '{jql}': {str(e)}")
             raise Exception(f"Failed to search issues: {str(e)}")
 
-    def create_issue(
+    async def create_issue(
         self,
         project_key: str,
         summary: str,
@@ -409,14 +409,14 @@ class JiraClient:
 
             payload = {"fields": fields}
 
-            response = self.client.post("/rest/api/3/issue", json=payload)
+            response = await self.client.post("/rest/api/3/issue", json=payload)
             response.raise_for_status()
             issue = response.json()
             issue_key = issue.get("key")
             logging.info(f"Created issue {issue_key}")
 
             # Fetch the created issue to return full details
-            return self.get_issue(issue_key)
+            return await self.get_issue(issue_key)
         except httpx.HTTPStatusError as e:
             logging.error(
                 f"Failed to create issue: {e.response.status_code} - {e.response.text}"
@@ -428,7 +428,7 @@ class JiraClient:
             logging.error(f"Failed to create issue: {str(e)}")
             raise Exception(f"Failed to create issue: {str(e)}")
 
-    def update_issue(
+    async def update_issue(
         self, issue_key: str, fields: Dict[str, Any], assignee_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
@@ -452,11 +452,11 @@ class JiraClient:
                 fields["assignee"] = {"id": assignee_id}
 
             payload = {"fields": fields}
-            response = self.client.put(f"/rest/api/3/issue/{issue_key}", json=payload)
+            response = await self.client.put(f"/rest/api/3/issue/{issue_key}", json=payload)
             response.raise_for_status()
             logging.info(f"Updated issue {issue_key}")
             # Fetch fresh data after update
-            return self.get_issue(issue_key)
+            return await self.get_issue(issue_key)
         except httpx.HTTPStatusError as e:
             logging.error(
                 f"Failed to update issue {issue_key}: {e.response.status_code} - {e.response.text}"
@@ -468,7 +468,7 @@ class JiraClient:
             logging.error(f"Failed to update issue {issue_key}: {str(e)}")
             raise Exception(f"Failed to update issue {issue_key}: {str(e)}")
 
-    def add_comment(self, issue_key: str, comment_body: str) -> Dict[str, Any]:
+    async def add_comment(self, issue_key: str, comment_body: str) -> Dict[str, Any]:
         """
         Add a comment to a Jira issue.
 
@@ -482,7 +482,7 @@ class JiraClient:
         try:
             # Convert comment to ADF format for Jira Cloud API v3
             payload = {"body": self._text_to_adf(comment_body)}
-            response = self.client.post(
+            response = await self.client.post(
                 f"/rest/api/3/issue/{issue_key}/comment", json=payload
             )
             response.raise_for_status()
@@ -505,7 +505,7 @@ class JiraClient:
             logging.error(f"Failed to add comment to {issue_key}: {str(e)}")
             raise Exception(f"Failed to add comment: {str(e)}")
 
-    def transition_issue(self, issue_key: str, transition_name: str) -> Dict[str, Any]:
+    async def transition_issue(self, issue_key: str, transition_name: str) -> Dict[str, Any]:
         """
         Transition an issue to a new status.
 
@@ -517,7 +517,7 @@ class JiraClient:
             Dictionary containing the updated issue details
         """
         try:
-            transitions = self.get_transitions(issue_key)
+            transitions = await self.get_transitions(issue_key)
 
             # Find the transition by name
             transition_id = None
@@ -533,14 +533,14 @@ class JiraClient:
                 )
 
             payload = {"transition": {"id": transition_id}}
-            response = self.client.post(
+            response = await self.client.post(
                 f"/rest/api/3/issue/{issue_key}/transitions", json=payload
             )
             response.raise_for_status()
             logging.info(f"Transitioned issue {issue_key} to {transition_name}")
 
             # Fetch fresh data after transition
-            return self.get_issue(issue_key)
+            return await self.get_issue(issue_key)
         except httpx.HTTPStatusError as e:
             logging.error(
                 f"Failed to transition issue {issue_key}: {e.response.status_code} - {e.response.text}"
@@ -552,7 +552,7 @@ class JiraClient:
             logging.error(f"Failed to transition issue {issue_key}: {str(e)}")
             raise Exception(f"Failed to transition issue: {str(e)}")
 
-    def get_transitions(self, issue_key: str) -> List[Dict[str, str]]:
+    async def get_transitions(self, issue_key: str) -> List[Dict[str, str]]:
         """
         Get available transitions for an issue.
 
@@ -563,7 +563,7 @@ class JiraClient:
             List of available transitions
         """
         try:
-            response = self.client.get(f"/rest/api/3/issue/{issue_key}/transitions")
+            response = await self.client.get(f"/rest/api/3/issue/{issue_key}/transitions")
             response.raise_for_status()
             data = response.json()
             transitions = data.get("transitions", [])
@@ -579,7 +579,7 @@ class JiraClient:
             logging.error(f"Failed to get transitions for {issue_key}: {str(e)}")
             raise Exception(f"Failed to get transitions: {str(e)}")
 
-    def assign_issue(self, issue_key: str, assignee_id: str) -> Dict[str, Any]:
+    async def assign_issue(self, issue_key: str, assignee_id: str) -> Dict[str, Any]:
         """
         Assign an issue to a user.
 
@@ -592,14 +592,14 @@ class JiraClient:
         """
         try:
             payload = {"accountId": assignee_id}
-            response = self.client.put(
+            response = await self.client.put(
                 f"/rest/api/3/issue/{issue_key}/assignee", json=payload
             )
             response.raise_for_status()
             logging.info(f"Assigned issue {issue_key} to user {assignee_id}")
 
             # Fetch fresh data after assignment
-            return self.get_issue(issue_key)
+            return await self.get_issue(issue_key)
         except httpx.HTTPStatusError as e:
             logging.error(
                 f"Failed to assign issue {issue_key}: {e.response.status_code} - {e.response.text}"
@@ -611,7 +611,7 @@ class JiraClient:
             logging.error(f"Failed to assign issue {issue_key}: {str(e)}")
             raise Exception(f"Failed to assign issue: {str(e)}")
 
-    def get_project_details(self, project_key: str) -> Dict[str, Any]:
+    async def get_project_details(self, project_key: str) -> Dict[str, Any]:
         """
         Get comprehensive details about a Jira project including metadata.
 
@@ -629,7 +629,7 @@ class JiraClient:
         """
         try:
             # Get basic project info
-            response = self.client.get(f"/rest/api/3/project/{project_key}")
+            response = await self.client.get(f"/rest/api/3/project/{project_key}")
             response.raise_for_status()
             project = response.json()
 
@@ -648,7 +648,7 @@ class JiraClient:
             # Get priorities (from project or global)
             priorities = []
             try:
-                priority_response = self.client.get(
+                priority_response = await self.client.get(
                     "/rest/api/3/priorityscheme?expand=priorities"
                 )
                 priority_response.raise_for_status()
@@ -671,7 +671,7 @@ class JiraClient:
             # Get statuses for the project
             statuses = []
             try:
-                status_response = self.client.get(
+                status_response = await self.client.get(
                     f"/rest/api/3/project/{project_key}/statuses"
                 )
                 status_response.raise_for_status()
@@ -697,7 +697,7 @@ class JiraClient:
             # Get issue link types
             link_types = []
             try:
-                link_response = self.client.get("/rest/api/3/issueLinkType")
+                link_response = await self.client.get("/rest/api/3/issueLinkType")
                 link_response.raise_for_status()
                 link_data = link_response.json()
                 for lt in link_data.get("issueLinkTypes", []):
@@ -716,7 +716,7 @@ class JiraClient:
             labels = []
             try:
                 # Search for issues in project to get labels (Jira doesn't have a direct labels endpoint)
-                label_response = self.client.post(
+                label_response = await self.client.post(
                     "/rest/api/3/search/jql",
                     json={
                         "jql": f"project = {project_key} AND labels is not EMPTY",
@@ -767,7 +767,7 @@ class JiraClient:
             )
             raise Exception(f"Failed to fetch project details: {str(e)}")
 
-    def get_project_users(
+    async def get_project_users(
         self, project_key: str, query: Optional[str] = None, max_results: int = 50
     ) -> Dict[str, Any]:
         """
@@ -789,7 +789,7 @@ class JiraClient:
             if query:
                 params["query"] = query
 
-            response = self.client.get(
+            response = await self.client.get(
                 "/rest/api/3/user/assignable/search", params=params
             )
             response.raise_for_status()
@@ -827,7 +827,7 @@ class JiraClient:
             logging.error(f"Failed to fetch project users for {project_key}: {str(e)}")
             raise Exception(f"Failed to fetch project users: {str(e)}")
 
-    def link_issues(
+    async def link_issues(
         self, issue_key: str, linked_issue_key: str, link_type: str
     ) -> Dict[str, Any]:
         """
@@ -848,7 +848,7 @@ class JiraClient:
                 "outwardIssue": {"key": linked_issue_key},
             }
 
-            response = self.client.post("/rest/api/3/issueLink", json=payload)
+            response = await self.client.post("/rest/api/3/issueLink", json=payload)
             response.raise_for_status()
 
             logging.info(f"Created link: {issue_key} {link_type} {linked_issue_key}")
@@ -874,7 +874,7 @@ class JiraClient:
             )
             raise Exception(f"Failed to link issues: {str(e)}")
 
-    def get_projects(self, start_at: int = 0, max_results: int = 50) -> Dict[str, Any]:
+    async def get_projects(self, start_at: int = 0, max_results: int = 50) -> Dict[str, Any]:
         """
         Get all projects accessible to the user.
 
@@ -891,7 +891,7 @@ class JiraClient:
                 "maxResults": max_results,
             }
 
-            response = self.client.get("/rest/api/3/project/search", params=params)
+            response = await self.client.get("/rest/api/3/project/search", params=params)
             response.raise_for_status()
             data = response.json()
 

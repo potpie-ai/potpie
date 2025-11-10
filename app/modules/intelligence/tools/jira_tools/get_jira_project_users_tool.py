@@ -76,8 +76,8 @@ class GetJiraProjectUsersTool:
             client = await get_jira_client_for_user(self.user_id, self.db)
 
             # Get project users
-            result = await asyncio.to_thread(
-                client.get_project_users, project_key=project_key, query=query
+            result = await client.get_project_users(
+                project_key=project_key, query=query
             )
 
             return {

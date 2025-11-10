@@ -77,8 +77,7 @@ class SearchJiraIssuesTool:
             client = await get_jira_client_for_user(self.user_id, self.db)
 
             # Search for issues
-            results = await asyncio.to_thread(
-                client.search_issues,
+            results = await client.search_issues(
                 jql=jql,
                 max_results=max_results,
                 include_comments=include_comments,

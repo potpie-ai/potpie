@@ -123,7 +123,7 @@ class SearchConfluencePagesTool:
                 }
 
             # Search pages
-            response = client.search_pages(
+            response = await client.search_pages(
                 cql=cql,
                 limit=limit,
                 include_archived=include_archived,
@@ -159,7 +159,7 @@ class SearchConfluencePagesTool:
 
                 pages.append(page_info)
 
-            client.close()
+            await client.close()
 
             return {
                 "success": True,
