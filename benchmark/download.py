@@ -29,10 +29,16 @@ def get_unique_repo_and_commits(csv_path: Path | str) -> dict[str, list[str]]:
         "repo_url",
         "commit_id",
     ]
-    df: DataFrame = pd.read_csv(csv_file_path, usecols=required_columns)  # pyright: ignore[reportUnknownMemberType]
+    df: DataFrame = pd.read_csv(
+        csv_file_path, usecols=required_columns
+    )  # pyright: ignore[reportUnknownMemberType]
     df.dropna(inplace=True)
-    df["repo_url"] = df["repo_url"].apply(_normalize_repo_url)  # pyright: ignore[reportUnknownMemberType]
-    repo_commit_dict = df.groupby("repo_url")["commit_id"].apply(set).to_dict()  # pyright: ignore[reportUnknownMemberType]
+    df["repo_url"] = df["repo_url"].apply(
+        _normalize_repo_url
+    )  # pyright: ignore[reportUnknownMemberType]
+    repo_commit_dict = (
+        df.groupby("repo_url")["commit_id"].apply(set).to_dict()
+    )  # pyright: ignore[reportUnknownMemberType]
     return repo_commit_dict
 
 
@@ -115,7 +121,9 @@ def setup_all_worktrees(
                 )  # This will raise if clone failed
                 successful_repos.append(repo_url)
                 logger.info("Successfully cloned bare repository.", repo_url=repo_url)
-            except Exception as e:  # TODO: Specialize the exception later like CalledProcessError or OSError
+            except (
+                Exception
+            ) as e:  # TODO: Specialize the exception later like CalledProcessError or OSError
                 logger.error(
                     "Failed to clone bare repository",
                     error=e,
