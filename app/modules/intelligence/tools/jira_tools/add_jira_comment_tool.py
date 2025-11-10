@@ -26,7 +26,7 @@ class AddJiraCommentTool:
 
     name = "Add Jira Comment"
     description = """Add a comment to an existing Jira issue.
-    
+
     Use this tool when you need to:
     - Add analysis results or findings to an issue
     - Document progress or updates on work
@@ -34,10 +34,10 @@ class AddJiraCommentTool:
     - Log investigation results or debugging notes
     - Reply to discussions on an issue
     - Add code review feedback
-    
+
     The comment will be posted with your user account as the author.
     Supports Jira text formatting (markdown-like syntax).
-    
+
     Returns confirmation and the posted comment details.
     """
 
@@ -99,18 +99,18 @@ def add_jira_comment_tool(db: Session, user_id: str) -> StructuredTool:
         func=tool_instance.run,
         name="Add Jira Comment",
         description="""Add a comment to an existing Jira issue.
-        
+
         Use this when you need to:
         - Document analysis results or findings
         - Provide updates or progress on work
         - Add additional context or information
         - Log investigation or debugging notes
         - Reply to discussions
-        
+
         Inputs:
         - issue_key (str): The issue key (e.g., 'PROJ-123')
         - comment (str): The comment text to add
-        
+
         Returns confirmation and posted comment details.""",
         args_schema=AddJiraCommentInput,
     )

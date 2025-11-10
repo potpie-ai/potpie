@@ -80,6 +80,7 @@ def configure_celery(queue_prefix: str):
 
 configure_celery(queue_name)
 
+
 def setup_phoenix_tracing():
     """Initialize Phoenix tracing for LLM monitoring in Celery workers."""
     try:

@@ -25,7 +25,7 @@ class GetJiraProjectDetailsTool:
 
     name = "Get Jira Project Details"
     description = """Get comprehensive details about a Jira project including all metadata.
-    
+
     Use this tool when you need to:
     - Find out what issue types are available in a project (Task, Bug, Story, Epic, etc.)
     - Get available priority levels (Highest, High, Medium, Low, Lowest)
@@ -33,10 +33,10 @@ class GetJiraProjectDetailsTool:
     - Get available issue link types (Blocks, Relates to, Duplicates, etc.)
     - View existing labels in the project
     - Get project lead and basic information
-    
+
     This tool is essential BEFORE creating or updating issues to ensure you use valid
     issue types and priorities. The statuses are for use with the Transition tool.
-    
+
     Returns comprehensive project metadata including:
     - Project basic info (name, description, lead, URL)
     - All available issue types with descriptions
@@ -103,18 +103,18 @@ def get_jira_project_details_tool(db: Session, user_id: str) -> StructuredTool:
         func=tool_instance.run,
         name="Get Jira Project Details",
         description="""Get comprehensive metadata about a Jira project.
-        
+
         IMPORTANT: Use this tool FIRST before creating or updating issues to discover:
         - Valid issue types for creation (Task, Bug, Story, Epic, etc.)
         - Valid priority levels for creation/updates (Highest, High, Medium, Low, Lowest)
         - Valid statuses for transitions (To Do, In Progress, Done, etc.) - use with Transition tool
         - Available link types for linking issues
         - Existing labels in the project
-        
+
         Input:
         - project_key (str): The project key (e.g., 'PROJ', 'BUG')
-        
-        Returns all project metadata including issue types, priorities, statuses, 
+
+        Returns all project metadata including issue types, priorities, statuses,
         link types, labels, and basic project information.""",
         args_schema=GetJiraProjectDetailsInput,
     )
