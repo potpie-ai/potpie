@@ -20,8 +20,13 @@ jobs:
         with:
           python-version: "3.11"  # Set a consistent Python version
 
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
       - name: Install dependencies
-        run: pip install --upgrade pip pre-commit  # Ensure latest pre-commit version
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          uv tool install pre-commit
 
       - name: Run pre-commit
         run: pre-commit run --all-files --show-diff-on-failure || true  # Run all hooks without failing

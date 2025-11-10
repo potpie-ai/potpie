@@ -566,7 +566,10 @@ class UniversalAnalyzeCodeTool:
 
 def universal_analyze_code_tool(sql_db: Session, user_id: str):
     """Factory function to create the universal code analysis tool."""
-    from langchain.tools import StructuredTool
+    try:
+        from langchain_core.tools import StructuredTool
+    except ImportError:  # Fallback for older LangChain releases
+        from langchain.tools import StructuredTool
 
     tool_instance = UniversalAnalyzeCodeTool(sql_db, user_id)
     return StructuredTool.from_function(

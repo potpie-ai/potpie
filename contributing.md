@@ -3,6 +3,7 @@
 Thank you for your interest in contributing to Potpie! We welcome and appreciate all contributions, whether you’re fixing bugs, improving documentation, or adding new features. This guide will help you get started.
 
 ## Table of Contents
+
 1. [Code of Conduct](#code-of-conduct)
 2. [How to Contribute](#how-to-contribute)
 3. [Getting Started](#getting-started)
@@ -19,6 +20,7 @@ Please note that by participating in the Potpie project, you agree to abide by o
 ## How to Contribute
 
 There are several ways you can contribute to Potpie:
+
 - Reporting bugs or suggesting improvements.
 - Submitting feature requests.
 - Adding documentation and improving existing content.
@@ -32,19 +34,24 @@ If you’re unsure about how to get started, feel free to browse our issues labe
 ### Prerequisites
 
 Ensure you have the following software installed:
+
 - [Git](https://git-scm.com/)
-- [Python](https://www.python.org/) (or your project's primary language)
+- [Python 3.11+](https://www.python.org/)
+- [uv](https://docs.astral.sh/uv/) - Fast Python package installer (install via `curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - [Docker](https://www.docker.com/) (if applicable)
 
 ### Fork and Clone the Repository
 
 1. **Fork** the repository on GitHub.
 2. **Clone** your forked repository:
+
    ```bash
    git clone https://github.com/your-username/potpie.git
    cd potpie
    ```
+
 3. Add the main repository as a remote:
+
    ```bash
    git remote add upstream https://github.com/potpie-ai/potpie.git
    ```
@@ -59,20 +66,22 @@ To ensure consistency and quality in the codebase, please adhere to the followin
 
 1. **Create a Branch**:
    - Branches should be named according to the feature or bug fix. For example:
+
      ```bash
      git checkout -b feature/your-feature-name
      ```
 
 2. **Make Changes**: Write clear, concise code and ensure that you follow any established coding conventions.
 
-
 3. **Commit Your Changes**:
    - Write descriptive commit messages. Use imperative mood and provide context if necessary:
+
      ```bash
      git commit -m "Add feature to handle XYZ"
      ```
 
 4. **Push to Your Fork**:
+
    ```bash
    git push origin feature/your-feature-name
    ```
@@ -80,6 +89,7 @@ To ensure consistency and quality in the codebase, please adhere to the followin
 ## Testing
 
 Testing is essential for maintaining the stability of Potpie. We encourage you to:
+
 - Write unit tests for new features.
 - Update existing tests when modifying functionality.
 - Ensure all tests pass before submitting a pull request.
@@ -105,6 +115,7 @@ When you’re ready to submit your changes:
 ## FAQs
 
 ### What is the difference between the ENV and the isDevelopmentMode environment variables ?
+
 `ENV` signifies the environment the app is running in,
 signfying configuration to load in dev / stage or prod env.
 
@@ -112,7 +123,6 @@ signfying configuration to load in dev / stage or prod env.
 
 The `ENV=development` still needs firebase / gcp / GitHub etc because it simply is about running potpie's backend locally.
 But `isDevelopmentMode=enabled` disables all these to bring in support for running without most dependencies and support local parsing for example.
-
 
 ## Community and Support
 
