@@ -93,12 +93,31 @@ class ParseHelper:
 
     def is_text_file(self, file_path):
         def open_text_file(file_path):
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    f.read(1024)
-                return True
-            except UnicodeDecodeError:
-                return False
+            """
+            Try multiple encodings to detect if file is text.
+
+            Order of encodings to try:
+            1. utf-8 (most common)
+            2. utf-8-sig (UTF-8 with BOM)
+            3. utf-16 (common in Windows C# files)
+            4. latin-1/iso-8859-1 (fallback, accepts all byte sequences)
+            """
+            encodings = ["utf-8", "utf-8-sig", "utf-16", "latin-1"]
+
+            for encoding in encodings:
+                try:
+                    with open(file_path, "r", encoding=encoding) as f:
+                        # Read first 8KB to detect encoding
+                        f.read(8192)
+                    return True
+                except (UnicodeDecodeError, UnicodeError):
+                    continue
+                except Exception:
+                    # Handle other errors (permissions, file not found, etc.)
+                    return False
+
+            # If all encodings fail, likely a binary file
+            return False
 
         ext = file_path.split(".")[-1]
         exclude_extensions = [
@@ -125,6 +144,8 @@ class ParseHelper:
             "c",
             "cs",
             "cpp",
+            "h",
+            "hpp",
             "el",
             "ex",
             "exs",
@@ -150,6 +171,8 @@ class ParseHelper:
             "html",
             "css",
             "sh",
+            "ps1",
+            "psm1",
             "md",
             "mdx",
             "xsq",
@@ -606,9 +629,23 @@ class ParseHelper:
                 for file in files:
                     file_path = os.path.join(root, file)
                     ext = os.path.splitext(file)[1].lower()
-                    try:
-                        with open(file_path, "r", encoding="utf-8") as f:
-                            content = f.read()
+
+                    # Try multiple encodings for robustness
+                    content = None
+                    encodings = ["utf-8", "utf-8-sig", "utf-16", "latin-1"]
+
+                    for encoding in encodings:
+                        try:
+                            with open(file_path, "r", encoding=encoding) as f:
+                                content = f.read()
+                                break
+                        except (UnicodeDecodeError, UnicodeError):
+                            continue
+                        except Exception:
+                            break
+
+                    if content is not None:
+                        try:
                             total_chars += len(content)
                             if ext == ".cs":
                                 lang_count["c_sharp"] += 1
@@ -648,12 +685,11 @@ class ParseHelper:
                                 lang_count["xml"] += 1
                             else:
                                 lang_count["other"] += 1
-                    except (
-                        UnicodeDecodeError,
-                        FileNotFoundError,
-                        PermissionError,
-                    ) as e:
-                        logger.warning(f"Error reading file {file_path}: {e}")
+                        except Exception as e:
+                            logger.warning(f"Error processing file {file_path}: {e}")
+                            continue
+                    else:
+                        logger.warning(f"Could not read file with any encoding: {file_path}")
                         continue
         except (TypeError, FileNotFoundError, PermissionError) as e:
             logger.error(f"Error accessing directory '{repo_dir}': {e}")
