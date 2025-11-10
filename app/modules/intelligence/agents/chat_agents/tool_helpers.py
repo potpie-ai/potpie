@@ -29,6 +29,26 @@ def get_tool_run_message(tool_name: str):
             return "Searching the web"
         case "analyze_code_structure":
             return "Analyzing code structure"
+        case "GetJiraIssue":
+            return "Fetching Jira issue details"
+        case "SearchJiraIssues":
+            return "Searching Jira issues"
+        case "CreateJiraIssue":
+            return "Creating new Jira issue"
+        case "UpdateJiraIssue":
+            return "Updating Jira issue"
+        case "AddJiraComment":
+            return "Adding comment to Jira issue"
+        case "TransitionJiraIssue":
+            return "Changing Jira issue status"
+        case "LinkJiraIssues":
+            return "Linking Jira issues"
+        case "GetJiraProjects":
+            return "Fetching Jira projects"
+        case "GetJiraProjectDetails":
+            return "Fetching Jira project details"
+        case "GetJiraProjectUsers":
+            return "Fetching Jira project users"
         case _:
             return "Querying data"
 
@@ -59,6 +79,26 @@ def get_tool_response_message(tool_name: str):
             return "Code structure analyzed successfully"
         case "WebSearchTool":
             return "Web search successful"
+        case "GetJiraIssue":
+            return "Jira issue details retrieved"
+        case "SearchJiraIssues":
+            return "Jira issues search completed"
+        case "CreateJiraIssue":
+            return "Jira issue created successfully"
+        case "UpdateJiraIssue":
+            return "Jira issue updated successfully"
+        case "AddJiraComment":
+            return "Comment added to Jira issue"
+        case "TransitionJiraIssue":
+            return "Jira issue status changed"
+        case "LinkJiraIssues":
+            return "Jira issues linked successfully"
+        case "GetJiraProjects":
+            return "Jira projects retrieved"
+        case "GetJiraProjectDetails":
+            return "Jira project details retrieved"
+        case "GetJiraProjectUsers":
+            return "Jira project users retrieved"
         case _:
             return "Data queried successfully"
 
@@ -83,7 +123,7 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             return ""
         case "get_code_file_structure":
             path = args.get("path")
-            if path != None and isinstance(path, str):
+            if path is not None and isinstance(path, str):
                 return f"-> fetching directory structure for {path}\n"
             return "-> fetching directory structure from root of the repo\n"
         case "GetNodeNeighboursFromNodeID":
@@ -103,6 +143,60 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             return f"Analyzing file - {args.get('file_path')}\n"
         case "WebSearchTool":
             return f"-> searching the web for {args.get('query')}\n"
+        case "GetJiraIssue":
+            issue_key = args.get("issue_key")
+            if issue_key:
+                return f"-> fetching issue {issue_key}"
+            return ""
+        case "SearchJiraIssues":
+            jql = args.get("jql")
+            if jql:
+                return f"-> JQL: {jql}"
+            return ""
+        case "CreateJiraIssue":
+            project_key = args.get("project_key")
+            summary = args.get("summary")
+            if project_key and summary:
+                return f"-> creating issue in {project_key}: {summary}"
+            return ""
+        case "UpdateJiraIssue":
+            issue_key = args.get("issue_key")
+            if issue_key:
+                return f"-> updating issue {issue_key}"
+            return ""
+        case "AddJiraComment":
+            issue_key = args.get("issue_key")
+            if issue_key:
+                return f"-> adding comment to {issue_key}"
+            return ""
+        case "TransitionJiraIssue":
+            issue_key = args.get("issue_key")
+            transition = args.get("transition")
+            if issue_key and transition:
+                return f"-> moving {issue_key} to '{transition}'"
+            return ""
+        case "LinkJiraIssues":
+            issue_key = args.get("issue_key")
+            linked_issue_key = args.get("linked_issue_key")
+            link_type = args.get("link_type")
+            if issue_key and linked_issue_key:
+                return f"-> linking {issue_key} {link_type or 'to'} {linked_issue_key}"
+            return ""
+        case "GetJiraProjects":
+            return "-> fetching all accessible projects"
+        case "GetJiraProjectDetails":
+            project_key = args.get("project_key")
+            if project_key:
+                return f"-> fetching details for project {project_key}"
+            return ""
+        case "GetJiraProjectUsers":
+            project_key = args.get("project_key")
+            query = args.get("query")
+            if project_key and query:
+                return f"-> searching users in {project_key}: {query}"
+            elif project_key:
+                return f"-> fetching users in {project_key}"
+            return ""
         case _:
             return ""
 
@@ -121,7 +215,7 @@ def get_tool_result_info_content(tool_name: str, content: List[Any] | str | Any)
                             for node in content
                         ]
                     )
-                except:
+                except Exception:
                     return ""
                 return res
             return ""
@@ -141,7 +235,7 @@ def get_tool_result_info_content(tool_name: str, content: List[Any] | str | Any)
                         code_content = item.get("code_content")
                         if code_content:
                             text += f"{path}\n```{code_content[:min(len(code_content),300)]}``` \n"
-                        elif item.get("error") != None:
+                        elif item.get("error") is not None:
                             text += f"Error: {item.get('error')} \n"
                 return text
             return ""

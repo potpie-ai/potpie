@@ -48,6 +48,16 @@ class GeneralPurposeAgent(ChatAgent):
                 "github_tool",
                 "get_linear_issue",
                 "update_linear_issue",
+                "get_jira_issue",
+                "search_jira_issues",
+                "create_jira_issue",
+                "update_jira_issue",
+                "add_jira_comment",
+                "transition_jira_issue",
+                "get_jira_projects",
+                "get_jira_project_details",
+                "link_jira_issues",
+                "get_jira_project_users",
                 "web_search_tool",
             ]
         )
