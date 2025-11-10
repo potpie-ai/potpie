@@ -80,7 +80,6 @@ class ConfluenceClient:
         logging.info(
             f"Initialized Confluence OAuth 2.0 client for {server} (cloud_id: {cloud_id})"
         )
-        logging.info(f"Confluence decrypted access token: {access_token}")
 
     async def close(self):
         """Close the HTTP client connection."""
