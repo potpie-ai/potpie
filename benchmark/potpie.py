@@ -1,290 +1,252 @@
-# parse a local repo and save it to the local database
-# verify and proceed towards multiple repos at the same time with semaphore
-
-from dotenv import load_dotenv
-from pathlib import Path
 import asyncio
-from uuid6 import UUID, uuid7
-import sys
+import os
+import aiohttp
+from dataclasses import dataclass
+from pathlib import Path
+from dotenv import load_dotenv
 import logging
-from datetime import datetime, timezone
-
-
-# Add the app directory to Python path
-sys.path.append(str(Path(__file__).parent.parent))
-
-
-from app.core.database import create_celery_async_session
-from app.modules.conversations.conversation.conversation_model import ConversationStatus
-from app.modules.parsing.graph_construction.parsing_service import ParsingService
-from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
-from app.modules.conversations.conversation.conversation_service import (
-    ConversationService,
-)
-from app.modules.conversations.message.message_model import MessageType
-from app.modules.conversations.conversation.conversation_schema import (
-    CreateConversationRequest,
-)
-from app.core.base_model import Base
-from app.core.database import SessionLocal, engine
-
-from app.modules.conversations.message.message_schema import MessageRequest
-from app.modules.conversations.message.message_store import MessageStore
-from app.modules.conversations.conversation.conversation_store import ConversationStore
-from app.core.models import *  # noqa #necessary for models to not give import errors
-from app.modules.users.user_service import UserService
-from app.modules.users.user_schema import CreateUser
-from app.core.database import get_db
-
+import pandas as pd
+from collections.abc import Awaitable
 from deepeval.test_case import LLMTestCase
-from deepeval.metrics import AnswerRelevancyMetric
 from deepeval import evaluate
 
 
-_ = load_dotenv()
-
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from .download import get_unique_repo_and_commits, setup_all_worktrees
+from .eval import correctness
 
 
-def setup_eval_user() -> str:
-    eval_user_id = "eval_user"
-
-    db = SessionLocal()
-
-    try:
-        user_service = UserService(db)
-        user = user_service.get_user_by_uid(eval_user_id)
-
-        if user:
-            logger.info("Evaluation user already exists: %s", eval_user_id)
-            return eval_user_id
-        else:
-            # Create new evaluation user
-            user = CreateUser(
-                uid=eval_user_id,
-                email="eval@potpie.ai",
-                display_name="Evaluation User",
-                email_verified=True,
-                created_at=datetime.now(timezone.utc),
-                last_login_at=datetime.now(timezone.utc),
-                provider_info={"access_token": "eval_token"},
-                provider_username="eval",
-            )
-
-            uid, _, error = user_service.create_user(user)
-
-            if error:
-                raise Exception("Failed to create evaluation user: %s", error)
-
-            logger.info("Created evaluation user with uid: %s", uid)
-            return str(uid)
-
-    finally:
-        db.close()
+@dataclass
+class PotPieUserInfo:
+    user_id: str
+    user_token: str
 
 
-async def parse_single_repo(
-    repo_path: Path,
-    user_id: str = "benchmark_user",
-    user_email: str = "benchmark@potpie.ai",
-    project_id: UUID | None = None,
-    branch_name: str | None = None,
-    commit_id: str | None = None,
-) -> UUID:
-    if project_id is None:
-        project_id = uuid7()
+async def _get_parse_status(user_info: PotPieUserInfo, project_id: str):
+    url = f"{BASE_URL}/api/v2/parsing-status/{project_id}"
+    # Set the headers
+    headers = {
+        "accept": "application/json",
+        "Content-Type": "application/json",
+        "x-api-key": user_info.user_token,
+        "x-user-id": user_info.user_id,
+    }
 
-    db_generator = get_db()
-    db = next(db_generator)
-
-    try:
-        parsing_service = ParsingService(db, user_id=user_id)
-        repo_details = ParsingRequest(
-            repo_path=str(repo_path), branch_name=branch_name, commit_id=commit_id
-        )
-        _ = await parsing_service.parse_directory(
-            repo_details=repo_details,
-            user_id=user_id,
-            user_email=user_email,
-            project_id=str(project_id),
-            cleanup_graph=True,
-        )
-        return project_id
-
-    except Exception:
-        logging.error("Error parsing repository", exc_info=True)
-        raise
-    finally:
-        db.close()
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers=headers) as response:
+            # Check for successful response
+            if response.status == 200:
+                data = await response.json()
+                return str(data["status"])
+            else:
+                raise Exception(
+                    f"Failed to get response: {await response.text()} {response.status}"
+                )
 
 
-async def create_conversation_and_post_message(
-    user_id: str, email_id: str, project_id: str, question: str
+async def status_checker_worker(
+    user_info: PotPieUserInfo, check_queue: asyncio.Queue[str], ready_projects: set[str]
+):
+    """Worker that pulls from queue, checks status, updates set."""
+    while True:
+        project_id = await check_queue.get()
+
+        try:
+            status = await _get_parse_status(user_info, project_id)
+
+            if status == "ready":
+                ready_projects.add(project_id)
+                logging.info("Project {} ready", project_id)
+            else:
+                await check_queue.put(project_id)
+                await asyncio.sleep(5.0)
+        except Exception as e:
+            print(f"Error checking {project_id}: {e}")
+            # Optionally re-queue on error
+            await check_queue.put(project_id)
+        finally:
+            check_queue.task_done()
+
+
+async def parse_single_repo(user_info: PotPieUserInfo, commit_id: str, repo_path: Path):
+    url = f"{BASE_URL}/api/v2/parse"
+    payload = {
+        "commit_id": commit_id,
+        "repo_path": str(repo_path.absolute()),
+    }
+    headers = {
+        "accept": "application/json",
+        "Content-Type": "application/json",
+        "x-api-key": user_info.user_token,
+        "x-user-id": user_info.user_id,
+    }
+
+    timeout = aiohttp.ClientTimeout(total=360)
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            url, headers=headers, json=payload, timeout=timeout
+        ) as response:
+            # Check for successful response
+            if response.status == 200:
+                data = await response.json()
+                project_id = str(data["project_id"])
+                return project_id
+            else:
+                raise Exception(
+                    f"Failed to get response: {await response.text()} {response.status}"
+                )
+
+
+async def create_conv_and_send_msg(
+    user_info: PotPieUserInfo, project_id: str, ready_projects: set[str], msg: str
 ) -> str:
-    """Create a conversation linked to a parsed repository."""
-    db = next(get_db())
-    async_session, engine = create_celery_async_session()
+    while project_id not in ready_projects:
+        await asyncio.sleep(0)
 
-    try:
-        conversation_store = ConversationStore(db, async_session)
-        message_store = MessageStore(db, async_session)
-
-        conversation_service = ConversationService.create(
-            conversation_store=conversation_store,
-            message_store=message_store,
-            db=db,
-            user_id=user_id,
-            user_email=email_id,
-        )
-
-        request = CreateConversationRequest(
-            title=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            user_id=user_id,
-            project_ids=[project_id],
-            agent_ids=["codebase_qna_agent"],
-            status=ConversationStatus.ACTIVE,
-        )
-
-        conversation_id, _ = await conversation_service.create_conversation(
-            request, user_id
-        )
-
-        message_request = MessageRequest(
-            content=question,
-        )
-
-        full_response = ""
-        async for chunk in conversation_service.store_message(
-            conversation_id=conversation_id,
-            message=message_request,
-            message_type=MessageType.HUMAN,
-            user_id=user_id,
-            stream=False,
-        ):
-            full_response += chunk.message
-        return full_response
-
-    finally:
-        await async_session.close()
-        await engine.dispose()
-        db.close()
-
-
-async def parse_multiple_repos(repo_paths: list[Path]) -> list[UUID]:
-    semaphore = asyncio.BoundedSemaphore(10)
-
-    async def _guarded_parse(repo_path: Path) -> UUID:
-        async with semaphore:
-            return await parse_single_repo(repo_path)
-
-    tasks = [asyncio.create_task(_guarded_parse(path)) for path in repo_paths]
-    results = await asyncio.gather(*tasks)
-    return results
+    url = f"{BASE_URL}/api/v2/project/{project_id}/message/"
+    payload = {"content": msg, "agent_id": "codebase_qna_agent"}
+    headers = {
+        "accept": "application/json",
+        "Content-Type": "application/json",
+        "x-api-key": user_info.user_token,
+        "x-user-id": user_info.user_id,
+    }
+    timeout = aiohttp.ClientTimeout(total=360)
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            url, headers=headers, json=payload, timeout=timeout
+        ) as response:
+            # Check for successful response
+            if response.status == 200:
+                data = await response.json()
+                answer = data["message"]
+                return answer
+            else:
+                raise Exception(
+                    f"Failed to get response: {await response.text()} {response.status}"
+                )
 
 
 async def main():
-    Base.metadata.create_all(bind=engine)
+    benchmark_file = "benchmark_sub.csv"
+    base_directory = Path("repos")
+    base_directory.mkdir(parents=True, exist_ok=True)
 
-    logger.info("Setting up evaluation user...")
-    user_id = setup_eval_user()
-
-    repo_path = Path("/home/dsantra/e3nn")
-    commit_id = "d7661462f07773b78e9dd1141520d41ab33aed1c"
-
-    # Parse repository
-    # logger.info(f"Starting parsing of repository: {repo_path}")
-    # project_id = await parse_single_repo(
-    #     repo_path=repo_path,
-    #     user_id=user_id,
-    #     user_email="eval@potpie.ai",
-    #     commit_id=commit_id,
-    # )
-    # project_id = str(project_id)
-    # print(f"Parsed repository. Project ID: {project_id}")
-    project_id = "019a5d95-8d7c-7c3e-861e-17360414b493"
-
-    # Create conversation to ask questions about the repo
-    logger.info("Creating conversation for repository Q&A...")
-    response = await create_conversation_and_post_message(
-        user_id=user_id,
-        email_id="eval@potpie.ai",
-        project_id=str(project_id),
-        question="How does e3nn achieve E(3)-equivariance through Irreducible Representations (Irreps) and Tensor Product operations?",
+    conn_info = PotPieUserInfo(
+        user_id=os.environ["defaultUsername"],
+        user_token=os.environ["INTERNAL_ADMIN_SECRET"],
     )
-    print(response)
+
+    qa_df = pd.read_csv("benchmark_sub.csv")
+    repo_to_commits = get_unique_repo_and_commits(benchmark_file)
+    worktree_map = setup_all_worktrees(repo_to_commits, base_directory)
+
+    # repo_commit_to_project_id = {
+    #     (
+    #         "https://github.com/cline/cline.git",
+    #         "ba98b44504d81ea2a261a7a18bf894b4893579c3",
+    #     ): "019a6a06-3dbf-720a-bdd3-eaf62c933d6f",
+    #     (
+    #         "https://github.com/google-gemini/gemini-cli.git",
+    #         "f6499487132f82cc6b498d9e51c939d28ccc2c70",
+    #     ): "019a6a06-2ef3-7493-8491-c66c6b62284c",
+    #     (
+    #         "https://github.com/huggingface/peft.git",
+    #         "e82e72a110b41ae8a62b4af83fab2b9aab614193",
+    #     ): "019a6a05-e7bc-77e5-ba78-9dfcaed0ef73",
+    #     (
+    #         "https://github.com/huggingface/trl.git",
+    #         "aaed6c1600ff4f3e0ccc6b3b8183c98d26390491",
+    #     ): "019a6a06-028f-7759-8e68-279a651ce453",
+    #     (
+    #         "https://github.com/microsoft/vscode.git",
+    #         "5ed7107dcc8338b4b43e32b22ae76106d7bcc6b5",
+    #     ): "019a6a05-f4f0-703f-8556-a10c68c865e3",
+    #     (
+    #         "https://github.com/n8n-io/n8n.git",
+    #         "ffbcafa2074e410279bf551bbac083874c10d19e",
+    #     ): "019a6a06-62f3-77ae-9bf6-f63197bbf1e6",
+    #     (
+    #         "https://github.com/puppeteer/puppeteer.git",
+    #         "bec92441dd8401e70150282e1065f283a5e11a14",
+    #     ): "019a6a06-202b-7e61-97e4-393454399028",
+    #     (
+    #         "https://github.com/tinygrad/tinygrad.git",
+    #         "614783693e97f57166e9e97d447ea6a6388d1519",
+    #     ): "019a6a06-4f4d-7652-828b-33154defb764",
+    #     (
+    #         "https://github.com/unslothai/unsloth.git",
+    #         "1c0ad844f170f67c7cdf6f7a9465bafb0f9627df",
+    #     ): "019a6a06-10d4-7edb-8cfe-0b1d8703ffe2",
+    # }
+
+    jobs: list[Awaitable[str]] = []
+    for (_, commit_id), worktree_path in worktree_map.items():
+        jobs.append(
+            parse_single_repo(
+                user_info=conn_info,
+                commit_id=commit_id,
+                repo_path=worktree_path,
+            )
+        )
+    keys = list(worktree_map.keys())
+    project_ids = await asyncio.gather(*jobs)
+    repo_commit_to_project_id = dict(zip(keys, project_ids))
+
+    ready_projects: set[str] = set()
+    check_queue: asyncio.Queue[str] = asyncio.Queue()
+
+    for pid in project_ids:
+        await check_queue.put(pid)
+
+    workers = [
+        asyncio.create_task(
+            status_checker_worker(conn_info, check_queue, ready_projects)
+        )
+        for _ in range(5)
+    ]
+    _ = await asyncio.gather(*workers)
+    ready_projects = set(repo_commit_to_project_id.values())
+
+    qa_tasks: list[Awaitable[str]] = []
+
+    # TODO: Run each question in batch to average out LLM results for each question
+    for _, row in qa_df.iterrows():
+        repo_url: str = row["repo_url"]
+        commit_id: str = row["commit_id"]
+        question: str = row["question"]
+        project_id = repo_commit_to_project_id[(repo_url, commit_id)]
+        qa_tasks.append(
+            create_conv_and_send_msg(
+                user_info=conn_info,
+                project_id=project_id,
+                ready_projects=ready_projects,
+                msg=question,
+            )
+        )
+    answers = await asyncio.gather(*qa_tasks)
+    expected_answers = qa_df["expected_answer"].tolist()
+
+    test_cases = [
+        LLMTestCase(
+            input=question, actual_output=answer, expected_output=expected_answer
+        )
+        for question, answer, expected_answer in zip(
+            qa_df["question"], answers, expected_answers
+        )
+    ]
+
     results = evaluate(
-        metrics=[AnswerRelevancyMetric()],
-        test_cases=[
-            LLMTestCase(
-                input=response,
-                actual_output="""
-                e3nn achieves E(3)-equivariance through three key mechanisms:
-
-                ### 1. Mathematical Foundation of Irreducible Representations
-
-                In e3nn, the [`Irrep`](e3nn/o3/_irreps.py#L14) class encapsulates irreducible representations of the O(3) group, where each irrep is defined by parameters `(l, p)`:
-
-                - `l`: The order of the representation (0, 1, 2, ...), determining the dimension `dim = 2l + 1`
-                - `p`: Parity (±1), representing behavior under spatial inversion
-
-                For example, `1e` represents an l=1 even-parity vector (ordinary vector), while `1o` represents an l=1 odd-parity pseudovector (like angular momentum).
-
-                ### 2. Equivariant Construction of Tensor Products
-
-                The [`TensorProduct`](e3nn/o3/_tensor_product/_tensor_product.py#L25) class implements equivariant tensor product operations. The core lies in:
-
-                ```python
-                # Clebsch-Gordan coefficients ensure equivariance
-                def D_from_angles(self, alpha, beta, gamma, k=None):
-                    # Generate rotation matrix D^l(alpha, beta, gamma)
-                ```
-
-                The tensor product follows Clebsch-Gordan rules: the tensor product of two irreps `l₁` and `l₂` decomposes as:
-
-                ```
-                l₁ ⊗ l₂ = ⊕_{l=|l₁-l₂|}^{l₁+l₂} l
-                ```
-
-                ### 3. Flexible Instruction System
-
-                Tensor products are controlled through instruction lists:
-
-                ```python
-                instructions = [
-                    (i_in1, i_in2, i_out, connection_mode, has_weight, path_weight)
-                ]
-                ```
-
-                Where `connection_mode` defines multiplicity handling:
-
-                - `"uvw"`: Fully connected, each input connects to each output
-                - `"uuu"`: Element-wise operation
-                - `"uvu"`, `"uvv"`, etc.: Partial connection modes
-
-                This design enables e3nn to construct neural network layers that preserve rotational and translational equivariance, suitable for 3D data processing tasks like molecular modeling and materials science.
-                """,
-            ),
-        ],
+        metrics=[correctness],
+        test_cases=test_cases,
     )
-    relevant_result = results[0]
+    for result in results:
+        print(result)
 
-    # # Ask some questions about the repository
-    # questions = [
-    #     "What is this repository about?",
-    #     "What are the main components and how do they work together?",
-    #     "Can you find any potential bugs or improvements?",
-    # ]
-
-    # for i, question in enumerate(questions, 1):
-    #     logger.info(f"Question {i}: {question}")
-    #     response = ask_about_repo(conversation_id, user_id, question)
-    #     print(f"\nQ{i}: {question}")
-    #     print(f"A{i}: {response}\n")
-
-    # print("All done!")
+    # print(answers)
 
 
 if __name__ == "__main__":
+    BASE_URL = "http://localhost:8001"
+    _ = load_dotenv()
     asyncio.run(main())
