@@ -1476,6 +1476,263 @@ async def jira_webhook(
         )
 
 
+def verify_jira_webhook_jwt(
+    authorization_header: Optional[str], client_secret: str
+) -> tuple[bool, Optional[Dict[str, Any]]]:
+    """Verify JWT token from Jira OAuth webhook"""
+    if not authorization_header:
+        logging.warning("No Authorization header in Jira webhook request")
+        return False, None
+
+    # Extract token from "Bearer <token>" format
+    parts = authorization_header.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        logging.warning(
+            "Invalid Authorization header format: expected 'Bearer <token>'"
+        )
+        return False, None
+
+    token = parts[1]
+
+    try:
+        # Decode and verify JWT
+        # Jira signs webhooks with HS256 (HMAC SHA-256) using client_secret
+        decoded = jwt.decode(
+            token,
+            client_secret,
+            algorithms=["HS256"],
+            options={
+                "verify_signature": True,
+                "verify_exp": True,  # Verify expiration
+                "verify_iat": True,  # Verify issued at
+            },
+        )
+
+        return True, decoded
+
+    except jwt.ExpiredSignatureError:
+        logging.error("Jira webhook JWT has expired")
+        return False, None
+    except jwt.InvalidTokenError as e:
+        logging.error(f"Invalid Jira webhook JWT: {str(e)}")
+        return False, None
+    except Exception as e:
+        logging.error(f"Error verifying Jira webhook JWT: {str(e)}")
+        return False, None
+
+
+@router.post("/jira/webhook")
+async def jira_webhook(
+    request: Request,
+    integrations_service: IntegrationsService = Depends(get_integrations_service),
+) -> Dict[str, Any]:
+    """Handle Jira webhook requests and publish to event bus"""
+    import json
+
+    try:
+        # Verify JWT authentication from Jira OAuth webhook
+        config = Config(".env")
+        jira_client_secret = config("JIRA_CLIENT_SECRET", default="")
+
+        jwt_claims = None
+        if jira_client_secret:
+            auth_header = request.headers.get("Authorization")
+            is_valid, jwt_claims = verify_jira_webhook_jwt(
+                auth_header, jira_client_secret
+            )
+            if not is_valid:
+                logging.warning(
+                    "Jira webhook JWT verification failed - rejecting request"
+                )
+                raise HTTPException(
+                    status_code=403, detail="Invalid or missing webhook authentication"
+                )
+        else:
+            logging.warning(
+                "JIRA_CLIENT_SECRET not configured - skipping JWT verification (INSECURE!)"
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Jira webhook cannot be processed: server misconfiguration",
+            )
+
+        # Try to read body
+        webhook_data = {}
+        try:
+            body = await request.body()
+            if body:
+                body_text = body.decode("utf-8")
+                try:
+                    webhook_data = json.loads(body_text)
+                except json.JSONDecodeError:
+                    webhook_data = {"raw_body": body_text}
+        except Exception as e:
+            logging.warning(f"Could not read request body: {str(e)}")
+
+        # Log form data if present
+        try:
+            form_data = await request.form()
+            if form_data:
+                form_dict = {k: str(v) for k, v in form_data.items()}
+                webhook_data.update(form_dict)
+        except Exception:
+            pass
+
+        # Use the service to log the webhook data
+        result = await integrations_service.log_jira_webhook(webhook_data)
+
+        # Determine event type
+        event_type = (
+            dict(request.headers).get("X-Event-Key")
+            or webhook_data.get("webhookEvent")
+            or "jira.unknown"
+        )
+
+        # Attempt to determine integration id from payload
+        integration_id = None
+
+        # OAuth webhooks include matchedWebhookIds - use this to look up the integration
+        # IMPORTANT: webhook_id alone is not unique! Same webhook_id can exist across different Jira sites.
+        # We need to match BOTH webhook_id AND site_id to find the correct integration.
+        matched_webhook_ids = (
+            webhook_data.get("matchedWebhookIds", [])
+            if isinstance(webhook_data, dict)
+            else []
+        )
+
+        # Extract site_id from multiple sources (in priority order)
+        site_id = None
+        if jwt_claims:
+            # JWT claims (most reliable)
+            context = jwt_claims.get("context", {})
+            site_id = context.get("cloudId") if isinstance(context, dict) else None
+            site_id = site_id or jwt_claims.get("aud")  # Fallback to audience
+
+        if not site_id and isinstance(webhook_data, dict):
+            # Webhook payload
+            site_id = webhook_data.get("cloudId") or webhook_data.get("siteId")
+
+        if not site_id:
+            # HTTP headers
+            site_id = dict(request.headers).get("X-Atlassian-Cloud-Id")
+
+        # Try to find integration by BOTH webhook_id AND site_id (composite key)
+        if matched_webhook_ids:
+            try:
+                from app.core.database import get_db
+                from app.core.models import Integration
+
+                db = next(get_db())
+                try:
+                    integrations = (
+                        db.query(Integration)
+                        .filter(
+                            Integration.integration_type == "jira",
+                            Integration.active == True,  # noqa: E712
+                        )
+                        .all()
+                    )
+
+                    for integration in integrations:
+                        metadata = integration.integration_metadata or {}
+                        webhooks = metadata.get("webhooks", [])
+
+                        for webhook in webhooks:
+                            webhook_id = webhook.get("id")
+                            webhook_site_id = webhook.get("site_id")
+
+                            # Match webhook_id from payload
+                            if webhook_id in matched_webhook_ids:
+                                # Verify site_id matches (composite key for uniqueness)
+                                if site_id and webhook_site_id == site_id:
+                                    integration_id = integration.integration_id
+                                    logging.info(
+                                        f"Found integration {integration_id} for webhook {webhook_id} + site {site_id}"
+                                    )
+                                    break
+                                elif not site_id:
+                                    # Fallback: match webhook_id only if site_id unavailable (less secure)
+                                    integration_id = integration.integration_id
+                                    logging.warning(
+                                        f"Found integration {integration_id} for webhook {webhook_id} (no site_id verification)"
+                                    )
+                                    break
+
+                        if integration_id:
+                            break
+                finally:
+                    db.close()
+            except Exception as e:
+                logging.debug(f"Jira webhook ID lookup failed: {e}")
+
+        # Fallback: Try site_id lookup via service (legacy/backup method)
+        if not integration_id and site_id:
+            try:
+                integration = (
+                    await integrations_service.check_existing_jira_integration(site_id)
+                )
+                if integration:
+                    integration_id = integration.get("integration_id")
+            except Exception as e:
+                logging.debug(f"Jira webhook site lookup failed: {e}")
+
+        # Fallback to query param or header
+        query_params = dict(request.query_params)
+        if not integration_id:
+            integration_id = query_params.get("integration_id") or dict(
+                request.headers
+            ).get("X-Integration-ID")
+
+        if integration_id:
+            from app.modules.event_bus import CeleryEventBus
+            from app.celery.celery_app import celery_app
+
+            event_bus = CeleryEventBus(celery_app)
+
+            try:
+                event_id = await event_bus.publish_webhook_event(
+                    integration_id=integration_id,
+                    integration_type="jira",
+                    event_type=event_type,
+                    payload=webhook_data,
+                    headers=dict(request.headers),
+                    source_ip=request.client.host if request.client else None,
+                )
+
+                return {
+                    "status": "success",
+                    "message": "Jira webhook logged and published to event bus",
+                    "logged_at": time.time(),
+                    "event_id": event_id,
+                    "event_type": event_type,
+                    "integration_id": integration_id,
+                    "service_result": result,
+                }
+            except Exception as e:
+                logging.error(f"Failed to publish Jira webhook to event bus: {str(e)}")
+                return {
+                    "status": "success",
+                    "message": "Jira webhook logged successfully (event bus failed)",
+                    "logged_at": time.time(),
+                    "event_bus_error": str(e),
+                    "service_result": result,
+                }
+
+        logging.warning("No integration_id provided or found for Jira webhook request")
+        return {
+            "status": "success",
+            "message": "Jira webhook logged successfully (no integration_id for event bus)",
+            "logged_at": time.time(),
+            "service_result": result,
+        }
+
+    except Exception as e:
+        logging.error(f"Error processing Jira webhook: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to process Jira webhook: {str(e)}"
+        )
+
+
 @router.post("/sentry/save")
 async def save_sentry_integration(
     request: SentrySaveRequest,

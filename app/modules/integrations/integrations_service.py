@@ -33,6 +33,9 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from .token_encryption import decrypt_token
+from datetime import datetime, timedelta, timezone
+
+from .token_encryption import decrypt_token
 
 
 class IntegrationsService:
@@ -847,6 +850,7 @@ class IntegrationsService:
                 self.db.query(Integration)
                 .filter(Integration.integration_type == "linear")
                 .filter(Integration.active == True)  # noqa: E712
+                .filter(Integration.active == True)  # noqa: E712
                 .filter(Integration.unique_identifier == organization_id)
                 .first()
             )
@@ -937,6 +941,10 @@ class IntegrationsService:
                 if db_integration.integration_type == "jira":
                     await self._cleanup_jira_webhooks(db_integration)
 
+                # Clean up Jira webhooks if this is a Jira integration
+                if db_integration.integration_type == "jira":
+                    await self._cleanup_jira_webhooks(db_integration)
+
                 # Perform the deletion
                 self.db.delete(db_integration)
                 self.db.commit()
@@ -952,6 +960,73 @@ class IntegrationsService:
             logging.error(f"Error deleting integration {integration_id}: {str(e)}")
             self.db.rollback()
             return False
+
+    async def _cleanup_jira_webhooks(self, db_integration: Integration) -> None:
+        """Clean up all registered Jira webhooks for an integration before deletion"""
+        try:
+            metadata = db_integration.integration_metadata or {}
+            webhooks = metadata.get("webhooks", [])
+
+            if not webhooks:
+                logging.info("No webhooks to clean up for Jira integration")
+                return
+
+            # Get access token and site_id from auth_data column (not metadata)
+            auth_data = db_integration.auth_data or {}
+            access_token = auth_data.get("access_token")
+
+            # Get site_id from scope_data or metadata
+            scope_data = db_integration.scope_data or {}
+            site_id = scope_data.get("org_slug") or metadata.get("site_id")
+
+            if not access_token or not site_id:
+                logging.warning(
+                    f"Cannot cleanup webhooks: missing access_token or site_id for integration {db_integration.integration_id}"
+                )
+                logging.debug(
+                    f"auth_data: {auth_data}, scope_data: {scope_data}, metadata: {metadata}"
+                )
+                return
+
+            access_token = decrypt_token(access_token)
+
+            # Delete each webhook
+            deleted_count = 0
+            failed_count = 0
+
+            for webhook in webhooks:
+                webhook_id = webhook.get("id")
+                if webhook_id:
+                    try:
+                        success = await self.jira_oauth.delete_webhook(
+                            cloud_id=site_id,
+                            access_token=access_token,
+                            webhook_id=str(webhook_id),
+                        )
+                        if success:
+                            deleted_count += 1
+                            logging.info(
+                                f"Deleted Jira webhook {webhook_id} for integration {db_integration.integration_id}"
+                            )
+                        else:
+                            failed_count += 1
+                            logging.warning(
+                                f"Failed to delete Jira webhook {webhook_id}"
+                            )
+                    except Exception as e:
+                        failed_count += 1
+                        logging.error(
+                            f"Error deleting Jira webhook {webhook_id}: {str(e)}"
+                        )
+
+            logging.info(
+                f"Webhook cleanup complete for integration {db_integration.integration_id}: "
+                f"{deleted_count} deleted, {failed_count} failed"
+            )
+
+        except Exception as e:
+            logging.error(f"Error during webhook cleanup: {str(e)}")
+            # Don't raise - we still want to delete the integration even if webhook cleanup fails
 
     async def _cleanup_jira_webhooks(self, db_integration: Integration) -> None:
         """Clean up all registered Jira webhooks for an integration before deletion"""
@@ -1310,6 +1385,10 @@ class IntegrationsService:
             if db_integration.integration_type == "jira":
                 await self._cleanup_jira_webhooks(db_integration)
 
+            # Clean up Jira webhooks if this is a Jira integration
+            if db_integration.integration_type == "jira":
+                await self._cleanup_jira_webhooks(db_integration)
+
             # Delete from database
             self.db.delete(db_integration)
             self.db.commit()
@@ -1341,6 +1420,25 @@ class IntegrationsService:
             return {
                 "status": "error",
                 "message": f"Failed to log Linear webhook: {str(e)}",
+                "logged_at": time.time(),
+            }
+
+    async def log_jira_webhook(self, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Log Jira webhook data for debugging and processing"""
+        try:
+            # Minimal transformation for now; we store raw payload and timestamp
+            return {
+                "status": "success",
+                "message": "Jira webhook logged successfully",
+                "logged_at": time.time(),
+                "webhook_data": webhook_data,
+            }
+
+        except Exception as e:
+            logging.error(f"Error logging Jira webhook: {str(e)}")
+            return {
+                "status": "error",
+                "message": f"Failed to log Jira webhook: {str(e)}",
                 "logged_at": time.time(),
             }
 

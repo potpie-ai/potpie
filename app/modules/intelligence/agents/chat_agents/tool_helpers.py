@@ -152,6 +152,7 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
         case "get_code_file_structure":
             path = args.get("path")
             if path is not None and isinstance(path, str):
+            if path is not None and isinstance(path, str):
                 return f"-> fetching directory structure for {path}\n"
             return "-> fetching directory structure from root of the repo\n"
         case "GetNodeNeighboursFromNodeID":
@@ -287,6 +288,7 @@ def get_tool_result_info_content(tool_name: str, content: List[Any] | str | Any)
                             for node in content
                         ]
                     )
+                except Exception:
                 except Exception:
                     return ""
                 return res
