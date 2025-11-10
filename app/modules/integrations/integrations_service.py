@@ -33,10 +33,6 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from .token_encryption import decrypt_token
-from datetime import datetime, timedelta, timezone
-
-from .token_encryption import decrypt_token
-
 
 class IntegrationsService:
     """Service layer for integrations"""
@@ -1420,25 +1416,6 @@ class IntegrationsService:
             return {
                 "status": "error",
                 "message": f"Failed to log Linear webhook: {str(e)}",
-                "logged_at": time.time(),
-            }
-
-    async def log_jira_webhook(self, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Log Jira webhook data for debugging and processing"""
-        try:
-            # Minimal transformation for now; we store raw payload and timestamp
-            return {
-                "status": "success",
-                "message": "Jira webhook logged successfully",
-                "logged_at": time.time(),
-                "webhook_data": webhook_data,
-            }
-
-        except Exception as e:
-            logging.error(f"Error logging Jira webhook: {str(e)}")
-            return {
-                "status": "error",
-                "message": f"Failed to log Jira webhook: {str(e)}",
                 "logged_at": time.time(),
             }
 
