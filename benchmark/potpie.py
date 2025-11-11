@@ -7,14 +7,187 @@ from dotenv import load_dotenv
 import logging
 import pandas as pd
 from collections.abc import Awaitable
+from datetime import datetime
 from deepeval.test_case import LLMTestCase
 from deepeval import evaluate
+from datetime import datetime
+from phoenix.client import Client
 
+try:
+    import phoenix as px
+    PHOENIX_AVAILABLE = True
+except ImportError:
+    PHOENIX_AVAILABLE = False
 
 from .download import get_unique_repo_and_commits, setup_all_worktrees
 from .eval import correctness
 
+def save_benchmark_results(
+    qa_df: pd.DataFrame,
+    answers: list[str],
+    eval_results,
+    output_file: Path,
+):
+    """
+    Save benchmark results to a CSV file with all fields and evaluation metrics.
+    
+    Args:
+        qa_df: Original DataFrame with repo_url, commit_id, question, expected_answer
+        answers: List of generated answers
+        eval_results: List of MetricData objects (or None) from DeepEval
+        output_file: Path to save the results CSV
+    """
+    # Prepare results data
+    results_data = []
+    eval_results_list = list(eval_results) if eval_results else []
+    
+    # Ensure we have enough results (pad with None if needed)
+    while len(eval_results_list) < len(qa_df):
+        eval_results_list.append(None)
+    
+    for idx, (_, row) in enumerate(qa_df.iterrows()):
+        result = eval_results_list[idx] if idx < len(eval_results_list) else None
+        
+        result_row = {
+            "repo_url": row["repo_url"],
+            "commit_id": row["commit_id"],
+            "question": row["question"],
+            "expected_answer": row["expected_answer"],
+            "generated_answer": answers[idx] if idx < len(answers) else "",
+            "timestamp": datetime.now().isoformat(),
+        }
+        
+        # Extract evaluation metrics from the result (MetricData object)
+        if result is not None:
+            score = result.score
+            success = result.success
+            reason = result.reason
+            metric_name = result.name
+        else:
+            score = None
+            success = None
+            reason = None
+            metric_name = "correctness"
+        
+        result_row["eval_score"] = score
+        result_row["eval_success"] = success
+        result_row["eval_reason"] = reason
+        result_row["eval_metric_name"] = metric_name
+        
+        results_data.append(result_row)
+    
+    # Create DataFrame and save
+    results_df = pd.DataFrame(results_data)
+    results_df.to_csv(output_file, index=False, encoding="utf-8")
 
+def upload_results_to_phoenix(
+    qa_df: pd.DataFrame,
+    answers: list[str],
+    eval_results,
+    dataset_name: str = None,
+    experiment_name: str = None,
+) -> None:
+    """
+    Upload benchmark results to Phoenix as a dataset AND create an experiment with eval metrics.
+    
+    This version uses the run_experiment workflow to log pre-computed results.
+    
+    Args:
+        qa_df: Original DataFrame with repo_url, commit_id, question, expected_answer
+        answers: List of generated answers
+        eval_results: DeepEval result object(s) with evaluation metrics
+        dataset_name: Name for the Phoenix dataset (default: auto-generated with timestamp)
+        experiment_name: Name for the Phoenix experiment (default: auto-generated with timestamp)
+    """
+    try:
+        # Generate names if not provided
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        if dataset_name is None:
+            dataset_name = f"Benchmark Dataset {timestamp}"
+        if experiment_name is None:
+            experiment_name = f"Benchmark Experiment {timestamp}"
+        
+        client = Client()
+        
+        eval_results_list = []
+        if isinstance(eval_results, dict):
+            eval_results_list = list(eval_results.values())
+        elif hasattr(eval_results, '__iter__') and not isinstance(eval_results, (str, bytes)):
+            try:
+                eval_results_list = list(eval_results)
+            except (TypeError, AttributeError):
+                eval_results_list = [eval_results]
+        else:
+            eval_results_list = [eval_results]
+        
+        dataset_data = {
+            "question": qa_df["question"].tolist(),
+            "expected_answer": qa_df["expected_answer"].tolist(),
+            "repo_url": qa_df["repo_url"].tolist(),
+            "commit_id": qa_df["commit_id"].tolist(),
+            "example_id": range(len(qa_df))
+        }
+        dataset_df = pd.DataFrame(dataset_data)
+        
+        dataset = client.datasets.create_dataset(
+            dataframe=dataset_df,
+            name=dataset_name,
+            input_keys=["question"],
+            metadata_keys=["repo_url", "commit_id", "expected_answer", "example_id"]
+        )
+        
+        def task(example):
+            try:
+                idx = int(example.metadata.get("example_id", 0))
+            except (ValueError, TypeError, KeyError):
+                idx = 0
+            
+            if idx < 0 or idx >= len(answers):
+                idx = 0
+            
+            answer = answers[idx] if idx < len(answers) else ""
+            return {"output": answer}
+
+        def get_correctness_score(output, metadata=None):
+            if metadata is None:
+                print("Metadata is None in get_correctness_score")
+                return 0.0
+            idx = int(metadata.get("example_id", 0))
+            result = eval_results_list[idx] if idx < len(eval_results_list) else None
+            if result and hasattr(result, "score"):
+                return float(result.score) if result.score is not None else 0.0
+            return 0.0
+
+        def get_success(output, metadata=None):
+            if metadata is None:
+                print("Metadata is None in get_success")
+                return 0.0
+            idx = int(metadata.get("example_id", 0))
+            result = eval_results_list[idx] if idx < len(eval_results_list) else None
+            if result and hasattr(result, "success"):
+                return 1.0 if result.success else 0.0
+            return 0.0
+
+        def get_reason(output, metadata=None):
+            if metadata is None:
+                print("Metadata is None in get_reason")
+                return ""  
+            idx = int(metadata.get("example_id", 0))
+            result = eval_results_list[idx] if idx < len(eval_results_list) else None
+            if result and hasattr(result, "reason") and result.reason:
+                return str(result.reason)
+            print("Result is None in get_reason")
+            return ""
+
+        experiment = client.experiments.run_experiment(
+            dataset=dataset,
+            task=task,
+            evaluators=[get_correctness_score, get_success, get_reason],
+            experiment_name=experiment_name,
+        )
+        
+    except Exception as e:
+        logging.error(f"Failed to upload results to Phoenix: {e}", exc_info=True)
 @dataclass
 class PotPieUserInfo:
     user_id: str
@@ -205,7 +378,7 @@ async def main():
         )
         for _ in range(5)
     ]
-    _ = await asyncio.gather(*workers)
+    # _ = await asyncio.gather(*workers)
     ready_projects = set(repo_commit_to_project_id.values())
 
     qa_tasks: list[Awaitable[str]] = []
@@ -240,10 +413,44 @@ async def main():
         metrics=[correctness],
         test_cases=test_cases,
     )
-    for result in results:
-        print(result)
 
-    # print(answers)
+    # DeepEval returns an EvaluationResult object with test_results attribute
+    test_results = results.test_results
+
+    # Extract MetricData from each TestResult
+    # Each TestResult has metrics_data (list of MetricData objects)
+    eval_results_for_save = []
+    for test_result in test_results:
+        # Get the first MetricData object (our correctness metric)
+        metric_data = test_result.metrics_data[0]
+        eval_results_for_save.append(metric_data)
+
+    # Print first result for verification
+    if eval_results_for_save and eval_results_for_save[0]:
+        print(f"\n✅ Extracted MetricData: score={eval_results_for_save[0].score}, success={eval_results_for_save[0].success}, name={eval_results_for_save[0].name}")
+
+    # Save results to file with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Create benchmark_results folder if it doesn't exist
+    results_dir = Path("benchmark_results")
+    results_dir.mkdir(exist_ok=True)
+    output_file = results_dir / f"benchmark_results_{timestamp}.csv"
+    save_benchmark_results(
+        qa_df=qa_df,
+        answers=answers,
+        eval_results=eval_results_for_save,  # Pass extracted results
+        output_file=output_file,
+    )
+    logging.info(f"✅ Benchmark results saved to {output_file}")
+
+    # Upload results to Phoenix 
+    upload_results_to_phoenix(
+        qa_df=qa_df,
+        answers=answers,
+        dataset_name=f"Benchmark Results {timestamp}",
+        experiment_name=f"Benchmark Experiment {timestamp}",
+        eval_results=eval_results_for_save,  # Pass extracted results
+    )
 
 
 if __name__ == "__main__":

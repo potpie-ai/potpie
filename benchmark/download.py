@@ -121,13 +121,18 @@ def setup_all_worktrees(
                 )  # This will raise if clone failed
                 successful_repos.append(repo_url)
                 logger.info("Successfully cloned bare repository.", repo_url=repo_url)
-            except (
-                Exception
-            ) as e:  # TODO: Specialize the exception later like CalledProcessError or OSError
+            except Exception as e:
+                # Get more details about the error
+                error_msg = str(e)
+                if hasattr(e, 'stderr') and e.stderr:
+                    error_msg += f"\nGit stderr: {e.stderr}"
+                if hasattr(e, 'stdout') and e.stdout:
+                    error_msg += f"\nGit stdout: {e.stdout}"
                 logger.error(
                     "Failed to clone bare repository",
-                    error=e,
+                    error=error_msg,
                     repo_url=futures_dict[future],
+                    exc_info=True,  # This will include full traceback
                 )
 
     #  Parallel worktree creation
