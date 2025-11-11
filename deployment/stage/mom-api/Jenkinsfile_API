@@ -17,16 +17,6 @@ pipeline {
         stage('Checkout') {
             steps {
                 script {
-                    // Determine environment based on branch
-                    def branch = env.GIT_BRANCH
-
-                    if (branch == "origin/main"){
-                        env.ENVIORNMENT = 'main'
-                    } else if (branch == "origin/custom-agents-production-release") {
-                        env.ENVIRONMENT = 'custom-agents-production-release'
-                    } else {
-                        error("Unknown branch: ${branch}. This pipeline only supports main and custom agents production release branches.")
-                    }
 
                     checkout scm
                     // Capture the short Git commit hash to use as the image tag
