@@ -28,6 +28,19 @@ from app.modules.search.search_service import SearchService
 
 logger = logging.getLogger(__name__)
 
+# Global singleton for SentenceTransformer to avoid reloading
+_embedding_model = None
+
+
+def get_embedding_model():
+    """Get the singleton SentenceTransformer model, loading it only once"""
+    global _embedding_model
+    if _embedding_model is None:
+        logger.info("Loading SentenceTransformer model (first time only)")
+        _embedding_model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+        logger.info("SentenceTransformer model loaded successfully")
+    return _embedding_model
+
 
 class InferenceService:
     def __init__(self, db: Session, user_id: Optional[str] = "dummy"):
@@ -38,7 +51,7 @@ class InferenceService:
         )
 
         self.provider_service = ProviderService(db, user_id)
-        self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+        self.embedding_model = get_embedding_model()  # Use singleton to avoid reloading
         self.search_service = SearchService(db)
         self.project_manager = ProjectService(db)
         self.parallel_requests = int(os.getenv("PARALLEL_REQUESTS", 50))

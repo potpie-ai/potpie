@@ -22,9 +22,7 @@ from .chat_agents.system_agents import (
     unit_test_agent,
 )
 from app.modules.intelligence.provider.provider_service import ProviderService
-from app.modules.intelligence.agents.chat_agents.adaptive_agent import (
-    PromptService,
-)
+from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.intelligence.agents.chat_agents.supervisor_agent import (
     SupervisorAgent,
@@ -121,7 +119,9 @@ class AgentsService:
                 name="Code Generation Agent",
                 description="An agent specialized in generating code for new features or fixing bugs.",
                 agent=code_gen_agent.CodeGenAgent(
-                    llm_provider, tools_provider, prompt_provider
+                    llm_provider,
+                    tools_provider,
+                    prompt_provider,
                 ),
             ),
             "general_purpose_agent": AgentWithInfo(
@@ -129,7 +129,9 @@ class AgentsService:
                 name="General Purpose Agent",
                 description="Agent for queries not needing understanding of or access to the users code repository",
                 agent=GeneralPurposeAgent(
-                    llm_provider, tools_provider, prompt_provider
+                    llm_provider,
+                    tools_provider,
+                    prompt_provider,
                 ),
             ),
         }
@@ -168,7 +170,7 @@ class AgentsService:
                 id=agent.id,
                 name=agent.role,
                 description=agent.goal,
-                status=agent.deployment_status,
+                status=agent.deployment_status or "STOPPED",
                 visibility=agent.visibility,
             )
             for agent in custom_agents

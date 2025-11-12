@@ -281,6 +281,44 @@ class LinearSaveResponse(BaseModel):
     error: Optional[str] = Field(None, description="Error message if operation failed")
 
 
+# Jira-specific schemas
+class JiraIntegrationStatus(BaseModel):
+    """Jira integration status for a user"""
+
+    user_id: str
+    is_connected: bool
+    connected_at: Optional[datetime] = None
+    scope: Optional[str] = None
+    expires_at: Optional[datetime] = None
+
+
+class JiraSaveRequest(BaseModel):
+    """Request to save Jira integration with authorization code"""
+
+    code: str = Field(..., description="OAuth authorization code from Jira")
+    redirect_uri: str = Field(
+        ..., description="OAuth redirect URI used during authorization"
+    )
+    instance_name: str = Field(
+        ..., description="User-defined name for this integration instance"
+    )
+    user_id: str = Field(..., description="Potpie user initiating the integration")
+    integration_type: str = Field(default="jira", description="Type of integration")
+    timestamp: str = Field(
+        ..., description="ISO timestamp when the integration was created"
+    )
+
+
+class JiraSaveResponse(BaseModel):
+    """Response after successfully saving Jira integration"""
+
+    success: bool = Field(..., description="Whether the operation was successful")
+    data: Optional[Dict[str, Any]] = Field(
+        None, description="Integration data if successful"
+    )
+    error: Optional[str] = Field(None, description="Error message if operation failed")
+
+
 # Generic save integration schema
 class IntegrationSaveRequest(BaseModel):
     """Request to save an integration with configurable and optional fields"""

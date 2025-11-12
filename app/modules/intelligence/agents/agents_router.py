@@ -8,9 +8,7 @@ from app.modules.auth.auth_service import AuthService
 from app.modules.intelligence.agents.agents_controller import AgentsController
 from app.modules.intelligence.agents.agents_service import AgentInfo
 from app.modules.intelligence.provider.provider_service import ProviderService
-from app.modules.intelligence.agents.chat_agents.adaptive_agent import (
-    PromptService,
-)
+from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.intelligence.agents.custom_agents.custom_agent_router import (
     router as custom_agent_router,
