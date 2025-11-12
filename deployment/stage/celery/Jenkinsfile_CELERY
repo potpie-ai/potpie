@@ -51,7 +51,7 @@ pipeline {
                             --build-arg GIT_COMMIT_HASH=${imageTag} \
                             --no-cache \
                             -fdeployment/stage/celery/celery.Dockerfile \
-                            -t ${DOCKER_REGISTRY}/celery-api-ss:${imageTag} \
+                            -t ${DOCKER_REGISTRY}/celery-api:${imageTag} \
                             ${env.WORKSPACE}"
                 }
             }
