@@ -39,6 +39,40 @@ if ! pip install -r requirements.txt; then
  exit 1
 fi
 
+# Install gVisor (optional, for command isolation)
+echo "Installing gVisor (optional, for command isolation)..."
+if python scripts/install_gvisor.py 2>/dev/null; then
+  echo "gVisor installed successfully"
+else
+  echo "Note: gVisor installation skipped or failed (this is optional)"
+fi
+
+# On Mac/Windows with Docker Desktop, also install runsc in Docker VM
+if [[ "$OSTYPE" == "darwin"* ]] || [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == "win32" ]]; then
+  if command -v docker > /dev/null 2>&1 && docker info > /dev/null 2>&1; then
+    echo "Setting up gVisor in Docker Desktop VM..."
+    if [ -f "scripts/install_gvisor_in_docker_vm.sh" ]; then
+      if bash scripts/install_gvisor_in_docker_vm.sh 2>/dev/null | grep -q "runsc installed"; then
+        echo "✓ gVisor installed in Docker Desktop VM"
+        echo ""
+        echo "⚠️  IMPORTANT: To complete gVisor setup for Docker Desktop:"
+        echo "   1. Open Docker Desktop Settings > Docker Engine"
+        echo "   2. Add this to the JSON:"
+        echo "      {"
+        echo "        \"runtimes\": {"
+        echo "          \"runsc\": {"
+        echo "            \"path\": \"/usr/local/bin/runsc\""
+        echo "          }"
+        echo "        }"
+        echo "      }"
+        echo "   3. Click 'Apply & Restart'"
+        echo "   4. After restart, gVisor will be available"
+        echo ""
+      fi
+    fi
+  fi
+fi
+
 # Apply database migrations
 alembic upgrade heads
 

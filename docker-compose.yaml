@@ -11,7 +11,7 @@ services:
     networks:
       - app-network
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -22,7 +22,7 @@ services:
     environment:
       NEO4J_AUTH: neo4j/mysecretpassword
       NEO4JLABS_PLUGINS: '["apoc"]' # Add this line to include APOC plugin
-      NEO4J_dbms_security_procedures_unrestricted: 'apoc.*' # Allow APOC procedures
+      NEO4J_dbms_security_procedures_unrestricted: "apoc.*" # Allow APOC procedures
       NEO4J_dbms_memory_transaction_total_max: 0
     ports:
       - "7474:7474"

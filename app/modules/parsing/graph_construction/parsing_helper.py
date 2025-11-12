@@ -36,6 +36,20 @@ class ParseHelper:
         self.db = db_session
         self.github_service = CodeProviderService(db_session)
 
+        # Initialize repo manager if enabled
+        self.repo_manager = None
+        try:
+            repo_manager_enabled = (
+                os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
+            )
+            if repo_manager_enabled:
+                from app.modules.repo_manager import RepoManager
+
+                self.repo_manager = RepoManager()
+                logger.info("RepoManager initialized in ParseHelper")
+        except Exception as e:
+            logger.warning(f"Failed to initialize RepoManager: {e}")
+
     @staticmethod
     def get_directory_size(path):
         total_size = 0
@@ -872,7 +886,239 @@ class ParseHelper:
             status=ProjectStatusEnum.CLONED.value,
         )
 
+        # Copy repo to .repos if repo manager is enabled
+        if self.repo_manager and extracted_dir and os.path.exists(extracted_dir):
+            try:
+                await self._copy_repo_to_repo_manager(
+                    normalized_full_name,
+                    extracted_dir,
+                    branch,
+                    latest_commit_sha,
+                    user_id,
+                    repo_metadata,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to copy repo to repo manager: {e}. Continuing with parsing."
+                )
+
         return extracted_dir, project_id
+
+    async def _copy_repo_to_repo_manager(
+        self,
+        repo_name: str,
+        extracted_dir: str,
+        branch: Optional[str],
+        commit_id: Optional[str],
+        user_id: str,
+        metadata: dict,
+    ):
+        """
+        Copy repository to .repos folder using git worktree and register with repo manager.
+
+        Args:
+            repo_name: Full repository name (e.g., 'owner/repo')
+            extracted_dir: Path to extracted repository
+            branch: Branch name
+            commit_id: Commit SHA
+            user_id: User ID
+            metadata: Repository metadata
+        """
+        if not self.repo_manager:
+            return
+
+        # Check if repo is already available
+        if self.repo_manager.is_repo_available(
+            repo_name, branch=branch, commit_id=commit_id, user_id=user_id
+        ):
+            logger.info(
+                f"Repo {repo_name}@{commit_id or branch} already available in repo manager"
+            )
+            # Update last accessed time
+            self.repo_manager.update_last_accessed(
+                repo_name, branch=branch, commit_id=commit_id, user_id=user_id
+            )
+            return
+
+        # Determine base repo path in .repos (hierarchical: owner/repo)
+        base_repo_path = self.repo_manager._get_repo_local_path(repo_name)
+
+        # Determine ref (commit_id takes precedence over branch)
+        ref = commit_id if commit_id else branch
+        if not ref:
+            logger.warning(
+                f"No branch or commit_id provided for {repo_name}, skipping worktree creation"
+            )
+            return
+
+        try:
+            # Initialize or get the base git repository
+            base_repo = self._initialize_base_repo(base_repo_path, extracted_dir)
+
+            # Create worktree for the specific branch/commit
+            worktree_path = self._create_worktree(
+                base_repo, ref, commit_id is not None, extracted_dir
+            )
+
+            logger.info(f"Created worktree for {repo_name}@{ref} at {worktree_path}")
+
+            # Register with repo manager (store worktree path)
+            self.repo_manager.register_repo(
+                repo_name=repo_name,
+                local_path=str(worktree_path),
+                branch=branch,
+                commit_id=commit_id,
+                user_id=user_id,
+                metadata=metadata,
+            )
+            logger.info(
+                f"Registered repo {repo_name}@{ref} with repo manager at {worktree_path}"
+            )
+        except Exception as e:
+            logger.error(f"Error creating worktree for repo manager: {e}")
+            raise
+
+    def _initialize_base_repo(self, base_repo_path: Path, extracted_dir: str) -> Repo:
+        """
+        Initialize or get the base git repository.
+
+        If the base repo doesn't exist, initialize it and copy the extracted repo.
+        If it exists, return the existing repo.
+        """
+        from git import Repo, InvalidGitRepositoryError
+
+        # Check if base repo already exists and is a valid git repo
+        if base_repo_path.exists():
+            try:
+                base_repo = Repo(base_repo_path)
+                logger.info(f"Using existing base repo at {base_repo_path}")
+                return base_repo
+            except InvalidGitRepositoryError:
+                logger.warning(
+                    f"Path {base_repo_path} exists but is not a git repo, removing"
+                )
+                shutil.rmtree(base_repo_path)
+
+        # Create base directory
+        base_repo_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Initialize bare repository (worktrees need a bare or regular repo)
+        # We'll use a regular repo with a detached HEAD initially
+        logger.info(f"Initializing base git repository at {base_repo_path}")
+
+        # Copy extracted repo to base location
+        shutil.copytree(extracted_dir, base_repo_path, dirs_exist_ok=True)
+
+        # Initialize git repo if not already a git repo
+        try:
+            base_repo = Repo(base_repo_path)
+        except InvalidGitRepositoryError:
+            # Initialize new git repo
+            base_repo = Repo.init(base_repo_path)
+            # Add all files and create initial commit
+            base_repo.git.add(A=True)
+            try:
+                base_repo.index.commit("Initial commit from parsing")
+            except Exception as e:
+                logger.warning(f"Could not create initial commit: {e}")
+
+        return base_repo
+
+    def _create_worktree(
+        self, base_repo: Repo, ref: str, is_commit: bool, extracted_dir: str
+    ) -> Path:
+        """
+        Create a git worktree for the given ref.
+
+        Args:
+            base_repo: Base git repository
+            ref: Branch name or commit SHA
+            is_commit: Whether ref is a commit SHA
+            extracted_dir: Path to extracted repository (to copy files from)
+
+        Returns:
+            Path to the worktree
+        """
+        from git import GitCommandError
+
+        # Generate worktree path
+        base_path = Path(base_repo.working_tree_dir or base_repo.git_dir)
+        worktrees_dir = base_path / "worktrees"
+        worktree_name = ref.replace("/", "_").replace("\\", "_")
+        worktree_path = worktrees_dir / worktree_name
+
+        # Remove existing worktree if it exists
+        if worktree_path.exists():
+            try:
+                logger.info(f"Removing existing worktree at {worktree_path}")
+                base_repo.git.worktree("remove", str(worktree_path), force=True)
+            except GitCommandError:
+                # Worktree might not be registered, just remove directory
+                shutil.rmtree(worktree_path, ignore_errors=True)
+
+        # Create worktree directory
+        worktrees_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # Try to create worktree from existing ref
+            if is_commit:
+                # For commits, use detached HEAD
+                base_repo.git.worktree("add", str(worktree_path), ref, "--detach")
+            else:
+                # For branches, try to checkout branch
+                try:
+                    base_repo.git.worktree("add", str(worktree_path), ref)
+                except GitCommandError:
+                    # Branch might not exist, create it from extracted_dir
+                    # First, ensure the ref exists in the base repo
+                    # Copy files from extracted_dir to worktree and commit
+                    worktree_path.mkdir(parents=True, exist_ok=True)
+                    # Copy files
+                    for item in os.listdir(extracted_dir):
+                        if item == ".git":
+                            continue
+                        src = os.path.join(extracted_dir, item)
+                        dst = worktree_path / item
+                        if os.path.isdir(src):
+                            shutil.copytree(src, dst, dirs_exist_ok=True)
+                        else:
+                            shutil.copy2(src, dst)
+
+                    # Initialize worktree as new repo and add as worktree
+                    worktree_repo = Repo.init(worktree_path)
+                    worktree_repo.git.add(A=True)
+                    try:
+                        worktree_repo.index.commit(f"Initial commit for {ref}")
+                    except Exception:
+                        pass
+
+                    # Add remote reference in base repo if needed
+                    # For now, we'll just use the worktree directly
+                    logger.info(
+                        f"Created worktree directory at {worktree_path} with copied files"
+                    )
+        except GitCommandError as e:
+            logger.warning(f"Could not create worktree using git command: {e}")
+            # Fallback: create directory and copy files
+            if not worktree_path.exists():
+                worktree_path.mkdir(parents=True, exist_ok=True)
+
+            # Copy files from extracted_dir
+            for item in os.listdir(extracted_dir):
+                if item == ".git":
+                    continue
+                src = os.path.join(extracted_dir, item)
+                dst = worktree_path / item
+                if os.path.isdir(src):
+                    if dst.exists():
+                        shutil.rmtree(dst)
+                    shutil.copytree(src, dst)
+                else:
+                    shutil.copy2(src, dst)
+
+            logger.info(f"Created worktree at {worktree_path} by copying files")
+
+        return worktree_path
 
     def extract_repository_metadata(repo):
         if isinstance(repo, Repo):
