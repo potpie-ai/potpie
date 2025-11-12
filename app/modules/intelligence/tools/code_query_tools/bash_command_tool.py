@@ -8,7 +8,7 @@ Only works if the project's worktree exists in the repo manager.
 import logging
 import os
 import shlex
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from langchain_core.tools import StructuredTool
@@ -155,20 +155,20 @@ class BashCommandTool:
     name: str = "bash_command"
     description: str = (
         """Run bash commands (grep, awk, find, sed, etc.) on the codebase.
-        
+
         This tool allows you to execute common Unix/bash commands directly on the repository files.
         The command will be executed in the repository's worktree directory using gVisor sandbox isolation
         for enhanced security. Commands run in an isolated environment that prevents filesystem modifications.
-        
+
         🔒 Security: Commands are executed in a gVisor sandbox, providing strong isolation and preventing
         unauthorized access or modifications to the host system.
-        
+
         ⚠️ CRITICAL RESTRICTION: ONLY USE READ-ONLY COMMANDS ⚠️
         This tool is designed for read-only operations only. Commands that modify, delete, or write files are NOT supported and may fail or cause unexpected behavior. The gVisor sandbox provides additional protection against accidental modifications.
-        
+
         IMPORTANT: This tool only works if the repository has been parsed and is available in the repo manager.
         If the worktree doesn't exist, the tool will return an error.
-        
+
         ✅ ALLOWED (Read-only commands):
         - Search for patterns: grep -r "pattern" .
         - Find files: find . -name "*.py" -type f
@@ -179,7 +179,7 @@ class BashCommandTool:
         - View file contents: cat file.txt, head file.txt, tail file.txt
         - Check file info: stat file.txt, file file.txt
         - Search in files: grep, ag, rg (ripgrep)
-        
+
         ❌ NOT ALLOWED (Write/modify commands):
         - File modification: echo > file, sed -i, awk -i
         - File creation: touch, mkdir, > file, >> file
@@ -191,26 +191,26 @@ class BashCommandTool:
         - Command substitution: `command` or $(command)
         - Environment access: env (blocked to prevent secret exposure)
         - Any command that modifies the filesystem
-        
+
         🔒 Security Features:
         - Commands run in gVisor sandbox with read-only filesystem mounts
         - Write operations are blocked at both command validation and filesystem level
         - Environment variables are filtered to prevent secret exposure
         - Network access is disabled in the sandbox
         - Only the specific project's repository is accessible
-        
+
         Args:
             project_id: The repository ID (UUID) to run the command on
             command: The bash command to execute (MUST be read-only)
             working_directory: Optional subdirectory within the repo (relative path from repo root)
-            
+
         Returns:
             Dictionary with:
             - success: bool indicating if command succeeded
             - output: Command stdout output
             - error: Command stderr output (if any)
             - exit_code: Command exit code
-            
+
         Example:
             {
                 "project_id": "550e8400-e29b-41d4-a716-446655440000",

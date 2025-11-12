@@ -28,4 +28,3 @@ else
     echo "This is expected if Docker Desktop hasn't been restarted yet."
     echo "Please restart Docker Desktop and run this script again."
 fi
-

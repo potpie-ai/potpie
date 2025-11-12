@@ -73,7 +73,7 @@ The system automatically detects:
 
 Based on these, it chooses the best method:
 - ✅ K8s + runsc: Use runsc directly
-- ✅ Linux + Docker + runsc: Use Docker with runsc runtime  
+- ✅ Linux + Docker + runsc: Use Docker with runsc runtime
 - ✅ Mac/Windows: Use regular subprocess
 - ✅ Fallback: Use regular subprocess if gVisor fails
 
@@ -121,4 +121,3 @@ print(f"gVisor available: {is_gvisor_available()}")
 - **Local**: gVisor adds extra isolation when configured
 - **Fallback**: Regular subprocess is still secure for local development
 - **Network**: Commands run with network disabled when using gVisor
-

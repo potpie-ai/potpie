@@ -36,7 +36,7 @@ Docker Desktop on Mac runs a Linux VM, so you can configure gVisor to work insid
    wget ${URL}/runsc ${URL}/runsc.sha512
    sha512sum -c runsc.sha512
    chmod a+rx runsc
-   
+
    # Copy runsc into Docker Desktop VM
    # This requires accessing Docker Desktop's VM filesystem
    # On Mac, Docker Desktop stores files in:
@@ -64,7 +64,7 @@ Docker Desktop on Mac runs a Linux VM, so you can configure gVisor to work insid
    ```bash
    docker info --format "{{.Runtimes}}"
    # Should show "runsc" in the output
-   
+
    # Test with a container
    docker run --rm --runtime=runsc busybox echo "Hello from gVisor"
    ```
@@ -149,4 +149,3 @@ print(result.stdout)  # Works fine with fallback
 - **K8s deployment**: ✅ gVisor works automatically (Linux containers)
 
 The current implementation handles Mac gracefully - you don't need to do anything special!
-

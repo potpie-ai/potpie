@@ -17,7 +17,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 script {
-                    
+
                     checkout scm
                     // Capture the short Git commit hash to use as the image tag
                     env.GIT_COMMIT_HASH = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()

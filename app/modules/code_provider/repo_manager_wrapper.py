@@ -11,7 +11,6 @@ Uses git worktree to manage multiple branches/commits efficiently.
 import os
 import logging
 from typing import List, Dict, Any, Optional
-from pathlib import Path
 
 from app.modules.code_provider.base.code_provider_interface import (
     ICodeProvider,
@@ -462,7 +461,7 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
 
         # Try to create/access worktree from base repo
         try:
-            from git import Repo, GitCommandError
+            from git import Repo
 
             repo = Repo(base_path)
 
@@ -496,7 +495,7 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
         # Generate worktree path based on ref
         base_path = repo.working_tree_dir or repo.git_dir
         worktree_dir = os.path.join(
-            os.path.dirname(base_path), f"worktrees", ref.replace("/", "_")
+            os.path.dirname(base_path), "worktrees", ref.replace("/", "_")
         )
 
         # Check if worktree already exists

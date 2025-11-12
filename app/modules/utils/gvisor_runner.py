@@ -17,10 +17,9 @@ Usage:
 import os
 import subprocess
 import logging
-import tempfile
 import platform
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict
 from dataclasses import dataclass
 
 from app.modules.utils.install_gvisor import get_runsc_path
@@ -640,7 +639,7 @@ def _run_command_regular(
             stderr=f"Command timed out after {timeout} seconds",
             success=False,
         )
-    except FileNotFoundError as e:
+    except FileNotFoundError:
         # Command not found
         return CommandResult(
             returncode=127,  # Standard "command not found" exit code

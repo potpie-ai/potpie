@@ -7,7 +7,6 @@ Used to track and manage local copies of repositories that have been parsed.
 
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
-from datetime import datetime
 
 
 class IRepoManager(ABC):

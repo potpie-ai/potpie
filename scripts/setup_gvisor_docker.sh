@@ -46,12 +46,12 @@ if command -v shasum > /dev/null 2>&1; then
     ACTUAL_HASH=$(shasum -a 512 runsc | awk '{print $1}')
     # Try to extract hash from checksum file (could be just hash, or hash + filename)
     EXPECTED_HASH=$(head -1 runsc.sha512 | awk '{print $1}')
-    
+
     if [ -z "$EXPECTED_HASH" ]; then
         # If no hash found, maybe the file is just the hash
         EXPECTED_HASH=$(cat runsc.sha512 | tr -d '\n\r ')
     fi
-    
+
     if [ "$EXPECTED_HASH" = "$ACTUAL_HASH" ]; then
         echo "✓ Checksum verified"
     else
@@ -160,4 +160,3 @@ echo ""
 # Clean up
 cd - > /dev/null
 rm -rf "$TMPDIR"
-

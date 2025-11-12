@@ -64,4 +64,3 @@ python scripts/install_gvisor.py
 ```
 
 For more details, see [gvisor_setup.md](./gvisor_setup.md)
-
