@@ -17,8 +17,6 @@ pipeline {
         stage('Checkout') {
             steps {
                 script {
-                    // Determine environment based on branch
-                    def branch = env.GIT_BRANCH
 
                     checkout scm
                     // Capture the short Git commit hash to use as the image tag
@@ -47,12 +45,7 @@ pipeline {
                     def dockerRegistry = env.DOCKER_REGISTRY
                     echo "Printing the saved docker registry from env:"
                     echo "${dockerRegistry}"
-                    sh "sudo docker build \
-                            --build-arg GIT_COMMIT_HASH=${imageTag} \
-                            --no-cache \
-                            -f deployment/stage/mom-api/api.Dockerfile \
-                            -t ${DOCKER_REGISTRY}/mom-api:${imageTag} \
-                            ${env.WORKSPACE}"
+                    sh "sudo docker build -f deployment/stage/mom-api/api.Dockerfile -t ${DOCKER_REGISTRY}/mom-api:${imageTag} ${env.WORKSPACE}"
                 }
             }
         }
@@ -64,7 +57,7 @@ pipeline {
                     def imageTag = env.GIT_COMMIT_HASH
                     echo "printing the user here"
                     sh "whoami && pwd"
-                    sh "sudo docker push ${DOCKER_REGISTRY}/mom-api:${imageTag}"
+                    sh "sudo docker push ${DOCKER_REGISTRY}/mom-api-ss:${imageTag}"
                 }
             }
         }
