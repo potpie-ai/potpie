@@ -5,6 +5,11 @@ import traceback
 from asyncio import create_task
 from contextlib import contextmanager
 
+# Apply encoding patch BEFORE importing blar_graph
+from app.modules.parsing.utils.encoding_patch import apply_encoding_patch
+
+apply_encoding_patch()
+
 from blar_graph.db_managers import Neo4jManager
 from blar_graph.graph_construction.core.graph_builder import GraphConstructor
 from fastapi import HTTPException
@@ -131,9 +136,17 @@ class ParsingService:
             raise HTTPException(status_code=500, detail=message)
 
         except Exception as e:
-            await project_manager.update_project_status(
-                project_id, ProjectStatusEnum.ERROR
-            )
+            logger.error(f"Error during parsing for project {project_id}: {e}")
+            # Rollback the database session to clear any pending transactions
+            self.db.rollback()
+            try:
+                await project_manager.update_project_status(
+                    project_id, ProjectStatusEnum.ERROR
+                )
+            except Exception as update_error:
+                logger.error(
+                    f"Failed to update project status after error: {update_error}"
+                )
             await ParseWebhookHelper().send_slack_notification(project_id, str(e))
             tb_str = "".join(traceback.format_exception(None, e, e.__traceback__))
             raise HTTPException(
@@ -143,6 +156,7 @@ class ParsingService:
         finally:
             if (
                 extracted_dir
+                and isinstance(extracted_dir, str)
                 and os.path.exists(extracted_dir)
                 and extracted_dir.startswith(os.getenv("PROJECT_PATH"))
             ):
@@ -183,7 +197,24 @@ class ParsingService:
         user_email: str,
     ):
         logger.info(
-            f"Parsing project {project_id}: Analyzing directory: {extracted_dir}"
+            f"ParsingService: Parsing project {project_id}: Analyzing directory: {extracted_dir}"
+        )
+
+        # Validate that extracted_dir is a valid path
+        if not isinstance(extracted_dir, str):
+            logger.error(
+                f"ParsingService: Invalid extracted_dir type: {type(extracted_dir)}, value: {extracted_dir}"
+            )
+            raise ValueError(
+                f"Expected string path, got {type(extracted_dir)}: {extracted_dir}"
+            )
+
+        if not os.path.exists(extracted_dir):
+            logger.error(f"ParsingService: Directory does not exist: {extracted_dir}")
+            raise FileNotFoundError(f"Directory not found: {extracted_dir}")
+
+        logger.info(
+            f"ParsingService: Directory exists and is accessible: {extracted_dir}"
         )
         project_details = await self.project_service.get_project_from_db_by_id(
             project_id

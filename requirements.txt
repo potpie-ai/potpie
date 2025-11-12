@@ -1,6 +1,7 @@
 fastapi[all]==0.115.6
 httpx==0.28.1
 cryptography==44.0.1
+PyJWT==2.10.1
 instructor==1.5.2
 jiter==0.5.0
 litellm==1.72.1

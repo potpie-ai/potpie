@@ -485,8 +485,11 @@ class UniversalAnalyzeCodeTool:
             details = self._get_project_details(project_id)
 
             # Get file content
+            # Use repo_path for local repos, project_name for remote repos
+            repo_identifier = details.get("repo_path") or details["project_name"]
+
             content = self.cp_service.get_file_content(
-                repo_name=details["project_name"],
+                repo_name=repo_identifier,
                 file_path=file_path,
                 start_line=None,
                 end_line=None,

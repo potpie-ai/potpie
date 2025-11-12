@@ -35,7 +35,8 @@ from app.modules.users.user_service import UserService
 from app.modules.utils.firebase_setup import FirebaseSetup
 
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.DEBUG if os.getenv("LOG_LEVEL") == "DEBUG" else logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
 )
 
 

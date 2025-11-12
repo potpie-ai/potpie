@@ -54,7 +54,7 @@ class GetCodeFromNodeIdTool:
         try:
             node_data = self._get_node_data(project_id, node_id)
             if not node_data:
-                logger.error(
+                logger.warning(
                     f"Node with ID '{node_id}' not found in repo '{project_id}'"
                 )
                 return {
@@ -92,7 +92,18 @@ class GetCodeFromNodeIdTool:
     def _process_result(
         self, node_data: Dict[str, Any], project: Project, node_id: str
     ) -> Dict[str, Any]:
+        # Check if node_data has the required fields
+        if not node_data or "file_path" not in node_data:
+            logger.error(
+                f"Node data is incomplete or missing file_path for node_id: {node_id}"
+            )
+            return {"error": f"Node data is incomplete for node_id: {node_id}"}
+
         file_path = node_data["file_path"]
+        if file_path is None:
+            logger.error(f"File path is None for node_id: {node_id}")
+            return {"error": f"File path is None for node_id: {node_id}"}
+
         start_line = node_data["start_line"]
         end_line = node_data["end_line"]
 
