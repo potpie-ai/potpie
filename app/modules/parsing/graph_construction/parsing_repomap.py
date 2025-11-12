@@ -22,6 +22,8 @@ from app.modules.parsing.graph_construction.parsing_helper import (  # noqa: E40
 warnings.simplefilter("ignore", category=FutureWarning)
 Tag = namedtuple("Tag", "rel_fname fname line end_line name kind type".split())
 
+logger = logging.getLogger(__name__)
+
 
 class RepoMap:
     # Parsing logic adapted from aider (https://github.com/paul-gauthier/aider)
@@ -139,69 +141,100 @@ class RepoMap:
         return data
 
     def get_tags_raw(self, fname, rel_fname):
-        lang = filename_to_lang(fname)
-        if not lang:
-            return
+        logger.debug(f"RepoMap: get_tags_raw called for {rel_fname}")
+        
+        try:
+            lang = filename_to_lang(fname)
+            if not lang:
+                logger.debug(f"RepoMap: No language detected for {rel_fname}, skipping")
+                return
+            
+            logger.debug(f"RepoMap: Detected language '{lang}' for {rel_fname}")
 
-        language = get_language(lang)
-        parser = get_parser(lang)
+            language = get_language(lang)
+            parser = get_parser(lang)
+            logger.debug(f"RepoMap: Got parser for language '{lang}'")
 
-        query_scm = get_scm_fname(lang)
-        if not query_scm.exists():
-            return
-        query_scm = query_scm.read_text()
+            query_scm = get_scm_fname(lang)
+            if not query_scm.exists():
+                logger.debug(f"RepoMap: No query file found for language '{lang}', skipping {rel_fname}")
+                return
+            query_scm = query_scm.read_text()
+            logger.debug(f"RepoMap: Loaded query schema for language '{lang}'")
 
-        code = self.io.read_text(fname)
-        if not code:
-            return
-        tree = parser.parse(bytes(code, "utf-8"))
+            logger.debug(f"RepoMap: Reading code from {rel_fname}")
+            code = self.io.read_text(fname)
+            if not code:
+                logger.debug(f"RepoMap: Empty or unreadable file {rel_fname}, skipping")
+                return
+            
+            logger.debug(f"RepoMap: Read {len(code)} characters from {rel_fname}, parsing with tree-sitter")
+            try:
+                tree = parser.parse(bytes(code, "utf-8"))
+                logger.debug(f"RepoMap: Successfully parsed {rel_fname} with tree-sitter")
+            except Exception as parse_error:
+                logger.error(f"RepoMap: Tree-sitter parsing failed for {rel_fname}: {parse_error}")
+                logger.exception(f"RepoMap: Parse exception details for {rel_fname}:")
+                return
 
-        # Run the tags queries
-        query = language.query(query_scm)
-        captures = query.captures(tree.root_node)
-        captures = list(captures)
-        saw = set()
+            # Run the tags queries
+            logger.debug(f"RepoMap: Running tag queries on {rel_fname}")
+            try:
+                query = language.query(query_scm)
+                captures = query.captures(tree.root_node)
+                captures = list(captures)
+                logger.debug(f"RepoMap: Found {len(captures)} captures in {rel_fname}")
+            except Exception as query_error:
+                logger.error(f"RepoMap: Query execution failed for {rel_fname}: {query_error}")
+                logger.exception(f"RepoMap: Query exception details for {rel_fname}:")
+                return
+                
+            saw = set()
 
-        for node, tag in captures:
-            node_text = node.text.decode("utf-8")
+            for node, tag in captures:
+                node_text = node.text.decode("utf-8")
 
-            if tag.startswith("name.definition."):
-                kind = "def"
-                type = tag.split(".")[-1]
+                if tag.startswith("name.definition."):
+                    kind = "def"
+                    type = tag.split(".")[-1]
 
-            elif tag.startswith("name.reference."):
-                kind = "ref"
-                type = tag.split(".")[-1]
+                elif tag.startswith("name.reference."):
+                    kind = "ref"
+                    type = tag.split(".")[-1]
 
-            else:
-                continue
+                else:
+                    continue
 
-            saw.add(kind)
+                saw.add(kind)
 
-            # Enhanced node text extraction for Java methods
-            if lang == "java" and type == "method":
-                # Handle method calls with object references (e.g., productService.listAllProducts())
-                parent = node.parent
-                if parent and parent.type == "method_invocation":
-                    object_node = parent.child_by_field_name("object")
-                    if object_node:
-                        node_text = f"{object_node.text.decode('utf-8')}.{node_text}"
+                # Enhanced node text extraction for Java methods
+                if lang == "java" and type == "method":
+                    # Handle method calls with object references (e.g., productService.listAllProducts())
+                    parent = node.parent
+                    if parent and parent.type == "method_invocation":
+                        object_node = parent.child_by_field_name("object")
+                        if object_node:
+                            node_text = f"{object_node.text.decode('utf-8')}.{node_text}"
 
-            result = Tag(
-                rel_fname=rel_fname,
-                fname=fname,
-                name=node_text,
-                kind=kind,
-                line=node.start_point[0],
-                end_line=node.end_point[0],
-                type=type,
-            )
+                result = Tag(
+                    rel_fname=rel_fname,
+                    fname=fname,
+                    name=node_text,
+                    kind=kind,
+                    line=node.start_point[0],
+                    end_line=node.end_point[0],
+                    type=type,
+                )
 
-            yield result
+                yield result
 
-        if "ref" in saw:
-            return
-        if "def" not in saw:
+            if "ref" in saw:
+                return
+            if "def" not in saw:
+                return
+        except Exception as e:
+            logger.error(f"RepoMap: Unexpected error in get_tags_raw for {rel_fname}: {e}")
+            logger.exception(f"RepoMap: get_tags_raw exception details for {rel_fname}:")
             return
 
         try:
@@ -580,42 +613,115 @@ class RepoMap:
         return False
 
     def create_graph(self, repo_dir):
+        logger.info(f"RepoMap: create_graph called with repo_dir: {repo_dir}")
+        
+        # Validate repo_dir
+        if not repo_dir:
+            error_msg = "repo_dir is None or empty"
+            logger.error(f"RepoMap: {error_msg}")
+            raise ValueError(error_msg)
+        
+        if not isinstance(repo_dir, str):
+            error_msg = f"repo_dir must be a string, got {type(repo_dir)}"
+            logger.error(f"RepoMap: {error_msg}")
+            raise TypeError(error_msg)
+        
+        if not os.path.exists(repo_dir):
+            error_msg = f"repo_dir does not exist: {repo_dir}"
+            logger.error(f"RepoMap: {error_msg}")
+            raise FileNotFoundError(error_msg)
+        
+        if not os.path.isdir(repo_dir):
+            error_msg = f"repo_dir is not a directory: {repo_dir}"
+            logger.error(f"RepoMap: {error_msg}")
+            raise NotADirectoryError(error_msg)
+        
+        logger.info(f"RepoMap: Validated repo_dir exists and is accessible")
+        
         G = nx.MultiDiGraph()
         defines = defaultdict(set)
         references = defaultdict(set)
         seen_relationships = set()
+        
+        total_files_processed = 0
+        total_files_skipped = 0
+        total_tags_found = 0
+        error_files = []
 
+        logger.debug(f"RepoMap: Starting to walk through directory: {repo_dir}")
         for root, dirs, files in os.walk(repo_dir):
             if any(part.startswith(".") for part in root.split(os.sep)):
+                logger.debug(f"RepoMap: Skipping hidden directory: {root}")
                 continue
+            
+            logger.debug(f"RepoMap: Processing directory: {root} with {len(files)} files")
 
             for file in files:
                 file_path = os.path.join(root, file)
                 rel_path = os.path.relpath(file_path, repo_dir)
+                
+                logger.debug(f"RepoMap: Checking file: {rel_path}")
 
-                if not self.parse_helper.is_text_file(file_path):
+                try:
+                    is_text = self.parse_helper.is_text_file(file_path)
+                except Exception as check_error:
+                    logger.error(f"RepoMap: Error checking if file is text {file_path}: {check_error}")
+                    error_files.append((file_path, f"is_text_file check failed: {check_error}"))
+                    total_files_skipped += 1
+                    continue
+                
+                if not is_text:
+                    logger.debug(f"RepoMap: Skipping non-text file: {rel_path}")
+                    total_files_skipped += 1
                     continue
 
-                logging.info(f"\nProcessing file: {rel_path}")
+                total_files_processed += 1
+                if total_files_processed % 50 == 0:
+                    logger.info(f"RepoMap: Processed {total_files_processed} files so far, found {total_tags_found} tags")
+                
+                logging.info(f"RepoMap: Processing text file: {rel_path}")
 
                 # Add file node
                 file_node_name = rel_path
                 if not G.has_node(file_node_name):
+                    try:
+                        file_text = self.io.read_text(file_path) or ""
+                        logger.debug(f"RepoMap: Read {len(file_text)} characters from {rel_path}")
+                    except Exception as read_error:
+                        logger.error(f"RepoMap: Error reading file {file_path}: {read_error}")
+                        error_files.append((file_path, f"read_text failed: {read_error}"))
+                        file_text = ""
+                    
                     G.add_node(
                         file_node_name,
                         file=rel_path,
                         type="FILE",
-                        text=self.io.read_text(file_path) or "",
+                        text=file_text,
                         line=0,
                         end_line=0,
                         name=rel_path.split("/")[-1],
                     )
+                    logger.debug(f"RepoMap: Added FILE node: {file_node_name}")
 
                 current_class = None
                 current_method = None
+                file_tags_count = 0
 
                 # Process all tags in file
-                for tag in self.get_tags(file_path, rel_path):
+                logger.debug(f"RepoMap: Getting tags for file: {rel_path}")
+                try:
+                    tags_list = list(self.get_tags(file_path, rel_path))
+                    logger.debug(f"RepoMap: Found {len(tags_list)} tags in {rel_path}")
+                except Exception as tags_error:
+                    logger.error(f"RepoMap: Error getting tags for {file_path}: {tags_error}")
+                    error_files.append((file_path, f"get_tags failed: {tags_error}"))
+                    tags_list = []
+                
+                for tag in tags_list:
+                    file_tags_count += 1
+                    total_tags_found += 1
+                    logger.debug(f"RepoMap: Processing tag {tag.kind} {tag.type} {tag.name} at line {tag.line}")
+                    
                     if tag.kind == "def":
                         if tag.type == "class":
                             node_type = "CLASS"
@@ -659,9 +765,11 @@ class RepoMap:
                                     ident=tag.name,
                                 )
                                 seen_relationships.add(rel_key)
+                                logger.debug(f"RepoMap: Added CONTAINS edge: {file_node_name} -> {node_name}")
 
                         # Record definition
                         defines[tag.name].add(node_name)
+                        logger.debug(f"RepoMap: Recorded definition: {tag.name} in {node_name}")
 
                     elif tag.kind == "ref":
                         # Handle references
@@ -681,7 +789,29 @@ class RepoMap:
                                 current_method,
                             )
                         )
+                        logger.debug(f"RepoMap: Recorded reference: {tag.name} from {source}")
+                
+                if file_tags_count > 0:
+                    logger.info(f"RepoMap: Processed {file_tags_count} tags in {rel_path}")
 
+        logger.info(
+            f"RepoMap: Graph construction phase 1 complete - "
+            f"Processed {total_files_processed} files, skipped {total_files_skipped} files, "
+            f"found {total_tags_found} total tags, {len(error_files)} errors"
+        )
+        
+        if error_files:
+            logger.warning(f"RepoMap: Files with errors:")
+            for error_file, error_msg in error_files[:10]:  # Log first 10 errors
+                logger.warning(f"  - {error_file}: {error_msg}")
+            if len(error_files) > 10:
+                logger.warning(f"  ... and {len(error_files) - 10} more errors")
+        
+        logger.info(f"RepoMap: Graph has {G.number_of_nodes()} nodes and {G.number_of_edges()} edges before references")
+        logger.info(f"RepoMap: Processing references to create REFERENCES edges")
+
+        references_created = 0
+        references_created = 0
         for ident, refs in references.items():
             target_nodes = defines.get(ident, set())
 
@@ -703,7 +833,21 @@ class RepoMap:
                                 "end_ref_line": end_line,
                             },
                         )
+                        references_created += 1
+                        if references_created % 1000 == 0:
+                            logger.debug(f"RepoMap: Created {references_created} REFERENCES edges so far")
+                    else:
+                        if not G.has_node(source):
+                            logger.debug(f"RepoMap: Source node not found for reference: {source}")
+                        if not G.has_node(target):
+                            logger.debug(f"RepoMap: Target node not found for reference: {target}")
 
+        logger.info(
+            f"RepoMap: Graph construction complete - "
+            f"Final graph has {G.number_of_nodes()} nodes and {G.number_of_edges()} edges "
+            f"({references_created} REFERENCES edges created)"
+        )
+        
         return G
 
     @staticmethod

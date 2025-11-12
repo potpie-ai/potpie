@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import os
 import time
 from typing import Dict, Optional
 
@@ -8,6 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
 from app.modules.search.search_service import SearchService
+
+logger = logging.getLogger(__name__)
 
 
 class CodeGraphService:
@@ -33,34 +36,78 @@ class CodeGraphService:
         self.driver.close()
 
     def create_and_store_graph(self, repo_dir, project_id, user_id):
+        logger.info(f"CodeGraphService: create_and_store_graph called for project_id={project_id}, user_id={user_id}")
+        logger.info(f"CodeGraphService: repo_dir={repo_dir}")
+        
+        # Validate inputs
+        if not repo_dir:
+            error_msg = f"repo_dir is None or empty for project {project_id}"
+            logger.error(f"CodeGraphService: {error_msg}")
+            raise ValueError(error_msg)
+        
+        if not os.path.exists(repo_dir):
+            error_msg = f"repo_dir does not exist: {repo_dir} for project {project_id}"
+            logger.error(f"CodeGraphService: {error_msg}")
+            raise FileNotFoundError(error_msg)
+        
+        if not os.path.isdir(repo_dir):
+            error_msg = f"repo_dir is not a directory: {repo_dir} for project {project_id}"
+            logger.error(f"CodeGraphService: {error_msg}")
+            raise NotADirectoryError(error_msg)
+        
+        logger.info(f"CodeGraphService: Validated repo_dir exists and is accessible")
+        
         # Create the graph using RepoMap
-        self.repo_map = RepoMap(
-            root=repo_dir,
-            verbose=True,
-            main_model=SimpleTokenCounter(),
-            io=SimpleIO(),
-        )
+        logger.info(f"CodeGraphService: Initializing RepoMap with root={repo_dir}")
+        try:
+            self.repo_map = RepoMap(
+                root=repo_dir,
+                verbose=True,
+                main_model=SimpleTokenCounter(),
+                io=SimpleIO(),
+            )
+            logger.info(f"CodeGraphService: RepoMap initialized successfully")
+        except Exception as e:
+            logger.error(f"CodeGraphService: Failed to initialize RepoMap: {e}")
+            raise
 
-        nx_graph = self.repo_map.create_graph(repo_dir)
+        logger.info(f"CodeGraphService: Calling repo_map.create_graph()")
+        try:
+            nx_graph = self.repo_map.create_graph(repo_dir)
+            logger.info(f"CodeGraphService: Graph created with {nx_graph.number_of_nodes()} nodes and {nx_graph.number_of_edges()} edges")
+        except Exception as e:
+            logger.error(f"CodeGraphService: Failed to create graph: {e}")
+            logger.exception("CodeGraphService: Exception details:")
+            raise
 
+        logger.info(f"CodeGraphService: Opening Neo4j session to store graph")
         with self.driver.session() as session:
             start_time = time.time()
             node_count = nx_graph.number_of_nodes()
-            logging.info(f"Creating {node_count} nodes")
+            logger.info(f"CodeGraphService: Creating {node_count} nodes in Neo4j")
 
             # Create specialized index for relationship queries
-            session.run(
+            logger.debug(f"CodeGraphService: Creating Neo4j index")
+            try:
+                session.run(
+                    """
+                    CREATE INDEX node_id_repo_idx IF NOT EXISTS
+                    FOR (n:NODE) ON (n.node_id, n.repoId)
                 """
-                CREATE INDEX node_id_repo_idx IF NOT EXISTS
-                FOR (n:NODE) ON (n.node_id, n.repoId)
-            """
-            )
+                )
+                logger.debug(f"CodeGraphService: Index created successfully")
+            except Exception as e:
+                logger.error(f"CodeGraphService: Failed to create index: {e}")
+                raise
 
             # Batch insert nodes
             batch_size = 1000
+            logger.info(f"CodeGraphService: Inserting nodes in batches of {batch_size}")
             for i in range(0, node_count, batch_size):
                 batch_nodes = list(nx_graph.nodes(data=True))[i : i + batch_size]
                 nodes_to_create = []
+                
+                logger.debug(f"CodeGraphService: Processing node batch {i//batch_size + 1}/{(node_count + batch_size - 1)//batch_size}")
 
                 for node_id, node_data in batch_nodes:
                     # Get the node type and ensure it's one of our expected types
@@ -97,17 +144,26 @@ class CodeGraphService:
                     nodes_to_create.append(processed_node)
 
                 # Create nodes with labels
-                session.run(
-                    """
-                    UNWIND $nodes AS node
-                    CALL apoc.create.node(node.labels, node) YIELD node AS n
-                    RETURN count(*) AS created_count
-                    """,
-                    nodes=nodes_to_create,
-                )
+                logger.debug(f"CodeGraphService: Creating {len(nodes_to_create)} nodes in Neo4j")
+                try:
+                    result = session.run(
+                        """
+                        UNWIND $nodes AS node
+                        CALL apoc.create.node(node.labels, node) YIELD node AS n
+                        RETURN count(*) AS created_count
+                        """,
+                        nodes=nodes_to_create,
+                    )
+                    count = result.single()["created_count"]
+                    logger.debug(f"CodeGraphService: Created {count} nodes in this batch")
+                except Exception as e:
+                    logger.error(f"CodeGraphService: Failed to create node batch: {e}")
+                    raise
+            
+            logger.info(f"CodeGraphService: All nodes created successfully")
 
             relationship_count = nx_graph.number_of_edges()
-            logging.info(f"Creating {relationship_count} relationships")
+            logger.info(f"CodeGraphService: Creating {relationship_count} relationships")
 
             # Pre-calculate common relationship types to avoid dynamic relationship creation
             rel_types = set()
@@ -198,9 +254,30 @@ class SimpleIO:
     def read_text(self, fname):
         try:
             with open(fname, "r", encoding="utf-8") as f:
-                return f.read()
-        except UnicodeDecodeError:
-            logging.warning(f"Could not read {fname} as UTF-8. Skipping this file.")
+                content = f.read()
+                logger.debug(f"SimpleIO: Successfully read {len(content)} characters from {fname} using UTF-8")
+                return content
+        except UnicodeDecodeError as e:
+            logger.warning(f"SimpleIO: UnicodeDecodeError reading {fname} as UTF-8: {e}")
+            logger.info(f"SimpleIO: Attempting to read {fname} with latin-1 encoding")
+            try:
+                with open(fname, "r", encoding="latin-1") as f:
+                    content = f.read()
+                    logger.info(f"SimpleIO: Successfully read {len(content)} characters from {fname} using latin-1")
+                    return content
+            except Exception as fallback_error:
+                logger.error(f"SimpleIO: Failed to read {fname} even with latin-1 encoding: {fallback_error}")
+                logger.exception(f"SimpleIO: Exception details for {fname}:")
+                return ""
+        except FileNotFoundError as e:
+            logger.error(f"SimpleIO: File not found: {fname}")
+            return ""
+        except PermissionError as e:
+            logger.error(f"SimpleIO: Permission denied reading file: {fname}")
+            return ""
+        except Exception as e:
+            logger.error(f"SimpleIO: Unexpected error reading {fname}: {e}")
+            logger.exception(f"SimpleIO: Exception details for {fname}:")
             return ""
 
     def tool_error(self, message):

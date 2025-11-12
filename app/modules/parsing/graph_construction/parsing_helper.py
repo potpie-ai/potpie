@@ -98,6 +98,29 @@ class ParseHelper:
                     f.read(1024)
                 return True
             except UnicodeDecodeError:
+                logger.debug(f"ParseHelper: UTF-8 decode failed for {file_path}, trying latin-1")
+                try:
+                    with open(file_path, "r", encoding="latin-1") as f:
+                        content = f.read(1024)
+                        # Check if it looks like text (printable characters)
+                        printable_ratio = sum(c.isprintable() or c.isspace() for c in content) / len(content) if content else 0
+                        if printable_ratio > 0.7:  # If more than 70% is printable, consider it text
+                            logger.debug(f"ParseHelper: File {file_path} is text (latin-1 encoding)")
+                            return True
+                        else:
+                            logger.debug(f"ParseHelper: File {file_path} is likely binary (low printable ratio: {printable_ratio:.2f})")
+                            return False
+                except Exception as e:
+                    logger.warning(f"ParseHelper: Failed to read {file_path} with latin-1: {e}")
+                    return False
+            except FileNotFoundError:
+                logger.warning(f"ParseHelper: File not found during text check: {file_path}")
+                return False
+            except PermissionError:
+                logger.warning(f"ParseHelper: Permission denied during text check: {file_path}")
+                return False
+            except Exception as e:
+                logger.error(f"ParseHelper: Unexpected error checking if file is text {file_path}: {e}")
                 return False
 
         ext = file_path.split(".")[-1]
@@ -351,20 +374,26 @@ class ParseHelper:
 
             logger.info(f"ParsingHelper: Extracting tarball to {final_dir}")
             try:
+                logger.debug(f"ParsingHelper: Opening tarball file: {tarball_path}")
                 with tarfile.open(tarball_path, "r:gz") as tar:
                     # Validate that the tarball is not empty
-                    if not tar.getmembers():
+                    members = tar.getmembers()
+                    logger.debug(f"ParsingHelper: Tarball contains {len(members)} members")
+                    if not members:
                         error_msg = "Tarball contains no files"
                         logger.error(f"ParsingHelper: {error_msg}")
                         raise ParsingFailedError(error_msg)
                     
                     temp_dir = os.path.join(final_dir, "temp_extract")
+                    logger.debug(f"ParsingHelper: Creating temp directory: {temp_dir}")
                     os.makedirs(temp_dir, exist_ok=True)
+                    logger.debug(f"ParsingHelper: Extracting {len(members)} members to {temp_dir}")
                     tar.extractall(path=temp_dir)
                     logger.info(f"ParsingHelper: Extracted tarball contents to {temp_dir}")
 
                     # Check if extraction directory has contents
                     extracted_contents = os.listdir(temp_dir)
+                    logger.debug(f"ParsingHelper: Temp directory contains {len(extracted_contents)} items: {extracted_contents[:5] if len(extracted_contents) > 5 else extracted_contents}")
                     if not extracted_contents:
                         error_msg = (
                             "Tarball extraction resulted in empty directory. "
@@ -375,39 +404,77 @@ class ParseHelper:
                     
                     extracted_dir = os.path.join(temp_dir, extracted_contents[0])
                     logger.info(f"ParsingHelper: Main extracted directory: {extracted_dir}")
-
+                    
+                    # Verify the extracted directory exists and is accessible
+                    if not os.path.exists(extracted_dir):
+                        error_msg = f"Extracted directory does not exist: {extracted_dir}"
+                        logger.error(f"ParsingHelper: {error_msg}")
+                        raise ParsingFailedError(error_msg)
+                    
+                    if not os.path.isdir(extracted_dir):
+                        error_msg = f"Extracted path is not a directory: {extracted_dir}"
+                        logger.error(f"ParsingHelper: {error_msg}")
+                        raise ParsingFailedError(error_msg)
+                    
+                    logger.debug(f"ParsingHelper: Walking through extracted directory to filter text files")
                     text_files_count = 0
+                    skipped_files_count = 0
+                    error_files_count = 0
+                    
                     for root, dirs, files in os.walk(extracted_dir):
+                        logger.debug(f"ParsingHelper: Processing directory: {root} with {len(files)} files")
                         for file in files:
                             if file.startswith("."):
+                                logger.debug(f"ParsingHelper: Skipping hidden file: {file}")
+                                skipped_files_count += 1
                                 continue
                             file_path = os.path.join(root, file)
-                            if self.is_text_file(file_path):
+                            logger.debug(f"ParsingHelper: Checking if file is text: {file_path}")
+                            
+                            try:
+                                is_text = self.is_text_file(file_path)
+                                logger.debug(f"ParsingHelper: File {file_path} is_text={is_text}")
+                            except Exception as check_error:
+                                logger.error(f"ParsingHelper: Error checking if file is text {file_path}: {check_error}")
+                                error_files_count += 1
+                                is_text = False
+                            
+                            if is_text:
                                 try:
                                     relative_path = os.path.relpath(
                                         file_path, extracted_dir
                                     )
                                     dest_path = os.path.join(final_dir, relative_path)
+                                    logger.debug(f"ParsingHelper: Copying text file from {file_path} to {dest_path}")
                                     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
                                     shutil.copy2(file_path, dest_path)
                                     text_files_count += 1
+                                    if text_files_count % 100 == 0:
+                                        logger.info(f"ParsingHelper: Copied {text_files_count} text files so far...")
                                 except (shutil.Error, OSError) as e:
                                     logger.error(
                                         f"ParsingHelper: Error copying file {file_path}: {e}"
                                     )
+                                    error_files_count += 1
+                            else:
+                                skipped_files_count += 1
 
                     logger.info(
-                        f"ParsingHelper: Copied {text_files_count} text files to final directory"
+                        f"ParsingHelper: File processing complete - Copied {text_files_count} text files, "
+                        f"skipped {skipped_files_count} files, encountered {error_files_count} errors"
                     )
                     # Remove the temporary directory
+                    logger.debug(f"ParsingHelper: Removing temporary directory: {temp_dir}")
                     try:
                         shutil.rmtree(temp_dir)
+                        logger.debug(f"ParsingHelper: Successfully removed temporary directory")
                     except OSError as e:
-                        logger.error(f"Error removing temporary directory: {e}")
+                        logger.error(f"ParsingHelper: Error removing temporary directory: {e}")
                         pass
             except tarfile.TarError as e:
                 error_msg = f"Failed to extract tarball: {e}. The archive may be corrupted or invalid."
                 logger.error(f"ParsingHelper: {error_msg}")
+                logger.error(f"ParsingHelper: Tarball path: {tarball_path}, size: {os.path.getsize(tarball_path) if os.path.exists(tarball_path) else 'N/A'}")
                 raise ParsingFailedError(error_msg) from e
 
         except (IOError, tarfile.TarError, shutil.Error) as e:
@@ -440,7 +507,27 @@ class ParseHelper:
         logger.info(
             f"ParsingHelper: Cloning repository '{repo_name}' branch '{branch}' using git"
         )
-
+        
+        # Ensure target_dir is accessible and create it if needed
+        # Convert Windows paths to WSL paths if necessary
+        if target_dir.startswith("C:") or target_dir.startswith("c:"):
+            # Windows path like C:\Users\... -> /mnt/c/Users/...
+            target_dir = "/mnt/" + target_dir[0].lower() + target_dir[2:].replace("\\", "/")
+            logger.info(f"ParsingHelper: Converted Windows path to WSL path: {target_dir}")
+        elif not target_dir.startswith("/"):
+            # Relative path or malformed - use current directory
+            logger.warning(f"ParsingHelper: Unexpected path format '{target_dir}', using current directory")
+            target_dir = os.path.abspath(os.path.join(os.getcwd(), target_dir))
+            logger.info(f"ParsingHelper: Resolved to absolute path: {target_dir}")
+        
+        # Create target directory if it doesn't exist
+        try:
+            os.makedirs(target_dir, exist_ok=True)
+            logger.info(f"ParsingHelper: Ensured target directory exists: {target_dir}")
+        except Exception as e:
+            logger.error(f"ParsingHelper: Failed to create target directory {target_dir}: {e}")
+            raise ParsingFailedError(f"Failed to create target directory: {e}") from e
+        
         final_dir = os.path.join(
             target_dir,
             f"{repo.full_name.replace('/', '-').replace('.', '-')}-{branch.replace('/', '-').replace('.', '-')}-{user_id}",
@@ -505,30 +592,51 @@ class ParseHelper:
             # Filter and copy only text files to final directory
             logger.info(f"ParsingHelper: Filtering text files from clone to {final_dir}")
             os.makedirs(final_dir, exist_ok=True)
+            logger.debug(f"ParsingHelper: Created final directory: {final_dir}")
 
             text_files_count = 0
+            skipped_files_count = 0
+            error_files_count = 0
+            
+            logger.debug(f"ParsingHelper: Starting to walk through cloned directory: {temp_clone_dir}")
             for root, dirs, files in os.walk(temp_clone_dir):
                 # Skip .git directory
                 if '.git' in root.split(os.sep):
+                    logger.debug(f"ParsingHelper: Skipping .git directory: {root}")
                     continue
 
                 # Skip hidden directories
                 if any(part.startswith('.') for part in root.split(os.sep)):
+                    logger.debug(f"ParsingHelper: Skipping hidden directory: {root}")
                     continue
+                
+                logger.debug(f"ParsingHelper: Processing directory: {root} with {len(files)} files")
 
                 for file in files:
                     # Skip hidden files
                     if file.startswith('.'):
+                        logger.debug(f"ParsingHelper: Skipping hidden file: {file}")
+                        skipped_files_count += 1
                         continue
 
                     file_path = os.path.join(root, file)
+                    logger.debug(f"ParsingHelper: Checking if file is text: {file_path}")
 
                     # Filter using is_text_file check
-                    if self.is_text_file(file_path):
+                    try:
+                        is_text = self.is_text_file(file_path)
+                        logger.debug(f"ParsingHelper: File {file_path} is_text={is_text}")
+                    except Exception as check_error:
+                        logger.error(f"ParsingHelper: Error checking if file is text {file_path}: {check_error}")
+                        error_files_count += 1
+                        is_text = False
+                    
+                    if is_text:
                         try:
                             # Calculate relative path from clone root
                             relative_path = os.path.relpath(file_path, temp_clone_dir)
                             dest_path = os.path.join(final_dir, relative_path)
+                            logger.debug(f"ParsingHelper: Copying text file from {file_path} to {dest_path}")
 
                             # Create destination directory structure
                             os.makedirs(os.path.dirname(dest_path), exist_ok=True)
@@ -536,13 +644,20 @@ class ParseHelper:
                             # Copy text file to final directory
                             shutil.copy2(file_path, dest_path)
                             text_files_count += 1
+                            
+                            if text_files_count % 100 == 0:
+                                logger.info(f"ParsingHelper: Copied {text_files_count} text files from git clone so far...")
                         except (shutil.Error, OSError) as e:
                             logger.error(
                                 f"ParsingHelper: Error copying file {file_path}: {e}"
                             )
+                            error_files_count += 1
+                    else:
+                        skipped_files_count += 1
 
             logger.info(
-                f"ParsingHelper: Copied {text_files_count} text files from git clone to final directory"
+                f"ParsingHelper: Git clone file processing complete - Copied {text_files_count} text files, "
+                f"skipped {skipped_files_count} files, encountered {error_files_count} errors"
             )
 
             # Clean up temporary clone directory
@@ -575,6 +690,8 @@ class ParseHelper:
 
     @staticmethod
     def detect_repo_language(repo_dir):
+        logger.info(f"ParseHelper: detect_repo_language called for directory: {repo_dir}")
+        
         lang_count = {
             "c_sharp": 0,
             "c": 0,
@@ -597,10 +714,16 @@ class ParseHelper:
             "other": 0,
         }
         total_chars = 0
+        total_files_scanned = 0
+        encoding_errors = []
+        skipped_directories = []
 
         try:
+            logger.info(f"ParseHelper: Starting directory walk for {repo_dir}")
             for root, _, files in os.walk(repo_dir):
+                # Skip hidden directories
                 if any(part.startswith(".") for part in root.split(os.sep)):
+                    skipped_directories.append(root)
                     continue
 
                 for file in files:
@@ -610,6 +733,8 @@ class ParseHelper:
                         with open(file_path, "r", encoding="utf-8") as f:
                             content = f.read()
                             total_chars += len(content)
+                            total_files_scanned += 1
+                            
                             if ext == ".cs":
                                 lang_count["c_sharp"] += 1
                             elif ext == ".c":
@@ -648,19 +773,80 @@ class ParseHelper:
                                 lang_count["xml"] += 1
                             else:
                                 lang_count["other"] += 1
-                    except (
-                        UnicodeDecodeError,
-                        FileNotFoundError,
-                        PermissionError,
-                    ) as e:
-                        logger.warning(f"Error reading file {file_path}: {e}")
+                    except UnicodeDecodeError as e:
+                        encoding_errors.append({
+                            "file": file_path,
+                            "error": str(e),
+                            "type": "UnicodeDecodeError"
+                        })
+                        logger.warning(f"ParseHelper: UnicodeDecodeError reading file {file_path}: {e}")
+                        # Try with different encoding
+                        try:
+                            with open(file_path, "r", encoding="latin-1") as f:
+                                content = f.read()
+                                total_chars += len(content)
+                                total_files_scanned += 1
+                                lang_count["other"] += 1
+                                logger.info(f"ParseHelper: Successfully read {file_path} with latin-1 encoding")
+                        except Exception as fallback_error:
+                            logger.error(f"ParseHelper: Failed to read {file_path} even with latin-1 encoding: {fallback_error}")
+                            encoding_errors[-1]["fallback_error"] = str(fallback_error)
+                        continue
+                    except FileNotFoundError as e:
+                        encoding_errors.append({
+                            "file": file_path,
+                            "error": str(e),
+                            "type": "FileNotFoundError"
+                        })
+                        logger.warning(f"ParseHelper: File not found {file_path}: {e}")
+                        continue
+                    except PermissionError as e:
+                        encoding_errors.append({
+                            "file": file_path,
+                            "error": str(e),
+                            "type": "PermissionError"
+                        })
+                        logger.warning(f"ParseHelper: Permission denied for file {file_path}: {e}")
+                        continue
+                    except Exception as e:
+                        encoding_errors.append({
+                            "file": file_path,
+                            "error": str(e),
+                            "type": type(e).__name__
+                        })
+                        logger.error(f"ParseHelper: Unexpected error reading file {file_path}: {e}")
+                        logger.exception(f"ParseHelper: Exception details for {file_path}:")
                         continue
         except (TypeError, FileNotFoundError, PermissionError) as e:
-            logger.error(f"Error accessing directory '{repo_dir}': {e}")
+            logger.error(f"ParseHelper: Error accessing directory '{repo_dir}': {e}")
+            logger.exception("ParseHelper: Directory access exception details:")
+        except Exception as e:
+            logger.error(f"ParseHelper: Unexpected error during language detection: {e}")
+            logger.exception("ParseHelper: Language detection exception details:")
+
+        # Log summary statistics
+        logger.info(f"ParseHelper: Language detection complete - scanned {total_files_scanned} files, {total_chars} total characters")
+        logger.info(f"ParseHelper: Language counts: {lang_count}")
+        logger.info(f"ParseHelper: Skipped {len(skipped_directories)} hidden directories")
+        
+        if encoding_errors:
+            logger.warning(f"ParseHelper: Encountered {len(encoding_errors)} encoding/file errors during scan")
+            logger.debug(f"ParseHelper: First 10 encoding errors: {encoding_errors[:10]}")
+            
+            # Log summary by error type
+            error_types = {}
+            for error in encoding_errors:
+                error_type = error.get("type", "Unknown")
+                error_types[error_type] = error_types.get(error_type, 0) + 1
+            logger.info(f"ParseHelper: Encoding error summary by type: {error_types}")
 
         # Determine the predominant language based on counts
         predominant_language = max(lang_count, key=lang_count.get)
-        return predominant_language if lang_count[predominant_language] > 0 else "other"
+        result_language = predominant_language if lang_count[predominant_language] > 0 else "other"
+        
+        logger.info(f"ParseHelper: Detected predominant language: {result_language} (count: {lang_count.get(result_language, 0)})")
+        
+        return result_language
 
     async def setup_project_directory(
         self,
@@ -729,6 +915,27 @@ class ParseHelper:
         if repo_path is not None:
             # Local repository detected - return the path directly without downloading tarball
             logger.info(f"ParsingHelper: Using local repository at {repo_path}")
+            
+            # Verify the path exists and is accessible
+            if not os.path.exists(repo_path):
+                error_msg = f"Local repository path does not exist: {repo_path}"
+                logger.error(f"ParsingHelper: {error_msg}")
+                raise FileNotFoundError(error_msg)
+            
+            if not os.path.isdir(repo_path):
+                error_msg = f"Local repository path is not a directory: {repo_path}"
+                logger.error(f"ParsingHelper: {error_msg}")
+                raise NotADirectoryError(error_msg)
+            
+            try:
+                contents = os.listdir(repo_path)
+                logger.info(f"ParsingHelper: Local repository contains {len(contents)} items")
+                logger.debug(f"ParsingHelper: Repository contents (first 20): {contents[:20]}")
+            except Exception as e:
+                logger.error(f"ParsingHelper: Cannot list local repository contents: {e}")
+                raise
+            
+            logger.info(f"ParsingHelper: Validated local repository is accessible")
             return repo_path, project_id
         if isinstance(repo_details, Repo):
             extracted_dir = repo_details.working_tree_dir
@@ -764,6 +971,7 @@ class ParseHelper:
                         repo_details,
                         user_id,
                     )
+                    logger.info(f"ParsingHelper: Tarball extracted to: {extracted_dir}")
                     latest_commit_sha = commit_id
                 else:
                     extracted_dir = await self.download_and_extract_tarball(
@@ -774,11 +982,46 @@ class ParseHelper:
                         repo_details,
                         user_id,
                     )
+                    logger.info(f"ParsingHelper: Tarball extracted to: {extracted_dir}")
+                    logger.info(f"ParsingHelper: Tarball extracted to: {extracted_dir}")
                     # Use repo.get_branch() instead of repo_details.get_branch()
                     # repo is the MockRepo object (or PyGithub Repository) with get_branch method
                     # repo_details can be ParsingRequest in dev mode, which doesn't have get_branch
                     branch_details = repo.get_branch(branch)
                     latest_commit_sha = branch_details.commit.sha
+                
+                # Validate extracted directory
+                logger.info(f"ParsingHelper: Validating extracted directory: {extracted_dir}")
+                if not extracted_dir:
+                    error_msg = "Extraction returned None or empty path"
+                    logger.error(f"ParsingHelper: {error_msg}")
+                    raise ParsingFailedError(error_msg)
+                
+                if not os.path.exists(extracted_dir):
+                    error_msg = f"Extracted directory does not exist: {extracted_dir}"
+                    logger.error(f"ParsingHelper: {error_msg}")
+                    raise ParsingFailedError(error_msg)
+                
+                if not os.path.isdir(extracted_dir):
+                    error_msg = f"Extracted path is not a directory: {extracted_dir}"
+                    logger.error(f"ParsingHelper: {error_msg}")
+                    raise ParsingFailedError(error_msg)
+                
+                try:
+                    contents = os.listdir(extracted_dir)
+                    logger.info(f"ParsingHelper: Extracted directory contains {len(contents)} items")
+                    logger.debug(f"ParsingHelper: Directory contents (first 20): {contents[:20]}")
+                    
+                    if len(contents) == 0:
+                        error_msg = f"Extracted directory is empty: {extracted_dir}"
+                        logger.error(f"ParsingHelper: {error_msg}")
+                        raise ParsingFailedError(error_msg)
+                except Exception as e:
+                    logger.error(f"ParsingHelper: Cannot list extracted directory contents: {e}")
+                    raise
+                
+                logger.info(f"ParsingHelper: Validated extracted directory is accessible and contains files")
+                
             except ParsingFailedError as e:
                 logger.exception("Failed to download repository")
                 raise HTTPException(

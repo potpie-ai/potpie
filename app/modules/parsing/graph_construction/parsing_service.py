@@ -58,13 +58,16 @@ class ParsingService:
         project_id: int,
         cleanup_graph: bool = True,
     ):
+        logger.info(f"ParsingService: parse_directory called for project_id={project_id}, user_id={user_id}")
         project_manager = ProjectService(self.db)
         extracted_dir = None
         try:
             if cleanup_graph:
+                logger.info(f"ParsingService: Cleanup graph enabled for project {project_id}")
                 neo4j_config = config_provider.get_neo4j_config()
 
                 try:
+                    logger.info(f"ParsingService: Initializing CodeGraphService for cleanup")
                     code_graph_service = CodeGraphService(
                         neo4j_config["uri"],
                         neo4j_config["username"],
@@ -72,15 +75,25 @@ class ParsingService:
                         self.db,
                     )
 
+                    logger.info(f"ParsingService: Cleaning up graph for project {project_id}")
                     code_graph_service.cleanup_graph(project_id)
+                    logger.info(f"ParsingService: Graph cleanup completed for project {project_id}")
                 except Exception as e:
-                    logger.error(f"Error in cleanup_graph: {e}")
+                    logger.error(f"ParsingService: Error in cleanup_graph: {e}")
+                    logger.exception("ParsingService: Cleanup exception details:")
                     raise HTTPException(status_code=500, detail="Internal server error")
 
+            logger.info(f"ParsingService: Cloning or copying repository for project {project_id}")
             repo, owner, auth = await self.parse_helper.clone_or_copy_repository(
                 repo_details, user_id
             )
-            if config_provider.get_is_development_mode():
+            logger.info(f"ParsingService: Repository cloned/copied successfully")
+            
+            is_dev_mode = config_provider.get_is_development_mode()
+            logger.info(f"ParsingService: Development mode={is_dev_mode}")
+            
+            if is_dev_mode:
+                logger.info(f"ParsingService: Setting up project directory (dev mode)")
                 (
                     extracted_dir,
                     project_id,
@@ -93,7 +106,9 @@ class ParsingService:
                     project_id,
                     commit_id=repo_details.commit_id,
                 )
+                logger.info(f"ParsingService: Project directory setup completed (dev mode): {extracted_dir}")
             else:
+                logger.info(f"ParsingService: Setting up project directory (prod mode)")
                 (
                     extracted_dir,
                     project_id,
@@ -106,24 +121,65 @@ class ParsingService:
                     project_id,
                     commit_id=repo_details.commit_id,
                 )
+                logger.info(f"ParsingService: Project directory setup completed (prod mode): {extracted_dir}")
 
+            logger.info(f"ParsingService: Detecting repository language")
+            logger.info(f"ParsingService: Repo type={type(repo).__name__}, extracted_dir={extracted_dir}")
+            
             if isinstance(repo, Repo):
-                language = self.parse_helper.detect_repo_language(extracted_dir)
-            else:
-                languages = repo.get_languages()
-                if languages:
-                    language = max(languages, key=languages.get).lower()
-                else:
+                logger.info(f"ParsingService: Repo is a Git Repo instance (local or GitBucket), detecting from files")
+                try:
                     language = self.parse_helper.detect_repo_language(extracted_dir)
+                    logger.info(f"ParsingService: Detected language from files: {language}")
+                except Exception as lang_error:
+                    logger.error(f"ParsingService: Language detection from files failed: {lang_error}")
+                    logger.exception("ParsingService: Language detection exception details:")
+                    language = "other"
+                    logger.warning(f"ParsingService: Defaulting to language='other' due to detection failure")
+            else:
+                logger.info(f"ParsingService: Repo is a GitHub/API instance, attempting to get languages from API")
+                try:
+                    languages = repo.get_languages()
+                    logger.info(f"ParsingService: Available languages from API: {languages}")
+                    if languages:
+                        language = max(languages, key=languages.get).lower()
+                        logger.info(f"ParsingService: Primary language from API: {language}")
+                    else:
+                        logger.warning(f"ParsingService: No languages from API, falling back to file detection")
+                        try:
+                            language = self.parse_helper.detect_repo_language(extracted_dir)
+                            logger.info(f"ParsingService: Detected language from files (fallback): {language}")
+                        except Exception as lang_error:
+                            logger.error(f"ParsingService: File-based language detection failed: {lang_error}")
+                            logger.exception("ParsingService: Language detection exception details:")
+                            language = "other"
+                            logger.warning(f"ParsingService: Defaulting to language='other' due to detection failure")
+                except Exception as api_error:
+                    logger.error(f"ParsingService: API language detection failed: {api_error}")
+                    logger.exception("ParsingService: API language detection exception details:")
+                    logger.warning(f"ParsingService: Falling back to file-based detection")
+                    try:
+                        language = self.parse_helper.detect_repo_language(extracted_dir)
+                        logger.info(f"ParsingService: Detected language from files (API fallback): {language}")
+                    except Exception as lang_error:
+                        logger.error(f"ParsingService: File-based language detection also failed: {lang_error}")
+                        logger.exception("ParsingService: Language detection exception details:")
+                        language = "other"
+                        logger.warning(f"ParsingService: Defaulting to language='other' due to all detection failures")
 
+            logger.info(f"ParsingService: Calling analyze_directory for project {project_id}")
+            logger.info(f"ParsingService: analyze_directory parameters - extracted_dir={extracted_dir}, project_id={project_id}, user_id={user_id}, language={language}")
             await self.analyze_directory(
                 extracted_dir, project_id, user_id, self.db, language, user_email
             )
+            logger.info(f"ParsingService: analyze_directory completed successfully for project {project_id}")
             message = "The project has been parsed successfully"
             return {"message": message, "id": project_id}
 
         except ParsingServiceError as e:
             message = str(f"{project_id} Failed during parsing: " + str(e))
+            logger.error(f"ParsingService: ParsingServiceError caught: {message}")
+            logger.exception("ParsingService: ParsingServiceError details:")
             await project_manager.update_project_status(
                 project_id, ProjectStatusEnum.ERROR
             )
@@ -131,31 +187,44 @@ class ParsingService:
             raise HTTPException(status_code=500, detail=message)
 
         except Exception as e:
-            logger.error(f"Error during parsing for project {project_id}: {e}")
+            logger.error(f"ParsingService: Exception during parsing for project {project_id}: {e}")
+            logger.exception("ParsingService: Exception details:")
             # Rollback the database session to clear any pending transactions
             self.db.rollback()
+            logger.info(f"ParsingService: Database session rolled back")
             try:
+                logger.info(f"ParsingService: Attempting to update project status to ERROR")
                 await project_manager.update_project_status(
                     project_id, ProjectStatusEnum.ERROR
                 )
+                logger.info(f"ParsingService: Project status updated to ERROR")
             except Exception as update_error:
                 logger.error(
-                    f"Failed to update project status after error: {update_error}"
+                    f"ParsingService: Failed to update project status after error: {update_error}"
                 )
+                logger.exception("ParsingService: Status update exception details:")
+            
             await ParseWebhookHelper().send_slack_notification(project_id, str(e))
             tb_str = "".join(traceback.format_exception(None, e, e.__traceback__))
+            logger.error(f"ParsingService: Full traceback: {tb_str}")
             raise HTTPException(
                 status_code=500, detail=f"{str(e)}\nTraceback: {tb_str}"
             )
 
         finally:
+            logger.info(f"ParsingService: Entering finally block for project {project_id}")
             if (
                 extracted_dir
                 and isinstance(extracted_dir, str)
                 and os.path.exists(extracted_dir)
                 and extracted_dir.startswith(os.getenv("PROJECT_PATH"))
             ):
+                logger.info(f"ParsingService: Cleaning up extracted directory: {extracted_dir}")
                 shutil.rmtree(extracted_dir, ignore_errors=True)
+                logger.info(f"ParsingService: Extracted directory cleaned up successfully")
+            else:
+                logger.info(f"ParsingService: No directory cleanup needed. extracted_dir={extracted_dir}")
+            logger.info(f"ParsingService: parse_directory completed for project {project_id}")
 
     def create_neo4j_indices(self, graph_manager):
         # Create existing indices from blar_graph
@@ -194,6 +263,7 @@ class ParsingService:
         logger.info(
             f"ParsingService: Parsing project {project_id}: Analyzing directory: {extracted_dir}"
         )
+        logger.debug(f"ParsingService: Parameters - project_id={project_id}, user_id={user_id}, language={language}")
 
         # Validate that extracted_dir is a valid path
         if not isinstance(extracted_dir, str):
@@ -208,33 +278,87 @@ class ParsingService:
             logger.error(f"ParsingService: Directory does not exist: {extracted_dir}")
             raise FileNotFoundError(f"Directory not found: {extracted_dir}")
 
+        if not os.path.isdir(extracted_dir):
+            logger.error(f"ParsingService: Path is not a directory: {extracted_dir}")
+            raise NotADirectoryError(f"Path is not a directory: {extracted_dir}")
+
+        # Check if directory is accessible and list contents
+        try:
+            contents = os.listdir(extracted_dir)
+            logger.info(f"ParsingService: Directory contains {len(contents)} items")
+            logger.debug(f"ParsingService: Directory contents (first 20): {contents[:20]}")
+        except Exception as e:
+            logger.error(f"ParsingService: Cannot list directory contents: {e}")
+            raise
+
         logger.info(
             f"ParsingService: Directory exists and is accessible: {extracted_dir}"
         )
-        project_details = await self.project_service.get_project_from_db_by_id(
-            project_id
-        )
+        
+        logger.info(f"ParsingService: Fetching project details for project_id={project_id}")
+        try:
+            project_details = await self.project_service.get_project_from_db_by_id(
+                project_id
+            )
+            logger.info(f"ParsingService: Project details retrieved successfully")
+        except Exception as e:
+            logger.error(f"ParsingService: Failed to fetch project details: {e}")
+            logger.exception("ParsingService: Exception details:")
+            raise
+        
         if project_details:
             repo_name = project_details.get("project_name")
             branch_name = project_details.get("branch_name")
+            logger.info(f"ParsingService: Project name={repo_name}, branch={branch_name}")
         else:
-            logger.error(f"Project with ID {project_id} not found.")
+            logger.error(f"ParsingService: Project with ID {project_id} not found.")
             raise HTTPException(status_code=404, detail="Project not found.")
 
+        logger.info(f"ParsingService: Detected language={language}, determining parsing path")
         if language in ["python", "javascript", "typescript"]:
-            graph_manager = Neo4jManager(project_id, user_id)
-            self.create_neo4j_indices(
-                graph_manager
-            )  # commented since indices are created already
+            logger.info(f"ParsingService: Processing python/javascript/typescript project with language={language}")
+            logger.info(f"ParsingService: Initializing Neo4jManager for project_id={project_id}, user_id={user_id}")
+            try:
+                graph_manager = Neo4jManager(project_id, user_id)
+                logger.info(f"ParsingService: Neo4jManager initialized successfully")
+            except Exception as e:
+                logger.error(f"ParsingService: Failed to initialize Neo4jManager: {e}")
+                logger.exception("ParsingService: Exception details:")
+                raise
+            
+            logger.info(f"ParsingService: Creating Neo4j indices")
+            try:
+                self.create_neo4j_indices(
+                    graph_manager
+                )  # commented since indices are created already
+                logger.info(f"ParsingService: Neo4j indices created successfully")
+            except Exception as e:
+                logger.error(f"ParsingService: Failed to create Neo4j indices: {e}")
+                logger.exception("ParsingService: Exception details:")
+                raise
 
             try:
+                logger.info(f"ParsingService: Initializing GraphConstructor with extracted_dir={extracted_dir}")
                 graph_constructor = GraphConstructor(user_id, extracted_dir)
+                logger.info(f"ParsingService: GraphConstructor initialized, building graph")
+                
                 n, r = graph_constructor.build_graph()
+                logger.info(f"ParsingService: Graph built successfully with {len(n) if n else 0} nodes and {len(r) if r else 0} relationships")
+                
+                logger.info(f"ParsingService: Creating nodes in Neo4j")
                 graph_manager.create_nodes(n)
+                logger.info(f"ParsingService: Nodes created successfully")
+                
+                logger.info(f"ParsingService: Creating edges in Neo4j")
                 graph_manager.create_edges(r)
+                logger.info(f"ParsingService: Edges created successfully")
+                
+                logger.info(f"ParsingService: Updating project status to PARSED")
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.PARSED
                 )
+                logger.info(f"ParsingService: Project status updated to PARSED")
+                
                 PostHogClient().send_event(
                     user_id,
                     "project_status_event",
@@ -242,12 +366,18 @@ class ParsingService:
                 )
 
                 # Generate docstrings using InferenceService
+                logger.info(f"ParsingService: Starting inference for project {project_id}")
                 await self.inference_service.run_inference(project_id)
+                logger.info(f"ParsingService: Inference completed for project {project_id}")
                 logger.info(f"DEBUGNEO4J: After inference project {project_id}")
                 self.inference_service.log_graph_stats(project_id)
+                
+                logger.info(f"ParsingService: Updating project status to READY")
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.READY
                 )
+                logger.info(f"ParsingService: Project status updated to READY")
+                
                 create_task(
                     EmailHelper().send_email(user_email, repo_name, branch_name)
                 )
@@ -256,9 +386,11 @@ class ParsingService:
                     "project_status_event",
                     {"project_id": project_id, "status": "Ready"},
                 )
+                logger.info(f"ParsingService: Python/JS/TS parsing flow completed successfully for project {project_id}")
             except Exception as e:
-                logger.error(e)
+                logger.error(f"ParsingService: Error during python/js/ts parsing for project {project_id}: {e}")
                 logger.error(traceback.format_exc())
+                logger.info(f"ParsingService: Updating project status to ERROR due to exception")
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.ERROR
                 )
@@ -269,39 +401,73 @@ class ParsingService:
                     {"project_id": project_id, "status": "Error"},
                 )
             finally:
+                logger.info(f"ParsingService: Closing graph_manager connection")
                 graph_manager.close()
+                logger.info(f"ParsingService: graph_manager closed successfully")
         elif language != "other":
+            logger.info(f"ParsingService: Processing non-python/js/ts project with language: {language}")
             try:
+                logger.info(f"ParsingService: Retrieving Neo4j config")
                 neo4j_config = config_provider.get_neo4j_config()
+                logger.debug(f"ParsingService: Neo4j config retrieved: uri={neo4j_config.get('uri', 'N/A')}")
+                
+                logger.info(f"ParsingService: Initializing CodeGraphService")
                 service = CodeGraphService(
                     neo4j_config["uri"],
                     neo4j_config["username"],
                     neo4j_config["password"],
                     db,
                 )
+                logger.info(f"ParsingService: CodeGraphService initialized successfully")
 
-                service.create_and_store_graph(extracted_dir, project_id, user_id)
+                logger.info(f"ParsingService: Calling create_and_store_graph for project {project_id}")
+                logger.info(f"ParsingService: Arguments - extracted_dir={extracted_dir}, project_id={project_id}, user_id={user_id}")
+                
+                try:
+                    service.create_and_store_graph(extracted_dir, project_id, user_id)
+                    logger.info(f"ParsingService: create_and_store_graph completed successfully for project {project_id}")
+                except Exception as graph_error:
+                    logger.error(f"ParsingService: create_and_store_graph failed for project {project_id}: {graph_error}")
+                    logger.exception("ParsingService: create_and_store_graph exception details:")
+                    raise
 
+                logger.info(f"ParsingService: Updating project status to PARSED")
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.PARSED
                 )
+                logger.info(f"ParsingService: Project status updated to PARSED")
+                
                 # Generate docstrings using InferenceService
+                logger.info(f"ParsingService: Starting inference for project {project_id}")
                 await self.inference_service.run_inference(project_id)
+                logger.info(f"ParsingService: Inference completed for project {project_id}")
                 logger.info(f"DEBUGNEO4J: After inference project {project_id}")
                 self.inference_service.log_graph_stats(project_id)
+                
+                logger.info(f"ParsingService: Updating project status to READY")
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.READY
                 )
+                logger.info(f"ParsingService: Project status updated to READY")
+                
                 create_task(
                     EmailHelper().send_email(user_email, repo_name, branch_name)
                 )
                 logger.info(f"DEBUGNEO4J: After update project status {project_id}")
                 self.inference_service.log_graph_stats(project_id)
+                logger.info(f"ParsingService: Non-python/js/ts parsing flow completed successfully for project {project_id}")
+            except Exception as e:
+                logger.error(f"ParsingService: Error during non-python/js/ts parsing for project {project_id}: {e}")
+                logger.exception("ParsingService: Exception details:")
+                raise
             finally:
+                logger.info(f"ParsingService: Closing CodeGraphService connection")
                 service.close()
+                logger.info(f"ParsingService: CodeGraphService closed successfully")
                 logger.info(f"DEBUGNEO4J: After close service {project_id}")
                 self.inference_service.log_graph_stats(project_id)
         else:
+            logger.warning(f"ParsingService: Language 'other' detected for project {project_id}, marking as ERROR")
             await self.project_service.update_project_status(
                 project_id, ProjectStatusEnum.ERROR
             )
