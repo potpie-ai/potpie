@@ -220,7 +220,9 @@ class SimpleIO:
                 logging.error(f"Error reading {fname}: {e}")
                 return ""
 
-        logging.warning(f"Could not read {fname} with any supported encoding. Skipping this file.")
+        logging.warning(
+            f"Could not read {fname} with any supported encoding. Skipping this file."
+        )
         return ""
 
     def tool_error(self, message):

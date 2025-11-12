@@ -36,7 +36,9 @@ class EncodingDetector:
     ]
 
     @staticmethod
-    def detect_encoding(file_path: str, encodings: Optional[list] = None) -> Optional[str]:
+    def detect_encoding(
+        file_path: str, encodings: Optional[list] = None
+    ) -> Optional[str]:
         """
         Detect the encoding of a file by trying multiple encodings.
 
@@ -65,7 +67,9 @@ class EncodingDetector:
         return None
 
     @staticmethod
-    def read_file(file_path: str, encodings: Optional[list] = None) -> Tuple[Optional[str], Optional[str]]:
+    def read_file(
+        file_path: str, encodings: Optional[list] = None
+    ) -> Tuple[Optional[str], Optional[str]]:
         """
         Read file with automatic encoding detection.
 

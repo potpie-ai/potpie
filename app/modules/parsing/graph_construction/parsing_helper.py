@@ -219,8 +219,12 @@ class ParseHelper:
             # According to GitBucket API docs: https://github.com/gitbucket/gitbucket/wiki/API-WebHook
             # Authentication: "Authorization: token YOUR_TOKEN" in header
             provider_type = os.getenv("CODE_PROVIDER", "github").lower()
-            
-            if provider_type == "gitbucket" and hasattr(repo, "_provider") and repo._provider:
+
+            if (
+                provider_type == "gitbucket"
+                and hasattr(repo, "_provider")
+                and repo._provider
+            ):
                 # For GitBucket, use the provider's authentication
                 # According to GitBucket API docs: https://github.com/gitbucket/gitbucket/wiki/API-WebHook
                 # Authentication format: "Authorization: token YOUR_TOKEN" in header
@@ -228,15 +232,17 @@ class ParseHelper:
                     github_client = repo._provider.client
                     if hasattr(github_client, "_Github__requester"):
                         requester = github_client._Github__requester
-                        
+
                         # Use the requester's session which has authentication already configured
                         if hasattr(requester, "_Requester__session"):
                             session = requester._Requester__session
                             response = session.get(tarball_url, stream=True, timeout=30)
-                            
+
                             # If we get 401, the session auth might not be working, fall back to manual token
                             if response.status_code == 401:
-                                raise requests.exceptions.HTTPError("401 Unauthorized from session")
+                                raise requests.exceptions.HTTPError(
+                                    "401 Unauthorized from session"
+                                )
                         else:
                             raise AttributeError("Requester session not available")
                     else:
@@ -245,22 +251,28 @@ class ParseHelper:
                     # Fallback to manual token extraction
                     token = None
                     headers = {}
-                    
+
                     # Priority 1: Try to get token from auth parameter
                     if auth and hasattr(auth, "token"):
                         token = auth.token
-                    
+
                     # Priority 2: Try to extract from PyGithub client's requester
                     if not token and hasattr(repo, "_provider") and repo._provider:
                         try:
                             github_client = repo._provider.client
                             if hasattr(github_client, "_Github__requester"):
                                 requester = github_client._Github__requester
-                                
-                                if hasattr(requester, "auth") and hasattr(requester.auth, "token"):
+
+                                if hasattr(requester, "auth") and hasattr(
+                                    requester.auth, "token"
+                                ):
                                     token = requester.auth.token
-                                elif hasattr(requester, "_Requester__authorizationHeader"):
-                                    auth_header = requester._Requester__authorizationHeader
+                                elif hasattr(
+                                    requester, "_Requester__authorizationHeader"
+                                ):
+                                    auth_header = (
+                                        requester._Requester__authorizationHeader
+                                    )
                                     if auth_header:
                                         if auth_header.startswith("token "):
                                             token = auth_header[6:]
@@ -268,31 +280,35 @@ class ParseHelper:
                                             token = auth_header[7:]
                         except Exception:
                             pass  # Token extraction failed, will try next method
-                    
+
                     # Priority 3: Fallback to environment variable
                     if not token:
                         token = os.getenv("CODE_PROVIDER_TOKEN")
-                    
+
                     if not token:
                         error_msg = "No authentication token available for GitBucket archive download"
                         logger.error(f"ParsingHelper: {error_msg}")
                         raise ValueError(error_msg)
-                    
+
                     # GitBucket web endpoints (archive downloads) may require Basic Auth
                     # Try token header format first (API standard per GitBucket docs)
                     headers = {"Authorization": f"token {token}"}
-                    logger.debug("ParsingHelper: Attempting archive download with token header")
-                    
+                    logger.debug(
+                        "ParsingHelper: Attempting archive download with token header"
+                    )
+
                     response = requests.get(
                         tarball_url, stream=True, headers=headers, timeout=30
                     )
-                    
+
                     # If token header fails with 401, try Basic Auth with repo owner username
                     # GitBucket web endpoints sometimes require Basic Auth (supported since v4.3)
                     if response.status_code == 401:
-                        logger.debug("ParsingHelper: Token header auth failed, trying Basic Auth")
+                        logger.debug(
+                            "ParsingHelper: Token header auth failed, trying Basic Auth"
+                        )
                         response.close()
-                        
+
                         # Try Basic Auth with repo owner username and token as password
                         if hasattr(repo, "owner") and hasattr(repo.owner, "login"):
                             username = repo.owner.login
@@ -300,7 +316,9 @@ class ParseHelper:
                             response = requests.get(
                                 tarball_url, stream=True, auth=basic_auth, timeout=30
                             )
-                            logger.debug(f"ParsingHelper: Basic Auth response status: {response.status_code}")
+                            logger.debug(
+                                f"ParsingHelper: Basic Auth response status: {response.status_code}"
+                            )
             else:
                 # For GitHub and other providers, use standard token auth
                 headers = {}
@@ -309,18 +327,18 @@ class ParseHelper:
                 response = requests.get(
                     tarball_url, stream=True, headers=headers, timeout=30
                 )
-            
+
             response.raise_for_status()
 
         except requests.exceptions.HTTPError as e:
             # If we get 401, archive download might not be supported for private repos
             # Fall back to git clone for GitBucket
             status_code = None
-            if hasattr(e, 'response') and e.response is not None:
+            if hasattr(e, "response") and e.response is not None:
                 status_code = e.response.status_code
-            elif '401' in str(e):
+            elif "401" in str(e):
                 status_code = 401
-            
+
             if status_code == 401:
                 provider_type = os.getenv("CODE_PROVIDER", "github").lower()
                 if provider_type == "gitbucket":
@@ -331,7 +349,7 @@ class ParseHelper:
                     return await self._clone_repository_with_auth(
                         repo, branch, target_dir, user_id
                     )
-            
+
             logger.error(f"ParsingHelper: Failed to download repository archive: {e}")
             raise ParsingFailedError("Failed to download repository archive") from e
         except requests.exceptions.RequestException as e:
@@ -339,7 +357,9 @@ class ParseHelper:
             raise ParsingFailedError("Failed to download repository archive") from e
         except Exception as e:
             logger.exception("ParsingHelper: Unexpected error in tarball download")
-            raise ParsingFailedError("Unexpected error during repository download") from e
+            raise ParsingFailedError(
+                "Unexpected error during repository download"
+            ) from e
         tarball_path = os.path.join(
             target_dir,
             f"{repo.full_name.replace('/', '-').replace('.', '-')}-{branch.replace('/', '-').replace('.', '-')}.tar.gz",
@@ -380,11 +400,13 @@ class ParseHelper:
                         error_msg = "Tarball contains no files"
                         logger.error(f"ParsingHelper: {error_msg}")
                         raise ParsingFailedError(error_msg)
-                    
+
                     temp_dir = os.path.join(final_dir, "temp_extract")
                     os.makedirs(temp_dir, exist_ok=True)
                     tar.extractall(path=temp_dir)
-                    logger.info(f"ParsingHelper: Extracted tarball contents to {temp_dir}")
+                    logger.info(
+                        f"ParsingHelper: Extracted tarball contents to {temp_dir}"
+                    )
 
                     # Check if extraction directory has contents
                     extracted_contents = os.listdir(temp_dir)
@@ -395,9 +417,11 @@ class ParseHelper:
                         )
                         logger.error(f"ParsingHelper: {error_msg}")
                         raise ParsingFailedError(error_msg)
-                    
+
                     extracted_dir = os.path.join(temp_dir, extracted_contents[0])
-                    logger.info(f"ParsingHelper: Main extracted directory: {extracted_dir}")
+                    logger.info(
+                        f"ParsingHelper: Main extracted directory: {extracted_dir}"
+                    )
 
                     text_files_count = 0
                     for root, dirs, files in os.walk(extracted_dir):
@@ -411,7 +435,9 @@ class ParseHelper:
                                         file_path, extracted_dir
                                     )
                                     dest_path = os.path.join(final_dir, relative_path)
-                                    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                                    os.makedirs(
+                                        os.path.dirname(dest_path), exist_ok=True
+                                    )
                                     shutil.copy2(file_path, dest_path)
                                     text_files_count += 1
                                 except (shutil.Error, OSError) as e:
@@ -442,9 +468,7 @@ class ParseHelper:
 
         return final_dir
 
-    async def _clone_repository_with_auth(
-        self, repo, branch, target_dir, user_id
-    ):
+    async def _clone_repository_with_auth(self, repo, branch, target_dir, user_id):
         """
         Clone repository using git with authentication.
         Fallback method when archive download fails for private repos.
@@ -492,56 +516,56 @@ class ParseHelper:
 
         parsed = urlparse(base_url)
         # Preserve the path component from base URL (e.g., /gitbucket)
-        base_path = parsed.path.rstrip('/')  # Remove trailing slash if present
-        repo_path = f"{base_path}/{repo.full_name}.git" if base_path else f"/{repo.full_name}.git"
+        base_path = parsed.path.rstrip("/")  # Remove trailing slash if present
+        repo_path = (
+            f"{base_path}/{repo.full_name}.git"
+            if base_path
+            else f"/{repo.full_name}.git"
+        )
 
-        clone_url_with_auth = urlunparse((
-            parsed.scheme,
-            f"{username}:{password}@{parsed.netloc}",
-            repo_path,
-            "",
-            "",
-            ""
-        ))
+        clone_url_with_auth = urlunparse(
+            (
+                parsed.scheme,
+                f"{username}:{password}@{parsed.netloc}",
+                repo_path,
+                "",
+                "",
+                "",
+            )
+        )
 
         # Log URL without credentials for security
-        safe_url = urlunparse((
-            parsed.scheme,
-            parsed.netloc,
-            repo_path,
-            "",
-            "",
-            ""
-        ))
+        safe_url = urlunparse((parsed.scheme, parsed.netloc, repo_path, "", "", ""))
         logger.info(f"ParsingHelper: Cloning from {safe_url}")
 
         try:
             # Clone the repository to temporary directory with shallow clone for faster download
             repo_obj = Repo.clone_from(
-                clone_url_with_auth,
-                temp_clone_dir,
-                branch=branch,
-                depth=1
+                clone_url_with_auth, temp_clone_dir, branch=branch, depth=1
             )
-            logger.info(f"ParsingHelper: Successfully cloned repository to temporary directory: {temp_clone_dir}")
+            logger.info(
+                f"ParsingHelper: Successfully cloned repository to temporary directory: {temp_clone_dir}"
+            )
 
             # Filter and copy only text files to final directory
-            logger.info(f"ParsingHelper: Filtering text files from clone to {final_dir}")
+            logger.info(
+                f"ParsingHelper: Filtering text files from clone to {final_dir}"
+            )
             os.makedirs(final_dir, exist_ok=True)
 
             text_files_count = 0
             for root, dirs, files in os.walk(temp_clone_dir):
                 # Skip .git directory
-                if '.git' in root.split(os.sep):
+                if ".git" in root.split(os.sep):
                     continue
 
                 # Skip hidden directories
-                if any(part.startswith('.') for part in root.split(os.sep)):
+                if any(part.startswith(".") for part in root.split(os.sep)):
                     continue
 
                 for file in files:
                     # Skip hidden files
-                    if file.startswith('.'):
+                    if file.startswith("."):
                         continue
 
                     file_path = os.path.join(root, file)
@@ -571,9 +595,13 @@ class ParseHelper:
             # Clean up temporary clone directory
             try:
                 shutil.rmtree(temp_clone_dir)
-                logger.info(f"ParsingHelper: Cleaned up temporary clone directory: {temp_clone_dir}")
+                logger.info(
+                    f"ParsingHelper: Cleaned up temporary clone directory: {temp_clone_dir}"
+                )
             except Exception as e:
-                logger.warning(f"ParsingHelper: Failed to clean up temp clone directory: {e}")
+                logger.warning(
+                    f"ParsingHelper: Failed to clean up temp clone directory: {e}"
+                )
 
             return final_dir
 
@@ -594,7 +622,9 @@ class ParseHelper:
                     shutil.rmtree(temp_clone_dir)
                 except Exception:
                     pass
-            raise ParsingFailedError(f"Unexpected error during repository clone: {e}") from e
+            raise ParsingFailedError(
+                f"Unexpected error during repository clone: {e}"
+            ) from e
 
     @staticmethod
     def detect_repo_language(repo_dir):
@@ -689,7 +719,9 @@ class ParseHelper:
                             logger.warning(f"Error processing file {file_path}: {e}")
                             continue
                     else:
-                        logger.warning(f"Could not read file with any encoding: {file_path}")
+                        logger.warning(
+                            f"Could not read file with any encoding: {file_path}"
+                        )
                         continue
         except (TypeError, FileNotFoundError, PermissionError) as e:
             logger.error(f"Error accessing directory '{repo_dir}': {e}")

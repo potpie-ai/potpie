@@ -7,6 +7,7 @@ from contextlib import contextmanager
 
 # Apply encoding patch BEFORE importing blar_graph
 from app.modules.parsing.utils.encoding_patch import apply_encoding_patch
+
 apply_encoding_patch()
 
 from blar_graph.db_managers import Neo4jManager

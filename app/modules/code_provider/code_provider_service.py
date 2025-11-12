@@ -164,9 +164,7 @@ class ProviderWrapper:
                             )
 
                             if format_type == "tarball":
-                                archive_url = (
-                                    f"{base_url}/{actual_repo_name}/archive/{ref}.tar.gz"
-                                )
+                                archive_url = f"{base_url}/{actual_repo_name}/archive/{ref}.tar.gz"
                             else:
                                 archive_url = (
                                     f"{base_url}/{actual_repo_name}/archive/{ref}.zip"

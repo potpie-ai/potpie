@@ -6,7 +6,6 @@ multi-encoding detection instead of hardcoded UTF-8.
 """
 
 import logging
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +13,16 @@ logger = logging.getLogger(__name__)
 _original_open = open
 
 
-def patched_open(file, mode="r", buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
+def patched_open(
+    file,
+    mode="r",
+    buffering=-1,
+    encoding=None,
+    errors=None,
+    newline=None,
+    closefd=True,
+    opener=None,
+):
     """
     Patched version of open() that falls back to multiple encodings.
 
@@ -23,7 +31,9 @@ def patched_open(file, mode="r", buffering=-1, encoding=None, errors=None, newli
     """
     # If not text mode or encoding explicitly specified, use original
     if "b" in mode or encoding is not None:
-        return _original_open(file, mode, buffering, encoding, errors, newline, closefd, opener)
+        return _original_open(
+            file, mode, buffering, encoding, errors, newline, closefd, opener
+        )
 
     # If opening for text reading, try multiple encodings
     if "r" in mode:
@@ -31,7 +41,9 @@ def patched_open(file, mode="r", buffering=-1, encoding=None, errors=None, newli
 
         for enc in encodings_to_try:
             try:
-                f = _original_open(file, mode, buffering, enc, errors, newline, closefd, opener)
+                f = _original_open(
+                    file, mode, buffering, enc, errors, newline, closefd, opener
+                )
                 # Try to read a bit to validate encoding
                 pos = f.tell()
                 f.read(1024)
@@ -48,10 +60,14 @@ def patched_open(file, mode="r", buffering=-1, encoding=None, errors=None, newli
                 raise
 
         # If all encodings fail, raise the last error
-        return _original_open(file, mode, buffering, "utf-8", errors, newline, closefd, opener)
+        return _original_open(
+            file, mode, buffering, "utf-8", errors, newline, closefd, opener
+        )
 
     # For write modes, default to UTF-8
-    return _original_open(file, mode, buffering, encoding or "utf-8", errors, newline, closefd, opener)
+    return _original_open(
+        file, mode, buffering, encoding or "utf-8", errors, newline, closefd, opener
+    )
 
 
 def apply_encoding_patch():

@@ -32,7 +32,7 @@ class SearchJiraIssuesTool:
 
     name = "Search Jira Issues"
     description = """Search for Jira issues using JQL (Jira Query Language).
-    
+
     Use this tool when you need to:
     - Find all issues in a project
     - Search for issues by status, priority, assignee, etc.
@@ -40,18 +40,18 @@ class SearchJiraIssuesTool:
     - Search by labels, components, or custom fields
     - Get unassigned issues
     - Find issues assigned to current user
-    
+
     JQL Examples:
     - "project = PROJ AND status = Open"
     - "assignee = currentUser() AND priority = High"
     - "labels = bug AND created >= -7d"
     - "status changed to Done during (-1w, now())"
     - "project = PROJ ORDER BY created DESC"
-    
+
     Optional parameters:
     - max_results: Limit number of results (default: 50)
     - include_comments: Set to True to include all comments for each issue (slower)
-    
+
     Returns a list of matching issues with their details.
     """
 
@@ -123,20 +123,20 @@ def search_jira_issues_tool(db: Session, user_id: str) -> StructuredTool:
         func=tool_instance.run,
         name="Search Jira Issues",
         description="""Search for Jira issues using JQL (Jira Query Language).
-        
+
         Use this when you need to find issues by:
         - Project, status, priority, assignee
         - Labels, components, or custom fields
         - Date ranges (created/updated)
         - Complex queries combining multiple criteria
-        
+
         Inputs:
         - jql (str): JQL query string (e.g., "project = PROJ AND status = Open")
         - max_results (int): Maximum number of results (default: 50)
         - include_comments (bool): If True, include all comments for each issue (default: False)
-        
+
         Note: Setting include_comments=True may slow down searches with many results.
-        
+
         Returns list of matching issues with details (and comments if requested).""",
         args_schema=SearchJiraIssuesInput,
     )
