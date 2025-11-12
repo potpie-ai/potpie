@@ -4,7 +4,8 @@ import os
 import shutil
 import tarfile
 import uuid
-from typing import Any, Tuple
+from pathlib import Path
+from typing import Any, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
 
 import requests
