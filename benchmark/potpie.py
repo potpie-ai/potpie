@@ -87,107 +87,168 @@ def upload_results_to_phoenix(
     dataset_name: str = None,
     experiment_name: str = None,
 ) -> None:
-    """
-    Upload benchmark results to Phoenix as a dataset AND create an experiment with eval metrics.
-    
-    This version uses the run_experiment workflow to log pre-computed results.
-    
-    Args:
-        qa_df: Original DataFrame with repo_url, commit_id, question, expected_answer
-        answers: List of generated answers
-        eval_results: DeepEval result object(s) with evaluation metrics
-        dataset_name: Name for the Phoenix dataset (default: auto-generated with timestamp)
-        experiment_name: Name for the Phoenix experiment (default: auto-generated with timestamp)
-    """
+    """Upload benchmark results to Phoenix with versioning."""
     try:
-        # Generate names if not provided
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        if dataset_name is None:
-            dataset_name = f"Benchmark Dataset {timestamp}"
-        if experiment_name is None:
-            experiment_name = f"Benchmark Experiment {timestamp}"
-        
         client = Client()
         
-        eval_results_list = []
-        if isinstance(eval_results, dict):
-            eval_results_list = list(eval_results.values())
-        elif hasattr(eval_results, '__iter__') and not isinstance(eval_results, (str, bytes)):
-            try:
-                eval_results_list = list(eval_results)
-            except (TypeError, AttributeError):
-                eval_results_list = [eval_results]
-        else:
-            eval_results_list = [eval_results]
+        # Normalize eval results
+        eval_results_list = (
+            list(eval_results.values()) if isinstance(eval_results, dict)
+            else list(eval_results) if hasattr(eval_results, '__iter__') and not isinstance(eval_results, (str, bytes))
+            else [eval_results]
+        )
         
-        dataset_data = {
+        # Names
+        base_dataset_name = dataset_name or "Benchmark Dataset"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        exp_name = experiment_name or f"Benchmark Experiment {timestamp}"
+        
+        # Prepare new dataset
+        dataset_df = pd.DataFrame({
             "question": qa_df["question"].tolist(),
             "expected_answer": qa_df["expected_answer"].tolist(),
             "repo_url": qa_df["repo_url"].tolist(),
             "commit_id": qa_df["commit_id"].tolist(),
             "example_id": range(len(qa_df))
-        }
-        dataset_df = pd.DataFrame(dataset_data)
+        })
         
-        dataset = client.datasets.create_dataset(
-            dataframe=dataset_df,
-            name=dataset_name,
-            input_keys=["question"],
-            metadata_keys=["repo_url", "commit_id", "expected_answer", "example_id"]
-        )
+        # Find matching dataset or determine version
+        dataset = None
+        final_dataset_name = base_dataset_name
         
+        try:
+            print(f"🔍 Searching for existing dataset: '{base_dataset_name}'")
+            datasets_list = list(client.datasets.list())
+            print(f"📊 Found {len(datasets_list)} total datasets in Phoenix")
+            
+            # Look for base name OR versioned datasets (e.g., "Benchmark Results v20251112_205958")
+            matching_datasets = [
+                ds for ds in datasets_list 
+                if ds.get('name') == base_dataset_name or ds.get('name', '').startswith(f"{base_dataset_name} v")
+            ]
+            
+            existing = None
+            if matching_datasets:
+                # Use the most recent one (sort by name, versions have timestamps)
+                existing = sorted(matching_datasets, key=lambda x: x.get('name', ''), reverse=True)[0]
+                existing_name = existing.get('name')
+                print(f"✓ Found {len(matching_datasets)} matching dataset(s), using most recent: '{existing_name}'")
+            
+            if existing:
+                dataset_obj = client.datasets.get_dataset(dataset=existing)
+                phoenix_df = dataset_obj.to_dataframe()
+                
+                # Extract questions from Phoenix format for comparison
+                existing_questions = _extract_questions_from_phoenix(phoenix_df)
+                new_questions = dataset_df["question"].tolist()
+
+                # WORKAROUND: Phoenix sometimes duplicates the first row
+                # Remove consecutive duplicates from existing questions
+                existing_deduped = []
+                for i, q in enumerate(existing_questions):
+                    if i == 0 or q != existing_questions[i-1]:
+                        existing_deduped.append(q)
+                
+                # Log deduplication if it occurred
+                if len(existing_deduped) != len(existing_questions):
+                    print(f"🔧 Phoenix bug workaround: Removed {len(existing_questions) - len(existing_deduped)} duplicate rows")
+                
+                # Normalize questions for comparison (strip whitespace)
+                existing_normalized = [q.strip() for q in existing_deduped]
+                new_normalized = [q.strip() for q in new_questions]
+    
+                print(f"📏 Comparing: {len(existing_normalized)} existing vs {len(new_normalized)} new questions")
+                
+                # Simple content check: compare questions
+                if existing_normalized == new_normalized:
+                    print(f"✅ Dataset unchanged, reusing '{existing_name}'")
+                    dataset = dataset_obj
+                else:
+                    # Content changed - create versioned dataset
+                    final_dataset_name = f"{base_dataset_name} v{timestamp}"
+                    print(f"⚠️ Dataset content changed, creating '{final_dataset_name}'")
+                    # Show first difference for debugging
+                    if len(existing_normalized) != len(new_normalized):
+                        print(f"   Reason: Different sizes ({len(existing_normalized)} vs {len(new_normalized)})")
+                    else:
+                        for i, (old, new) in enumerate(zip(existing_normalized, new_normalized)):
+                            if old != new:
+                                print(f"   Reason: Question {i} differs")
+                                print(f"   Old starts with: {old[:80]}...")
+                                print(f"   New starts with: {new[:80]}...")
+                                break
+            else:
+                print(f"❌ No existing dataset found with name '{base_dataset_name}'")
+        except Exception as e:
+            print(f"❌ Error checking existing dataset: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # Create new dataset if needed
+        if dataset is None:
+            logging.info(f"Creating dataset '{final_dataset_name}' ({len(dataset_df)} rows)")
+            dataset = client.datasets.create_dataset(
+                dataframe=dataset_df,
+                name=final_dataset_name,
+                input_keys=["question"],
+                metadata_keys=["repo_url", "commit_id", "expected_answer", "example_id"]
+            )
+        
+        # Task function
         def task(example):
-            try:
-                idx = int(example.metadata.get("example_id", 0))
-            except (ValueError, TypeError, KeyError):
-                idx = 0
-            
-            if idx < 0 or idx >= len(answers):
-                idx = 0
-            
-            answer = answers[idx] if idx < len(answers) else ""
-            return {"output": answer}
-
-        def get_correctness_score(output, metadata=None):
-            if metadata is None:
-                print("Metadata is None in get_correctness_score")
-                return 0.0
+            idx = int(example.metadata.get("example_id", 0))
+            idx = max(0, min(idx, len(answers) - 1))
+            return {"output": answers[idx] if answers else ""}
+        
+        # Evaluators
+        def correctness_score(output, metadata=None):
+            if not metadata: return 0.0
             idx = int(metadata.get("example_id", 0))
             result = eval_results_list[idx] if idx < len(eval_results_list) else None
-            if result and hasattr(result, "score"):
-                return float(result.score) if result.score is not None else 0.0
-            return 0.0
-
-        def get_success(output, metadata=None):
-            if metadata is None:
-                print("Metadata is None in get_success")
-                return 0.0
+            return float(result.score) if (result and hasattr(result, "score") and result.score is not None) else 0.0
+        
+        def success(output, metadata=None):
+            if not metadata: return 0
             idx = int(metadata.get("example_id", 0))
             result = eval_results_list[idx] if idx < len(eval_results_list) else None
-            if result and hasattr(result, "success"):
-                return 1.0 if result.success else 0.0
-            return 0.0
-
-        def get_reason(output, metadata=None):
-            if metadata is None:
-                print("Metadata is None in get_reason")
-                return ""  
+            return 1 if (result and hasattr(result, "success") and result.success) else 0
+        
+        def reason(output, metadata=None):
+            if not metadata: return ""
             idx = int(metadata.get("example_id", 0))
             result = eval_results_list[idx] if idx < len(eval_results_list) else None
-            if result and hasattr(result, "reason") and result.reason:
-                return str(result.reason)
-            print("Result is None in get_reason")
-            return ""
-
+            return str(result.reason) if (result and hasattr(result, "reason") and result.reason) else ""
+        
+        # Run experiment
         experiment = client.experiments.run_experiment(
             dataset=dataset,
             task=task,
-            evaluators=[get_correctness_score, get_success, get_reason],
-            experiment_name=experiment_name,
+            evaluators=[correctness_score, success, reason],
+            experiment_name=exp_name,
         )
         
+        logging.info(f"✅ Created experiment '{exp_name}' on '{dataset.name}'")
+        
     except Exception as e:
-        logging.error(f"Failed to upload results to Phoenix: {e}", exc_info=True)
+        logging.error(f"Failed to upload to Phoenix: {e}", exc_info=True)
+        raise
+
+
+def _extract_questions_from_phoenix(phoenix_df: pd.DataFrame) -> list[str]:
+    """Extract questions from Phoenix format for comparison."""
+    questions = []
+    for _, row in phoenix_df.iterrows():
+        if 'input' in phoenix_df.columns:
+            input_val = row['input']
+            if isinstance(input_val, dict):
+                questions.append(input_val.get('question', ''))
+            else:
+                questions.append(str(input_val))
+        else:
+            questions.append('')
+    return questions
+
+
 @dataclass
 class PotPieUserInfo:
     user_id: str
@@ -426,8 +487,8 @@ async def main():
         eval_results_for_save.append(metric_data)
 
     # Print first result for verification
-    if eval_results_for_save and eval_results_for_save[0]:
-        print(f"\n✅ Extracted MetricData: score={eval_results_for_save[0].score}, success={eval_results_for_save[0].success}, name={eval_results_for_save[0].name}")
+    # if eval_results_for_save and eval_results_for_save[0]:
+    #     print(f"\n✅ Extracted MetricData: score={eval_results_for_save[0].score}, success={eval_results_for_save[0].success}, name={eval_results_for_save[0].name}")
 
     # Save results to file with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -447,7 +508,7 @@ async def main():
     upload_results_to_phoenix(
         qa_df=qa_df,
         answers=answers,
-        dataset_name=f"Benchmark Results {timestamp}",
+        dataset_name=f"Benchmark Results",
         experiment_name=f"Benchmark Experiment {timestamp}",
         eval_results=eval_results_for_save,  # Pass extracted results
     )
