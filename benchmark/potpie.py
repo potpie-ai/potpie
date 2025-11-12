@@ -1,15 +1,15 @@
 import asyncio
+import logging
 import os
-import aiohttp
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from pathlib import Path
-from dotenv import load_dotenv
-import logging
-import pandas as pd
-from collections.abc import Awaitable
-from deepeval.test_case import LLMTestCase
-from deepeval import evaluate
 
+import aiohttp
+import pandas as pd
+from deepeval import evaluate
+from deepeval.test_case import LLMTestCase
+from dotenv import load_dotenv
 
 from .download import get_unique_repo_and_commits, setup_all_worktrees
 from .eval import correctness
@@ -205,7 +205,6 @@ async def main():
         )
         for _ in range(5)
     ]
-    _ = await asyncio.gather(*workers)
     ready_projects = set(repo_commit_to_project_id.values())
 
     qa_tasks: list[Awaitable[str]] = []
@@ -225,8 +224,13 @@ async def main():
             )
         )
     answers = await asyncio.gather(*qa_tasks)
+    try:
+        await check_queue.join()
+    finally:
+        for worker in workers:
+            worker.cancel()
+        await asyncio.gather(*workers, return_exceptions=True)
     expected_answers = qa_df["expected_answer"].tolist()
-
     test_cases = [
         LLMTestCase(
             input=question, actual_output=answer, expected_output=expected_answer

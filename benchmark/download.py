@@ -1,9 +1,10 @@
-import sys
 import subprocess
+import sys
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, Future, as_completed
-from loguru import logger
+
 import pandas as pd
+from loguru import logger
 from pandas import DataFrame
 
 
@@ -17,7 +18,7 @@ def _normalize_repo_url(url: str) -> str:
     Returns:
         Normalized URL ending with .git
     """
-    url = url.strip()
+    url = url.strip().rstrip("/")
     if not url.endswith(".git"):
         url += ".git"
     return url
