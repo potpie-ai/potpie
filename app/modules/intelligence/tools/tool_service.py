@@ -67,10 +67,24 @@ from app.modules.intelligence.tools.linear_tools import (
     get_linear_issue_tool,
     update_linear_issue_tool,
 )
+from app.modules.intelligence.tools.jira_tools import (
+    get_jira_issue_tool,
+    search_jira_issues_tool,
+    create_jira_issue_tool,
+    update_jira_issue_tool,
+    add_jira_comment_tool,
+    transition_jira_issue_tool,
+    get_jira_projects_tool,
+    get_jira_project_details_tool,
+    get_jira_project_users_tool,
+    link_jira_issues_tool,
+)
 from app.modules.intelligence.tools.web_tools.web_search_tool import web_search_tool
 from app.modules.intelligence.provider.provider_service import ProviderService
 from langchain_core.tools import StructuredTool
 from .think_tool import think_tool
+from .todo_management_tool import create_todo_management_tools
+from .code_changes_manager import create_code_changes_management_tools
 
 
 class ToolService:
@@ -129,6 +143,20 @@ class ToolService:
             ),
             "get_linear_issue": get_linear_issue_tool(self.db, self.user_id),
             "update_linear_issue": update_linear_issue_tool(self.db, self.user_id),
+            "get_jira_issue": get_jira_issue_tool(self.db, self.user_id),
+            "search_jira_issues": search_jira_issues_tool(self.db, self.user_id),
+            "create_jira_issue": create_jira_issue_tool(self.db, self.user_id),
+            "update_jira_issue": update_jira_issue_tool(self.db, self.user_id),
+            "add_jira_comment": add_jira_comment_tool(self.db, self.user_id),
+            "transition_jira_issue": transition_jira_issue_tool(self.db, self.user_id),
+            "get_jira_projects": get_jira_projects_tool(self.db, self.user_id),
+            "get_jira_project_details": get_jira_project_details_tool(
+                self.db, self.user_id
+            ),
+            "get_jira_project_users": get_jira_project_users_tool(
+                self.db, self.user_id
+            ),
+            "link_jira_issues": link_jira_issues_tool(self.db, self.user_id),
             "intelligent_code_graph": get_intelligent_code_graph_tool(
                 self.db, self.provider_service, self.user_id
             ),
@@ -143,6 +171,15 @@ class ToolService:
         bash_tool = bash_command_tool(self.db, self.user_id)
         if bash_tool:
             tools["bash_command"] = bash_tool
+        # Add todo management tools
+        todo_tools = create_todo_management_tools()
+        for tool in todo_tools:
+            tools[tool.name] = tool
+
+        # Add code changes management tools
+        code_changes_tools = create_code_changes_management_tools()
+        for tool in code_changes_tools:
+            tools[tool.name] = tool
 
         if self.webpage_extractor_tool:
             tools["webpage_extractor"] = self.webpage_extractor_tool
@@ -187,10 +224,9 @@ class ToolService:
     def list_tools_with_parameters(self) -> Dict[str, ToolInfoWithParameters]:
         return {
             tool_id: ToolInfoWithParameters(
-                id=tool_id,
                 name=tool.name,
                 description=tool.description,
-                args_schema=tool.args_schema.schema(),
+                args_schema=tool.args_schema.schema() if tool.args_schema else {},
             )
             for tool_id, tool in self.tools.items()
         }

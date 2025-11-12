@@ -162,20 +162,29 @@ class CodeProviderAddPRCommentsTool:
             }
 
         try:
-            # Initialize GitHub client
-            logging.info(f"[ADD_PR_COMMENT] Getting client for repo: {repo_name}")
-            g = self._get_github_client(repo_name)
-
-            # Get the actual repo name for API calls (handles GitBucket conversion)
+            # Normalize input repo_name if needed, then get actual name for API calls
             from app.modules.parsing.utils.repo_name_normalizer import (
+                normalize_repo_name,
                 get_actual_repo_name_for_lookup,
             )
             import os
 
             provider_type = os.getenv("CODE_PROVIDER", "github").lower()
-            actual_repo_name = get_actual_repo_name_for_lookup(repo_name, provider_type)
+            # Normalize input repo_name first (in case it comes in as "root/repo")
+            normalized_input = normalize_repo_name(repo_name, provider_type)
+            # Then convert to actual format for API calls
+            actual_repo_name = get_actual_repo_name_for_lookup(
+                normalized_input, provider_type
+            )
+
+            # Get provider for URL construction later
+            provider = CodeProviderFactory.create_provider_with_fallback(
+                normalized_input
+            )
+            g = provider.client
+
             logging.info(
-                f"[ADD_PR_COMMENT] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}"
+                f"[ADD_PR_COMMENT] Provider type: {provider_type}, Original repo: {repo_name}, Normalized: {normalized_input}, Actual repo for API: {actual_repo_name}"
             )
 
             repo = g.get_repo(actual_repo_name)
@@ -399,13 +408,25 @@ class CodeProviderAddPRCommentsTool:
                                 f"[ADD_PR_COMMENT] Failed to add general comment: {str(e)}"
                             )
 
+                    # Use the normalized input we already computed
+                    normalized_repo_name = normalized_input
+                    # Construct GitBucket URL using normalized name
+                    base_url = (
+                        provider.get_api_base_url()
+                        if hasattr(provider, "get_api_base_url")
+                        else "http://localhost:8080"
+                    )
+                    if base_url.endswith("/api/v3"):
+                        base_url = base_url[:-7]  # Remove '/api/v3'
+                    pr_url = f"{base_url}/{normalized_repo_name}/pull/{pr_number}"
+
                     result = {
                         "success": True,
                         "operation": "add_pr_comments",
                         "pr_number": pr_number,
                         "review_id": None,  # GitBucket doesn't return review ID
                         "action": "COMMENT",  # GitBucket may not support review actions
-                        "url": f"http://localhost:8080/root/test-mongo/pull/{pr_number}",
+                        "url": pr_url,
                         "comments_count": len(added_comments),
                         "errors": errors if errors else None,
                     }

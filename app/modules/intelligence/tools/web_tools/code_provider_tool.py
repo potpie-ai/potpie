@@ -122,14 +122,20 @@ class CodeProviderTool:
         try:
             github = self._get_github_client(repo_name)
 
-            # Get the actual repo name for API calls (handles GitBucket conversion)
+            # Normalize input repo_name if needed, then get actual name for API calls
             from app.modules.parsing.utils.repo_name_normalizer import (
+                normalize_repo_name,
                 get_actual_repo_name_for_lookup,
             )
             import os
 
             provider_type = os.getenv("CODE_PROVIDER", "github").lower()
-            actual_repo_name = get_actual_repo_name_for_lookup(repo_name, provider_type)
+            # Normalize input repo_name first (in case it comes in as "root/repo")
+            normalized_input = normalize_repo_name(repo_name, provider_type)
+            # Then convert to actual format for API calls
+            actual_repo_name = get_actual_repo_name_for_lookup(
+                normalized_input, provider_type
+            )
             logging.info(
                 f"[CODE_PROVIDER_TOOL] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}"
             )

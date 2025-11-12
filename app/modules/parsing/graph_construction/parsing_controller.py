@@ -48,11 +48,27 @@ class ParsingController:
         project_manager = ProjectService(db)
         parse_helper = ParseHelper(db)
         parsing_service = ParsingService(db, user_id)
-        if config_provider.get_is_development_mode():
-            # In dev mode: if repo_name exists, move it to repo_path and set repo_name to None
-            if repo_details.repo_name:
+
+        # Auto-detect if repo_name is actually a filesystem path
+        if repo_details.repo_name and not repo_details.repo_path:
+            is_path = (
+                os.path.isabs(repo_details.repo_name)
+                or repo_details.repo_name.startswith(("~", "./", "../"))
+                or os.path.isdir(os.path.expanduser(repo_details.repo_name))
+            )
+            if is_path:
+                # Move from repo_name to repo_path
                 repo_details.repo_path = repo_details.repo_name
+                repo_details.repo_name = repo_details.repo_path.split("/")[-1]
+                logger.info(
+                    f"Auto-detected filesystem path: repo_path={repo_details.repo_path}, repo_name={repo_details.repo_name}"
+                )
+
+        if config_provider.get_is_development_mode():
+            # In dev mode: if both repo_path and repo_name are provided, prioritize repo_path (local)
+            if repo_details.repo_path and repo_details.repo_name:
                 repo_details.repo_name = None
+            # Otherwise keep whichever one is provided as-is
         else:
             # In non-dev mode: if repo_name is None but repo_path exists, extract repo_name from repo_path
             if not repo_details.repo_name and repo_details.repo_path:

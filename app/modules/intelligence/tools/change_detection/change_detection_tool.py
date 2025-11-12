@@ -1,13 +1,16 @@
 import asyncio
 import logging
-from typing import Dict, List
+import os
+from typing import Dict, List, Optional
 
 from fastapi import HTTPException
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 from tree_sitter_languages import get_parser
+import pathspec
 
 from app.core.database import get_db
+from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.code_provider.github.github_service import GithubService
 from app.modules.code_provider.local_repo.local_repo_service import LocalRepoService
@@ -18,6 +21,7 @@ from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
+from neo4j import GraphDatabase
 
 
 class ChangeDetectionInput(BaseModel):
@@ -60,6 +64,146 @@ class ChangeDetectionTool:
         self.sql_db = sql_db
         self.user_id = user_id
         self.search_service = SearchService(self.sql_db)
+        # Initialize Neo4j driver for direct queries
+        neo4j_config = config_provider.get_neo4j_config()
+        self.neo4j_driver = GraphDatabase.driver(
+            neo4j_config["uri"],
+            auth=(neo4j_config["username"], neo4j_config["password"]),
+        )
+
+    def _find_node_by_file_and_name(
+        self, project_id: str, file_path: str, function_name: str
+    ) -> Optional[str]:
+        """
+        Find a node_id in Neo4j by file path and function name.
+
+        Args:
+            project_id: The project/repo ID
+            file_path: The file path (e.g., 'tests/test_sdk.py')
+            function_name: The function name (e.g., 'test_document_lifecycle')
+
+        Returns:
+            The node_id if found, None otherwise
+        """
+        # Try multiple query strategies:
+        # 1. Exact match on file_path ending (handles full paths)
+        # 2. Contains match on file_path (handles both relative and full paths)
+        # 3. Match on just the filename
+        # 4. Try with full absolute path (if we can construct it)
+        queries = [
+            # Strategy 1: File path ends with the relative path
+            """
+            MATCH (n:NODE {repoId: $project_id})
+            WHERE n.file_path ENDS WITH $file_path
+            AND n.name = $function_name
+            AND (n:FUNCTION OR n:CLASS)
+            RETURN n.node_id AS node_id, n.file_path AS file_path, n.name AS name
+            LIMIT 5
+            """,
+            # Strategy 2: File path contains the relative path
+            """
+            MATCH (n:NODE {repoId: $project_id})
+            WHERE n.file_path CONTAINS $file_path
+            AND n.name = $function_name
+            AND (n:FUNCTION OR n:CLASS)
+            RETURN n.node_id AS node_id, n.file_path AS file_path, n.name AS name
+            LIMIT 5
+            """,
+            # Strategy 3: Match on just the filename
+            """
+            MATCH (n:NODE {repoId: $project_id})
+            WHERE n.file_path ENDS WITH $filename
+            AND n.name = $function_name
+            AND (n:FUNCTION OR n:CLASS)
+            RETURN n.node_id AS node_id, n.file_path AS file_path, n.name AS name
+            LIMIT 5
+            """,
+            # Strategy 4: Try with dot-separated path format (e.g., .Users.dhirenmathur.Documents.mongo-proxy.tests.test_sdk.py)
+            """
+            MATCH (n:NODE {repoId: $project_id})
+            WHERE n.file_path ENDS WITH $dot_path
+            AND n.name = $function_name
+            AND (n:FUNCTION OR n:CLASS)
+            RETURN n.node_id AS node_id, n.file_path AS file_path, n.name AS name
+            LIMIT 5
+            """,
+        ]
+
+        # Extract just the filename for strategy 3
+        filename = file_path.split("/")[-1] if "/" in file_path else file_path
+
+        # Create dot-separated path format for strategy 4
+        # Convert 'tests/test_sdk.py' to '.tests.test_sdk.py'
+        dot_path = "." + file_path.replace("/", ".")
+
+        try:
+            with self.neo4j_driver.session() as session:
+                for i, query in enumerate(queries, 1):
+                    if i == 3:
+                        # Use filename for strategy 3
+                        result = session.run(
+                            query,
+                            project_id=project_id,
+                            filename=filename,
+                            function_name=function_name,
+                        )
+                    elif i == 4:
+                        # Use dot_path for strategy 4
+                        result = session.run(
+                            query,
+                            project_id=project_id,
+                            dot_path=dot_path,
+                            function_name=function_name,
+                        )
+                    else:
+                        result = session.run(
+                            query,
+                            project_id=project_id,
+                            file_path=file_path,
+                            function_name=function_name,
+                        )
+
+                    records = list(result)
+                    if records:
+                        # Return the first match
+                        return records[0]["node_id"]
+
+                # No matches found with any strategy
+                return None
+        except Exception as e:
+            logging.error(
+                f"[CHANGE_DETECTION] Error searching for node by file and name: {e}",
+                exc_info=True,
+            )
+            return None
+
+    def _get_gitignore_spec(self, repo_path: str) -> Optional[pathspec.PathSpec]:
+        """
+        Create a PathSpec object from the .gitignore file in the repository.
+
+        Args:
+            repo_path: Path to the repository root
+
+        Returns:
+            PathSpec object or None if .gitignore doesn't exist
+        """
+        gitignore_path = os.path.join(repo_path, ".gitignore")
+        if not os.path.exists(gitignore_path):
+            return None
+
+        try:
+            with open(gitignore_path, "r", encoding="utf-8") as f:
+                gitignore_content = f.read()
+
+            # Create a PathSpec object from the .gitignore content
+            return pathspec.PathSpec.from_lines(
+                pathspec.patterns.GitWildMatchPattern, gitignore_content.splitlines()
+            )
+        except Exception as e:
+            logging.warning(
+                f"[CHANGE_DETECTION] Error reading .gitignore file: {str(e)}"
+            )
+            return None
 
     def _parse_diff_detail(self, patch_details):
         changed_files = {}
@@ -88,8 +232,24 @@ class ChangeDetectionTool:
                     project_id
                 )
                 code_service = CodeProviderService(self.sql_db)
+                # Use repo_path for local repos, otherwise use project_name
+                # Only use project_name if repo_path is not set AND it's a valid remote repo format
+                repo_path = project.get("repo_path")
+                if repo_path:
+                    repo_identifier = repo_path
+                else:
+                    # Check if project_name is a local path before using it
+                    project_name = project["project_name"]
+                    if os.path.isabs(project_name) or os.path.isdir(
+                        os.path.expanduser(project_name)
+                    ):
+                        repo_identifier = project_name
+                    else:
+                        # Not a local path, use project_name (will be validated by provider)
+                        repo_identifier = project_name
+
                 file_content = code_service.get_file_content(
-                    project["project_name"],
+                    repo_identifier,
                     relative_file_path,
                     0,
                     0,
@@ -248,43 +408,140 @@ class ChangeDetectionTool:
                 import os
 
                 provider_type = os.getenv("CODE_PROVIDER", "github").lower()
-                actual_repo_name = get_actual_repo_name_for_lookup(
-                    repo_name, provider_type
-                )
-                logging.info(
-                    f"[CHANGE_DETECTION] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}"
-                )
 
-                # Create provider with proper auth for this specific repo
-                provider = CodeProviderFactory.create_provider_with_fallback(
-                    actual_repo_name
-                )
+                # Use repo_path for local repos, otherwise normalize the repo_name
+                if repo_path:
+                    actual_repo_name = repo_path
+                    logging.info(
+                        f"[CHANGE_DETECTION] Using local repo_path: {actual_repo_name}"
+                    )
+                else:
+                    actual_repo_name = get_actual_repo_name_for_lookup(
+                        repo_name, provider_type
+                    )
+                    logging.info(
+                        f"[CHANGE_DETECTION] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}"
+                    )
 
-                # Get default branch first
-                github_client = provider.client
-                repo = github_client.get_repo(actual_repo_name)
-                default_branch = repo.default_branch
-                logging.info(
-                    f"[CHANGE_DETECTION] Default branch: {default_branch}, comparing with: {branch_name}"
-                )
+                # For local repos, skip provider creation and use git diff directly
+                if repo_path and os.path.isdir(repo_path):
+                    # Local repository - use git diff for accurate change detection
+                    from git import Repo as GitRepo
 
-                # Use provider's compare_branches method
-                logging.info(
-                    "[CHANGE_DETECTION] Using provider's compare_branches method"
-                )
-                comparison_result = provider.compare_branches(
-                    actual_repo_name, default_branch, branch_name
-                )
+                    git_repo = GitRepo(actual_repo_name)
 
-                # Extract patches from comparison result
-                patches_dict = {
-                    file["filename"]: file["patch"]
-                    for file in comparison_result["files"]
-                    if "patch" in file
-                }
-                logging.info(
-                    f"[CHANGE_DETECTION] Comparison complete: {len(patches_dict)} files with patches, {comparison_result['commits']} commits"
-                )
+                    # Get default branch (usually main or master)
+                    try:
+                        # Try to get the default branch from git config
+                        default_branch = git_repo.git.symbolic_ref(
+                            "refs/remotes/origin/HEAD"
+                        ).split("/")[-1]
+                    except Exception:
+                        # Fallback to common default branch names
+                        if "main" in git_repo.heads:
+                            default_branch = "main"
+                        elif "master" in git_repo.heads:
+                            default_branch = "master"
+                        else:
+                            default_branch = git_repo.active_branch.name
+
+                    current_branch = branch_name or git_repo.active_branch.name
+                    logging.info(
+                        f"[CHANGE_DETECTION] Local repo - comparing {default_branch}..{current_branch}"
+                    )
+
+                    # Get all changes from default branch (includes committed + uncommitted)
+                    # This is equivalent to: git diff <default_branch>
+                    patches_dict = {}
+                    try:
+                        # Load .gitignore patterns to filter out ignored files
+                        gitignore_spec = self._get_gitignore_spec(actual_repo_name)
+
+                        # Use git diff <default_branch> to get all changes from that branch
+                        # This includes both committed changes on current branch AND uncommitted changes
+                        diff_output = git_repo.git.diff(default_branch, unified=3)
+
+                        # Parse diff output to get file-level patches
+                        if diff_output:
+                            current_file = None
+                            current_patch = []
+                            for line in diff_output.splitlines():
+                                if line.startswith("diff --git"):
+                                    # Save previous file
+                                    if current_file:
+                                        # Only add file if it doesn't match .gitignore patterns
+                                        if (
+                                            not gitignore_spec
+                                            or not gitignore_spec.match_file(
+                                                current_file
+                                            )
+                                        ):
+                                            patches_dict[current_file] = "\n".join(
+                                                current_patch
+                                            )
+                                        else:
+                                            logging.debug(
+                                                f"[CHANGE_DETECTION] Excluding ignored file: {current_file}"
+                                            )
+                                    # Extract filename
+                                    parts = line.split()
+                                    if len(parts) >= 3:
+                                        current_file = parts[2].lstrip("a/")
+                                        current_patch = [line]
+                                elif current_file:
+                                    current_patch.append(line)
+                            # Save last file
+                            if current_file:
+                                # Only add file if it doesn't match .gitignore patterns
+                                if not gitignore_spec or not gitignore_spec.match_file(
+                                    current_file
+                                ):
+                                    patches_dict[current_file] = "\n".join(
+                                        current_patch
+                                    )
+                                else:
+                                    logging.debug(
+                                        f"[CHANGE_DETECTION] Excluding ignored file: {current_file}"
+                                    )
+
+                        logging.info(
+                            f"[CHANGE_DETECTION] Local repo - found {len(patches_dict)} changed files (diff from {default_branch})"
+                        )
+                    except Exception as e:
+                        logging.error(
+                            f"[CHANGE_DETECTION] Error getting local changes: {e}"
+                        )
+                        patches_dict = {}
+                else:
+                    # Remote repository - create provider with proper auth
+                    provider = CodeProviderFactory.create_provider_with_fallback(
+                        actual_repo_name
+                    )
+
+                    github_client = provider.client
+                    repo = github_client.get_repo(actual_repo_name)
+                    default_branch = repo.default_branch
+                    logging.info(
+                        f"[CHANGE_DETECTION] Remote repo - default branch: {default_branch}, comparing with: {branch_name}"
+                    )
+
+                    # Use provider's compare_branches method
+                    logging.info(
+                        "[CHANGE_DETECTION] Using provider's compare_branches method"
+                    )
+                    comparison_result = provider.compare_branches(
+                        actual_repo_name, default_branch, branch_name
+                    )
+
+                    # Extract patches from comparison result
+                    patches_dict = {
+                        file["filename"]: file["patch"]
+                        for file in comparison_result["files"]
+                        if "patch" in file
+                    }
+                    logging.info(
+                        f"[CHANGE_DETECTION] Comparison complete: {len(patches_dict)} files with patches, {comparison_result['commits']} commits"
+                    )
 
             elif isinstance(code_service.service_instance, GithubService):
                 logging.info("[CHANGE_DETECTION] Using GithubService for diff")
@@ -427,15 +684,40 @@ class ChangeDetectionTool:
                             project_id, node_id_query
                         )
                         if relevance_search:
-                            node_id = relevance_search[0]["node_id"]
+                            node_id = relevance_search[0].get("node_id")
                             if node_id:
                                 node_ids.append(node_id)
                         else:
-                            node_ids.append(
-                                GetCodeFromNodeIdTool(self.sql_db, self.user_id).run(
-                                    project_id, identifier
-                                )["node_id"]
-                            )
+                            # Fallback: try to find node by file path and function name
+                            # Identifier format is 'file_path:function_name'
+                            # Parse identifier into file_path and function_name
+                            if ":" in identifier:
+                                file_path, function_name = identifier.rsplit(":", 1)
+
+                                # Try to find node by file path and name
+                                found_node_id = self._find_node_by_file_and_name(
+                                    project_id, file_path, function_name
+                                )
+
+                                if found_node_id:
+                                    node_ids.append(found_node_id)
+                                else:
+                                    # Last resort: try GetCodeFromNodeIdTool with identifier as-is
+                                    # (in case the identifier IS the actual node_id format)
+                                    fallback_result = GetCodeFromNodeIdTool(
+                                        self.sql_db, self.user_id
+                                    ).run(project_id, identifier)
+
+                                    # Check if result has an error or missing node_id
+                                    if "error" in fallback_result:
+                                        logging.warning(
+                                            f"[CHANGE_DETECTION] Could not find node for identifier '{identifier}': {fallback_result['error']}"
+                                        )
+                                        continue
+
+                                    node_id = fallback_result.get("node_id")
+                                    if node_id:
+                                        node_ids.append(node_id)
 
                     # Fetch code for node ids and store in a dict
                     node_code_dict = {}
@@ -457,7 +739,7 @@ class ChangeDetectionTool:
                             or "file_path" not in node_code
                         ):
                             logging.warning(
-                                f"[CHANGE_DETECTION] Missing required fields for node {node_id}: {node_code}"
+                                f"[CHANGE_DETECTION] Missing required fields for node {node_id}"
                             )
                             continue
 
@@ -511,9 +793,24 @@ class ChangeDetectionTool:
                             )
                         )
 
-                    result = ChangeDetectionResponse(
-                        patches=patches_dict, changes=changes_list
-                    )
+                    # For local repos with too many changes, return only file names instead of full patches
+                    # to avoid context length issues
+                    if len(patches_dict) > 50:
+                        logging.warning(
+                            f"[CHANGE_DETECTION] Too many patches ({len(patches_dict)}), returning file names only"
+                        )
+                        # Convert patches to just file names with line counts
+                        patches_summary = {
+                            filename: f"Changed ({len(patch.splitlines())} lines)"
+                            for filename, patch in patches_dict.items()
+                        }
+                        result = ChangeDetectionResponse(
+                            patches=patches_summary, changes=changes_list
+                        )
+                    else:
+                        result = ChangeDetectionResponse(
+                            patches=patches_dict, changes=changes_list
+                        )
                     logging.info(
                         f"[CHANGE_DETECTION] Returning result with {len(patches_dict)} patches and {len(changes_list)} changes"
                     )

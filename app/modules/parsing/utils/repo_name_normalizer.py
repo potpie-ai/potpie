@@ -57,13 +57,15 @@ def normalize_repo_name(repo_name: str, provider_type: str = None) -> str:
 
 def get_actual_repo_name_for_lookup(repo_name: str, provider_type: str = None) -> str:
     """
-    Get the actual repository name that should be used for database lookups.
+    Get the actual repository name that should be used for API calls.
 
-    This is the reverse of normalize_repo_name - it converts the normalized name
-    back to the format that the provider actually uses.
+    For GitBucket: The API documentation (https://github.com/gitbucket/gitbucket/wiki/API-WebHook)
+    does not explicitly require 'root/repo' format. However, GitBucket API responses return
+    'root' as the owner name. We try the username format first, and if that fails, fall back
+    to 'root/repo' format.
 
     Args:
-        repo_name: Normalized repository name
+        repo_name: Normalized repository name (e.g., 'dhiren/repo')
         provider_type: Code provider type
 
     Returns:
@@ -78,17 +80,37 @@ def get_actual_repo_name_for_lookup(repo_name: str, provider_type: str = None) -
 
     # GitBucket specific handling
     if provider_type == "gitbucket":
-        # Only reverse-map when we previously normalized from 'root/<repo>' to '<username>/<repo>'
+        # According to GitBucket API docs, the format is owner/repo
+        # The docs don't explicitly require 'root' format, but API responses return 'root' as owner
+        # Try using the username format first (as per GitHub API v3 compatibility)
+        # If API calls fail, the caller should retry with 'root/repo' format
         actual_username = os.getenv("GITBUCKET_USERNAME")
+
         if actual_username and repo_name.startswith(f"{actual_username}/"):
-            parts = repo_name.split("/")
-            if len(parts) == 2:
-                actual_name = f"root/{parts[1]}"
-                logger.debug(
-                    "GitBucket: Converting '%s' to '%s' for API calls",
-                    repo_name,
-                    actual_name,
-                )
-                return actual_name
+            logger.debug(
+                "GitBucket: Using username format '%s' for API calls (per GitHub API v3 compatibility)",
+                repo_name,
+            )
+            return repo_name
+
+        # If repo_name is already 'root/repo', use it as-is
+        if repo_name.startswith("root/"):
+            logger.debug(
+                "GitBucket: Using 'root' format '%s' for API calls",
+                repo_name,
+            )
+            return repo_name
+
+        # If we have a username but repo_name doesn't match, try converting to root format
+        # This handles cases where normalization happened but we need the API format
+        if actual_username:
+            repo_part = repo_name.split("/", 1)[1] if "/" in repo_name else repo_name
+            root_repo_name = f"root/{repo_part}"
+            logger.debug(
+                "GitBucket: Converting '%s' to '%s' for API calls (fallback to root format)",
+                repo_name,
+                root_repo_name,
+            )
+            return root_repo_name
 
     return repo_name

@@ -3,12 +3,19 @@ from app.modules.intelligence.agents.chat_agents.agent_config import (
     TaskConfig,
 )
 from app.modules.intelligence.agents.chat_agents.pydantic_agent import PydanticRagAgent
+from app.modules.intelligence.agents.chat_agents.pydantic_multi_agent import (
+    PydanticMultiAgent,
+    AgentType as MultiAgentType,
+)
+from app.modules.intelligence.agents.multi_agent_config import MultiAgentConfig
 from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.provider.exceptions import UnsupportedProviderError
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class LowLevelDesignAgent(ChatAgent):
@@ -50,17 +57,60 @@ class LowLevelDesignAgent(ChatAgent):
                 "github_tool",
                 "think",
                 "get_linear_issue",
+                "get_jira_issue",
+                "search_jira_issues",
+                "create_jira_issue",
+                "update_jira_issue",
+                "add_jira_comment",
+                "transition_jira_issue",
+                "get_jira_projects",
+                "get_jira_project_details",
+                "link_jira_issues",
+                "get_jira_project_users",
                 "fetch_file",
                 "analyze_code_structure",
                 "bash_command",
             ]
         )
 
-        if not self.llm_provider.supports_pydantic("chat"):
-            raise UnsupportedProviderError(
-                f"Model '{self.llm_provider.chat_config.model}' does not support Pydantic-based agents."
+        supports_pydantic = self.llm_provider.supports_pydantic("chat")
+        should_use_multi = MultiAgentConfig.should_use_multi_agent("LLD_agent")
+
+        logger.info(
+            f"LowLevelDesignAgent: supports_pydantic={supports_pydantic}, should_use_multi_agent={should_use_multi}"
+        )
+        logger.info(f"Current model: {self.llm_provider.chat_config.model}")
+        logger.info(f"Model capabilities: {self.llm_provider.chat_config.capabilities}")
+
+        if supports_pydantic:
+            if should_use_multi:
+                logger.info("✅ Using PydanticMultiAgent (multi-agent system)")
+                # Create specialized delegate agents for low-level design
+                delegate_agents = {
+                    MultiAgentType.THINK_EXECUTE: AgentConfig(
+                        role="Design Planning Specialist",
+                        goal="Create comprehensive low-level design plans based on analysis",
+                        backstory="You are a senior architect who excels at creating detailed, actionable design plans that follow best practices.",
+                        tasks=[
+                            TaskConfig(
+                                description="Create detailed low-level design plans with clear implementation steps and architectural decisions",
+                                expected_output="Comprehensive low-level design document with implementation roadmap",
+                            )
+                        ],
+                        max_iter=20,
+                    ),
+                }
+                return PydanticMultiAgent(
+                    self.llm_provider, agent_config, tools, None, delegate_agents
+                )
+            else:
+                logger.info("❌ Multi-agent disabled by config, using PydanticRagAgent")
+                return PydanticRagAgent(self.llm_provider, agent_config, tools)
+        else:
+            logger.error(
+                f"❌ Model '{self.llm_provider.chat_config.model}' does not support Pydantic - using fallback PydanticRagAgent"
             )
-        return PydanticRagAgent(self.llm_provider, agent_config, tools)
+            return PydanticRagAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if ctx.node_ids and len(ctx.node_ids) > 0:

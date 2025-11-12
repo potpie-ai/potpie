@@ -54,7 +54,7 @@ class GetCodeFromNodeIdTool:
         try:
             node_data = self._get_node_data(project_id, node_id)
             if not node_data:
-                logger.error(
+                logger.warning(
                     f"Node with ID '{node_id}' not found in repo '{project_id}'"
                 )
                 return {

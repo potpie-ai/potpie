@@ -196,12 +196,34 @@ class CodeGraphService:
 
 class SimpleIO:
     def read_text(self, fname):
-        try:
-            with open(fname, "r", encoding="utf-8") as f:
-                return f.read()
-        except UnicodeDecodeError:
-            logging.warning(f"Could not read {fname} as UTF-8. Skipping this file.")
-            return ""
+        """
+        Read file with multiple encoding fallbacks.
+
+        Tries encodings in order:
+        1. utf-8 (most common)
+        2. utf-8-sig (UTF-8 with BOM)
+        3. utf-16 (common in Windows files)
+        4. latin-1 (fallback that accepts all bytes)
+        """
+        encodings = ["utf-8", "utf-8-sig", "utf-16", "latin-1"]
+
+        for encoding in encodings:
+            try:
+                with open(fname, "r", encoding=encoding) as f:
+                    content = f.read()
+                    if encoding != "utf-8":
+                        logging.info(f"Read {fname} using {encoding} encoding")
+                    return content
+            except (UnicodeDecodeError, UnicodeError):
+                continue
+            except Exception as e:
+                logging.error(f"Error reading {fname}: {e}")
+                return ""
+
+        logging.warning(
+            f"Could not read {fname} with any supported encoding. Skipping this file."
+        )
+        return ""
 
     def tool_error(self, message):
         logging.error(f"Error: {message}")
