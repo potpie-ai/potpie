@@ -7,6 +7,7 @@ import uuid
 from typing import Any, Tuple
 from urllib.parse import urlparse, urlunparse
 
+import chardet
 import requests
 import requests.auth
 from fastapi import HTTPException
@@ -92,27 +93,66 @@ class ParseHelper:
         return repo, owner, auth
 
     def is_text_file(self, file_path):
-        def open_text_file(file_path):
+        """
+        Determine if a file is a text file by checking extension and content.
+        Uses chardet for automatic encoding detection to handle all codecs.
+        """
+
+        def check_text_content(file_path):
+            """
+            Check if file content is text using chardet for encoding detection.
+            Also validates if content looks like text (printable characters).
+            """
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    f.read(1024)
-                return True
-            except UnicodeDecodeError:
-                logger.debug(f"ParseHelper: UTF-8 decode failed for {file_path}, trying latin-1")
-                try:
-                    with open(file_path, "r", encoding="latin-1") as f:
-                        content = f.read(1024)
-                        # Check if it looks like text (printable characters)
-                        printable_ratio = sum(c.isprintable() or c.isspace() for c in content) / len(content) if content else 0
-                        if printable_ratio > 0.7:  # If more than 70% is printable, consider it text
-                            logger.debug(f"ParseHelper: File {file_path} is text (latin-1 encoding)")
-                            return True
-                        else:
-                            logger.debug(f"ParseHelper: File {file_path} is likely binary (low printable ratio: {printable_ratio:.2f})")
-                            return False
-                except Exception as e:
-                    logger.warning(f"ParseHelper: Failed to read {file_path} with latin-1: {e}")
+                # Read a sample of the file (8KB for better detection)
+                with open(file_path, "rb") as f:
+                    sample = f.read(8192)
+
+                if not sample:
+                    # Empty files are considered text
+                    return True
+
+                # Use chardet to detect encoding
+                detection = chardet.detect(sample)
+                encoding = detection.get("encoding")
+                confidence = detection.get("confidence", 0)
+
+                # If chardet can't detect with reasonable confidence, likely binary
+                if not encoding or confidence < 0.5:
+                    logger.debug(
+                        f"ParseHelper: File {file_path} has low encoding confidence "
+                        f"({confidence:.2%}), likely binary"
+                    )
                     return False
+
+                # Try to decode with detected encoding
+                try:
+                    content = sample.decode(encoding)
+                except (UnicodeDecodeError, LookupError):
+                    logger.debug(
+                        f"ParseHelper: Failed to decode {file_path} with detected encoding {encoding}"
+                    )
+                    return False
+
+                # Calculate printable character ratio
+                printable_count = sum(c.isprintable() or c.isspace() for c in content)
+                printable_ratio = printable_count / len(content) if content else 0
+
+                # If less than 70% printable, likely binary
+                if printable_ratio < 0.70:
+                    logger.debug(
+                        f"ParseHelper: File {file_path} is likely binary "
+                        f"(printable ratio: {printable_ratio:.2%}, encoding: {encoding})"
+                    )
+                    return False
+
+                logger.debug(
+                    f"ParseHelper: Validated {file_path} as text "
+                    f"(encoding: {encoding}, confidence: {confidence:.2%}, "
+                    f"printable ratio: {printable_ratio:.2%})"
+                )
+                return True
+
             except FileNotFoundError:
                 logger.warning(f"ParseHelper: File not found during text check: {file_path}")
                 return False
@@ -120,11 +160,16 @@ class ParseHelper:
                 logger.warning(f"ParseHelper: Permission denied during text check: {file_path}")
                 return False
             except Exception as e:
-                logger.error(f"ParseHelper: Unexpected error checking if file is text {file_path}: {e}")
+                logger.error(
+                    f"ParseHelper: Unexpected error checking if file is text {file_path}: {e}"
+                )
                 return False
 
-        ext = file_path.split(".")[-1]
+        ext = file_path.split(".")[-1].lower()
+
+        # Binary/executable extensions that should NEVER be parsed as text
         exclude_extensions = [
+            # Images
             "png",
             "jpg",
             "jpeg",
@@ -134,20 +179,91 @@ class ParseHelper:
             "webp",
             "ico",
             "svg",
+            # Videos
             "mp4",
             "avi",
             "mov",
             "wmv",
             "flv",
+            "webm",
+            "mkv",
+            # Archives
+            "zip",
+            "tar",
+            "gz",
+            "bz2",
+            "7z",
+            "rar",
+            "xz",
+            # Executables and libraries
+            "exe",
+            "dll",
+            "so",
+            "dylib",
+            "lib",
+            "a",
+            "o",
+            "obj",
+            # Cryptographic/binary formats
+            "snk",
+            "pfx",
+            "cer",
+            "der",
+            "p12",
+            "key",
+            "crt",
+            "pem",
+            # Audio
+            "wav",
+            "mp3",
+            "ogg",
+            "flac",
+            "aac",
+            "wma",
+            # Databases
+            "db",
+            "sqlite",
+            "sqlite3",
+            "mdb",
+            # Jupyter notebooks (should be parsed differently)
             "ipynb",
+            # Other binary
+            "bin",
+            "dat",
+            "pyc",
+            "pyo",
+            "class",
+            "jar",
+            "war",
+            # Fonts
+            "ttf",
+            "otf",
+            "woff",
+            "woff2",
+            "eot",
+            # PDF and Office
+            "pdf",
+            "doc",
+            "docx",
+            "xls",
+            "xlsx",
+            "ppt",
+            "pptx",
         ]
+
         include_extensions = [
             "py",
             "js",
             "ts",
+            "tsx",
+            "jsx",
             "c",
             "cs",
             "cpp",
+            "cxx",
+            "cc",
+            "h",
+            "hpp",
             "el",
             "ex",
             "exs",
@@ -161,6 +277,7 @@ class ParseHelper:
             "rb",
             "rs",
             "md",
+            "mdx",
             "txt",
             "json",
             "yaml",
@@ -171,16 +288,35 @@ class ParseHelper:
             "conf",
             "xml",
             "html",
+            "htm",
             "css",
+            "scss",
+            "sass",
+            "less",
             "sh",
-            "md",
-            "mdx",
+            "bash",
+            "zsh",
+            "fish",
+            "ps1",
+            "psm1",
+            "bat",
+            "cmd",
             "xsq",
             "proto",
+            "sql",
+            "r",
+            "R",
+            "scala",
+            "kt",
+            "swift",
+            "m",
+            "vue",
+            "svelte",
         ]
+
         if ext in exclude_extensions:
             return False
-        elif ext in include_extensions or open_text_file(file_path):
+        elif ext in include_extensions or check_text_content(file_path):
             return True
         else:
             return False
@@ -211,15 +347,13 @@ class ParseHelper:
                 logger.error(
                     f"ParsingHelper: Invalid tarball URL type: {type(tarball_url)}, value: {tarball_url}"
                 )
-                raise ValueError(
-                    f"Expected string URL, got {type(tarball_url)}: {tarball_url}"
-                )
+                raise ValueError(f"Expected string URL, got {type(tarball_url)}: {tarball_url}")
 
             # For GitBucket private repos, use PyGithub client's requester for authenticated requests
             # According to GitBucket API docs: https://github.com/gitbucket/gitbucket/wiki/API-WebHook
             # Authentication: "Authorization: token YOUR_TOKEN" in header
             provider_type = os.getenv("CODE_PROVIDER", "github").lower()
-            
+
             if provider_type == "gitbucket" and hasattr(repo, "_provider") and repo._provider:
                 # For GitBucket, use the provider's authentication
                 # According to GitBucket API docs: https://github.com/gitbucket/gitbucket/wiki/API-WebHook
@@ -256,7 +390,7 @@ class ParseHelper:
                             github_client = repo._provider.client
                             if hasattr(github_client, "_Github__requester"):
                                 requester = github_client._Github__requester
-                                
+
                                 if hasattr(requester, "auth") and hasattr(requester.auth, "token"):
                                     token = requester.auth.token
                                 elif hasattr(requester, "_Requester__authorizationHeader"):
@@ -274,7 +408,9 @@ class ParseHelper:
                         token = os.getenv("CODE_PROVIDER_TOKEN")
                     
                     if not token:
-                        error_msg = "No authentication token available for GitBucket archive download"
+                        error_msg = (
+                            "No authentication token available for GitBucket archive download"
+                        )
                         logger.error(f"ParsingHelper: {error_msg}")
                         raise ValueError(error_msg)
                     
@@ -282,11 +418,9 @@ class ParseHelper:
                     # Try token header format first (API standard per GitBucket docs)
                     headers = {"Authorization": f"token {token}"}
                     logger.debug("ParsingHelper: Attempting archive download with token header")
-                    
-                    response = requests.get(
-                        tarball_url, stream=True, headers=headers, timeout=30
-                    )
-                    
+
+                    response = requests.get(tarball_url, stream=True, headers=headers, timeout=30)
+
                     # If token header fails with 401, try Basic Auth with repo owner username
                     # GitBucket web endpoints sometimes require Basic Auth (supported since v4.3)
                     if response.status_code == 401:
@@ -306,10 +440,8 @@ class ParseHelper:
                 headers = {}
                 if auth:
                     headers = {"Authorization": f"token {auth.token}"}
-                response = requests.get(
-                    tarball_url, stream=True, headers=headers, timeout=30
-                )
-            
+                response = requests.get(tarball_url, stream=True, headers=headers, timeout=30)
+
             response.raise_for_status()
 
         except requests.exceptions.HTTPError as e:
@@ -328,10 +460,8 @@ class ParseHelper:
                         "ParsingHelper: Archive download failed with 401 for GitBucket private repo, "
                         "falling back to git clone"
                     )
-                    return await self._clone_repository_with_auth(
-                        repo, branch, target_dir, user_id
-                    )
-            
+                    return await self._clone_repository_with_auth(repo, branch, target_dir, user_id)
+
             logger.error(f"ParsingHelper: Failed to download repository archive: {e}")
             raise ParsingFailedError("Failed to download repository archive") from e
         except requests.exceptions.RequestException as e:
@@ -401,22 +531,10 @@ class ParseHelper:
                         )
                         logger.error(f"ParsingHelper: {error_msg}")
                         raise ParsingFailedError(error_msg)
-                    
+
                     extracted_dir = os.path.join(temp_dir, extracted_contents[0])
                     logger.info(f"ParsingHelper: Main extracted directory: {extracted_dir}")
-                    
-                    # Verify the extracted directory exists and is accessible
-                    if not os.path.exists(extracted_dir):
-                        error_msg = f"Extracted directory does not exist: {extracted_dir}"
-                        logger.error(f"ParsingHelper: {error_msg}")
-                        raise ParsingFailedError(error_msg)
-                    
-                    if not os.path.isdir(extracted_dir):
-                        error_msg = f"Extracted path is not a directory: {extracted_dir}"
-                        logger.error(f"ParsingHelper: {error_msg}")
-                        raise ParsingFailedError(error_msg)
-                    
-                    logger.debug(f"ParsingHelper: Walking through extracted directory to filter text files")
+
                     text_files_count = 0
                     skipped_files_count = 0
                     error_files_count = 0
@@ -441,9 +559,7 @@ class ParseHelper:
                             
                             if is_text:
                                 try:
-                                    relative_path = os.path.relpath(
-                                        file_path, extracted_dir
-                                    )
+                                    relative_path = os.path.relpath(file_path, extracted_dir)
                                     dest_path = os.path.join(final_dir, relative_path)
                                     logger.debug(f"ParsingHelper: Copying text file from {file_path} to {dest_path}")
                                     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
@@ -472,7 +588,9 @@ class ParseHelper:
                         logger.error(f"ParsingHelper: Error removing temporary directory: {e}")
                         pass
             except tarfile.TarError as e:
-                error_msg = f"Failed to extract tarball: {e}. The archive may be corrupted or invalid."
+                error_msg = (
+                    f"Failed to extract tarball: {e}. The archive may be corrupted or invalid."
+                )
                 logger.error(f"ParsingHelper: {error_msg}")
                 logger.error(f"ParsingHelper: Tarball path: {tarball_path}, size: {os.path.getsize(tarball_path) if os.path.exists(tarball_path) else 'N/A'}")
                 raise ParsingFailedError(error_msg) from e
@@ -504,30 +622,8 @@ class ParseHelper:
             else getattr(repo, "full_name", "unknown")
         )
 
-        logger.info(
-            f"ParsingHelper: Cloning repository '{repo_name}' branch '{branch}' using git"
-        )
-        
-        # Ensure target_dir is accessible and create it if needed
-        # Convert Windows paths to WSL paths if necessary
-        if target_dir.startswith("C:") or target_dir.startswith("c:"):
-            # Windows path like C:\Users\... -> /mnt/c/Users/...
-            target_dir = "/mnt/" + target_dir[0].lower() + target_dir[2:].replace("\\", "/")
-            logger.info(f"ParsingHelper: Converted Windows path to WSL path: {target_dir}")
-        elif not target_dir.startswith("/"):
-            # Relative path or malformed - use current directory
-            logger.warning(f"ParsingHelper: Unexpected path format '{target_dir}', using current directory")
-            target_dir = os.path.abspath(os.path.join(os.getcwd(), target_dir))
-            logger.info(f"ParsingHelper: Resolved to absolute path: {target_dir}")
-        
-        # Create target directory if it doesn't exist
-        try:
-            os.makedirs(target_dir, exist_ok=True)
-            logger.info(f"ParsingHelper: Ensured target directory exists: {target_dir}")
-        except Exception as e:
-            logger.error(f"ParsingHelper: Failed to create target directory {target_dir}: {e}")
-            raise ParsingFailedError(f"Failed to create target directory: {e}") from e
-        
+        logger.info(f"ParsingHelper: Cloning repository '{repo_name}' branch '{branch}' using git")
+
         final_dir = os.path.join(
             target_dir,
             f"{repo.full_name.replace('/', '-').replace('.', '-')}-{branch.replace('/', '-').replace('.', '-')}-{user_id}",
@@ -556,7 +652,7 @@ class ParseHelper:
 
         parsed = urlparse(base_url)
         # Preserve the path component from base URL (e.g., /gitbucket)
-        base_path = parsed.path.rstrip('/')  # Remove trailing slash if present
+        base_path = parsed.path.rstrip("/")  # Remove trailing slash if present
         repo_path = f"{base_path}/{repo.full_name}.git" if base_path else f"/{repo.full_name}.git"
 
         clone_url_with_auth = urlunparse((
@@ -581,12 +677,7 @@ class ParseHelper:
 
         try:
             # Clone the repository to temporary directory with shallow clone for faster download
-            repo_obj = Repo.clone_from(
-                clone_url_with_auth,
-                temp_clone_dir,
-                branch=branch,
-                depth=1
-            )
+            repo_obj = Repo.clone_from(clone_url_with_auth, temp_clone_dir, branch=branch, depth=1)
             logger.info(f"ParsingHelper: Successfully cloned repository to temporary directory: {temp_clone_dir}")
 
             # Filter and copy only text files to final directory
@@ -648,9 +739,7 @@ class ParseHelper:
                             if text_files_count % 100 == 0:
                                 logger.info(f"ParsingHelper: Copied {text_files_count} text files from git clone so far...")
                         except (shutil.Error, OSError) as e:
-                            logger.error(
-                                f"ParsingHelper: Error copying file {file_path}: {e}"
-                            )
+                            logger.error(f"ParsingHelper: Error copying file {file_path}: {e}")
                             error_files_count += 1
                     else:
                         skipped_files_count += 1
@@ -687,6 +776,114 @@ class ParseHelper:
                 except Exception:
                     pass
             raise ParsingFailedError(f"Unexpected error during repository clone: {e}") from e
+
+    @staticmethod
+    def read_file_with_encoding(file_path, max_size=None):
+        """
+        Read a file with automatic encoding detection using chardet.
+        This handles all codecs properly (UTF-8, Windows-1252, Shift-JIS, GB2312, etc.)
+
+        Args:
+            file_path: Path to the file to read
+            max_size: Maximum number of bytes to read (None = read entire file)
+
+        Returns:
+            tuple: (content, encoding_used) where content is the decoded string
+
+        Raises:
+            FileNotFoundError: If file doesn't exist
+            PermissionError: If file can't be accessed
+            UnicodeDecodeError: If file can't be decoded with detected encoding
+            Exception: For other errors
+        """
+        try:
+            # Read file as bytes for encoding detection
+            with open(file_path, "rb") as f:
+                raw_bytes = f.read(max_size) if max_size else f.read()
+
+            if not raw_bytes:
+                # Empty file
+                return "", "utf-8"
+
+            # Try UTF-8 first (most common for source code)
+            try:
+                content = raw_bytes.decode("utf-8")
+                return content, "utf-8"
+            except UnicodeDecodeError:
+                # Not UTF-8, continue with chardet detection
+                pass
+
+            # Detect encoding using chardet
+            detection = chardet.detect(raw_bytes)
+            encoding = detection.get("encoding")
+            confidence = detection.get("confidence", 0)
+
+            # If chardet can't detect with reasonable confidence, try common encodings
+            if not encoding or confidence < 0.5:
+                logger.debug(
+                    f"ParseHelper: Low encoding confidence ({confidence:.2%}) for {file_path}, "
+                    f"trying fallback encodings"
+                )
+                # Try common encodings as fallback
+                fallback_encodings = ["utf-8", "cp1252", "latin-1"]
+                for fallback_encoding in fallback_encodings:
+                    try:
+                        content = raw_bytes.decode(fallback_encoding)
+                        logger.debug(
+                            f"ParseHelper: Successfully decoded {file_path} with {fallback_encoding}"
+                        )
+                        return content, fallback_encoding
+                    except (UnicodeDecodeError, LookupError):
+                        continue
+                # If all fallbacks fail, raise an error
+                raise UnicodeDecodeError(
+                    "unknown",
+                    raw_bytes,
+                    0,
+                    len(raw_bytes),
+                    f"Could not decode file with any encoding (chardet confidence: {confidence:.2%})",
+                )
+
+            # Try to decode with detected encoding
+            try:
+                content = raw_bytes.decode(encoding)
+                logger.debug(
+                    f"ParseHelper: Read {file_path} with {encoding} encoding "
+                    f"(confidence: {confidence:.2%})"
+                )
+                return content, encoding
+            except (UnicodeDecodeError, LookupError) as e:
+                # Chardet detection failed, try fallback encodings
+                logger.debug(
+                    f"ParseHelper: Failed to decode {file_path} with detected encoding {encoding} "
+                    f"(confidence: {confidence:.2%}): {e}. Trying fallback encodings."
+                )
+                fallback_encodings = ["utf-8", "cp1252", "latin-1"]
+                for fallback_encoding in fallback_encodings:
+                    try:
+                        content = raw_bytes.decode(fallback_encoding)
+                        logger.debug(
+                            f"ParseHelper: Successfully decoded {file_path} with fallback {fallback_encoding}"
+                        )
+                        return content, fallback_encoding
+                    except (UnicodeDecodeError, LookupError):
+                        continue
+                # If all fallbacks fail, raise the original error
+                logger.warning(
+                    f"ParseHelper: Failed to decode {file_path} with detected encoding {encoding} "
+                    f"and all fallback encodings"
+                )
+                raise
+
+        except FileNotFoundError:
+            logger.error(f"ParseHelper: File not found: {file_path}")
+            raise
+        except PermissionError:
+            logger.error(f"ParseHelper: Permission denied: {file_path}")
+            raise
+        except Exception as e:
+            logger.error(f"ParseHelper: Error reading file {file_path}: {e}")
+            raise
 
     @staticmethod
     def detect_repo_language(repo_dir):
@@ -729,84 +926,68 @@ class ParseHelper:
                 for file in files:
                     file_path = os.path.join(root, file)
                     ext = os.path.splitext(file)[1].lower()
+
                     try:
-                        with open(file_path, "r", encoding="utf-8") as f:
-                            content = f.read()
-                            total_chars += len(content)
-                            total_files_scanned += 1
-                            
-                            if ext == ".cs":
-                                lang_count["c_sharp"] += 1
-                            elif ext == ".c":
-                                lang_count["c"] += 1
-                            elif ext in [".cpp", ".cxx", ".cc"]:
-                                lang_count["cpp"] += 1
-                            elif ext == ".el":
-                                lang_count["elisp"] += 1
-                            elif ext == ".ex" or ext == ".exs":
-                                lang_count["elixir"] += 1
-                            elif ext == ".elm":
-                                lang_count["elm"] += 1
-                            elif ext == ".go":
-                                lang_count["go"] += 1
-                            elif ext == ".java":
-                                lang_count["java"] += 1
-                            elif ext in [".js", ".jsx"]:
-                                lang_count["javascript"] += 1
-                            elif ext == ".ml" or ext == ".mli":
-                                lang_count["ocaml"] += 1
-                            elif ext == ".php":
-                                lang_count["php"] += 1
-                            elif ext == ".py":
-                                lang_count["python"] += 1
-                            elif ext == ".ql":
-                                lang_count["ql"] += 1
-                            elif ext == ".rb":
-                                lang_count["ruby"] += 1
-                            elif ext == ".rs":
-                                lang_count["rust"] += 1
-                            elif ext in [".ts", ".tsx"]:
-                                lang_count["typescript"] += 1
-                            elif ext in [".md", ".mdx"]:
-                                lang_count["markdown"] += 1
-                            elif ext in [".xml", ".xsq"]:
-                                lang_count["xml"] += 1
-                            else:
-                                lang_count["other"] += 1
-                    except UnicodeDecodeError as e:
+                        # Use the new helper that handles all encodings with chardet
+                        content, encoding_used = ParseHelper.read_file_with_encoding(file_path)
+                        total_chars += len(content)
+                        total_files_scanned += 1
+
+                        # Log when non-UTF-8 encoding was needed (info level for visibility)
+                        if encoding_used.lower() not in ["utf-8", "ascii"]:
+                            logger.info(
+                                f"ParseHelper: Read {file_path} using {encoding_used} encoding"
+                            )
+
+                        if ext == ".cs":
+                            lang_count["c_sharp"] += 1
+                        elif ext == ".c":
+                            lang_count["c"] += 1
+                        elif ext in [".cpp", ".cxx", ".cc"]:
+                            lang_count["cpp"] += 1
+                        elif ext == ".el":
+                            lang_count["elisp"] += 1
+                        elif ext == ".ex" or ext == ".exs":
+                            lang_count["elixir"] += 1
+                        elif ext == ".elm":
+                            lang_count["elm"] += 1
+                        elif ext == ".go":
+                            lang_count["go"] += 1
+                        elif ext == ".java":
+                            lang_count["java"] += 1
+                        elif ext in [".js", ".jsx"]:
+                            lang_count["javascript"] += 1
+                        elif ext == ".ml" or ext == ".mli":
+                            lang_count["ocaml"] += 1
+                        elif ext == ".php":
+                            lang_count["php"] += 1
+                        elif ext == ".py":
+                            lang_count["python"] += 1
+                        elif ext == ".ql":
+                            lang_count["ql"] += 1
+                        elif ext == ".rb":
+                            lang_count["ruby"] += 1
+                        elif ext == ".rs":
+                            lang_count["rust"] += 1
+                        elif ext in [".ts", ".tsx"]:
+                            lang_count["typescript"] += 1
+                        elif ext in [".md", ".mdx"]:
+                            lang_count["markdown"] += 1
+                        elif ext in [".xml", ".xsq"]:
+                            lang_count["xml"] += 1
+                        else:
+                            lang_count["other"] += 1
+                    except (
+                        UnicodeDecodeError,
+                        FileNotFoundError,
+                        PermissionError,
+                    ) as e:
                         encoding_errors.append({
                             "file": file_path,
                             "error": str(e),
-                            "type": "UnicodeDecodeError"
+                            "type": type(e).__name__
                         })
-                        logger.warning(f"ParseHelper: UnicodeDecodeError reading file {file_path}: {e}")
-                        # Try with different encoding
-                        try:
-                            with open(file_path, "r", encoding="latin-1") as f:
-                                content = f.read()
-                                total_chars += len(content)
-                                total_files_scanned += 1
-                                lang_count["other"] += 1
-                                logger.info(f"ParseHelper: Successfully read {file_path} with latin-1 encoding")
-                        except Exception as fallback_error:
-                            logger.error(f"ParseHelper: Failed to read {file_path} even with latin-1 encoding: {fallback_error}")
-                            encoding_errors[-1]["fallback_error"] = str(fallback_error)
-                        continue
-                    except FileNotFoundError as e:
-                        encoding_errors.append({
-                            "file": file_path,
-                            "error": str(e),
-                            "type": "FileNotFoundError"
-                        })
-                        logger.warning(f"ParseHelper: File not found {file_path}: {e}")
-                        continue
-                    except PermissionError as e:
-                        encoding_errors.append({
-                            "file": file_path,
-                            "error": str(e),
-                            "type": "PermissionError"
-                        })
-                        logger.warning(f"ParseHelper: Permission denied for file {file_path}: {e}")
+                        logger.warning(f"ParseHelper: Error reading file {file_path}: {e}")
                         continue
                     except Exception as e:
                         encoding_errors.append({
@@ -814,8 +995,9 @@ class ParseHelper:
                             "error": str(e),
                             "type": type(e).__name__
                         })
-                        logger.error(f"ParseHelper: Unexpected error reading file {file_path}: {e}")
-                        logger.exception(f"ParseHelper: Exception details for {file_path}:")
+                        logger.warning(
+                            f"ParseHelper: Unexpected error reading file {file_path}: {e}"
+                        )
                         continue
         except (TypeError, FileNotFoundError, PermissionError) as e:
             logger.error(f"ParseHelper: Error accessing directory '{repo_dir}': {e}")
@@ -841,11 +1023,27 @@ class ParseHelper:
             logger.info(f"ParseHelper: Encoding error summary by type: {error_types}")
 
         # Determine the predominant language based on counts
-        predominant_language = max(lang_count, key=lang_count.get)
-        result_language = predominant_language if lang_count[predominant_language] > 0 else "other"
-        
-        logger.info(f"ParseHelper: Detected predominant language: {result_language} (count: {lang_count.get(result_language, 0)})")
-        
+        # Exclude 'other' from consideration - only use it if no actual programming language is found
+        programming_languages = {k: v for k, v in lang_count.items() if k != "other"}
+
+        if programming_languages:
+            # If we have any actual programming language files, use the most common one
+            predominant_language = max(programming_languages, key=programming_languages.get)
+            result_language = predominant_language if programming_languages[predominant_language] > 0 else "other"
+            logger.info(
+                f"ParseHelper: Detected predominant language: {result_language} "
+                f"(count: {lang_count.get(result_language, 0)}), "
+                f"programming language files found: {sum(programming_languages.values())}, "
+                f"other files: {lang_count.get('other', 0)}"
+            )
+        else:
+            # No programming language files found, default to 'other'
+            result_language = "other"
+            logger.info(
+                f"ParseHelper: No supported programming language files found, "
+                f"defaulting to 'other' (total files: {lang_count.get('other', 0)})"
+            )
+
         return result_language
 
     async def setup_project_directory(
@@ -869,9 +1067,7 @@ class ParseHelper:
         if isinstance(repo, Repo):
             # Local repository - use full path from Repo object
             repo_path = repo.working_tree_dir
-            full_name = repo_path.split("/")[
-                -1
-            ]  # Extract just the directory name for display
+            full_name = repo_path.split("/")[-1]  # Extract just the directory name for display
             logger.info(
                 f"ParsingHelper: Detected local repository at {repo_path} with name {full_name}"
             )
@@ -950,9 +1146,7 @@ class ParseHelper:
                     branch_details = repo_details.head.commit
                     latest_commit_sha = branch_details.hexsha
             except GitCommandError as e:
-                logger.error(
-                    f"Error checking out {'commit' if commit_id else 'branch'}: {e}"
-                )
+                logger.error(f"Error checking out {'commit' if commit_id else 'branch'}: {e}")
                 raise HTTPException(
                     status_code=400,
                     detail=f"Failed to checkout {'commit ' + commit_id if commit_id else 'branch ' + branch}",
@@ -1140,9 +1334,7 @@ class ParseHelper:
 
         return metadata
 
-    async def check_commit_status(
-        self, project_id: str, requested_commit_id: str = None
-    ) -> bool:
+    async def check_commit_status(self, project_id: str, requested_commit_id: str = None) -> bool:
         """
         Check if the current commit ID of the project matches the latest commit ID from the repository.
 
@@ -1198,9 +1390,7 @@ class ParseHelper:
         # We need to compare the stored commit with the latest branch commit
 
         if not repo_name:
-            logger.error(
-                f"Repository name or branch name not found for project ID {project_id}"
-            )
+            logger.error(f"Repository name or branch name not found for project ID {project_id}")
             return False
 
         if not branch_name:
@@ -1228,9 +1418,7 @@ class ParseHelper:
                 return False
 
             # Get the latest commit from the branch
-            logger.info(
-                f"check_commit_status: Getting latest commit from branch {branch_name}"
-            )
+            logger.info(f"check_commit_status: Getting latest commit from branch {branch_name}")
             branch = repo.get_branch(branch_name)
             latest_commit_id = branch.commit.sha
 
