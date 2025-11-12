@@ -1,7 +1,8 @@
 import asyncio
 import logging
 import os
-from typing import Any, Dict, Optional
+import random
+from typing import Any, Dict, List, Optional
 
 from github import Github
 from github.GithubException import UnknownObjectException
@@ -9,20 +10,10 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.core.config_provider import config_provider
 from app.modules.code_provider.provider_factory import CodeProviderFactory
-from app.modules.parsing.utils.repo_name_normalizer import (
-    get_actual_repo_name_for_lookup,
-)
-
-logger = logging.getLogger(__name__)
 
 
-class RepositoryAccessError(Exception):
-    """Raised when a repository cannot be accessed via the configured provider."""
-
-
-class GithubToolInput(BaseModel):
+class CodeProviderToolInput(BaseModel):
     repo_name: str = Field(
         description="The full repository name in format 'owner/repo' WITHOUT any quotes"
     )
@@ -35,8 +26,8 @@ class GithubToolInput(BaseModel):
     )
 
 
-class GithubTool:
-    name = "GitHub Tool"
+class CodeProviderTool:
+    name = "Code Provider Tool"
     description = """Fetches GitHub issues and pull request information including diffs.
         :param repo_name: string, the full repository name (owner/repo)
         :param issue_number: optional int, the issue or PR number to fetch
@@ -52,9 +43,25 @@ class GithubTool:
         Returns dictionary containing the issue/PR content, metadata, and success status.
         """
 
+    gh_token_list: List[str] = []
+
+    @classmethod
+    def initialize_tokens(cls):
+        token_string = os.getenv("GH_TOKEN_LIST", "")
+        cls.gh_token_list = [
+            token.strip() for token in token_string.split(",") if token.strip()
+        ]
+        if not cls.gh_token_list:
+            raise ValueError(
+                "GitHub token list is empty or not set in environment variables"
+            )
+        logging.info(f"Initialized {len(cls.gh_token_list)} GitHub tokens")
+
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db
         self.user_id = user_id
+        if not CodeProviderTool.gh_token_list:
+            CodeProviderTool.initialize_tokens()
 
     async def arun(
         self,
@@ -84,68 +91,30 @@ class GithubTool:
                     "content": None,
                 }
             return content
-        except RepositoryAccessError as e:
-            logger.error("Repository access error: %s", str(e))
-            return {
-                "success": False,
-                "error": str(e),
-                "content": None,
-            }
         except Exception as e:
-            logger.exception("An unexpected error occurred: %s", str(e))
+            logging.exception(f"An unexpected error occurred: {str(e)}")
             return {
                 "success": False,
                 "error": f"An unexpected error occurred: {str(e)}",
                 "content": None,
             }
 
+    @classmethod
+    def get_public_github_instance(cls):
+        if not cls.gh_token_list:
+            cls.initialize_tokens()
+        token = random.choice(cls.gh_token_list)
+        return Github(token)
+
     def _get_github_client(self, repo_name: str) -> Github:
-        """Get GitHub client using provider factory with PAT-first fallback logic."""
+        """Get GitHub client using provider factory."""
         try:
-            provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
-        except ValueError as e:
-            logger.exception(
-                "Failed to create provider for repository '%s': %s", repo_name, str(e)
-            )
-            raise RepositoryAccessError(
-                f"Repository {repo_name} not found or inaccessible"
-            ) from e
+            # Use the standard provider factory instead of the GitHub-specific fallback
+            provider = CodeProviderFactory.create_provider()
+            return provider.client
         except Exception as e:
-            logger.exception(
-                "Unexpected error creating provider for repository '%s': %s",
-                repo_name,
-                str(e),
-            )
-            raise RepositoryAccessError(
-                f"Repository {repo_name} not found or inaccessible"
-            ) from e
-
-        if provider is None:
-            message = (
-                f"Provider factory returned None for repository '{repo_name}'. "
-                "Unable to obtain client."
-            )
-            logger.error(message)
-            raise RepositoryAccessError(message)
-
-        client = getattr(provider, "client", None)
-        if client is None:
-            message = (
-                f"Provider '{type(provider).__name__}' does not expose a client for "
-                f"repository '{repo_name}'."
-            )
-            logger.error(message)
-            raise RepositoryAccessError(message)
-
-        if not hasattr(client, "get_repo"):
-            message = (
-                f"Client of type '{type(client).__name__}' for repository "
-                f"'{repo_name}' does not support required operations."
-            )
-            logger.error(message)
-            raise RepositoryAccessError(message)
-
-        return client
+            logging.error(f"Failed to get GitHub client: {str(e)}")
+            raise Exception(f"Repository {repo_name} not found or inaccessible")
 
     def _fetch_github_content(
         self, repo_name: str, issue_number: Optional[int], is_pull_request: bool
@@ -153,13 +122,20 @@ class GithubTool:
         try:
             github = self._get_github_client(repo_name)
 
+            # Normalize input repo_name if needed, then get actual name for API calls
+            from app.modules.parsing.utils.repo_name_normalizer import (
+                normalize_repo_name,
+                get_actual_repo_name_for_lookup,
+            )
+            import os
+
             provider_type = os.getenv("CODE_PROVIDER", "github").lower()
-            actual_repo_name = get_actual_repo_name_for_lookup(repo_name, provider_type)
-            logger.info(
-                "[GITHUB_TOOL] Provider type: %s, Original repo: %s, Actual repo for API: %s",
-                provider_type,
-                repo_name,
-                actual_repo_name,
+            # Normalize input repo_name first (in case it comes in as "root/repo")
+            normalized_input = normalize_repo_name(repo_name, provider_type)
+            # Then convert to actual format for API calls
+            actual_repo_name = get_actual_repo_name_for_lookup(normalized_input, provider_type)
+            logging.info(
+                f"[CODE_PROVIDER_TOOL] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}"
             )
 
             repo = github.get_repo(actual_repo_name)
@@ -235,42 +211,33 @@ class GithubTool:
                         },
                     }
                 except UnknownObjectException:
-                    missing_item = "Pull request" if is_pull_request else "Issue"
                     return {
                         "success": False,
-                        "error": f"{missing_item} #{issue_number} not found in {repo_name}",
+                        "error": f"{'Pull request' if is_pull_request else 'Issue'} #{issue_number} not found in {repo_name}",
                         "content": None,
                     }
 
-        except RepositoryAccessError:
-            raise
         except Exception as e:
-            logger.error("Error fetching GitHub content: %s", str(e))
+            logging.error(f"Error fetching GitHub content: {str(e)}")
             return None
 
-    @staticmethod
-    def _has_pat_credentials() -> bool:
-        return bool(os.getenv("CODE_PROVIDER_TOKEN") or os.getenv("GH_TOKEN_LIST"))
 
-    @staticmethod
-    def _has_app_credentials() -> bool:
-        return bool(os.getenv("GITHUB_APP_ID") and config_provider.get_github_key())
+def code_provider_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
+    from app.modules.code_provider.provider_factory import has_code_provider_credentials
 
-
-def github_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
-    # Initialize when either PAT-based credentials or App credentials are present
-    if not (GithubTool._has_pat_credentials() or GithubTool._has_app_credentials()):
-        logger.warning(
-            "GitHub credentials not set (PAT or App). GitHub tool will not be initialized"
+    if not has_code_provider_credentials():
+        logging.warning(
+            "No code provider credentials configured. Please set CODE_PROVIDER_TOKEN, "
+            "GH_TOKEN_LIST, GITHUB_APP_ID, or CODE_PROVIDER_USERNAME/PASSWORD."
         )
         return None
 
-    tool_instance = GithubTool(sql_db, user_id)
+    tool_instance = CodeProviderTool(sql_db, user_id)
     return StructuredTool.from_function(
         coroutine=tool_instance.arun,
         func=tool_instance.run,
-        name="GitHub Content Fetcher",
-        description="""Fetches GitHub issues and pull request information including diffs.
+        name="Code Provider Content Fetcher",
+        description="""Fetches repository issues and pull request information including diffs.
         :param repo_name: string, the full repository name (owner/repo)
         :param issue_number: optional int, the issue or PR number to fetch
         :param is_pull_request: optional bool, whether to fetch a PR (True) or issue (False)
@@ -283,5 +250,5 @@ def github_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
             }
 
         Returns dictionary containing the issue/PR content, metadata, and success status.""",
-        args_schema=GithubToolInput,
+        args_schema=CodeProviderToolInput,
     )

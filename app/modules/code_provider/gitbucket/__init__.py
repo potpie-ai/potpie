@@ -1,0 +1,1 @@
+"""GitBucket provider module."""
