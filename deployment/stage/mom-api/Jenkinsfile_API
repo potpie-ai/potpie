@@ -57,7 +57,7 @@ pipeline {
                     def imageTag = env.GIT_COMMIT_HASH
                     echo "printing the user here"
                     sh "whoami && pwd"
-                    sh "sudo docker push ${DOCKER_REGISTRY}/mom-api-ss:${imageTag}"
+                    sh "sudo docker push ${DOCKER_REGISTRY}/mom-api:${imageTag}"
                 }
             }
         }
