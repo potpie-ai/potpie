@@ -17,16 +17,6 @@ pipeline {
         stage('Checkout') {
             steps {
                 script {
-                    // Determine environment based on branch
-                    def branch = env.GIT_BRANCH
-
-                    if (branch == "origin/main") {
-                        env.ENVIRONMENT = 'main'
-                    } else if (branch == "origin/custom-agents-production-release") {
-                        env.ENVIRONMENT = 'custom-agents-production-release'
-                    } else {
-                        error("Unknown branch: ${branch}. This pipeline only supports main and custom agents production release branches.")
-                    }
 
                     checkout scm
                     // Capture the short Git commit hash to use as the image tag
@@ -55,7 +45,7 @@ pipeline {
                     def dockerRegistry = env.DOCKER_REGISTRY
                     echo "Printing the saved docker registry from env:"
                     echo "${dockerRegistry}"
-                    sh "sudo docker build -f deployment/stage/convo-server/convo.Dockerfile -t ${DOCKER_REGISTRY}/convo:${imageTag} /var/lib/jenkins/workspace/conversation_server-pipeline"
+                    sh "sudo docker build -f deployment/stage/convo-server/convo.Dockerfile -t ${DOCKER_REGISTRY}/convo:${imageTag} ${env.WORKSPACE}"
                 }
             }
         }
