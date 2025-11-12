@@ -26,13 +26,13 @@ class GetJiraProjectsTool:
 
     name = "Get Jira Projects"
     description = """Fetch all Jira projects accessible to the authenticated user.
-    
+
     Use this tool when you need to:
     - List all available projects for the user
     - Find a project by name to get its key
     - Show the user what projects they can create issues in
     - Get project metadata (ID, key, name, lead, type)
-    
+
     Returns a list of all accessible projects with their details including:
     - Project key (used for creating issues)
     - Project name
@@ -104,16 +104,16 @@ def get_jira_projects_tool(db: Session, user_id: str) -> StructuredTool:
         func=tool_instance.run,
         name="Get Jira Projects",
         description="""Fetch all Jira projects accessible to the authenticated user.
-        
+
         Use this when you need to:
         - List all available projects
         - Find a project key by name
         - Show what projects the user can work with
         - Get project metadata for creating issues
-        
+
         Input:
         - max_results (int, optional): Maximum projects to return (default: 50, max: 100)
-        
+
         Returns list of projects with key, name, ID, type, lead, and URL.""",
         args_schema=GetJiraProjectsInput,
     )

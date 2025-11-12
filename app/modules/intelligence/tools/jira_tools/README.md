@@ -21,7 +21,7 @@ The Jira tools enable agents to perform common Jira operations on behalf of user
   - Set at creation time
   - Defines what type of work item it is
   - Examples: Bug, Task, Story, Epic, Subtask
-  
+
 - **Status**: The current STATE in the workflow (e.g., To Do, In Progress, Done)
   - Changes throughout the issue's lifecycle
   - Represents where the issue is in its workflow
