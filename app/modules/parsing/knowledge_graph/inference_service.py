@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import re
+import time
 from typing import Any, Dict, List, Optional
 
 import tiktoken
@@ -19,6 +20,7 @@ from app.modules.parsing.knowledge_graph.inference_schema import (
     DocstringResponse,
 )
 from app.modules.parsing.services.inference_cache_service import InferenceCacheService
+from app.modules.parsing.utils.timing_collector import get_timing_collector
 from app.modules.parsing.utils.content_hash import (
     generate_content_hash,
     is_content_cacheable,
@@ -128,6 +130,7 @@ class InferenceService:
                     break
                 all_nodes.extend(batch)
                 offset += batch_size
+        
         logger.info(f"DEBUGNEO4J: Fetched {len(all_nodes)} nodes for repo {repo_id}")
         return all_nodes
 
@@ -736,11 +739,17 @@ class InferenceService:
             return DocstringResponse(docstrings=[])
 
     async def generate_docstrings(self, repo_id: str) -> Dict[str, DocstringResponse]:
+        collector = get_timing_collector()
+        start_time = time.perf_counter()
         logger.info(
             f"DEBUGNEO4J: Function: {self.generate_docstrings.__name__}, Repo ID: {repo_id}"
         )
         self.log_graph_stats(repo_id)
+        
+        fetch_start = time.perf_counter()
         nodes = self.fetch_graph(repo_id)
+        fetch_elapsed = time.perf_counter() - fetch_start
+        collector.add_timing("generate_docstrings > fetch_graph", fetch_elapsed)
         logger.info(
             f"DEBUGNEO4J: After fetch graph, Repo ID: {repo_id}, Nodes: {len(nodes)}"
         )
@@ -750,6 +759,7 @@ class InferenceService:
         )
 
         # Prepare a list of nodes for bulk insert
+        prepare_start = time.perf_counter()
         nodes_to_index = [
             {
                 "project_id": repo_id,
@@ -762,15 +772,23 @@ class InferenceService:
             if node.get("file_path") not in {None, ""}
             and node.get("name") not in {None, ""}
         ]
+        prepare_elapsed = time.perf_counter() - prepare_start
+        collector.add_timing("generate_docstrings > prepare_search_indices", prepare_elapsed)
 
         # Perform bulk insert
+        search_index_start = time.perf_counter()
         await self.search_service.bulk_create_search_indices(nodes_to_index)
+        search_index_elapsed = time.perf_counter() - search_index_start
+        collector.add_timing("generate_docstrings > bulk_create_search_indices", search_index_elapsed)
 
         logger.info(
             f"Project {repo_id}: Created search indices over {len(nodes_to_index)} nodes"
         )
 
+        commit_start = time.perf_counter()
         await self.search_service.commit_indices()
+        commit_elapsed = time.perf_counter() - commit_start
+        collector.add_timing("generate_docstrings > commit_search_indices", commit_elapsed)
         # entry_points = self.get_entry_points(repo_id)
         # logger.info(
         #     f"DEBUGNEO4J: After get entry points, Repo ID: {repo_id}, Entry points: {len(entry_points)}"
@@ -786,14 +804,19 @@ class InferenceService:
         # )
         # self.log_graph_stats(repo_id)
         # Batch nodes (this mutates each node dict with cache-hit metadata)
+        batch_start = time.perf_counter()
         batches = self.batch_nodes(nodes, project_id=repo_id)
+        batch_elapsed = time.perf_counter() - batch_start
+        collector.add_timing("generate_docstrings > batch_nodes", batch_elapsed)
 
         # Process cached nodes after batching so hits are populated
+        cached_start = time.perf_counter()
         cached_nodes = [node for node in nodes if node.get("cached_inference")]
         for node in cached_nodes:
             node["project_id"] = repo_id
             await self.update_neo4j_with_cached_inference(node)
-
+        cached_elapsed = time.perf_counter() - cached_start
+        collector.add_timing("generate_docstrings > process_cached_nodes", cached_elapsed, count=len(cached_nodes))
         logger.info(f"Processed {len(cached_nodes)} cached nodes for project {repo_id}")
         all_docstrings = {"docstrings": []}
 
@@ -876,8 +899,11 @@ class InferenceService:
                     # Continue with next batch instead of failing entire operation
                     return DocstringResponse(docstrings=[])
 
+        llm_processing_start = time.perf_counter()
         tasks = [process_batch(batch, i) for i, batch in enumerate(batches)]
         results = await asyncio.gather(*tasks)
+        llm_processing_elapsed = time.perf_counter() - llm_processing_start
+        collector.add_timing("generate_docstrings > LLM_batch_processing", llm_processing_elapsed)
 
         for result in results:
             if not isinstance(result, DocstringResponse):
@@ -893,6 +919,8 @@ class InferenceService:
         if cache_service:
             cache_service.db.close()
 
+        elapsed = time.perf_counter() - start_time
+        collector.add_timing("generate_docstrings", elapsed)
         return updated_docstrings
 
     async def generate_response(
@@ -976,9 +1004,8 @@ class InferenceService:
             },
         ]
 
-        import time
-
-        start_time = time.time()
+        collector = get_timing_collector()
+        start_time = time.perf_counter()
         logger.info(f"Parsing project {repo_id}: Starting the inference process...")
 
         try:
@@ -988,14 +1015,17 @@ class InferenceService:
                 config_type="inference",
             )
         except Exception as e:
+            elapsed = time.perf_counter() - start_time
+            collector.add_timing("generate_response (ERROR)", elapsed)
             logger.error(
                 f"Parsing project {repo_id}: Inference request failed. Error: {str(e)}"
             )
             result = DocstringResponse(docstrings=[])
 
-        end_time = time.time()
+        elapsed = time.perf_counter() - start_time
+        collector.add_timing("generate_response", elapsed)
         logger.info(
-            f"Parsing project {repo_id}: Inference request completed. Time Taken: {end_time - start_time} seconds"
+            f"Parsing project {repo_id}: Inference request completed. Time Taken: {elapsed:.4f} seconds"
         )
         return result
 
@@ -1094,12 +1124,22 @@ class InferenceService:
             )
 
     async def run_inference(self, repo_id: str):
+        collector = get_timing_collector()
+        start_time = time.perf_counter()
+        
         docstrings = await self.generate_docstrings(repo_id)
         logger.info(
             f"DEBUGNEO4J: After generate docstrings, Repo ID: {repo_id}, Docstrings: {len(docstrings)}"
         )
         self.log_graph_stats(repo_id)
+        
+        vector_index_start = time.perf_counter()
         self.create_vector_index()
+        vector_index_elapsed = time.perf_counter() - vector_index_start
+        collector.add_timing("run_inference > create_vector_index", vector_index_elapsed)
+        
+        elapsed = time.perf_counter() - start_time
+        collector.add_timing("run_inference", elapsed)
 
     def query_vector_index(
         self,

@@ -3,6 +3,7 @@ import logging
 import os
 import shutil
 import tarfile
+import time
 import uuid
 from typing import Any, Tuple
 from urllib.parse import urlparse, urlunparse
@@ -16,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
 from app.modules.parsing.utils.repo_name_normalizer import normalize_repo_name
+from app.modules.parsing.utils.timing_collector import get_timing_collector
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 
@@ -48,6 +50,9 @@ class ParseHelper:
     async def clone_or_copy_repository(
         self, repo_details: RepoDetails, user_id: str
     ) -> Tuple[Any, str, Any]:
+        collector = get_timing_collector()
+        start_time = time.perf_counter()
+        
         owner = None
         auth = None
         repo = None
@@ -89,6 +94,8 @@ class ParseHelper:
                     detail="Repository not found or inaccessible on GitHub",
                 )
 
+        elapsed = time.perf_counter() - start_time
+        collector.add_timing("clone_or_copy_repository", elapsed)
         return repo, owner, auth
 
     def is_text_file(self, file_path):
@@ -188,6 +195,8 @@ class ParseHelper:
     async def download_and_extract_tarball(
         self, repo, branch, target_dir, auth, repo_details, user_id
     ):
+        collector = get_timing_collector()
+        start_time = time.perf_counter()
         # Get repo name for logging - handle both Repo objects and repo objects with full_name
         repo_name = (
             repo.working_tree_dir
@@ -200,10 +209,13 @@ class ParseHelper:
         )
 
         try:
+            get_url_start = time.perf_counter()
             logger.info(
                 f"ParsingHelper: Getting archive link for repo '{repo_name}', branch '{branch}'"
             )
             tarball_url = repo.get_archive_link("tarball", branch)
+            get_url_elapsed = time.perf_counter() - get_url_start
+            collector.add_timing("download_and_extract_tarball > get_archive_url", get_url_elapsed)
             logger.info(f"ParsingHelper: Retrieved tarball URL: {tarball_url}")
 
             # Validate that tarball_url is a string, not an exception object
@@ -329,6 +341,8 @@ class ParseHelper:
                 )
 
             response.raise_for_status()
+            
+            download_start = time.perf_counter()
 
         except requests.exceptions.HTTPError as e:
             # If we get 401, archive download might not be supported for private repos
@@ -374,11 +388,15 @@ class ParseHelper:
         logger.info(f"ParsingHelper: Final directory: {final_dir}")
 
         try:
+            write_start = time.perf_counter()
             logger.info(f"ParsingHelper: Writing tarball to {tarball_path}")
             with open(tarball_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
             tarball_size = os.path.getsize(tarball_path)
+            write_elapsed = time.perf_counter() - write_start
+            download_total_elapsed = time.perf_counter() - download_start
+            collector.add_timing("download_and_extract_tarball > download_tarball", download_total_elapsed)
             logger.info(
                 f"ParsingHelper: Successfully downloaded tarball, size: {tarball_size} bytes"
             )
@@ -392,6 +410,7 @@ class ParseHelper:
                 logger.error(f"ParsingHelper: {error_msg}")
                 raise ParsingFailedError(error_msg)
 
+            extract_start = time.perf_counter()
             logger.info(f"ParsingHelper: Extracting tarball to {final_dir}")
             try:
                 with tarfile.open(tarball_path, "r:gz") as tar:
@@ -423,6 +442,7 @@ class ParseHelper:
                         f"ParsingHelper: Main extracted directory: {extracted_dir}"
                     )
 
+                    copy_start = time.perf_counter()
                     text_files_count = 0
                     for root, dirs, files in os.walk(extracted_dir):
                         for file in files:
@@ -445,9 +465,14 @@ class ParseHelper:
                                         f"ParsingHelper: Error copying file {file_path}: {e}"
                                     )
 
+                    copy_elapsed = time.perf_counter() - copy_start
+                    extract_elapsed = time.perf_counter() - extract_start
+                    collector.add_timing("download_and_extract_tarball > extract_tarball", extract_elapsed)
+                    collector.add_timing("download_and_extract_tarball > copy_text_files", copy_elapsed, count=text_files_count)
                     logger.info(
                         f"ParsingHelper: Copied {text_files_count} text files to final directory"
                     )
+                    
                     # Remove the temporary directory
                     try:
                         shutil.rmtree(temp_dir)
@@ -466,6 +491,8 @@ class ParseHelper:
             if os.path.exists(tarball_path):
                 os.remove(tarball_path)
 
+        elapsed = time.perf_counter() - start_time
+        collector.add_timing("download_and_extract_tarball", elapsed)
         return final_dir
 
     async def _clone_repository_with_auth(self, repo, branch, target_dir, user_id):
@@ -628,6 +655,9 @@ class ParseHelper:
 
     @staticmethod
     def detect_repo_language(repo_dir):
+        collector = get_timing_collector()
+        start_time = time.perf_counter()
+        
         lang_count = {
             "c_sharp": 0,
             "c": 0,
@@ -728,7 +758,11 @@ class ParseHelper:
 
         # Determine the predominant language based on counts
         predominant_language = max(lang_count, key=lang_count.get)
-        return predominant_language if lang_count[predominant_language] > 0 else "other"
+        result = predominant_language if lang_count[predominant_language] > 0 else "other"
+        
+        elapsed = time.perf_counter() - start_time
+        collector.add_timing("detect_repo_language", elapsed)
+        return result
 
     async def setup_project_directory(
         self,
@@ -740,6 +774,8 @@ class ParseHelper:
         project_id=None,  # Change type to str
         commit_id=None,
     ):
+        collector = get_timing_collector()
+        start_time = time.perf_counter()
         # Check if this is a local repository by examining the repo object
         # In development mode: repo is Repo object, repo_details is ParsingRequest
         # In non-development mode: both repo and repo_details can be Repo objects
@@ -782,10 +818,15 @@ class ParseHelper:
             f"ParsingHelper: Original full_name: {full_name}, Normalized: {normalized_full_name}, repo_path: {repo_path}"
         )
 
+        db_check_start = time.perf_counter()
         project = await self.project_manager.get_project_from_db(
             normalized_full_name, branch, user_id, repo_path, commit_id
         )
+        db_check_elapsed = time.perf_counter() - db_check_start
+        collector.add_timing("setup_project_directory > db_project_check", db_check_elapsed)
+        
         if not project:
+            register_start = time.perf_counter()
             project_id = await self.project_manager.register_project(
                 normalized_full_name,
                 branch,
@@ -794,9 +835,13 @@ class ParseHelper:
                 commit_id=commit_id,
                 repo_path=repo_path,  # Pass repo_path when registering
             )
+            register_elapsed = time.perf_counter() - register_start
+            collector.add_timing("setup_project_directory > register_project", register_elapsed)
         if repo_path is not None:
             # Local repository detected - return the path directly without downloading tarball
             logger.info(f"ParsingHelper: Using local repository at {repo_path}")
+            elapsed = time.perf_counter() - start_time
+            collector.add_timing("setup_project_directory (local)", elapsed)
             return repo_path, project_id
         if isinstance(repo_details, Repo):
             extracted_dir = repo_details.working_tree_dir
@@ -822,6 +867,7 @@ class ParseHelper:
                 os.chdir(current_dir)  # Restore the original working directory
         else:
             try:
+                download_start = time.perf_counter()
                 if commit_id:
                     # For GitHub API, we need to download tarball for specific commit
                     extracted_dir = await self.download_and_extract_tarball(
@@ -847,6 +893,8 @@ class ParseHelper:
                     # repo_details can be ParsingRequest in dev mode, which doesn't have get_branch
                     branch_details = repo.get_branch(branch)
                     latest_commit_sha = branch_details.commit.sha
+                download_elapsed = time.perf_counter() - download_start
+                collector.add_timing("setup_project_directory > download_and_extract", download_elapsed)
             except ParsingFailedError as e:
                 logger.exception("Failed to download repository")
                 raise HTTPException(
@@ -861,6 +909,7 @@ class ParseHelper:
         # Use repo instead of repo_details for metadata extraction
         # repo is always the MockRepo (remote) or Repo (local) object with required methods
         # repo_details can be ParsingRequest in dev mode, which lacks these methods
+        metadata_start = time.perf_counter()
         repo_metadata = ParseHelper.extract_repository_metadata(repo)
         repo_metadata["error_message"] = None
         project_metadata = json.dumps(repo_metadata).encode("utf-8")
@@ -871,7 +920,11 @@ class ParseHelper:
             commit_id=latest_commit_sha,
             status=ProjectStatusEnum.CLONED.value,
         )
+        metadata_elapsed = time.perf_counter() - metadata_start
+        collector.add_timing("setup_project_directory > extract_update_metadata", metadata_elapsed)
 
+        elapsed = time.perf_counter() - start_time
+        collector.add_timing("setup_project_directory", elapsed)
         return extracted_dir, project_id
 
     def extract_repository_metadata(repo):
@@ -978,12 +1031,17 @@ class ParseHelper:
         Returns:
             bool: True if the commit IDs match or if this is a pinned commit parse, False otherwise.
         """
+        collector = get_timing_collector()
+        start_time = time.perf_counter()
         logger.info(
             f"check_commit_status: Checking commit status for project {project_id}, "
             f"requested_commit_id={requested_commit_id}"
         )
 
+        db_query_start = time.perf_counter()
         project = await self.project_manager.get_project_from_db_by_id(project_id)
+        db_query_elapsed = time.perf_counter() - db_query_start
+        collector.add_timing("check_commit_status > db_query", db_query_elapsed)
         if not project:
             logger.error(f"Project with ID {project_id} not found")
             return False
@@ -1040,24 +1098,32 @@ class ParseHelper:
             return False
 
         try:
+            github_api_start = time.perf_counter()
             logger.info(
                 f"check_commit_status: Branch-based parse - getting repo info for {repo_name}"
             )
             _github, repo = self.github_service.get_repo(repo_name)
+            github_api_elapsed = time.perf_counter() - github_api_start
+            collector.add_timing("check_commit_status > get_repo_from_github", github_api_elapsed)
 
             # If current_commit_id is None, we should reparse
             if current_commit_id is None:
                 logger.info(
                     f"check_commit_status: Project {project_id} has no commit_id, will reparse"
                 )
+                elapsed = time.perf_counter() - start_time
+                collector.add_timing("check_commit_status (no commit_id)", elapsed)
                 return False
 
             # Get the latest commit from the branch
+            get_branch_start = time.perf_counter()
             logger.info(
                 f"check_commit_status: Getting latest commit from branch {branch_name}"
             )
             branch = repo.get_branch(branch_name)
             latest_commit_id = branch.commit.sha
+            get_branch_elapsed = time.perf_counter() - get_branch_start
+            collector.add_timing("check_commit_status > get_branch_commit", get_branch_elapsed)
 
             # Compare current commit with latest commit
             is_up_to_date = current_commit_id == latest_commit_id
@@ -1067,10 +1133,14 @@ class ParseHelper:
                 f"Current: {current_commit_id}, Latest: {latest_commit_id}"
             )
 
+            elapsed = time.perf_counter() - start_time
+            collector.add_timing("check_commit_status", elapsed)
             return is_up_to_date
         except Exception as e:
+            elapsed = time.perf_counter() - start_time
+            collector.add_timing("check_commit_status (ERROR)", elapsed)
             logger.error(
-                f"check_commit_status: Error fetching latest commit for {repo_name}/{branch_name}: {e}",
+                f"Error fetching latest commit for {repo_name}/{branch_name}: {e}",
                 exc_info=True,
             )
             return False

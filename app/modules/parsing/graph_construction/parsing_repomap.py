@@ -17,6 +17,7 @@ from app.core.database import get_db
 from app.modules.parsing.graph_construction.parsing_helper import (  # noqa: E402
     ParseHelper,
 )
+from app.modules.parsing.utils.timing_collector import get_timing_collector
 
 # tree_sitter is throwing a FutureWarning
 warnings.simplefilter("ignore", category=FutureWarning)
@@ -135,7 +136,6 @@ class RepoMap:
             return []
 
         data = list(self.get_tags_raw(fname, rel_fname))
-
         return data
 
     def get_tags_raw(self, fname, rel_fname):
@@ -154,6 +154,7 @@ class RepoMap:
         code = self.io.read_text(fname)
         if not code:
             return
+        
         tree = parser.parse(bytes(code, "utf-8"))
 
         # Run the tags queries
@@ -580,11 +581,18 @@ class RepoMap:
         return False
 
     def create_graph(self, repo_dir):
+        collector = get_timing_collector()
+        start_time = time.perf_counter()
+        
         G = nx.MultiDiGraph()
         defines = defaultdict(set)
         references = defaultdict(set)
         seen_relationships = set()
 
+        file_walk_start = time.perf_counter()
+        files_processed = 0
+        get_tags_total_time = 0.0
+        get_tags_count = 0
         for root, dirs, files in os.walk(repo_dir):
             if any(part.startswith(".") for part in root.split(os.sep)):
                 continue
@@ -597,6 +605,7 @@ class RepoMap:
                     continue
 
                 logging.info(f"\nProcessing file: {rel_path}")
+                files_processed += 1
 
                 # Add file node
                 file_node_name = rel_path
@@ -615,7 +624,13 @@ class RepoMap:
                 current_method = None
 
                 # Process all tags in file
-                for tag in self.get_tags(file_path, rel_path):
+                get_tags_start = time.perf_counter()
+                tags = list(self.get_tags(file_path, rel_path))
+                get_tags_elapsed = time.perf_counter() - get_tags_start
+                get_tags_total_time += get_tags_elapsed
+                get_tags_count += 1
+                
+                for tag in tags:
                     if tag.kind == "def":
                         if tag.type == "class":
                             node_type = "CLASS"
@@ -704,6 +719,15 @@ class RepoMap:
                             },
                         )
 
+        file_walk_elapsed = time.perf_counter() - file_walk_start
+        elapsed = time.perf_counter() - start_time
+        
+        # Aggregate get_tags timings
+        if get_tags_count > 0:
+            collector.add_timing("create_graph > get_tags (aggregated)", get_tags_total_time, count=get_tags_count)
+        
+        collector.add_timing("create_graph > file_walk", file_walk_elapsed)
+        collector.add_timing("create_graph", elapsed)
         return G
 
     @staticmethod

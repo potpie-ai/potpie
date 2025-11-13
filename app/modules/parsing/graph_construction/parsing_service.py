@@ -1,6 +1,7 @@
 import logging
 import os
 import shutil
+import time
 import traceback
 from asyncio import create_task
 from contextlib import contextmanager
@@ -25,6 +26,7 @@ from app.modules.parsing.graph_construction.parsing_helper import (
     ParsingServiceError,
 )
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
+from app.modules.parsing.utils.timing_collector import get_timing_collector, print_timing_report, reset_timing_collector
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
@@ -63,10 +65,20 @@ class ParsingService:
         project_id: int,
         cleanup_graph: bool = True,
     ):
+        # Reset timing collector for new parsing session
+        reset_timing_collector()
+        collector = get_timing_collector()
+        
+        start_time = time.perf_counter()
+        logger.info(
+            f"Starting parsing for project_id={project_id}, cleanup_graph={cleanup_graph}"
+        )
+        
         project_manager = ProjectService(self.db)
         extracted_dir = None
         try:
             if cleanup_graph:
+                cleanup_start = time.perf_counter()
                 neo4j_config = config_provider.get_neo4j_config()
 
                 try:
@@ -78,13 +90,22 @@ class ParsingService:
                     )
 
                     code_graph_service.cleanup_graph(project_id)
+                    cleanup_elapsed = time.perf_counter() - cleanup_start
+                    collector.add_timing("parse_directory > cleanup_graph", cleanup_elapsed)
                 except Exception as e:
-                    logger.error(f"Error in cleanup_graph: {e}")
+                    cleanup_elapsed = time.perf_counter() - cleanup_start
+                    collector.add_timing("parse_directory > cleanup_graph (ERROR)", cleanup_elapsed)
+                    logger.error(f"Graph cleanup ERROR: {e}")
                     raise HTTPException(status_code=500, detail="Internal server error")
 
+            clone_start = time.perf_counter()
             repo, owner, auth = await self.parse_helper.clone_or_copy_repository(
                 repo_details, user_id
             )
+            clone_elapsed = time.perf_counter() - clone_start
+            collector.add_timing("parse_directory > clone_or_copy_repository", clone_elapsed)
+            
+            setup_start = time.perf_counter()
             if config_provider.get_is_development_mode():
                 (
                     extracted_dir,
@@ -111,7 +132,10 @@ class ParsingService:
                     project_id,
                     commit_id=repo_details.commit_id,
                 )
+            setup_elapsed = time.perf_counter() - setup_start
+            collector.add_timing("parse_directory > setup_project_directory", setup_elapsed)
 
+            lang_detect_start = time.perf_counter()
             if isinstance(repo, Repo):
                 language = self.parse_helper.detect_repo_language(extracted_dir)
             else:
@@ -120,15 +144,30 @@ class ParsingService:
                     language = max(languages, key=languages.get).lower()
                 else:
                     language = self.parse_helper.detect_repo_language(extracted_dir)
+            lang_detect_elapsed = time.perf_counter() - lang_detect_start
+            collector.add_timing("parse_directory > detect_repo_language", lang_detect_elapsed)
 
+            analyze_start = time.perf_counter()
             await self.analyze_directory(
                 extracted_dir, project_id, user_id, self.db, language, user_email
             )
+            analyze_elapsed = time.perf_counter() - analyze_start
+            collector.add_timing("parse_directory > analyze_directory", analyze_elapsed)
+            
+            elapsed = time.perf_counter() - start_time
+            collector.add_timing("parse_directory (total)", elapsed)
+            
+            # Print timing report at the end
+            print_timing_report(f"Parsing Timing Report - Project {project_id}")
+            
             message = "The project has been parsed successfully"
             return {"message": message, "id": project_id}
 
         except ParsingServiceError as e:
+            elapsed = time.perf_counter() - start_time
             message = str(f"{project_id} Failed during parsing: " + str(e))
+            collector.add_timing("parse_directory (ERROR)", elapsed)
+            print_timing_report(f"Parsing Timing Report (ERROR) - Project {project_id}")
             await project_manager.update_project_status(
                 project_id, ProjectStatusEnum.ERROR
             )
@@ -136,6 +175,9 @@ class ParsingService:
             raise HTTPException(status_code=500, detail=message)
 
         except Exception as e:
+            elapsed = time.perf_counter() - start_time
+            collector.add_timing("parse_directory (ERROR)", elapsed)
+            print_timing_report(f"Parsing Timing Report (ERROR) - Project {project_id}")
             logger.error(f"Error during parsing for project {project_id}: {e}")
             # Rollback the database session to clear any pending transactions
             self.db.rollback()
@@ -196,6 +238,8 @@ class ParsingService:
         language: str,
         user_email: str,
     ):
+        collector = get_timing_collector()
+        start_time = time.perf_counter()
         logger.info(
             f"ParsingService: Parsing project {project_id}: Analyzing directory: {extracted_dir}"
         )
@@ -216,9 +260,14 @@ class ParsingService:
         logger.info(
             f"ParsingService: Directory exists and is accessible: {extracted_dir}"
         )
+        
+        project_details_start = time.perf_counter()
         project_details = await self.project_service.get_project_from_db_by_id(
             project_id
         )
+        project_details_elapsed = time.perf_counter() - project_details_start
+        collector.add_timing("analyze_directory > get_project_details", project_details_elapsed)
+        
         if project_details:
             repo_name = project_details.get("project_name")
             branch_name = project_details.get("branch_name")
@@ -227,19 +276,37 @@ class ParsingService:
             raise HTTPException(status_code=404, detail="Project not found.")
 
         if language in ["python", "javascript", "typescript"]:
+            graph_init_start = time.perf_counter()
             graph_manager = Neo4jManager(project_id, user_id)
             self.create_neo4j_indices(
                 graph_manager
             )  # commented since indices are created already
+            graph_init_elapsed = time.perf_counter() - graph_init_start
+            collector.add_timing("analyze_directory > graph_manager_init", graph_init_elapsed)
 
             try:
+                build_graph_start = time.perf_counter()
                 graph_constructor = GraphConstructor(user_id, extracted_dir)
                 n, r = graph_constructor.build_graph()
+                build_graph_elapsed = time.perf_counter() - build_graph_start
+                collector.add_timing("analyze_directory > build_graph", build_graph_elapsed)
+                
+                create_nodes_start = time.perf_counter()
                 graph_manager.create_nodes(n)
+                create_nodes_elapsed = time.perf_counter() - create_nodes_start
+                collector.add_timing("analyze_directory > create_nodes", create_nodes_elapsed, count=len(n) if n else 0)
+                
+                create_edges_start = time.perf_counter()
                 graph_manager.create_edges(r)
+                create_edges_elapsed = time.perf_counter() - create_edges_start
+                collector.add_timing("analyze_directory > create_edges", create_edges_elapsed, count=len(r) if r else 0)
+                status_update_start = time.perf_counter()
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.PARSED
                 )
+                status_update_elapsed = time.perf_counter() - status_update_start
+                collector.add_timing("analyze_directory > update_status_PARSED", status_update_elapsed)
+                
                 PostHogClient().send_event(
                     user_id,
                     "project_status_event",
@@ -247,12 +314,19 @@ class ParsingService:
                 )
 
                 # Generate docstrings using InferenceService
+                inference_start = time.perf_counter()
                 await self.inference_service.run_inference(project_id)
+                inference_elapsed = time.perf_counter() - inference_start
+                collector.add_timing("analyze_directory > run_inference", inference_elapsed)
                 logger.info(f"DEBUGNEO4J: After inference project {project_id}")
                 self.inference_service.log_graph_stats(project_id)
+                
+                status_update_start = time.perf_counter()
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.READY
                 )
+                status_update_elapsed = time.perf_counter() - status_update_start
+                collector.add_timing("analyze_directory > update_status_READY", status_update_elapsed)
                 create_task(
                     EmailHelper().send_email(user_email, repo_name, branch_name)
                 )
@@ -274,9 +348,16 @@ class ParsingService:
                     {"project_id": project_id, "status": "Error"},
                 )
             finally:
+                close_start = time.perf_counter()
                 graph_manager.close()
+                close_elapsed = time.perf_counter() - close_start
+                collector.add_timing("analyze_directory > close_graph_manager", close_elapsed)
+                
+                elapsed = time.perf_counter() - start_time
+                collector.add_timing("analyze_directory (python/js/ts)", elapsed)
         elif language != "other":
             try:
+                service_init_start = time.perf_counter()
                 neo4j_config = config_provider.get_neo4j_config()
                 service = CodeGraphService(
                     neo4j_config["uri"],
@@ -284,28 +365,50 @@ class ParsingService:
                     neo4j_config["password"],
                     db,
                 )
+                service_init_elapsed = time.perf_counter() - service_init_start
+                collector.add_timing("analyze_directory > CodeGraphService_init", service_init_elapsed)
 
+                create_graph_start = time.perf_counter()
                 service.create_and_store_graph(extracted_dir, project_id, user_id)
+                create_graph_elapsed = time.perf_counter() - create_graph_start
+                collector.add_timing("analyze_directory > create_and_store_graph", create_graph_elapsed)
 
+                status_update_start = time.perf_counter()
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.PARSED
                 )
+                status_update_elapsed = time.perf_counter() - status_update_start
+                collector.add_timing("analyze_directory > update_status_PARSED", status_update_elapsed)
+                
                 # Generate docstrings using InferenceService
+                inference_start = time.perf_counter()
                 await self.inference_service.run_inference(project_id)
+                inference_elapsed = time.perf_counter() - inference_start
+                collector.add_timing("analyze_directory > run_inference", inference_elapsed)
                 logger.info(f"DEBUGNEO4J: After inference project {project_id}")
                 self.inference_service.log_graph_stats(project_id)
+                
+                status_update_start = time.perf_counter()
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.READY
                 )
+                status_update_elapsed = time.perf_counter() - status_update_start
+                collector.add_timing("analyze_directory > update_status_READY", status_update_elapsed)
                 create_task(
                     EmailHelper().send_email(user_email, repo_name, branch_name)
                 )
                 logger.info(f"DEBUGNEO4J: After update project status {project_id}")
                 self.inference_service.log_graph_stats(project_id)
             finally:
+                close_start = time.perf_counter()
                 service.close()
+                close_elapsed = time.perf_counter() - close_start
+                collector.add_timing("analyze_directory > close_CodeGraphService", close_elapsed)
                 logger.info(f"DEBUGNEO4J: After close service {project_id}")
                 self.inference_service.log_graph_stats(project_id)
+                
+                elapsed = time.perf_counter() - start_time
+                collector.add_timing("analyze_directory (other language)", elapsed)
         else:
             await self.project_service.update_project_status(
                 project_id, ProjectStatusEnum.ERROR
@@ -318,11 +421,25 @@ class ParsingService:
             )
 
     async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
+        start_time = time.perf_counter()
+        logger.info(
+            f"[TIMING] parsing_service.duplicate_graph: START | "
+            f"old_repo_id={old_repo_id}, new_repo_id={new_repo_id}"
+        )
+        
+        clone_indices_start = time.perf_counter()
         await self.search_service.clone_search_indices(old_repo_id, new_repo_id)
+        clone_indices_elapsed = time.perf_counter() - clone_indices_start
+        logger.info(
+            f"[TIMING] parsing_service.duplicate_graph: Clone search indices | "
+            f"elapsed={clone_indices_elapsed:.4f}s"
+        )
+        
         node_batch_size = 3000  # Fixed batch size for nodes
         relationship_batch_size = 3000  # Fixed batch size for relationships
         try:
             # Step 1: Fetch and duplicate nodes in batches
+            nodes_start = time.perf_counter()
             with self.inference_service.driver.session() as session:
                 offset = 0
                 while True:
@@ -364,8 +481,14 @@ class ParsingService:
                     """
                     session.run(create_query, new_repo_id=new_repo_id, batch=nodes)
                     offset += node_batch_size
+            nodes_elapsed = time.perf_counter() - nodes_start
+            logger.info(
+                f"[TIMING] parsing_service.duplicate_graph: Duplicate nodes | "
+                f"elapsed={nodes_elapsed:.4f}s"
+            )
 
             # Step 2: Fetch and duplicate relationships in batches
+            relationships_start = time.perf_counter()
             with self.inference_service.driver.session() as session:
                 offset = 0
                 while True:
@@ -396,12 +519,23 @@ class ParsingService:
                         relationship_query, new_repo_id=new_repo_id, batch=relationships
                     )
                     offset += relationship_batch_size
-
+            relationships_elapsed = time.perf_counter() - relationships_start
             logger.info(
+                f"[TIMING] parsing_service.duplicate_graph: Duplicate relationships | "
+                f"elapsed={relationships_elapsed:.4f}s"
+            )
+
+            elapsed = time.perf_counter() - start_time
+            logger.info(
+                f"[TIMING] parsing_service.duplicate_graph: COMPLETE | "
+                f"total_elapsed={elapsed:.4f}s | "
                 f"Successfully duplicated graph from {old_repo_id} to {new_repo_id}"
             )
 
         except Exception as e:
+            elapsed = time.perf_counter() - start_time
             logger.error(
+                f"[TIMING] parsing_service.duplicate_graph: ERROR | "
+                f"elapsed={elapsed:.4f}s | "
                 f"Error duplicating graph from {old_repo_id} to {new_repo_id}: {e}"
             )

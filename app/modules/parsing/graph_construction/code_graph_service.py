@@ -7,6 +7,7 @@ from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
 
 from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
+from app.modules.parsing.utils.timing_collector import get_timing_collector
 from app.modules.search.search_service import SearchService
 
 
@@ -33,30 +34,42 @@ class CodeGraphService:
         self.driver.close()
 
     def create_and_store_graph(self, repo_dir, project_id, user_id):
+        collector = get_timing_collector()
+        start_time = time.perf_counter()
+        
         # Create the graph using RepoMap
+        repomap_init_start = time.perf_counter()
         self.repo_map = RepoMap(
             root=repo_dir,
             verbose=True,
             main_model=SimpleTokenCounter(),
             io=SimpleIO(),
         )
+        repomap_init_elapsed = time.perf_counter() - repomap_init_start
+        collector.add_timing("create_and_store_graph > RepoMap_init", repomap_init_elapsed)
 
+        create_graph_start = time.perf_counter()
         nx_graph = self.repo_map.create_graph(repo_dir)
+        create_graph_elapsed = time.perf_counter() - create_graph_start
+        collector.add_timing("create_and_store_graph > create_graph", create_graph_elapsed)
 
         with self.driver.session() as session:
-            start_time = time.time()
             node_count = nx_graph.number_of_nodes()
             logging.info(f"Creating {node_count} nodes")
 
             # Create specialized index for relationship queries
+            index_start = time.perf_counter()
             session.run(
                 """
                 CREATE INDEX node_id_repo_idx IF NOT EXISTS
                 FOR (n:NODE) ON (n.node_id, n.repoId)
             """
             )
+            index_elapsed = time.perf_counter() - index_start
+            collector.add_timing("create_and_store_graph > create_index", index_elapsed)
 
             # Batch insert nodes
+            nodes_insert_start = time.perf_counter()
             batch_size = 1000
             for i in range(0, node_count, batch_size):
                 batch_nodes = list(nx_graph.nodes(data=True))[i : i + batch_size]
@@ -105,6 +118,8 @@ class CodeGraphService:
                     """,
                     nodes=nodes_to_create,
                 )
+            nodes_insert_elapsed = time.perf_counter() - nodes_insert_start
+            collector.add_timing("create_and_store_graph > insert_nodes", nodes_insert_elapsed, count=node_count)
 
             relationship_count = nx_graph.number_of_edges()
             logging.info(f"Creating {relationship_count} relationships")
@@ -116,6 +131,7 @@ class CodeGraphService:
                 rel_types.add(rel_type)
 
             # Process relationships with huge batch size and type-specific queries
+            relationships_insert_start = time.perf_counter()
             batch_size = 1000
 
             for rel_type in rel_types:
@@ -155,13 +171,21 @@ class CodeGraphService:
                         CREATE (source)-[r:{rel_type} {{repoId: edge.repoId}}]->(target)
                     """
                     session.run(query, edges=edges_to_create)
+            relationships_insert_elapsed = time.perf_counter() - relationships_insert_start
+            collector.add_timing("create_and_store_graph > insert_relationships", relationships_insert_elapsed, count=relationship_count)
 
-            end_time = time.time()
+            end_time = time.perf_counter()
+            total_elapsed = end_time - start_time
+            collector.add_timing("create_and_store_graph", total_elapsed)
             logging.info(
-                f"Time taken to create graph and search index: {end_time - start_time:.2f} seconds"
+                f"Time taken to create graph and search index: {total_elapsed:.2f} seconds"
             )
 
     def cleanup_graph(self, project_id: str):
+        collector = get_timing_collector()
+        start_time = time.perf_counter()
+        
+        neo4j_start = time.perf_counter()
         with self.driver.session() as session:
             session.run(
                 """
@@ -170,10 +194,18 @@ class CodeGraphService:
                 """,
                 project_id=project_id,
             )
+        neo4j_elapsed = time.perf_counter() - neo4j_start
+        collector.add_timing("cleanup_graph > neo4j_cleanup", neo4j_elapsed)
 
         # Clean up search index
+        search_start = time.perf_counter()
         search_service = SearchService(self.db)
         search_service.delete_project_index(project_id)
+        search_elapsed = time.perf_counter() - search_start
+        collector.add_timing("cleanup_graph > search_index_cleanup", search_elapsed)
+        
+        elapsed = time.perf_counter() - start_time
+        collector.add_timing("cleanup_graph", elapsed)
 
     async def get_node_by_id(self, node_id: str, project_id: str) -> Optional[Dict]:
         with self.driver.session() as session:
