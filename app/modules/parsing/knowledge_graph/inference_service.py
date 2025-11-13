@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import re
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import tiktoken
 from neo4j import GraphDatabase
@@ -10,12 +10,18 @@ from sentence_transformers import SentenceTransformer
 from sqlalchemy.orm import Session
 
 from app.core.config_provider import config_provider
+from app.core.database import get_db
 from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from app.modules.parsing.knowledge_graph.inference_schema import (
     DocstringRequest,
     DocstringResponse,
+)
+from app.modules.parsing.services.inference_cache_service import InferenceCacheService
+from app.modules.parsing.utils.content_hash import (
+    generate_content_hash,
+    is_content_cacheable,
 )
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
@@ -87,6 +93,15 @@ class InferenceService:
 
     def num_tokens_from_string(self, string: str, model: str = "gpt-4") -> int:
         """Returns the number of tokens in a text string."""
+        # Handle None or empty strings gracefully
+        if string is None:
+            return 0
+        if not isinstance(string, str):
+            logger.warning(
+                f"Expected string, got {type(string)}. Converting to string."
+            )
+            string = str(string)
+
         try:
             encoding = tiktoken.encoding_for_model(model)
         except KeyError:
@@ -203,25 +218,192 @@ class InferenceService:
                 for record in result
             }
 
+    def split_large_node(
+        self, node_text: str, node_id: str, max_tokens: int
+    ) -> List[Dict[str, Any]]:
+        """Split large nodes into processable chunks with context preservation"""
+        model = "gpt-4"  # Should be configurable
+        max_chunk_tokens = max_tokens // 2  # Reserve space for prompt
+
+        # Try to split by logical boundaries (functions, classes, etc.)
+        lines = node_text.split("\n")
+        chunks = []
+        current_chunk_lines = []
+        current_tokens = 0
+
+        for line in lines:
+            test_chunk = "\n".join(current_chunk_lines + [line])
+            test_tokens = self.num_tokens_from_string(test_chunk, model)
+
+            if test_tokens > max_chunk_tokens and current_chunk_lines:
+                # Save current chunk and start new one
+                chunks.append(
+                    {
+                        "text": "\n".join(current_chunk_lines),
+                        "node_id": f"{node_id}_chunk_{len(chunks)}",
+                        "is_chunk": True,
+                        "parent_node_id": node_id,
+                        "chunk_index": len(chunks),
+                    }
+                )
+                current_chunk_lines = [line]
+                current_tokens = self.num_tokens_from_string(line, model)
+            else:
+                current_chunk_lines.append(line)
+                current_tokens = test_tokens
+
+        # Add final chunk
+        if current_chunk_lines:
+            chunks.append(
+                {
+                    "text": "\n".join(current_chunk_lines),
+                    "node_id": f"{node_id}_chunk_{len(chunks)}",
+                    "is_chunk": True,
+                    "parent_node_id": node_id,
+                    "chunk_index": len(chunks),
+                }
+            )
+
+        return chunks
+
+    def consolidate_chunk_responses(
+        self, chunk_responses: List[DocstringResponse], parent_node_id: str
+    ) -> DocstringResponse:
+        """Consolidate multiple chunk docstring responses into a single parent node response"""
+        if not chunk_responses:
+            return DocstringResponse(docstrings=[])
+
+        # Collect all chunk docstrings
+        all_docstrings = []
+        all_tags = set()
+
+        for response in chunk_responses:
+            for docstring in response.docstrings:
+                all_docstrings.append(docstring.docstring)
+                all_tags.update(docstring.tags or [])
+
+        # Create consolidated docstring
+        if len(all_docstrings) == 1:
+            consolidated_text = all_docstrings[0]
+        else:
+            # Combine multiple chunk descriptions intelligently
+            consolidated_text = f"This is a large code component split across {len(all_docstrings)} sections: "
+            consolidated_text += " | ".join(
+                [f"Section {i+1}: {doc}" for i, doc in enumerate(all_docstrings)]
+            )
+
+        # Create single consolidated docstring for parent node
+        from app.modules.parsing.knowledge_graph.inference_schema import DocstringNode
+
+        consolidated_docstring = DocstringNode(
+            node_id=parent_node_id, docstring=consolidated_text, tags=list(all_tags)
+        )
+
+        return DocstringResponse(docstrings=[consolidated_docstring])
+
+    def process_chunk_responses(
+        self, response: DocstringResponse, batch: List[DocstringRequest]
+    ) -> Optional[DocstringResponse]:
+        """Process chunk responses and consolidate them by parent node"""
+        # Separate chunk responses from regular responses
+        chunk_responses = {}
+        regular_responses = []
+
+        for docstring in response.docstrings:
+            # Find the corresponding request to get metadata
+            request = next(
+                (req for req in batch if req.node_id == docstring.node_id), None
+            )
+            if request and request.metadata and request.metadata.get("is_chunk"):
+                parent_id = request.metadata.get("parent_node_id")
+                if parent_id:
+                    if parent_id not in chunk_responses:
+                        chunk_responses[parent_id] = []
+                    chunk_responses[parent_id].append(docstring)
+            else:
+                regular_responses.append(docstring)
+
+        # If no chunks, return original response
+        if not chunk_responses:
+            return response
+
+        # Consolidate chunk responses
+        consolidated_responses = []
+
+        for parent_id, chunk_docstrings in chunk_responses.items():
+            # Create a mock response list for consolidation
+            mock_responses = []
+            for chunk_doc in chunk_docstrings:
+                from app.modules.parsing.knowledge_graph.inference_schema import (
+                    DocstringResponse,
+                )
+
+                mock_responses.append(DocstringResponse(docstrings=[chunk_doc]))
+
+            consolidated = self.consolidate_chunk_responses(mock_responses, parent_id)
+            consolidated_responses.extend(consolidated.docstrings)
+
+        # Add regular (non-chunk) responses
+        consolidated_responses.extend(regular_responses)
+
+        return DocstringResponse(docstrings=consolidated_responses)
+
     def batch_nodes(
-        self, nodes: List[Dict], max_tokens: int = 16000, model: str = "gpt-4"
+        self,
+        nodes: List[Dict],
+        max_tokens: int = 16000,
+        model: str = "gpt-4",
+        project_id: Optional[str] = None,
     ) -> List[List[DocstringRequest]]:
+        """Enhanced batching with cache-aware processing"""
         batches = []
         current_batch = []
         current_tokens = 0
         node_dict = {node["node_id"]: node for node in nodes}
 
+        # Track cache hits/misses for metrics
+        cache_hits = 0
+        cache_misses = 0
+        uncacheable_nodes = 0
+
+        # Get database session for cache operations
+        cache_service = None
+        db = None
+        try:
+            db = next(get_db())
+            cache_service = InferenceCacheService(db)
+        except Exception as e:
+            logger.warning(
+                f"Failed to initialize cache service: {e}. Continuing without cache."
+            )
+            if db:
+                db.close()
+            cache_service = None
+
         def replace_referenced_text(
             text: str, node_dict: Dict[str, Dict[str, str]]
         ) -> str:
+            # Handle None input gracefully
+            if text is None:
+                return ""
+
             pattern = r"Code replaced for brevity\. See node_id ([a-f0-9]+)"
             regex = re.compile(pattern)
 
+            resolved_refs = 0
+            failed_refs = 0
+
             def replace_match(match):
+                nonlocal resolved_refs, failed_refs
                 node_id = match.group(1)
-                if node_id in node_dict:
-                    return "\n" + node_dict[node_id]["text"].split("\n", 1)[-1]
-                return match.group(0)
+                if node_id in node_dict and node_dict[node_id].get("text"):
+                    resolved_refs += 1
+                    # Return full text of referenced node for consistent cache hashing
+                    return node_dict[node_id]["text"]
+                else:
+                    failed_refs += 1
+                    logger.debug(f"Failed to resolve reference to node_id: {node_id}")
+                    return match.group(0)
 
             previous_text = None
             current_text = text
@@ -229,6 +411,13 @@ class InferenceService:
             while previous_text != current_text:
                 previous_text = current_text
                 current_text = regex.sub(replace_match, current_text)
+
+            # Log reference resolution stats if any references were found
+            if resolved_refs > 0 or failed_refs > 0:
+                logger.debug(
+                    f"Reference resolution: {resolved_refs} resolved, {failed_refs} failed"
+                )
+
             return current_text
 
         for node in nodes:
@@ -236,32 +425,161 @@ class InferenceService:
                 logger.warning(f"Node {node['node_id']} has no text. Skipping...")
                 continue
 
-            updated_text = replace_referenced_text(node["text"], node_dict)
+            updated_text = replace_referenced_text(node.get("text"), node_dict)
             node_tokens = self.num_tokens_from_string(updated_text, model)
 
-            if node_tokens > max_tokens:
-                logger.warning(
-                    f"Node {node['node_id']} - {node_tokens} tokens, has exceeded the max_tokens limit. Skipping..."
+            # Check if content is cacheable and look for cached inference
+            if cache_service and is_content_cacheable(updated_text):
+                content_hash = generate_content_hash(
+                    updated_text, node.get("node_type")
                 )
-                continue
+
+                # Check cache for existing inference
+                # Simplified - project_id parameter ignored by cache service
+                cached_inference = cache_service.get_cached_inference(content_hash)
+
+                if cached_inference:
+                    # Cache hit - store inference directly in node
+                    node["cached_inference"] = cached_inference
+                    node["content_hash"] = content_hash
+                    cache_hits += 1
+
+                    # Detailed logging for cache hits
+                    logger.debug(
+                        f"✅ CACHE HIT | "
+                        f"node={node['node_id'][:8]} | "
+                        f"hash={content_hash[:12]} | "
+                        f"type={node.get('node_type', 'MISSING')}"
+                    )
+                    continue  # Skip adding to LLM batch
+                else:
+                    cache_misses += 1
+
+                    # Detailed logging for cache misses
+                    logger.debug(
+                        f"❌ CACHE MISS | "
+                        f"node={node['node_id'][:8]} | "
+                        f"hash={content_hash[:12]} | "
+                        f"type={node.get('node_type', 'MISSING')} | "
+                        f"preview={updated_text[:80].replace(chr(10), ' ')}"
+                    )
+
+                    # Check for unresolved references
+                    if "Code replaced for brevity" in updated_text:
+                        logger.warning(
+                            f"⚠️  UNRESOLVED REFERENCE | "
+                            f"node={node['node_id'][:8]} | "
+                            f"text contains unreplaced placeholder"
+                        )
+
+                    # Mark for caching after inference
+                    node["content_hash"] = content_hash
+                    node["should_cache"] = True
+            else:
+                uncacheable_nodes += 1
+
+            # Handle large nodes (existing logic from Phase 1)
+            if node_tokens > max_tokens:
+                logger.info(
+                    f"Node {node['node_id']} exceeds token limit ({node_tokens} tokens). Splitting into chunks..."
+                )
+                node_chunks = self.split_large_node(
+                    updated_text, node["node_id"], max_tokens
+                )
+
+                # Process each chunk as a separate node
+                for chunk in node_chunks:
+                    chunk_tokens = self.num_tokens_from_string(chunk["text"], model)
+
+                    if current_tokens + chunk_tokens > max_tokens:
+                        if current_batch:
+                            batches.append(current_batch)
+                        current_batch = []
+                        current_tokens = 0
+
+                    current_batch.append(
+                        DocstringRequest(
+                            node_id=chunk["node_id"],
+                            text=chunk["text"],
+                            metadata={
+                                "is_chunk": True,
+                                "parent_node_id": chunk["parent_node_id"],
+                                "chunk_index": chunk.get("chunk_index", 0),
+                                "should_cache": True,
+                                "content_hash": generate_content_hash(
+                                    chunk["text"], "chunk"
+                                ),
+                            },
+                        )
+                    )
+                    current_tokens += chunk_tokens
+                continue  # Skip normal processing for large nodes
 
             if current_tokens + node_tokens > max_tokens:
-                if current_batch:  # Only append if there are items
+                # Finalize current batch if it has nodes
+                if current_batch:
                     batches.append(current_batch)
-                current_batch = []
-                current_tokens = 0
 
-            current_batch.append(
-                DocstringRequest(node_id=node["node_id"], text=updated_text)
-            )
-            current_tokens += node_tokens
+                # Start new batch with current node
+                current_batch = [
+                    DocstringRequest(
+                        node_id=node["node_id"], text=updated_text, metadata=node
+                    )
+                ]
+                current_tokens = node_tokens
+            else:
+                # Add to current batch
+                current_batch.append(
+                    DocstringRequest(
+                        node_id=node["node_id"], text=updated_text, metadata=node
+                    )
+                )
+                current_tokens += node_tokens
 
         if current_batch:
             batches.append(current_batch)
 
-        total_nodes = sum(len(batch) for batch in batches)
-        logger.info(f"Batched {total_nodes} nodes into {len(batches)} batches")
+        # Enhanced logging with cache metrics
+        total_nodes = len(nodes)
+        batched_nodes = sum(len(batch) for batch in batches)
+        large_nodes_split = len(
+            [
+                n
+                for n in nodes
+                if n.get("text")
+                and self.num_tokens_from_string(
+                    replace_referenced_text(n.get("text", ""), node_dict) or "", model
+                )
+                > max_tokens
+            ]
+        )
+
+        if cache_service:
+            logger.info(
+                f"Cache stats - Hits: {cache_hits}, Misses: {cache_misses}, Uncacheable: {uncacheable_nodes}"
+            )
+            cache_hit_rate = cache_hits / total_nodes * 100 if total_nodes > 0 else 0
+            logger.info(f"Cache hit rate: {cache_hit_rate:.1f}%")
+
+            # Run diagnostics on nodes if DEBUG logging is enabled
+            try:
+                from app.modules.parsing.utils.cache_diagnostics import (
+                    analyze_cache_misses,
+                    log_diagnostics_summary,
+                )
+
+                # Run diagnostics on the nodes we just processed
+                diagnostics = analyze_cache_misses(nodes, cache_service.db)
+                log_diagnostics_summary(diagnostics)
+            except Exception as e:
+                logger.warning(f"Failed to run cache diagnostics: {e}")
+
+        logger.info(f"Batched {batched_nodes} nodes into {len(batches)} batches")
+        logger.info(f"Large nodes split: {large_nodes_split}")
         logger.info(f"Batch sizes: {[len(batch) for batch in batches]}")
+
+        if cache_service:
+            cache_service.db.close()
 
         return batches
 
@@ -347,7 +665,9 @@ class InferenceService:
                 continue  # Skip entry points that exceed the max_tokens limit
 
             if current_tokens + entry_point_tokens > max_tokens:
-                batches.append(current_batch)
+                # Safety check: only append if current_batch has items
+                if current_batch:
+                    batches.append(current_batch)
                 current_batch = []
                 current_tokens = 0
 
@@ -465,23 +785,96 @@ class InferenceService:
         #     f"DEBUGNEO4J: After get neighbours, Repo ID: {repo_id}, Entry points neighbors: {len(entry_points_neighbors)}"
         # )
         # self.log_graph_stats(repo_id)
-        batches = self.batch_nodes(nodes)
+        # Batch nodes (this mutates each node dict with cache-hit metadata)
+        batches = self.batch_nodes(nodes, project_id=repo_id)
+
+        # Process cached nodes after batching so hits are populated
+        cached_nodes = [node for node in nodes if node.get("cached_inference")]
+        for node in cached_nodes:
+            node["project_id"] = repo_id
+            await self.update_neo4j_with_cached_inference(node)
+
+        logger.info(f"Processed {len(cached_nodes)} cached nodes for project {repo_id}")
         all_docstrings = {"docstrings": []}
+
+        # Process LLM batches and cache results
+        cache_service = None
+        result_db = None
+        try:
+            result_db = next(get_db())
+            cache_service = InferenceCacheService(result_db)
+        except Exception as e:
+            logger.warning(
+                f"Failed to initialize cache service for result storage: {e}"
+            )
+            if result_db:
+                result_db.close()
+            cache_service = None
 
         semaphore = asyncio.Semaphore(self.parallel_requests)
 
         async def process_batch(batch, batch_index: int):
             async with semaphore:
                 logger.info(f"Processing batch {batch_index} for project {repo_id}")
-                response = await self.generate_response(batch, repo_id)
-                if not isinstance(response, DocstringResponse):
-                    logger.warning(
-                        f"Parsing project {repo_id}: Invalid response from LLM. Not an instance of DocstringResponse. Retrying..."
-                    )
+                try:
+                    # Generate inference for batch
                     response = await self.generate_response(batch, repo_id)
-                else:
-                    self.update_neo4j_with_docstrings(repo_id, response)
-                return response
+                    if not isinstance(response, DocstringResponse):
+                        logger.warning(
+                            f"Parsing project {repo_id}: Invalid response from LLM. Not an instance of DocstringResponse. Retrying..."
+                        )
+                        response = await self.generate_response(batch, repo_id)
+
+                    if isinstance(response, DocstringResponse):
+                        # Store results in cache and Neo4j
+                        for request, docstring_result in zip(
+                            batch, response.docstrings
+                        ):
+                            metadata = request.metadata or {}
+
+                            # Store in cache if eligible
+                            if (
+                                cache_service
+                                and metadata.get("should_cache")
+                                and metadata.get("content_hash")
+                            ):
+                                try:
+                                    # Convert DocstringResult to dictionary for caching
+                                    inference_data = {
+                                        "node_id": docstring_result.node_id,
+                                        "docstring": docstring_result.docstring,
+                                        "tags": docstring_result.tags,
+                                    }
+
+                                    # project_id stored for metadata/tracing only
+                                    cache_service.store_inference(
+                                        content_hash=metadata["content_hash"],
+                                        inference_data=inference_data,
+                                        project_id=repo_id,  # Metadata only
+                                        node_type=metadata.get("node_type"),
+                                        content_length=len(request.text),
+                                        tags=docstring_result.tags,
+                                    )
+                                except Exception as cache_error:
+                                    logger.warning(
+                                        f"Failed to cache inference for node {request.node_id}: {cache_error}"
+                                    )
+
+                        # Handle chunk consolidation before Neo4j update
+                        processed_response = self.process_chunk_responses(
+                            response, batch
+                        )
+                        if processed_response:
+                            self.update_neo4j_with_docstrings(
+                                repo_id, processed_response
+                            )
+
+                    return response
+
+                except Exception as e:
+                    logger.error(f"Failed to process batch {batch_index}: {e}")
+                    # Continue with next batch instead of failing entire operation
+                    return DocstringResponse(docstrings=[])
 
         tasks = [process_batch(batch, i) for i, batch in enumerate(batches)]
         results = await asyncio.gather(*tasks)
@@ -496,6 +889,10 @@ class InferenceService:
         #     all_docstrings, entry_points_neighbors
         # )
         updated_docstrings = all_docstrings
+
+        if cache_service:
+            cache_service.db.close()
+
         return updated_docstrings
 
     async def generate_response(
@@ -605,6 +1002,52 @@ class InferenceService:
     def generate_embedding(self, text: str) -> List[float]:
         embedding = self.embedding_model.encode(text)
         return embedding.tolist()
+
+    async def update_neo4j_with_cached_inference(self, node: Dict[str, Any]) -> None:
+        """Update Neo4j with cached inference data for a single node"""
+        cached_inference = node.get("cached_inference", {})
+        if not cached_inference:
+            return
+
+        # Extract inference data
+        docstring = cached_inference.get("docstring", "")
+        tags = cached_inference.get("tags", [])
+
+        # Reuse cached embedding if available, otherwise generate new one
+        embedding = cached_inference.get("embedding_vector")
+        if embedding is None:
+            logger.debug(
+                f"Generating new embedding for cached inference node {node.get('node_id', 'unknown')}"
+            )
+            embedding = self.generate_embedding(docstring)
+        else:
+            logger.debug(
+                f"Reusing cached embedding for node {node.get('node_id', 'unknown')}"
+            )
+
+        with self.driver.session() as session:
+            project = self.project_manager.get_project_from_db_by_id_sync(
+                node.get("project_id", "")
+            )
+            repo_path = project.get("repo_path") if project else None
+            is_local_repo = True if repo_path else False
+
+            session.run(
+                """
+                MATCH (n:NODE {repoId: $repo_id, node_id: $node_id})
+                SET n.docstring = $docstring,
+                    n.embedding = $embedding,
+                    n.tags = $tags
+                """
+                + ("" if is_local_repo else ", n.text = null, n.signature = null"),
+                repo_id=node.get("project_id", ""),
+                node_id=node["node_id"],
+                docstring=docstring,
+                embedding=embedding,
+                tags=tags,
+            )
+
+        logger.debug(f"Updated Neo4j with cached inference for node {node['node_id']}")
 
     def update_neo4j_with_docstrings(self, repo_id: str, docstrings: DocstringResponse):
         with self.driver.session() as session:
