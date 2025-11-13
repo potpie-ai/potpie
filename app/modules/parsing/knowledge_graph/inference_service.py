@@ -128,6 +128,7 @@ class InferenceService:
                     break
                 all_nodes.extend(batch)
                 offset += batch_size
+
         logger.info(f"DEBUGNEO4J: Fetched {len(all_nodes)} nodes for repo {repo_id}")
         return all_nodes
 
@@ -469,12 +470,14 @@ class InferenceService:
                         logger.warning(
                             f"⚠️  UNRESOLVED REFERENCE | "
                             f"node={node['node_id'][:8]} | "
-                            f"text contains unreplaced placeholder"
+                            f"text contains unreplaced placeholder - SKIPPING CACHE"
                         )
-
-                    # Mark for caching after inference
-                    node["content_hash"] = content_hash
-                    node["should_cache"] = True
+                        # DON'T mark for caching - unresolved references have low reuse value
+                        # Continue to LLM processing but without cache storage
+                    else:
+                        # Only mark resolved nodes for caching
+                        node["content_hash"] = content_hash
+                        node["should_cache"] = True
             else:
                 uncacheable_nodes += 1
 
@@ -740,6 +743,7 @@ class InferenceService:
             f"DEBUGNEO4J: Function: {self.generate_docstrings.__name__}, Repo ID: {repo_id}"
         )
         self.log_graph_stats(repo_id)
+
         nodes = self.fetch_graph(repo_id)
         logger.info(
             f"DEBUGNEO4J: After fetch graph, Repo ID: {repo_id}, Nodes: {len(nodes)}"
@@ -793,7 +797,6 @@ class InferenceService:
         for node in cached_nodes:
             node["project_id"] = repo_id
             await self.update_neo4j_with_cached_inference(node)
-
         logger.info(f"Processed {len(cached_nodes)} cached nodes for project {repo_id}")
         all_docstrings = {"docstrings": []}
 
@@ -976,9 +979,6 @@ class InferenceService:
             },
         ]
 
-        import time
-
-        start_time = time.time()
         logger.info(f"Parsing project {repo_id}: Starting the inference process...")
 
         try:
@@ -993,10 +993,7 @@ class InferenceService:
             )
             result = DocstringResponse(docstrings=[])
 
-        end_time = time.time()
-        logger.info(
-            f"Parsing project {repo_id}: Inference request completed. Time Taken: {end_time - start_time} seconds"
-        )
+        logger.info(f"Parsing project {repo_id}: Inference request completed.")
         return result
 
     def generate_embedding(self, text: str) -> List[float]:
@@ -1099,6 +1096,7 @@ class InferenceService:
             f"DEBUGNEO4J: After generate docstrings, Repo ID: {repo_id}, Docstrings: {len(docstrings)}"
         )
         self.log_graph_stats(repo_id)
+
         self.create_vector_index()
 
     def query_vector_index(
