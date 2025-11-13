@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from starlette.config import Config
 from starlette.responses import RedirectResponse
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 import logging
 import time
 import urllib.parse
@@ -10,6 +10,7 @@ import jwt
 
 from app.core.database import get_db
 from app.api.router import get_api_key_user
+from app.modules.auth.auth_service import AuthService
 
 from .sentry_oauth_v2 import SentryOAuthV2
 from .linear_oauth import LinearOAuth
@@ -115,9 +116,17 @@ async def sentry_oauth_callback(
 
 @router.get("/sentry/status/{user_id}")
 async def get_sentry_status(
-    user_id: str, sentry_oauth: SentryOAuthV2 = Depends(get_sentry_oauth)
+    user_id: str,
+    sentry_oauth: SentryOAuthV2 = Depends(get_sentry_oauth),
+    user: dict = Depends(AuthService.check_auth),
 ) -> SentryIntegrationStatus:
     """Get Sentry integration status for a user"""
+    # Verify the authenticated user matches the requested user_id
+    if user["user_id"] != user_id:
+        raise HTTPException(
+            status_code=403, detail="Cannot access other users' integration status"
+        )
+
     user_info = sentry_oauth.get_user_info(user_id)
 
     if not user_info:
@@ -133,9 +142,17 @@ async def get_sentry_status(
 
 @router.delete("/sentry/revoke/{user_id}")
 async def revoke_sentry_access(
-    user_id: str, sentry_oauth: SentryOAuthV2 = Depends(get_sentry_oauth)
+    user_id: str,
+    sentry_oauth: SentryOAuthV2 = Depends(get_sentry_oauth),
+    user: dict = Depends(AuthService.check_auth),
 ) -> Dict[str, Any]:
     """Revoke Sentry OAuth access for a user"""
+    # Verify the authenticated user matches the requested user_id
+    if user["user_id"] != user_id:
+        raise HTTPException(
+            status_code=403, detail="Cannot revoke other users' integrations"
+        )
+
     success = sentry_oauth.revoke_access(user_id)
 
     if success:
@@ -382,9 +399,17 @@ async def linear_oauth_callback(
 
 @router.get("/linear/status/{user_id}")
 async def get_linear_status(
-    user_id: str, linear_oauth: LinearOAuth = Depends(get_linear_oauth)
+    user_id: str,
+    linear_oauth: LinearOAuth = Depends(get_linear_oauth),
+    user: dict = Depends(AuthService.check_auth),
 ) -> LinearIntegrationStatus:
     """Get Linear integration status for a user"""
+    # Verify the authenticated user matches the requested user_id
+    if user["user_id"] != user_id:
+        raise HTTPException(
+            status_code=403, detail="Cannot access other users' integration status"
+        )
+
     user_info = linear_oauth.get_user_info(user_id)
 
     if not user_info:
@@ -400,9 +425,17 @@ async def get_linear_status(
 
 @router.delete("/linear/revoke/{user_id}")
 async def revoke_linear_access(
-    user_id: str, linear_oauth: LinearOAuth = Depends(get_linear_oauth)
+    user_id: str,
+    linear_oauth: LinearOAuth = Depends(get_linear_oauth),
+    user: dict = Depends(AuthService.check_auth),
 ) -> Dict[str, Any]:
     """Revoke Linear OAuth access for a user"""
+    # Verify the authenticated user matches the requested user_id
+    if user["user_id"] != user_id:
+        raise HTTPException(
+            status_code=403, detail="Cannot revoke other users' integrations"
+        )
+
     success = linear_oauth.revoke_access(user_id)
 
     if success:
@@ -419,10 +452,13 @@ async def revoke_linear_access(
 async def save_linear_integration(
     request: LinearSaveRequest,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> LinearSaveResponse:
     """Save Linear integration after OAuth callback"""
     try:
-        result = await integrations_service.save_linear_integration(request)
+        # Get authenticated user_id
+        user_id = user["user_id"]
+        result = await integrations_service.save_linear_integration(request, user_id)
         return LinearSaveResponse(success=True, data=result, error=None)
     except Exception as e:
         logging.error(f"Error saving Linear integration: {str(e)}")
@@ -537,7 +573,7 @@ async def jira_oauth_callback(
 
                 # Save the integration (this will exchange the code and persist tokens)
                 save_result = await integrations_service.save_jira_integration(
-                    save_request
+                    save_request, user_id
                 )
 
                 db.close()
@@ -552,7 +588,7 @@ async def jira_oauth_callback(
                 ):
                     frontend_url = f"https://{frontend_url}"
 
-                redirect_url = f"{frontend_url}/integrations/jira/redirect?success=true&integration_id={save_result.get('integration_id')}&user_name={save_result.get('user_name','')}"
+                redirect_url = f"{frontend_url}/integrations/jira/redirect?success=true&integration_id={save_result.get('integration_id')}&user_name={save_result.get('user_name', '')}"
 
                 return RedirectResponse(url=redirect_url)
 
@@ -603,8 +639,15 @@ async def jira_oauth_callback(
 async def get_jira_status(
     user_id: str,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> JiraIntegrationStatus:
     """Get Jira integration status for a user"""
+    # Verify the authenticated user matches the requested user_id
+    if user["user_id"] != user_id:
+        raise HTTPException(
+            status_code=403, detail="Cannot access other users' integration status"
+        )
+
     return await integrations_service.get_jira_integration_status(user_id)
 
 
@@ -613,8 +656,15 @@ async def revoke_jira_access(
     user_id: str,
     jira_oauth: JiraOAuth = Depends(get_jira_oauth),
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> Dict[str, Any]:
     """Revoke Jira OAuth access for a user"""
+    # Verify the authenticated user matches the requested user_id
+    if user["user_id"] != user_id:
+        raise HTTPException(
+            status_code=403, detail="Cannot revoke other users' integrations"
+        )
+
     tokens_removed = jira_oauth.revoke_access(user_id)
     deactivated = await integrations_service.deactivate_jira_integrations_for_user(
         user_id
@@ -635,9 +685,17 @@ async def revoke_jira_access(
 async def get_jira_resources(
     integration_id: str,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> Dict[str, Any]:
     """List Jira accessible resources for an integration."""
     try:
+        # Verify the user owns this integration
+        integration = await integrations_service.get_integration_by_id(integration_id)
+        if not integration or integration.get("created_by") != user["user_id"]:
+            raise HTTPException(
+                status_code=403, detail="Integration not found or access denied"
+            )
+
         result = await integrations_service.get_jira_accessible_resources(
             integration_id
         )
@@ -648,6 +706,8 @@ async def get_jira_resources(
             "site_id": result.get("site_id"),
             "site_url": result.get("site_url"),
         }
+    except HTTPException:
+        raise
     except Exception as exc:
         logging.error("Error fetching Jira accessible resources: %s", exc)
         raise HTTPException(
@@ -662,9 +722,17 @@ async def get_jira_projects(
     start_at: int = 0,
     max_results: int = 50,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> Dict[str, Any]:
     """Fetch Jira projects for an integration."""
     try:
+        # Verify the user owns this integration
+        integration = await integrations_service.get_integration_by_id(integration_id)
+        if not integration or integration.get("created_by") != user["user_id"]:
+            raise HTTPException(
+                status_code=403, detail="Integration not found or access denied"
+            )
+
         result = await integrations_service.get_jira_projects(
             integration_id, start_at=start_at, max_results=max_results
         )
@@ -676,6 +744,8 @@ async def get_jira_projects(
             "site_name": result.get("site_name"),
             "projects": result,
         }
+    except HTTPException:
+        raise
     except Exception as exc:
         logging.error("Error fetching Jira projects: %s", exc)
         raise HTTPException(
@@ -689,9 +759,17 @@ async def get_jira_project_details(
     integration_id: str,
     project_key: str,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> Dict[str, Any]:
     """Fetch details for a specific Jira project."""
     try:
+        # Verify the user owns this integration
+        integration = await integrations_service.get_integration_by_id(integration_id)
+        if not integration or integration.get("created_by") != user["user_id"]:
+            raise HTTPException(
+                status_code=403, detail="Integration not found or access denied"
+            )
+
         result = await integrations_service.get_jira_project_details(
             integration_id, project_key
         )
@@ -700,6 +778,8 @@ async def get_jira_project_details(
             "integration_id": integration_id,
             "project": result,
         }
+    except HTTPException:
+        raise
     except Exception as exc:
         logging.error("Error fetching Jira project details: %s", exc)
         raise HTTPException(
@@ -712,10 +792,12 @@ async def get_jira_project_details(
 async def save_jira_integration(
     request: JiraSaveRequest,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> JiraSaveResponse:
     """Save Jira integration after OAuth callback"""
     try:
-        result = await integrations_service.save_jira_integration(request)
+        user_id = user["user_id"]
+        result = await integrations_service.save_jira_integration(request, user_id)
         return JiraSaveResponse(success=True, data=result, error=None)
     except Exception as e:
         logging.error(f"Error saving Jira integration: {str(e)}")
@@ -1230,10 +1312,13 @@ async def jira_webhook(
 async def save_sentry_integration(
     request: SentrySaveRequest,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> SentrySaveResponse:
     """Save Sentry integration after OAuth callback"""
     try:
-        result = await integrations_service.save_sentry_integration(request)
+        # Get the authenticated Potpie user's ID
+        user_id = user["user_id"]
+        result = await integrations_service.save_sentry_integration(request, user_id)
         return SentrySaveResponse(success=True, data=result, error=None)
     except Exception as e:
         logging.error(f"Error saving Sentry integration: {str(e)}")
@@ -1268,15 +1353,20 @@ async def save_integration(
 @router.get("/connected")
 async def list_connected_integrations(
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> Dict[str, Any]:
-    """List all connected integrations that are saved"""
+    """List all connected integrations that are saved for the authenticated user"""
     try:
-        all_integrations = await integrations_service.get_all_integrations()
+        # Get the authenticated user's ID
+        user_id = user["user_id"]
+
+        # Get integrations only for this user
+        user_integrations = await integrations_service.get_integrations_by_user(user_id)
 
         # Filter only active integrations
         connected_integrations = {
             integration_id: integration_data
-            for integration_id, integration_data in all_integrations.items()
+            for integration_id, integration_data in user_integrations.items()
             if integration_data.get("active", False)
         }
 
@@ -1297,19 +1387,31 @@ async def list_integrations(
     integration_type: Optional[str] = None,
     org_slug: Optional[str] = None,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> Dict[str, Any]:
     """List all integrations with optional filtering"""
     try:
+        # Get the authenticated user's ID
+        user_id = user["user_id"]
+
+        # Get integrations for this user
+        user_integrations = await integrations_service.get_integrations_by_user(user_id)
+
+        # Apply additional filters if provided
         if integration_type:
-            integrations = await integrations_service.get_integrations_by_type(
-                integration_type
-            )
+            integrations = {
+                integration_id: integration_data
+                for integration_id, integration_data in user_integrations.items()
+                if integration_data.get("integration_type") == integration_type
+            }
         elif org_slug:
-            integrations = await integrations_service.get_integrations_by_org_slug(
-                org_slug
-            )
+            integrations = {
+                integration_id: integration_data
+                for integration_id, integration_data in user_integrations.items()
+                if integration_data.get("scope_data", {}).get("org_slug") == org_slug
+            }
         else:
-            integrations = await integrations_service.get_all_integrations()
+            integrations = user_integrations
 
         return {
             "status": "success",
@@ -1327,13 +1429,24 @@ async def list_integrations(
 async def get_integration(
     integration_id: str,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> Dict[str, Any]:
-    """Get a specific integration by ID"""
+    """Get a specific integration by ID (only if owned by the authenticated user)"""
     try:
+        # Get the authenticated user's ID
+        user_id = user["user_id"]
+
         integration = await integrations_service.get_integration_by_id(integration_id)
         if not integration:
             raise HTTPException(
                 status_code=404, detail=f"Integration not found: {integration_id}"
+            )
+
+        # Verify ownership - user can only view their own integrations
+        if integration.get("created_by") != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to view this integration",
             )
 
         return {"status": "success", "integration": integration}
@@ -1350,9 +1463,13 @@ async def get_integration(
 async def delete_integration(
     integration_id: str,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> Dict[str, Any]:
-    """Delete an integration by ID"""
+    """Delete an integration by ID (only if owned by the authenticated user)"""
     try:
+        # Get the authenticated user's ID
+        user_id = user["user_id"]
+
         # Validate integration_id format (basic UUID format check)
         if not integration_id or len(integration_id) < 10:
             raise HTTPException(status_code=400, detail="Invalid integration ID format")
@@ -1366,8 +1483,17 @@ async def delete_integration(
                 status_code=404, detail=f"Integration not found: {integration_id}"
             )
 
+        # Verify ownership - user can only delete their own integrations
+        if existing_integration.get("created_by") != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to delete this integration",
+            )
+
         # Log the deletion attempt
-        logging.info(f"Attempting to delete integration: {integration_id}")
+        logging.info(
+            f"User {user_id} attempting to delete integration: {integration_id}"
+        )
 
         success = await integrations_service.delete_integration(integration_id)
         if not success:
@@ -1400,9 +1526,27 @@ async def update_integration_status(
     integration_id: str,
     active: bool,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> Dict[str, Any]:
-    """Update integration active status"""
+    """Update integration active status (only if owned by the authenticated user)"""
     try:
+        # Get the authenticated user's ID
+        user_id = user["user_id"]
+
+        # Check if integration exists and verify ownership
+        integration = await integrations_service.get_integration_by_id(integration_id)
+        if not integration:
+            raise HTTPException(
+                status_code=404, detail=f"Integration not found: {integration_id}"
+            )
+
+        # Verify ownership
+        if integration.get("created_by") != user_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to update this integration",
+            )
+
         success = await integrations_service.update_integration_status(
             integration_id, active
         )
@@ -1429,8 +1573,11 @@ async def update_integration_status(
 async def create_integration(
     request: IntegrationCreateRequest,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> IntegrationResponse:
     """Create a new integration using schema models"""
+    # Override created_by with authenticated user to prevent spoofing
+    request.created_by = user["user_id"]
     return await integrations_service.create_integration(request)
 
 
@@ -1438,9 +1585,24 @@ async def create_integration(
 async def get_integration_schema(
     integration_id: str,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> IntegrationResponse:
-    """Get integration by ID using schema models"""
-    return await integrations_service.get_integration_schema(integration_id)
+    """Get integration by ID using schema models (only if owned by the authenticated user)"""
+    # Get the authenticated user's ID
+    user_id = user["user_id"]
+
+    result = await integrations_service.get_integration_schema(integration_id)
+
+    # Verify ownership if integration was found
+    if result.success and result.data:
+        if result.data.created_by != user_id:
+            return IntegrationResponse(
+                success=False,
+                data=None,
+                error="You don't have permission to view this integration",
+            )
+
+    return result
 
 
 @router.put("/schema/{integration_id}", response_model=IntegrationResponse)
@@ -1448,18 +1610,32 @@ async def update_integration_schema(
     integration_id: str,
     request: IntegrationUpdateRequest,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> IntegrationResponse:
-    """Update integration using schema models - currently only allows name updates"""
+    """Update integration using schema models - currently only allows name updates (only if owned by the authenticated user)"""
     try:
+        # Get the authenticated user's ID
+        user_id = user["user_id"]
+
         # Validate integration_id format
         if not integration_id or len(integration_id) < 10:
             return IntegrationResponse(
                 success=False, data=None, error="Invalid integration ID format"
             )
 
+        # Check ownership before updating
+        existing = await integrations_service.get_integration_schema(integration_id)
+        if existing.success and existing.data:
+            if existing.data.created_by != user_id:
+                return IntegrationResponse(
+                    success=False,
+                    data=None,
+                    error="You don't have permission to update this integration",
+                )
+
         # Log the update attempt
         logging.info(
-            f"Attempting to update integration name: {integration_id} to '{request.name}'"
+            f"User {user_id} attempting to update integration name: {integration_id} to '{request.name}'"
         )
 
         result = await integrations_service.update_integration(integration_id, request)
@@ -1483,17 +1659,33 @@ async def update_integration_schema(
 async def delete_integration_schema(
     integration_id: str,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> IntegrationResponse:
-    """Delete integration using schema models"""
+    """Delete integration using schema models (only if owned by the authenticated user)"""
     try:
+        # Get the authenticated user's ID
+        user_id = user["user_id"]
+
         # Validate integration_id format (basic UUID format check)
         if not integration_id or len(integration_id) < 10:
             return IntegrationResponse(
                 success=False, data=None, error="Invalid integration ID format"
             )
 
+        # Check ownership before deleting
+        existing = await integrations_service.get_integration_schema(integration_id)
+        if existing.success and existing.data:
+            if existing.data.created_by != user_id:
+                return IntegrationResponse(
+                    success=False,
+                    data=None,
+                    error="You don't have permission to delete this integration",
+                )
+
         # Log the deletion attempt
-        logging.info(f"Attempting to delete integration (schema): {integration_id}")
+        logging.info(
+            f"User {user_id} attempting to delete integration (schema): {integration_id}"
+        )
 
         result = await integrations_service.delete_integration_schema(integration_id)
 
@@ -1512,90 +1704,20 @@ async def delete_integration_schema(
         )
 
 
-@router.delete("/bulk")
-async def delete_integrations_bulk(
-    integration_ids: List[str],
-    integrations_service: IntegrationsService = Depends(get_integrations_service),
-) -> Dict[str, Any]:
-    """Delete multiple integrations by their IDs"""
-    try:
-        if not integration_ids:
-            raise HTTPException(status_code=400, detail="No integration IDs provided")
-
-        if len(integration_ids) > 100:  # Prevent bulk deletion of too many items
-            raise HTTPException(
-                status_code=400,
-                detail="Cannot delete more than 100 integrations at once",
-            )
-
-        # Validate all integration IDs
-        for integration_id in integration_ids:
-            if not integration_id or len(integration_id) < 10:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid integration ID format: {integration_id}",
-                )
-
-        logging.info(f"Attempting bulk deletion of {len(integration_ids)} integrations")
-
-        results = {
-            "successful_deletions": [],
-            "failed_deletions": [],
-            "total_requested": len(integration_ids),
-            "total_successful": 0,
-            "total_failed": 0,
-        }
-
-        # Process each integration deletion
-        for integration_id in integration_ids:
-            try:
-                success = await integrations_service.delete_integration(integration_id)
-                if success:
-                    results["successful_deletions"].append(integration_id)
-                    results["total_successful"] += 1
-                else:
-                    results["failed_deletions"].append(
-                        {
-                            "integration_id": integration_id,
-                            "error": "Integration not found or deletion failed",
-                        }
-                    )
-                    results["total_failed"] += 1
-            except Exception as e:
-                results["failed_deletions"].append(
-                    {"integration_id": integration_id, "error": str(e)}
-                )
-                results["total_failed"] += 1
-
-        logging.info(
-            f"Bulk deletion completed: {results['total_successful']} successful, {results['total_failed']} failed"
-        )
-
-        return {
-            "status": "completed",
-            "message": f"Bulk deletion completed: {results['total_successful']} successful, {results['total_failed']} failed",
-            "results": results,
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logging.error(f"Error in bulk deletion: {str(e)}")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to perform bulk deletion: {str(e)}"
-        )
-
-
 @router.get("/schema/list", response_model=IntegrationListResponse)
 async def list_integrations_schema(
     integration_type: Optional[IntegrationType] = None,
     status: Optional[IntegrationStatus] = None,
     active: Optional[bool] = None,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> IntegrationListResponse:
-    """List integrations using schema models with filtering"""
+    """List integrations using schema models with filtering for the authenticated user"""
+    # Get the authenticated user's ID
+    user_id = user["user_id"]
+
     return await integrations_service.list_integrations_schema(
-        integration_type=integration_type, status=status, active=active
+        integration_type=integration_type, status=status, active=active, user_id=user_id
     )
 
 
@@ -1604,9 +1726,17 @@ async def list_integrations_schema(
 async def get_sentry_organizations(
     integration_id: str,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> Dict[str, Any]:
     """Get Sentry organizations for an integration"""
     try:
+        # Verify the user owns this integration
+        integration = await integrations_service.get_integration_by_id(integration_id)
+        if not integration or integration.get("created_by") != user["user_id"]:
+            raise HTTPException(
+                status_code=403, detail="Integration not found or access denied"
+            )
+
         organizations = await integrations_service.get_sentry_organizations(
             integration_id
         )
@@ -1614,6 +1744,8 @@ async def get_sentry_organizations(
             "status": "success",
             "organizations": organizations,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"Error getting Sentry organizations: {str(e)}")
         raise HTTPException(
@@ -1626,9 +1758,17 @@ async def get_sentry_projects(
     integration_id: str,
     org_slug: str,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> Dict[str, Any]:
     """Get Sentry projects for an organization"""
     try:
+        # Verify the user owns this integration
+        integration = await integrations_service.get_integration_by_id(integration_id)
+        if not integration or integration.get("created_by") != user["user_id"]:
+            raise HTTPException(
+                status_code=403, detail="Integration not found or access denied"
+            )
+
         projects = await integrations_service.get_sentry_projects(
             integration_id, org_slug
         )
@@ -1637,6 +1777,8 @@ async def get_sentry_projects(
             "org_slug": org_slug,
             "projects": projects,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"Error getting Sentry projects: {str(e)}")
         raise HTTPException(
@@ -1652,9 +1794,17 @@ async def get_sentry_issues(
     org_slug: str,
     project_slug: str,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> Dict[str, Any]:
     """Get Sentry issues for a project"""
     try:
+        # Verify the user owns this integration
+        integration = await integrations_service.get_integration_by_id(integration_id)
+        if not integration or integration.get("created_by") != user["user_id"]:
+            raise HTTPException(
+                status_code=403, detail="Integration not found or access denied"
+            )
+
         issues = await integrations_service.get_sentry_issues(
             integration_id, org_slug, project_slug
         )
@@ -1664,6 +1814,8 @@ async def get_sentry_issues(
             "project_slug": project_slug,
             "issues": issues,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"Error getting Sentry issues: {str(e)}")
         raise HTTPException(
@@ -1678,9 +1830,17 @@ async def make_sentry_api_call(
     method: str = "GET",
     data: Optional[Dict[str, Any]] = None,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> Dict[str, Any]:
     """Make a custom API call to Sentry"""
     try:
+        # Verify the user owns this integration
+        integration = await integrations_service.get_integration_by_id(integration_id)
+        if not integration or integration.get("created_by") != user["user_id"]:
+            raise HTTPException(
+                status_code=403, detail="Integration not found or access denied"
+            )
+
         result = await integrations_service.make_sentry_api_call(
             integration_id, f"/{endpoint}", method, data
         )
@@ -1690,6 +1850,8 @@ async def make_sentry_api_call(
             "method": method,
             "data": result,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"Error making Sentry API call: {str(e)}")
         raise HTTPException(
@@ -1701,15 +1863,25 @@ async def make_sentry_api_call(
 async def refresh_sentry_token(
     integration_id: str,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> Dict[str, Any]:
     """Refresh expired Sentry access token"""
     try:
+        # Verify the user owns this integration
+        integration = await integrations_service.get_integration_by_id(integration_id)
+        if not integration or integration.get("created_by") != user["user_id"]:
+            raise HTTPException(
+                status_code=403, detail="Integration not found or access denied"
+            )
+
         result = await integrations_service.refresh_sentry_token(integration_id)
         return {
             "status": "success",
             "message": "Token refreshed successfully",
             "data": result,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"Error refreshing Sentry token: {str(e)}")
         raise HTTPException(
@@ -1721,9 +1893,17 @@ async def refresh_sentry_token(
 async def get_sentry_token_status(
     integration_id: str,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> Dict[str, Any]:
     """Get the status of Sentry access token (valid/expired)"""
     try:
+        # Verify the user owns this integration
+        integration = await integrations_service.get_integration_by_id(integration_id)
+        if not integration or integration.get("created_by") != user["user_id"]:
+            raise HTTPException(
+                status_code=403, detail="Integration not found or access denied"
+            )
+
         # Try to get a valid token (this will refresh if expired)
         access_token = await integrations_service.get_valid_sentry_token(integration_id)
 
@@ -1733,6 +1913,9 @@ async def get_sentry_token_status(
             "has_token": bool(access_token),
             "message": "Token is valid and ready for use",
         }
+
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"Error checking Sentry token status: {str(e)}")
         return {
