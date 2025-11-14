@@ -48,6 +48,18 @@ def configure_celery(queue_prefix: str):
             "app.celery.tasks.parsing_tasks.process_parsing": {
                 "queue": f"{queue_prefix}_process_repository"
             },
+            "app.celery.tasks.parsing_tasks.process_parsing_distributed": {
+                "queue": f"{queue_prefix}_process_repository"
+            },
+            "app.celery.tasks.parsing_tasks.parse_directory_unit": {
+                "queue": f"{queue_prefix}_process_repository"  # Changed to same queue as coordinator
+            },
+            "app.celery.tasks.parsing_tasks.aggregate_and_resolve_references": {
+                "queue": f"{queue_prefix}_process_repository"  # Added route for new callback task
+            },
+            "app.celery.tasks.parsing_tasks.resolve_cross_directory_references": {
+                "queue": f"{queue_prefix}_process_repository"
+            },
             "app.celery.tasks.agent_tasks.execute_agent_background": {
                 "queue": f"{queue_prefix}_agent_tasks"
             },
@@ -66,14 +78,14 @@ def configure_celery(queue_prefix: str):
         worker_prefetch_multiplier=1,
         task_acks_late=True,
         task_track_started=True,
-        task_time_limit=5400,  # 90 minutes in seconds
+        task_time_limit=54000,  # 900 minutes in seconds
         # Add fair task distribution settings
         worker_max_tasks_per_child=200,  # Restart worker after 200 tasks to prevent memory leaks
         worker_max_memory_per_child=2000000,  # Restart worker if using more than 2GB
         task_default_rate_limit="10/m",  # Limit tasks to 10 per minute per worker
         task_reject_on_worker_lost=True,  # Requeue tasks if worker dies
         broker_transport_options={
-            "visibility_timeout": 5400
+            "visibility_timeout": 54000
         },  # 45 minutes visibility timeout
     )
 

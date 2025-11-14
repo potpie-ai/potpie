@@ -2,6 +2,9 @@
 from app.celery.celery_app import celery_app, logger
 from app.celery.tasks.parsing_tasks import (
     process_parsing,  # Ensure the task is imported
+    process_parsing_distributed,  # Distributed parsing coordinator
+    parse_directory_unit,  # Directory worker task
+    resolve_cross_directory_references,  # Cross-directory reference resolution
 )
 from app.celery.tasks.agent_tasks import (
     execute_agent_background,  # Import agent task
@@ -19,6 +22,9 @@ def register_tasks():
 
     # Register parsing tasks
     celery_app.tasks.register(process_parsing)
+    celery_app.tasks.register(process_parsing_distributed)
+    celery_app.tasks.register(parse_directory_unit)
+    celery_app.tasks.register(resolve_cross_directory_references)
 
     # Register agent tasks
     celery_app.tasks.register(execute_agent_background)

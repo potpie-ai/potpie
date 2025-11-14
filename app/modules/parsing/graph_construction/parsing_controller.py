@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
 from uuid6 import uuid7
 
-from app.celery.tasks.parsing_tasks import process_parsing
+from app.celery.tasks.parsing_tasks import process_parsing, process_parsing_distributed
 from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
@@ -34,6 +34,22 @@ load_dotenv(override=True)
 
 
 class ParsingController:
+    @staticmethod
+    def _get_parsing_task():
+        """
+        Get the appropriate parsing task based on USE_DISTRIBUTED_PARSING environment variable.
+
+        Returns:
+            Celery task function (either process_parsing or process_parsing_distributed)
+        """
+        use_distributed = os.getenv("USE_DISTRIBUTED_PARSING", "false").lower() == "true"
+        if use_distributed:
+            logger.info("Using distributed parsing")
+            return process_parsing_distributed
+        else:
+            logger.info("Using sequential parsing")
+            return process_parsing
+
     @staticmethod
     @validate_parsing_input
     async def parse_directory(
@@ -194,7 +210,8 @@ class ParsingController:
                     logger.info(
                         f"Submitting parsing task for existing project {project_id}"
                     )
-                    process_parsing.delay(
+                    parsing_task = ParsingController._get_parsing_task()
+                    parsing_task.delay(
                         repo_details.model_dump(),
                         user_id,
                         user_email,
@@ -266,7 +283,8 @@ class ParsingController:
         if not user_email:
             user_email = None
 
-        process_parsing.delay(
+        parsing_task = ParsingController._get_parsing_task()
+        parsing_task.delay(
             repo_details.model_dump(),
             user_id,
             user_email,

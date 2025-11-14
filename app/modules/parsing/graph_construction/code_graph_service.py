@@ -218,14 +218,78 @@ class CodeGraphService:
             )
 
     def cleanup_graph(self, project_id: str):
+        """
+        Delete all nodes for a project in batches to avoid memory issues.
+        Uses a two-phase approach:
+        1. Delete relationships in batches
+        2. Delete nodes in batches
+        This avoids the OOM error from DETACH DELETE on highly connected nodes.
+        """
+        rel_batch_size = int(os.getenv('NEO4J_DELETE_REL_BATCH_SIZE', '5000'))
+        node_batch_size = int(os.getenv('NEO4J_DELETE_NODE_BATCH_SIZE', '1000'))
+
+        logger.info(f"Starting batched cleanup for project {project_id}")
+        logger.info(f"Phase 1: Deleting relationships (batch_size={rel_batch_size})")
+
+        total_rels_deleted = 0
+        total_nodes_deleted = 0
+
         with self.driver.session() as session:
-            session.run(
-                """
-                MATCH (n {repoId: $project_id})
-                DETACH DELETE n
-                """,
-                project_id=project_id,
-            )
+            # Phase 1: Delete all relationships first
+            while True:
+                result = session.run(
+                    """
+                    MATCH (n {repoId: $project_id})-[r]-()
+                    WITH r LIMIT $batch_size
+                    DELETE r
+                    RETURN count(r) as deleted
+                    """,
+                    project_id=project_id,
+                    batch_size=rel_batch_size
+                )
+
+                record = result.single()
+                deleted_count = record["deleted"] if record else 0
+                total_rels_deleted += deleted_count
+
+                if deleted_count > 0:
+                    logger.info(f"Deleted {deleted_count} relationships (total: {total_rels_deleted})")
+
+                # If we deleted fewer than batch_size, we're done
+                if deleted_count < rel_batch_size:
+                    break
+
+            logger.info(f"Phase 1 complete: deleted {total_rels_deleted} total relationships")
+            logger.info(f"Phase 2: Deleting nodes (batch_size={node_batch_size})")
+
+            # Phase 2: Delete all nodes (now they have no relationships)
+            while True:
+                result = session.run(
+                    """
+                    MATCH (n {repoId: $project_id})
+                    WITH n LIMIT $batch_size
+                    DELETE n
+                    RETURN count(n) as deleted
+                    """,
+                    project_id=project_id,
+                    batch_size=node_batch_size
+                )
+
+                record = result.single()
+                deleted_count = record["deleted"] if record else 0
+                total_nodes_deleted += deleted_count
+
+                if deleted_count > 0:
+                    logger.info(f"Deleted {deleted_count} nodes (total: {total_nodes_deleted})")
+
+                # If we deleted fewer than batch_size, we're done
+                if deleted_count < node_batch_size:
+                    break
+
+        logger.info(
+            f"Cleanup complete: deleted {total_rels_deleted} relationships "
+            f"and {total_nodes_deleted} nodes for project {project_id}"
+        )
 
         # Clean up search index
         search_service = SearchService(self.db)
@@ -248,6 +312,235 @@ class CodeGraphService:
         with self.driver.session() as session:
             result = session.run(query)
             return [record.data() for record in result]
+
+    def write_subgraph_incremental(
+        self, graph, project_id: str, user_id: str, batch_size: int = 1000
+    ):
+        """
+        Write subgraph to Neo4j incrementally with smaller batches.
+
+        Designed for distributed parsing where multiple workers write
+        concurrently. Uses batch UNWIND queries for optimal performance.
+
+        Args:
+            graph: NetworkX MultiDiGraph to write
+            project_id: Project ID (used as repoId)
+            user_id: User ID (used for node_id generation)
+            batch_size: Number of nodes/edges per batch (default 1000)
+
+        Returns:
+            Tuple of (nodes_created, edges_created)
+        """
+        logger.info(
+            f"Writing subgraph incrementally: "
+            f"{graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges"
+        )
+
+        # Convert graph to node list
+        nodes = []
+        for node_name, node_data in graph.nodes(data=True):
+            node_type = node_data.get("type", "UNKNOWN")
+            if node_type == "UNKNOWN":
+                continue
+
+            labels = ["NODE"]
+            if node_type in ["FILE", "CLASS", "FUNCTION", "INTERFACE"]:
+                labels.append(node_type)
+
+            node_dict = {
+                "name": node_data.get("name", node_name),
+                "file_path": node_data.get("file", ""),
+                "start_line": node_data.get("line", -1),
+                "end_line": node_data.get("end_line", -1),
+                "repoId": project_id,
+                "node_id": CodeGraphService.generate_node_id(node_name, user_id),
+                "entityId": user_id,
+                "type": node_type,
+                "text": node_data.get("text", ""),
+                "display_name": node_data.get("display_name", ""),
+                "labels": labels,
+            }
+            # Remove None values
+            node_dict = {k: v for k, v in node_dict.items() if v is not None}
+            nodes.append(node_dict)
+
+        # Write nodes in batches using UNWIND (no per-node queries)
+        nodes_created = 0
+        with self.driver.session() as session:
+            for i in range(0, len(nodes), batch_size):
+                batch = nodes[i:i+batch_size]
+
+                # Group nodes by label combination for efficient creation
+                nodes_by_labels = {}
+                for node in batch:
+                    labels_tuple = tuple(sorted(node['labels']))
+                    if labels_tuple not in nodes_by_labels:
+                        nodes_by_labels[labels_tuple] = []
+                    nodes_by_labels[labels_tuple].append(node)
+
+                # Create nodes with same labels in single query
+                for labels_tuple, label_nodes in nodes_by_labels.items():
+                    labels_str = ':'.join(labels_tuple)
+                    # Remove 'labels' key from node properties
+                    nodes_without_labels = [
+                        {k: v for k, v in node.items() if k != 'labels'}
+                        for node in label_nodes
+                    ]
+
+                    query = f"""
+                        UNWIND $nodes AS node
+                        CREATE (n:{labels_str})
+                        SET n = node
+                    """
+                    session.run(query, nodes=nodes_without_labels)
+                    nodes_created += len(label_nodes)
+
+                logger.info(f"Wrote {nodes_created}/{len(nodes)} nodes")
+
+        # Convert edges to list
+        relationships = []
+        for source, target, edge_data in graph.edges(data=True):
+            rel_dict = {
+                'source_id': CodeGraphService.generate_node_id(source, user_id),
+                'target_id': CodeGraphService.generate_node_id(target, user_id),
+                'type': edge_data.get('type', 'REFERENCES'),
+                'repoId': project_id,
+            }
+            # Preserve all edge properties
+            for key, value in edge_data.items():
+                if key != 'type':  # type is already added
+                    rel_dict[key] = value
+            relationships.append(rel_dict)
+
+        # Write edges in batches, grouped by relationship type
+        edges_created = 0
+        with self.driver.session() as session:
+            # Group by relationship type
+            rel_types = {}
+            for rel in relationships:
+                rel_type = rel['type']
+                if rel_type not in rel_types:
+                    rel_types[rel_type] = []
+                rel_types[rel_type].append(rel)
+
+            for rel_type, type_edges in rel_types.items():
+                # Validate relationship type to prevent injection
+                if not rel_type.replace('_', '').isalnum():
+                    logger.warning(f"Skipping invalid relationship type: {rel_type}")
+                    continue
+
+                for i in range(0, len(type_edges), batch_size):
+                    batch = type_edges[i:i+batch_size]
+                    # Extract edge properties (excluding source_id, target_id, type)
+                    edges_with_props = []
+                    for edge in batch:
+                        edge_props = {k: v for k, v in edge.items()
+                                     if k not in ['source_id', 'target_id', 'type']}
+                        edges_with_props.append({
+                            'source_id': edge['source_id'],
+                            'target_id': edge['target_id'],
+                            'props': edge_props
+                        })
+
+                    query = f"""
+                        UNWIND $edges AS edge
+                        MATCH (source:NODE {{node_id: edge.source_id, repoId: $repo_id}})
+                        MATCH (target:NODE {{node_id: edge.target_id, repoId: $repo_id}})
+                        CREATE (source)-[r:{rel_type}]->(target)
+                        SET r = edge.props
+                    """
+                    session.run(query, edges=edges_with_props, repo_id=project_id)
+                    edges_created += len(batch)
+                    logger.info(f"Wrote {edges_created}/{len(relationships)} edges")
+
+        logger.info(
+            f"Subgraph write complete: {nodes_created} nodes, {edges_created} edges"
+        )
+
+        return nodes_created, edges_created
+
+    def create_edges_batch(
+        self, edges_list: list, project_id: str, user_id: str, batch_size: int = 1000
+    ) -> int:
+        """
+        Create edges in Neo4j from a list of edge dictionaries.
+
+        Used by cross-directory reference resolution to create REFERENCES edges
+        after all nodes have been created.
+
+        Args:
+            edges_list: List of edge dicts with keys:
+                - source: source node name
+                - target: target node name
+                - type: relationship type
+                - other properties to set on the edge
+            project_id: Project ID (used as repoId)
+            user_id: User ID (for node_id generation)
+            batch_size: Number of edges per batch (default 1000)
+
+        Returns:
+            Number of edges created
+        """
+        logger.info(f"Creating {len(edges_list)} edges in batches of {batch_size}")
+
+        # Convert source/target names to node_ids
+        edges_to_create = []
+        for edge in edges_list:
+            edge_dict = {
+                'source_id': CodeGraphService.generate_node_id(edge['source'], user_id),
+                'target_id': CodeGraphService.generate_node_id(edge['target'], user_id),
+                'type': edge.get('type', 'REFERENCES'),
+                'repoId': project_id,
+            }
+            # Copy all other properties
+            for key, value in edge.items():
+                if key not in ['source', 'target', 'type']:
+                    edge_dict[key] = value
+            edges_to_create.append(edge_dict)
+
+        # Group by relationship type for efficient creation
+        rel_types = {}
+        for edge in edges_to_create:
+            rel_type = edge['type']
+            if rel_type not in rel_types:
+                rel_types[rel_type] = []
+            rel_types[rel_type].append(edge)
+
+        edges_created = 0
+        with self.driver.session() as session:
+            for rel_type, type_edges in rel_types.items():
+                # Validate relationship type
+                if not rel_type.replace('_', '').isalnum():
+                    logger.warning(f"Skipping invalid relationship type: {rel_type}")
+                    continue
+
+                for i in range(0, len(type_edges), batch_size):
+                    batch = type_edges[i:i+batch_size]
+
+                    # Extract edge properties (excluding source_id, target_id, type, repoId)
+                    edges_with_props = []
+                    for edge in batch:
+                        edge_props = {k: v for k, v in edge.items()
+                                     if k not in ['source_id', 'target_id', 'type']}
+                        edges_with_props.append({
+                            'source_id': edge['source_id'],
+                            'target_id': edge['target_id'],
+                            'props': edge_props
+                        })
+
+                    query = f"""
+                        UNWIND $edges AS edge
+                        MATCH (source:NODE {{node_id: edge.source_id, repoId: $repo_id}})
+                        MATCH (target:NODE {{node_id: edge.target_id, repoId: $repo_id}})
+                        CREATE (source)-[r:{rel_type}]->(target)
+                        SET r = edge.props
+                    """
+                    session.run(query, edges=edges_with_props, repo_id=project_id)
+                    edges_created += len(batch)
+                    logger.info(f"Created {edges_created}/{len(edges_to_create)} edges")
+
+        logger.info(f"Edge creation complete: {edges_created} edges")
+        return edges_created
 
 
 class SimpleIO:
