@@ -222,13 +222,15 @@ class RedisStreamManager:
                     "message": "Generation stopped by user",
                 },
             )
-            
+
             # Set task status to cancelled
             self.set_task_status(conversation_id, run_id, "cancelled")
-            
+
             logger.info(f"Cleared session for {conversation_id}:{run_id}")
         except Exception as e:
-            logger.error(f"Failed to clear session for {conversation_id}:{run_id}: {str(e)}")
+            logger.error(
+                f"Failed to clear session for {conversation_id}:{run_id}: {str(e)}"
+            )
 
     def wait_for_task_start(
         self, conversation_id: str, run_id: str, timeout: int = 10

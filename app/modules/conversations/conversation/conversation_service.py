@@ -1113,7 +1113,9 @@ class ConversationService:
                 # - For queued tasks: Prevents them from starting execution
                 # - For running tasks: Sends SIGTERM to terminate them
                 # terminate=True ensures both cases are handled
-                self.celery_app.control.revoke(task_id, terminate=True, signal="SIGTERM")
+                self.celery_app.control.revoke(
+                    task_id, terminate=True, signal="SIGTERM"
+                )
                 logger.info(
                     f"Revoked Celery task {task_id} for {conversation_id}:{run_id} (works for both queued and running tasks)"
                 )

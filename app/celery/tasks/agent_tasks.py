@@ -113,7 +113,7 @@ def execute_agent_background(
                             logger.warning(
                                 f"Failed to flush message buffer on cancellation: {str(e)}"
                             )
-                        # Continue with cancellation even if flush fails     
+                        # Continue with cancellation even if flush fails
                         redis_manager.publish_event(
                             conversation_id,
                             run_id,
@@ -295,7 +295,7 @@ def execute_regenerate_background(
                                 f"Failed to flush message buffer on cancellation: {str(e)}"
                             )
                         # Continue with cancellation even if flush fails
-                        
+
                         redis_manager.publish_event(
                             conversation_id,
                             run_id,

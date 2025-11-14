@@ -367,7 +367,9 @@ class ConversationAPI:
 
         # Store the Celery task ID for later revocation
         redis_manager.set_task_id(conversation_id, run_id, task_result.id)
-        logger.info(f"Started agent task {task_result.id} for {conversation_id}:{run_id}")
+        logger.info(
+            f"Started agent task {task_result.id} for {conversation_id}:{run_id}"
+        )
 
         # Wait for background task to start (with health check)
         # Increased timeout to 30 seconds to handle queued tasks
@@ -498,7 +500,9 @@ class ConversationAPI:
 
         # Store the Celery task ID for later revocation
         redis_manager.set_task_id(conversation_id, run_id, task_result.id)
-        logger.info(f"Started regenerate task {task_result.id} for {conversation_id}:{run_id}")
+        logger.info(
+            f"Started regenerate task {task_result.id} for {conversation_id}:{run_id}"
+        )
 
         # Wait for background task to start (with health check)
         # Increased timeout to 30 seconds to handle queued tasks
