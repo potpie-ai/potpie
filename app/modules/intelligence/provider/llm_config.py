@@ -17,6 +17,7 @@ MODEL_CONFIG_MAP = {
             "supports_vision": True,
             "supports_tool_parallelism": True,
         },
+        "context_window": 128000,
         "base_url": None,
         "api_version": None,
     },
@@ -29,6 +30,7 @@ MODEL_CONFIG_MAP = {
             "supports_vision": True,
             "supports_tool_parallelism": True,
         },
+        "context_window": 200000,
         "base_url": None,
         "api_version": None,
     },
@@ -41,6 +43,7 @@ MODEL_CONFIG_MAP = {
             "supports_vision": True,
             "supports_tool_parallelism": True,
         },
+        "context_window": 128000,
         "base_url": None,
         "api_version": None,
     },
@@ -54,6 +57,7 @@ MODEL_CONFIG_MAP = {
             "supports_vision": True,
             "supports_tool_parallelism": True,
         },
+        "context_window": 200000,
         "base_url": None,
         "api_version": None,
     },
@@ -66,6 +70,7 @@ MODEL_CONFIG_MAP = {
             "supports_vision": True,
             "supports_tool_parallelism": True,
         },
+        "context_window": 200000,
         "base_url": None,
         "api_version": None,
     },
@@ -78,6 +83,7 @@ MODEL_CONFIG_MAP = {
             "supports_vision": True,
             "supports_tool_parallelism": True,
         },
+        "context_window": 200000,
         "base_url": None,
         "api_version": None,
     },
@@ -90,6 +96,7 @@ MODEL_CONFIG_MAP = {
             "supports_vision": True,
             "supports_tool_parallelism": True,
         },
+        "context_window": 200000,
         "base_url": None,
         "api_version": None,
     },
@@ -102,6 +109,7 @@ MODEL_CONFIG_MAP = {
             "supports_vision": True,
             "supports_tool_parallelism": True,
         },
+        "context_window": 200000,
         "base_url": None,
         "api_version": None,
     },
@@ -114,6 +122,7 @@ MODEL_CONFIG_MAP = {
             "supports_vision": True,
             "supports_tool_parallelism": True,
         },
+        "context_window": 200000,
         "base_url": None,
         "api_version": None,
     },
@@ -128,6 +137,7 @@ MODEL_CONFIG_MAP = {
             "supports_vision": False,
             "supports_tool_parallelism": True,
         },
+        "context_window": 64000,
         "base_url": "https://openrouter.ai/api/v1",
         "api_version": None,
     },
@@ -142,6 +152,7 @@ MODEL_CONFIG_MAP = {
             "supports_vision": False,
             "supports_tool_parallelism": True,
         },
+        "context_window": 128000,
         "base_url": "https://openrouter.ai/api/v1",
         "api_version": None,
     },
@@ -156,6 +167,7 @@ MODEL_CONFIG_MAP = {
             "supports_vision": True,
             "supports_tool_parallelism": True,
         },
+        "context_window": 1000000,
         "base_url": "https://openrouter.ai/api/v1",
         "api_version": None,
     },
@@ -169,6 +181,7 @@ MODEL_CONFIG_MAP = {
             "supports_vision": True,
             "supports_tool_parallelism": True,
         },
+        "context_window": 2000000,
         "base_url": "https://openrouter.ai/api/v1",
         "api_version": None,
     },
@@ -182,6 +195,7 @@ class LLMProviderConfig:
         model: str,
         default_params: Dict[str, Any],
         capabilities: Dict[str, bool],
+        context_window: int = 8192,
         base_url: Optional[str] = None,
         api_version: Optional[str] = None,
         auth_provider: Optional[str] = None,
@@ -191,6 +205,7 @@ class LLMProviderConfig:
         self.model = model
         self.default_params = default_params
         self.capabilities = dict(capabilities) if capabilities else {}
+        self.context_window = context_window
 
         env_base_url = os.environ.get("LLM_API_BASE")
         env_api_version = os.environ.get("LLM_API_VERSION")
@@ -263,6 +278,16 @@ def get_config_for_model(model_string: str) -> Dict[str, Any]:
         "azure",
         "ollama",
     }
+
+    # Default context windows by provider
+    default_context_windows = {
+        "openai": 128000,
+        "anthropic": 200000,
+        "ollama": 8192,
+        "azure": 128000,
+        "gemini": 1000000,
+    }
+
     return {
         "provider": provider,
         "default_params": {"temperature": 0.3},
@@ -272,6 +297,7 @@ def get_config_for_model(model_string: str) -> Dict[str, Any]:
             "supports_vision": provider in {"openai", "anthropic"},
             "supports_tool_parallelism": provider in {"openai", "anthropic"},
         },
+        "context_window": default_context_windows.get(provider, 8192),
         "base_url": None,
         "api_version": None,
         "auth_provider": provider,
@@ -313,6 +339,7 @@ def build_llm_provider_config(
         model=full_model_name,
         default_params=dict(config_data["default_params"]),
         capabilities=config_data.get("capabilities", {}),
+        context_window=config_data.get("context_window", 8192),
         base_url=config_data.get("base_url"),
         api_version=config_data.get("api_version"),
         auth_provider=config_data.get("auth_provider"),
