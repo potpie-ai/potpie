@@ -197,6 +197,39 @@ class RedisStreamManager:
         status = self.redis_client.get(status_key)
         return status.decode() if status else None
 
+    def set_task_id(self, conversation_id: str, run_id: str, task_id: str) -> None:
+        """Store Celery task ID for this conversation/run"""
+        task_id_key = f"task:id:{conversation_id}:{run_id}"
+        self.redis_client.set(task_id_key, task_id, ex=600)  # 10 minute expiry
+        logger.debug(f"Stored task ID {task_id} for {conversation_id}:{run_id}")
+
+    def get_task_id(self, conversation_id: str, run_id: str) -> Optional[str]:
+        """Get Celery task ID for this conversation/run"""
+        task_id_key = f"task:id:{conversation_id}:{run_id}"
+        task_id = self.redis_client.get(task_id_key)
+        return task_id.decode() if task_id else None
+
+    def clear_session(self, conversation_id: str, run_id: str) -> None:
+        """Clear session data when stopping - publishes end event and cleans up"""
+        try:
+            # Publish an end event with cancelled status so clients know to stop
+            self.publish_event(
+                conversation_id,
+                run_id,
+                "end",
+                {
+                    "status": "cancelled",
+                    "message": "Generation stopped by user",
+                },
+            )
+            
+            # Set task status to cancelled
+            self.set_task_status(conversation_id, run_id, "cancelled")
+            
+            logger.info(f"Cleared session for {conversation_id}:{run_id}")
+        except Exception as e:
+            logger.error(f"Failed to clear session for {conversation_id}:{run_id}: {str(e)}")
+
     def wait_for_task_start(
         self, conversation_id: str, run_id: str, timeout: int = 10
     ) -> bool:

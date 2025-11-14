@@ -99,6 +99,21 @@ def execute_agent_background(
                         logger.info(
                             f"Agent execution cancelled: {conversation_id}:{run_id}"
                         )
+
+                        # Flush any buffered AI response chunks before cancelling
+                        try:
+                            message_id = service.history_manager.flush_message_buffer(
+                                conversation_id, MessageType.AI_GENERATED
+                            )
+                            if message_id:
+                                logger.debug(
+                                    f"Flushed partial AI response (message_id: {message_id}) for cancelled task: {conversation_id}:{run_id}"
+                                )
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to flush message buffer on cancellation: {str(e)}"
+                            )
+                        # Continue with cancellation even if flush fails     
                         redis_manager.publish_event(
                             conversation_id,
                             run_id,
@@ -161,6 +176,9 @@ def execute_agent_background(
                 f"Background agent execution cancelled: {conversation_id}:{run_id}"
             )
 
+        # Return the completion status so on_success can check if it was cancelled
+        return completed
+
     except Exception as e:
         logger.error(
             f"Background agent execution failed: {conversation_id}:{run_id}: {str(e)}",
@@ -215,6 +233,7 @@ def execute_regenerate_background(
                 ConversationStore,
             )
             from app.modules.conversations.message.message_store import MessageStore
+            from app.modules.conversations.message.message_model import MessageType
 
             # Use BaseTask's context manager to get a fresh, non-pooled async session
             # This avoids asyncpg Future binding issues across tasks sharing the same event loop
@@ -261,6 +280,22 @@ def execute_regenerate_background(
                         logger.info(
                             f"Regenerate execution cancelled: {conversation_id}:{run_id}"
                         )
+
+                        # Flush any buffered AI response chunks before cancelling
+                        try:
+                            message_id = service.history_manager.flush_message_buffer(
+                                conversation_id, MessageType.AI_GENERATED
+                            )
+                            if message_id:
+                                logger.debug(
+                                    f"Flushed partial AI response (message_id: {message_id}) for cancelled regenerate: {conversation_id}:{run_id}"
+                                )
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to flush message buffer on cancellation: {str(e)}"
+                            )
+                        # Continue with cancellation even if flush fails
+                        
                         redis_manager.publish_event(
                             conversation_id,
                             run_id,
@@ -331,6 +366,9 @@ def execute_regenerate_background(
             logger.info(
                 f"Background regenerate execution cancelled: {conversation_id}:{run_id}"
             )
+
+        # Return the completion status so on_success can check if it was cancelled
+        return completed
 
     except Exception as e:
         logger.error(
