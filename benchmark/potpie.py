@@ -8,6 +8,8 @@ import logging
 import pandas as pd
 from collections.abc import Awaitable
 from datetime import datetime
+from contextlib import redirect_stdout
+from io import StringIO
 from deepeval.test_case import LLMTestCase
 from deepeval import evaluate
 from datetime import datetime
@@ -117,9 +119,9 @@ def upload_results_to_phoenix(
         final_dataset_name = base_dataset_name
         
         try:
-            print(f"🔍 Searching for existing dataset: '{base_dataset_name}'")
+            print(f"Searching for existing dataset: '{base_dataset_name}'")
             datasets_list = list(client.datasets.list())
-            print(f"📊 Found {len(datasets_list)} total datasets in Phoenix")
+            print(f"Found {len(datasets_list)} total datasets in Phoenix")
             
             # Look for base name OR versioned datasets (e.g., "Benchmark Results v20251112_205958")
             matching_datasets = [
@@ -132,7 +134,7 @@ def upload_results_to_phoenix(
                 # Use the most recent one (sort by name, versions have timestamps)
                 existing = sorted(matching_datasets, key=lambda x: x.get('name', ''), reverse=True)[0]
                 existing_name = existing.get('name')
-                print(f"✓ Found {len(matching_datasets)} matching dataset(s), using most recent: '{existing_name}'")
+                print(f"Found {len(matching_datasets)} matching dataset(s), using most recent: '{existing_name}'")
             
             if existing:
                 dataset_obj = client.datasets.get_dataset(dataset=existing)
@@ -151,22 +153,22 @@ def upload_results_to_phoenix(
                 
                 # Log deduplication if it occurred
                 if len(existing_deduped) != len(existing_questions):
-                    print(f"🔧 Phoenix bug workaround: Removed {len(existing_questions) - len(existing_deduped)} duplicate rows")
+                    print(f"Phoenix bug workaround: Removed {len(existing_questions) - len(existing_deduped)} duplicate rows")
                 
                 # Normalize questions for comparison (strip whitespace)
                 existing_normalized = [q.strip() for q in existing_deduped]
                 new_normalized = [q.strip() for q in new_questions]
     
-                print(f"📏 Comparing: {len(existing_normalized)} existing vs {len(new_normalized)} new questions")
+                print(f"Comparing: {len(existing_normalized)} existing vs {len(new_normalized)} new questions")
                 
                 # Simple content check: compare questions
                 if existing_normalized == new_normalized:
-                    print(f"✅ Dataset unchanged, reusing '{existing_name}'")
+                    print(f"Dataset unchanged, reusing '{existing_name}'")
                     dataset = dataset_obj
                 else:
                     # Content changed - create versioned dataset
                     final_dataset_name = f"{base_dataset_name} v{timestamp}"
-                    print(f"⚠️ Dataset content changed, creating '{final_dataset_name}'")
+                    print(f"Dataset content changed, creating '{final_dataset_name}'")
                     # Show first difference for debugging
                     if len(existing_normalized) != len(new_normalized):
                         print(f"   Reason: Different sizes ({len(existing_normalized)} vs {len(new_normalized)})")
@@ -178,9 +180,9 @@ def upload_results_to_phoenix(
                                 print(f"   New starts with: {new[:80]}...")
                                 break
             else:
-                print(f"❌ No existing dataset found with name '{base_dataset_name}'")
+                print(f"No existing dataset found with name '{base_dataset_name}'")
         except Exception as e:
-            print(f"❌ Error checking existing dataset: {e}")
+            print(f"Error checking existing dataset: {e}")
             import traceback
             traceback.print_exc()
         
@@ -227,7 +229,7 @@ def upload_results_to_phoenix(
             experiment_name=exp_name,
         )
         
-        logging.info(f"✅ Created experiment '{exp_name}' on '{dataset.name}'")
+        logging.info(f"Created experiment '{exp_name}' on '{dataset.name}'")
         
     except Exception as e:
         logging.error(f"Failed to upload to Phoenix: {e}", exc_info=True)
@@ -488,7 +490,7 @@ async def main():
 
     # Print first result for verification
     # if eval_results_for_save and eval_results_for_save[0]:
-    #     print(f"\n✅ Extracted MetricData: score={eval_results_for_save[0].score}, success={eval_results_for_save[0].success}, name={eval_results_for_save[0].name}")
+    #     print(f"\nExtracted MetricData: score={eval_results_for_save[0].score}, success={eval_results_for_save[0].success}, name={eval_results_for_save[0].name}")
 
     # Save results to file with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -502,7 +504,7 @@ async def main():
         eval_results=eval_results_for_save,  # Pass extracted results
         output_file=output_file,
     )
-    logging.info(f"✅ Benchmark results saved to {output_file}")
+    logging.info(f"Benchmark results saved to {output_file}")
 
     # Upload results to Phoenix 
     upload_results_to_phoenix(
