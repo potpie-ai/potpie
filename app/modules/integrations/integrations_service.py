@@ -2412,9 +2412,9 @@ class IntegrationsService:
             return 0
 
     async def save_confluence_integration(
-        self, request: ConfluenceSaveRequest
+        self, request: ConfluenceSaveRequest, user_id: str
     ) -> Dict[str, Any]:
-        """Save Confluence integration with authorization code"""
+        """Save Confluence integration with authorization code (associate with user_id)"""
         try:
             from .token_encryption import encrypt_token
 
@@ -2512,7 +2512,7 @@ class IntegrationsService:
 
             # Cache tokens in in-memory store for compatibility endpoints
             self.confluence_oauth.token_store.store_tokens(
-                request.user_id,
+                user_id,
                 {
                     "access_token": access_token,
                     "refresh_token": tokens.get("refresh_token"),
@@ -2544,7 +2544,7 @@ class IntegrationsService:
                 "unique_identifier",
                 f"confluence-{site_id}" if site_id else f"confluence-{integration_id}",
             )
-            setattr(db_integration, "created_by", request.user_id)
+            setattr(db_integration, "created_by", user_id)
             setattr(db_integration, "created_at", created_at)
             setattr(db_integration, "updated_at", created_at)
 
