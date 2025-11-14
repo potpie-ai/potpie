@@ -43,12 +43,12 @@ class CreateJiraIssueTool:
 
     name = "Create Jira Issue"
     description = """Create a new issue in Jira.
-    
+
     IMPORTANT: Before using this tool, use 'Get Jira Project Details' tool to discover:
     - Valid issue types for the project (Task, Bug, Story, Epic, etc.)
     - Valid priority levels (Highest, High, Medium, Low, Lowest)
     - Existing labels you can use
-    
+
     If assigning to a user, use 'Get Jira Project Users' tool first to get their account_id.
 
     Use this tool when you need to:
@@ -57,20 +57,20 @@ class CreateJiraIssueTool:
     - Create a story for a new feature
     - Document technical debt or improvements
     - Log incidents or problems
-    
+
     Required fields:
     - project_key: The project where issue will be created
     - summary: Brief title/summary of the issue
     - description: Detailed description
-    
+
     Optional fields:
     - issue_type: Type of work item (default: 'Task') - e.g., Bug, Story, Epic. Use 'Get Jira Project Details' to see valid types.
     - priority: Priority level (e.g., 'High', 'Medium', 'Low'). Use 'Get Jira Project Details' to see valid priorities.
     - assignee_id: Account ID of user to assign to
     - labels: Tags for categorization
-    
+
     To change the status after creation, use the 'Transition Jira Issue' tool.
-    
+
     Returns the created issue with its key and details.
     """
 
@@ -173,16 +173,16 @@ def create_jira_issue_tool(db: Session, user_id: str) -> StructuredTool:
         func=tool_instance.run,
         name="Create Jira Issue",
         description="""Create a new issue in Jira with summary, description, and optional fields.
-        
+
         IMPORTANT: Use 'Get Jira Project Details' tool FIRST to discover valid issue types and priorities.
         If assigning to a user, use 'Get Jira Project Users' tool to get their account_id.
-        
+
         Use this when you need to:
         - Create bug reports from errors or issues found
         - Create tasks for work that needs to be done
         - Document feature requests or improvements
         - Log incidents or problems
-        
+
         Inputs:
         - project_key (str): Project key (e.g., 'PROJ', 'BUG')
         - summary (str): Brief title of the issue
@@ -191,7 +191,7 @@ def create_jira_issue_tool(db: Session, user_id: str) -> StructuredTool:
         - priority (str, optional): Priority level. Get valid priorities from project details.
         - assignee_id (str, optional): User's account ID. Get from project users tool.
         - labels (list, optional): List of labels/tags
-        
+
         Returns the created issue with its key and URL. Use 'Transition Jira Issue' tool to change status.""",
         args_schema=CreateJiraIssueInput,
     )

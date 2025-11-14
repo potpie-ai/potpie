@@ -29,7 +29,7 @@ class LinkJiraIssuesTool:
 
     name = "Link Jira Issues"
     description = """Create a relationship link between two Jira issues.
-    
+
     Use this tool when you need to:
     - Link related issues together (e.g., 'Relates to')
     - Show that one issue blocks another (e.g., 'Blocks')
@@ -37,17 +37,17 @@ class LinkJiraIssuesTool:
     - Clone or split issues (e.g., 'Clones')
     - Create parent-child relationships for subtasks
     - Establish dependencies between issues
-    
+
     Common link types:
     - 'Blocks' / 'is blocked by'
     - 'Relates' / 'relates to'
     - 'Duplicates' / 'is duplicated by'
     - 'Clones' / 'is cloned by'
     - 'Causes' / 'is caused by'
-    
+
     TIP: Use the 'Get Jira Project Details' tool first to see all available
     link types for your Jira instance.
-    
+
     Returns confirmation of the link creation.
     """
 
@@ -111,21 +111,21 @@ def link_jira_issues_tool(db: Session, user_id: str) -> StructuredTool:
         func=tool_instance.run,
         name="Link Jira Issues",
         description="""Create a relationship link between two Jira issues.
-        
+
         Use this when you need to:
         - Link related issues together
         - Show blocking relationships
         - Mark duplicates
         - Clone or split issues
         - Create dependencies
-        
+
         Inputs:
         - issue_key (str): Source issue key (e.g., 'PROJ-123')
         - linked_issue_key (str): Target issue key (e.g., 'PROJ-456')
         - link_type (str): Type of link ('Blocks', 'Relates', 'Duplicates', 'Clones', etc.)
-        
+
         TIP: Use 'Get Jira Project Details' tool first to see available link types.
-        
+
         Returns confirmation of the link creation.""",
         args_schema=LinkJiraIssuesInput,
     )

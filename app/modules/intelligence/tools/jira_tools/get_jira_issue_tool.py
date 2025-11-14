@@ -25,13 +25,13 @@ class GetJiraIssueTool:
 
     name = "Get Jira Issue"
     description = """Fetch detailed information about a Jira issue by its key.
-    
+
     Use this tool when you need to:
     - Get current status, assignee, or priority of an issue
     - Read the description and summary of an issue
     - Check when an issue was created or last updated
     - Get the reporter and project information
-    
+
     Returns comprehensive issue details including summary, description, status,
     priority, assignee, reporter, dates, and more.
     """
@@ -91,16 +91,16 @@ def get_jira_issue_tool(db: Session, user_id: str) -> StructuredTool:
         func=tool_instance.run,
         name="Get Jira Issue",
         description="""Fetch detailed information about a Jira issue by its key (e.g., 'PROJ-123').
-        
+
         Use this when you need to:
         - Get current status, assignee, or priority of an issue
         - Read the description and summary of an issue
         - Check when an issue was created or last updated
         - Get the reporter and project information
-        
+
         Input:
         - issue_key (str): The Jira issue key (e.g., 'PROJ-123', 'BUG-456')
-        
+
         Returns comprehensive issue details.""",
         args_schema=GetJiraIssueInput,
     )

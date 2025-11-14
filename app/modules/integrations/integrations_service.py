@@ -623,7 +623,7 @@ class IntegrationsService:
         )
 
     async def save_sentry_integration(
-        self, request: SentrySaveRequest
+        self, request: SentrySaveRequest, user_id: str
     ) -> Dict[str, Any]:
         """Save Sentry integration with authorization code (backend handles token exchange)"""
         try:
@@ -725,21 +725,19 @@ class IntegrationsService:
             # Create scope data from organization information
             org_info = tokens["organization"]
 
-            # Check if this Sentry account is already integrated
-            sentry_user_id = tokens.get("user", {}).get("id")
-            if sentry_user_id:
-                existing_integration = await self.check_existing_sentry_integration(
-                    org_info["slug"], sentry_user_id
+            # Check if this Potpie user already integrated this Sentry org
+            existing_integration = await self.check_existing_sentry_integration(
+                org_info["slug"], user_id
+            )
+            if existing_integration:
+                logging.warning(
+                    f"Sentry account (org: {org_info['slug']}, user: {user_id}) is already integrated: {existing_integration['integration_id']}"
                 )
-                if existing_integration:
-                    logging.warning(
-                        f"Sentry account (org: {org_info['slug']}, user: {sentry_user_id}) is already integrated: {existing_integration['integration_id']}"
-                    )
-                    raise Exception(
-                        f"Sentry account is already integrated. "
-                        f"Existing integration ID: {existing_integration['integration_id']}. "
-                        f"Please delete the existing integration first if you want to reconnect."
-                    )
+                raise Exception(
+                    f"Sentry account is already integrated. "
+                    f"Existing integration ID: {existing_integration['integration_id']}. "
+                    f"Please delete the existing integration first if you want to reconnect."
+                )
 
             scope_data = ScopeData(
                 org_slug=org_info["slug"],
@@ -771,11 +769,11 @@ class IntegrationsService:
             setattr(
                 db_integration,
                 "unique_identifier",
-                f"{org_info['slug']}-{tokens.get('user', {}).get('id', 'unknown')}",
+                f"{org_info['slug']}-{user_id}",  # Use Potpie user_id for uniqueness
             )
             setattr(
-                db_integration, "created_by", tokens.get("user", {}).get("id", "system")
-            )  # Use actual user ID from OAuth
+                db_integration, "created_by", user_id
+            )  # Use Potpie user_id, not Sentry OAuth user ID
             setattr(db_integration, "created_at", created_at)
             setattr(db_integration, "updated_at", created_at)
 
@@ -869,9 +867,11 @@ class IntegrationsService:
             )
             return None
 
-    async def get_all_integrations(self) -> Dict[str, Dict[str, Any]]:
-        """Get all integrations from database (legacy method)"""
-        db_integrations = self.db.query(Integration).all()
+    async def get_integrations_by_user(self, user_id: str) -> Dict[str, Dict[str, Any]]:
+        """Get all integrations created by a specific user"""
+        db_integrations = (
+            self.db.query(Integration).filter(Integration.created_by == user_id).all()
+        )
         return {
             str(integration.integration_id): self._db_to_dict(integration)
             for integration in db_integrations
@@ -1238,12 +1238,15 @@ class IntegrationsService:
         integration_type: Optional[IntegrationType] = None,
         status: Optional[IntegrationStatus] = None,
         active: Optional[bool] = None,
+        user_id: Optional[str] = None,
     ) -> IntegrationListResponse:
         """List integrations using schema models with filtering"""
         try:
             query = self.db.query(Integration)
 
             # Apply filters
+            if user_id is not None:
+                query = query.filter(Integration.created_by == user_id)
             if integration_type is not None:
                 query = query.filter(
                     Integration.integration_type == integration_type.value
@@ -1598,7 +1601,7 @@ class IntegrationsService:
             return None
 
     async def save_linear_integration(
-        self, request: LinearSaveRequest
+        self, request: LinearSaveRequest, user_id: str
     ) -> Dict[str, Any]:
         """Save Linear integration with authorization code (backend handles token exchange)"""
         try:
@@ -1757,7 +1760,7 @@ class IntegrationsService:
             setattr(
                 db_integration,
                 "created_by",
-                user_info.get("id", "system") if user_info else "system",
+                user_id,  # Use Potpie user_id, not Linear OAuth user ID
             )
             setattr(db_integration, "created_at", created_at)
             setattr(db_integration, "updated_at", created_at)
@@ -1879,7 +1882,9 @@ class IntegrationsService:
             self.db.rollback()
             raise Exception(f"Failed to save integration: {str(e)}")
 
-    async def save_jira_integration(self, request: JiraSaveRequest) -> Dict[str, Any]:
+    async def save_jira_integration(
+        self, request: JiraSaveRequest, user_id: str
+    ) -> Dict[str, Any]:
         """Save Jira integration with authorization code"""
         try:
             from .token_encryption import encrypt_token
@@ -1974,7 +1979,7 @@ class IntegrationsService:
 
             # Cache tokens in in-memory store for compatibility endpoints
             self.jira_oauth.token_store.store_tokens(
-                request.user_id,
+                user_id,
                 {
                     "access_token": access_token,
                     "refresh_token": tokens.get("refresh_token"),
@@ -2080,7 +2085,7 @@ class IntegrationsService:
                 "unique_identifier",
                 f"jira-{site_id}" if site_id else f"jira-{integration_id}",
             )
-            setattr(db_integration, "created_by", request.user_id)
+            setattr(db_integration, "created_by", user_id)
             setattr(db_integration, "created_at", created_at)
             setattr(db_integration, "updated_at", created_at)
 

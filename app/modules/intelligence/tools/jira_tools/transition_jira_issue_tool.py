@@ -28,7 +28,7 @@ class TransitionJiraIssueTool:
 
     name = "Transition Jira Issue"
     description = """Change the status of a Jira issue by transitioning it through the workflow.
-    
+
     Use this tool when you need to:
     - Move an issue to 'In Progress' when work starts
     - Mark an issue as 'Done' when completed
@@ -36,12 +36,12 @@ class TransitionJiraIssueTool:
     - Close or resolve an issue
     - Move through any custom workflow states
     - Change issue status based on external events or conditions
-    
+
     The transition name should match your Jira workflow (case-insensitive).
     Common transitions: 'To Do', 'In Progress', 'Done', 'Closed', 'Resolved'
-    
+
     If the transition name doesn't exist, the error will list available transitions.
-    
+
     Returns the updated issue with its new status.
     """
 
@@ -125,17 +125,17 @@ def transition_jira_issue_tool(db: Session, user_id: str) -> StructuredTool:
         func=tool_instance.run,
         name="Transition Jira Issue",
         description="""Change the status of a Jira issue through its workflow.
-        
+
         Use this when you need to:
         - Start work on an issue (move to 'In Progress')
         - Complete work (move to 'Done' or 'Resolved')
         - Reopen issues or move back to earlier states
         - Move through custom workflow states
-        
+
         Inputs:
         - issue_key (str): The issue key (e.g., 'PROJ-123')
         - transition (str): Target status name ('To Do', 'In Progress', 'Done', etc.)
-        
+
         If transition name is invalid, error will list available transitions.
         Returns updated issue with new status.""",
         args_schema=TransitionJiraIssueInput,

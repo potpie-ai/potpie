@@ -35,16 +35,16 @@ class GetJiraProjectUsersTool:
         self.user_id = user_id
 
     description = """Get a list of users who can be assigned to issues in a Jira project.
-    
+
     Use this tool when you need to:
     - Find a user's account ID for assigning issues
     - Search for users by name or email
     - Discover who can be assigned to tasks in a project
     - Finding users in a particular Jira project
-    
+
     Returns a list of users with their account IDs, display names, and email addresses.
     You can optionally filter by providing a search query (e.g., a person's name).
-    
+
     IMPORTANT: Use the 'accountId' field when assigning issues, NOT the display name."""
 
     async def arun(
@@ -121,14 +121,14 @@ def get_jira_project_users_tool(db: Session, user_id: int) -> StructuredTool:
         func=tool_instance.run,
         name="Get Jira Project Users",
         description="""Get assignable users in a Jira project.
-        
+
         Use this to find user account IDs needed for assigning issues.
         You can search by name or email using the optional query parameter.
-        
+
         Inputs:
         - project_key (str): The project key (e.g., 'PROJ')
         - query (str, optional): Search term to filter users by name or email
-        
+
         Returns a list of users with their account IDs, which you can use when creating or updating issues.
         IMPORTANT: Use the 'accountId' field when assigning, not the display name.""",
         args_schema=GetJiraProjectUsersInput,

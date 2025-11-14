@@ -39,20 +39,20 @@ class UpdateJiraIssueTool:
 
     name = "Update Jira Issue"
     description = """Update fields of an existing Jira issue.
-    
+
     TIPS:
     - Use 'Get Jira Project Details' tool to discover valid priority levels
     - Use 'Get Jira Project Users' tool to get user account IDs for assignment
-    
+
     Use this tool when you need to:
     - Change the summary or description of an issue
     - Update the priority level
     - Assign or reassign the issue to a user (requires account_id)
     - Modify issue details based on new information
     - Correct mistakes in issue fields
-    
+
     You can update one or more fields at once. Only provide the fields you want to change.
-    
+
     Returns the updated issue with all current details.
     """
 
@@ -148,21 +148,21 @@ def update_jira_issue_tool(db: Session, user_id: str) -> StructuredTool:
         func=tool_instance.run,
         name="Update Jira Issue",
         description="""Update fields of an existing Jira issue.
-        
+
         TIP: Use 'Get Jira Project Details' to discover valid priorities.
-        
+
         Use this when you need to:
         - Change the summary or description
         - Update the priority level
         - Modify issue details based on new information
-        
+
         Inputs:
         - issue_key (str): The issue key (e.g., 'PROJ-123')
         - summary (str, optional): New summary/title
         - description (str, optional): New description
         - priority (str, optional): New priority level (see project details for valid values, Eg: 'High', 'Medium', 'Low')
         - assignee_id (str, optional): Atlassian account ID to assign issue to (use 'Get Jira Project Users' to find account IDs)
-        
+
         Provide only the fields you want to update. Returns updated issue details.""",
         args_schema=UpdateJiraIssueInput,
     )
