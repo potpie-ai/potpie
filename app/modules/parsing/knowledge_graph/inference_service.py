@@ -116,6 +116,313 @@ class InferenceService:
         logger.info(f"DEBUGNEO4J: Fetched {len(all_nodes)} nodes for repo {repo_id}")
         return all_nodes
 
+    def fetch_graph_by_directory(
+        self, repo_id: str, directory_path: Optional[str] = None, is_root: bool = False
+    ) -> List[Dict]:
+        """
+        Fetch nodes for a specific directory or root level.
+
+        Args:
+            repo_id: Repository ID
+            directory_path: Directory path to filter nodes (e.g., "src/services")
+            is_root: If True, fetch only root-level files (no subdirectories)
+
+        Returns:
+            List of node dictionaries with node_id, text, file_path, etc.
+
+        Note:
+            - When is_root=True, fetches files like "main.py", "setup.py" but NOT "src/main.py"
+            - When directory_path is provided, fetches files within that directory
+            - Uses proper Cypher filtering to avoid OOM issues
+        """
+        batch_size = 500
+        all_nodes = []
+
+        with self.driver.session() as session:
+            offset = 0
+            while True:
+                # Build query based on parameters
+                if is_root:
+                    # Root directory: files without '/' in path
+                    query = """
+                        MATCH (n:NODE {repoId: $repo_id})
+                        WHERE n.file_path IS NOT NULL
+                          AND n.file_path <> ''
+                          AND NOT n.file_path CONTAINS '/'
+                        RETURN n.node_id AS node_id,
+                               n.text AS text,
+                               n.file_path AS file_path,
+                               n.start_line AS start_line,
+                               n.end_line AS end_line,
+                               n.name AS name
+                        SKIP $offset LIMIT $limit
+                    """
+                    params = {"repo_id": repo_id, "offset": offset, "limit": batch_size}
+
+                elif directory_path:
+                    # Specific directory: files that start with directory_path/
+                    query = """
+                        MATCH (n:NODE {repoId: $repo_id})
+                        WHERE n.file_path IS NOT NULL
+                          AND n.file_path STARTS WITH $directory_prefix
+                        RETURN n.node_id AS node_id,
+                               n.text AS text,
+                               n.file_path AS file_path,
+                               n.start_line AS start_line,
+                               n.end_line AS end_line,
+                               n.name AS name
+                        SKIP $offset LIMIT $limit
+                    """
+                    # Ensure directory_path ends with / for proper prefix matching
+                    directory_prefix = (
+                        directory_path if directory_path.endswith("/")
+                        else f"{directory_path}/"
+                    )
+                    params = {
+                        "repo_id": repo_id,
+                        "directory_prefix": directory_prefix,
+                        "offset": offset,
+                        "limit": batch_size,
+                    }
+                else:
+                    # No filtering - fetch all (same as fetch_graph)
+                    query = """
+                        MATCH (n:NODE {repoId: $repo_id})
+                        RETURN n.node_id AS node_id,
+                               n.text AS text,
+                               n.file_path AS file_path,
+                               n.start_line AS start_line,
+                               n.end_line AS end_line,
+                               n.name AS name
+                        SKIP $offset LIMIT $limit
+                    """
+                    params = {"repo_id": repo_id, "offset": offset, "limit": batch_size}
+
+                result = session.run(query, **params)
+                batch = [dict(record) for record in result]
+
+                if not batch:
+                    break
+
+                all_nodes.extend(batch)
+                offset += batch_size
+
+        filter_desc = (
+            "root level" if is_root
+            else f"directory '{directory_path}'" if directory_path
+            else "all"
+        )
+        logger.info(
+            f"DEBUGNEO4J: Fetched {len(all_nodes)} nodes for repo {repo_id} "
+            f"({filter_desc})"
+        )
+        return all_nodes
+
+    async def process_nodes_streaming(
+        self,
+        repo_id: str,
+        directory_path: Optional[str] = None,
+        is_root: bool = False,
+        chunk_size: int = 500,
+    ) -> Dict[str, DocstringResponse]:
+        """
+        Process nodes in streaming fashion to avoid OOM for large directories.
+
+        This method:
+        1. Fetches nodes in chunks from Neo4j
+        2. Batches them for LLM processing
+        3. Generates docstrings and embeddings
+        4. Updates Neo4j immediately (no accumulation in memory)
+        5. Creates search indices in batches (deferred commit)
+
+        Args:
+            repo_id: Repository ID
+            directory_path: Directory to process (None = all nodes)
+            is_root: Whether this is root directory
+            chunk_size: Number of nodes to fetch per DB query
+
+        Returns:
+            Dict with summary statistics (not full docstrings to save memory)
+        """
+        logger.info(
+            f"Starting streaming inference for repo {repo_id}, "
+            f"directory={directory_path}, is_root={is_root}"
+        )
+
+        total_nodes_processed = 0
+        total_batches_processed = 0
+        total_nodes_indexed = 0  # Track total for reporting
+        failed_batches = []  # Track batch failures for reporting
+
+        with self.driver.session() as session:
+            offset = 0
+
+            while True:
+                # Fetch chunk of nodes
+                if is_root:
+                    query = """
+                        MATCH (n:NODE {repoId: $repo_id})
+                        WHERE n.file_path IS NOT NULL
+                          AND n.file_path <> ''
+                          AND NOT n.file_path CONTAINS '/'
+                        RETURN n.node_id AS node_id,
+                               n.text AS text,
+                               n.file_path AS file_path,
+                               n.start_line AS start_line,
+                               n.end_line AS end_line,
+                               n.name AS name
+                        SKIP $offset LIMIT $limit
+                    """
+                    params = {"repo_id": repo_id, "offset": offset, "limit": chunk_size}
+                elif directory_path:
+                    query = """
+                        MATCH (n:NODE {repoId: $repo_id})
+                        WHERE n.file_path IS NOT NULL
+                          AND n.file_path STARTS WITH $directory_prefix
+                        RETURN n.node_id AS node_id,
+                               n.text AS text,
+                               n.file_path AS file_path,
+                               n.start_line AS start_line,
+                               n.end_line AS end_line,
+                               n.name AS name
+                        SKIP $offset LIMIT $limit
+                    """
+                    directory_prefix = (
+                        directory_path if directory_path.endswith("/")
+                        else f"{directory_path}/"
+                    )
+                    params = {
+                        "repo_id": repo_id,
+                        "directory_prefix": directory_prefix,
+                        "offset": offset,
+                        "limit": chunk_size,
+                    }
+                else:
+                    query = """
+                        MATCH (n:NODE {repoId: $repo_id})
+                        RETURN n.node_id AS node_id,
+                               n.text AS text,
+                               n.file_path AS file_path,
+                               n.start_line AS start_line,
+                               n.end_line AS end_line,
+                               n.name AS name
+                        SKIP $offset LIMIT $limit
+                    """
+                    params = {"repo_id": repo_id, "offset": offset, "limit": chunk_size}
+
+                result = session.run(query, **params)
+                nodes_chunk = [dict(record) for record in result]
+
+                if not nodes_chunk:
+                    # No more nodes to process
+                    break
+
+                logger.info(
+                    f"Processing chunk: offset={offset}, nodes_fetched={len(nodes_chunk)}"
+                )
+
+                # Batch nodes for LLM processing
+                batches = self.batch_nodes(nodes_chunk)
+
+                # Process batches with semaphore for rate limiting
+                semaphore = asyncio.Semaphore(self.parallel_requests)
+
+                async def process_batch(batch, batch_index: int):
+                    async with semaphore:
+                        logger.info(
+                            f"Processing batch {batch_index} for repo {repo_id}"
+                        )
+                        response = await self.generate_response(batch, repo_id)
+                        if isinstance(response, DocstringResponse):
+                            # Update Neo4j immediately (don't accumulate in memory)
+                            self.update_neo4j_with_docstrings(repo_id, response)
+                        else:
+                            logger.warning(
+                                f"Invalid response for batch {batch_index}, retrying..."
+                            )
+                            response = await self.generate_response(batch, repo_id)
+                            if isinstance(response, DocstringResponse):
+                                self.update_neo4j_with_docstrings(repo_id, response)
+                        return response
+
+                tasks = [process_batch(batch, i) for i, batch in enumerate(batches)]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                # Track batch failures for reporting
+                for i, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        logger.error(
+                            f"Batch {i} failed for repo {repo_id}: {result}",
+                            exc_info=result
+                        )
+                        failed_batches.append({
+                            'batch_index': i,
+                            'error': str(result),
+                            'error_type': type(result).__name__
+                        })
+                    elif not isinstance(result, DocstringResponse):
+                        logger.warning(
+                            f"Batch {i} returned invalid response for repo {repo_id}: {type(result)}"
+                        )
+                        failed_batches.append({
+                            'batch_index': i,
+                            'error': 'Invalid response type',
+                            'error_type': 'InvalidResponseError'
+                        })
+
+                total_batches_processed += len(batches)
+
+                # Create search indices for this chunk only (not accumulated)
+                nodes_to_index_chunk = []
+                for node in nodes_chunk:
+                    if node.get("file_path") and node.get("name"):
+                        nodes_to_index_chunk.append({
+                            "project_id": repo_id,
+                            "node_id": node["node_id"],
+                            "name": node.get("name", ""),
+                            "file_path": node.get("file_path", ""),
+                            "content": f"{node.get('name', '')} {node.get('file_path', '')}",
+                        })
+
+                # Batch create search indices for this chunk (deferred commit)
+                if nodes_to_index_chunk:
+                    logger.debug(
+                        f"Creating search indices for chunk: {len(nodes_to_index_chunk)} nodes "
+                        f"(offset={offset}, auto_commit=False)"
+                    )
+                    await self.search_service.bulk_create_search_indices(
+                        nodes_to_index_chunk, auto_commit=False
+                    )
+                    total_nodes_indexed += len(nodes_to_index_chunk)
+                    del nodes_to_index_chunk  # Explicit cleanup
+
+                total_nodes_processed += len(nodes_chunk)
+
+                # Clear chunk from memory
+                del nodes_chunk
+                offset += chunk_size
+
+        logger.info(
+            f"Streaming inference complete: repo={repo_id}, "
+            f"total_nodes={total_nodes_processed}, "
+            f"total_batches={total_batches_processed}, "
+            f"total_indexed={total_nodes_indexed}"
+        )
+
+        if failed_batches:
+            logger.warning(
+                f"Failed {len(failed_batches)}/{total_batches_processed} batches for repo {repo_id}: "
+                f"{failed_batches}"
+            )
+
+        return {
+            "total_nodes_processed": total_nodes_processed,
+            "total_batches_processed": total_batches_processed,
+            "nodes_indexed": total_nodes_indexed,
+            "failed_batches": failed_batches,
+            "batch_failure_rate": len(failed_batches) / total_batches_processed if total_batches_processed > 0 else 0.0,
+        }
+
     def get_entry_points(self, repo_id: str) -> List[str]:
         batch_size = 400  # Define the batch size
         all_entry_points = []

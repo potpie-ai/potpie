@@ -606,6 +606,155 @@ def aggregate_and_resolve_references(
         }
 
 
+def spawn_inference_chord(task_instance, project_id: str, user_id: str) -> Dict[str, Any]:
+    """
+    Helper function to spawn inference chord with work units.
+
+    This function:
+    1. Queries Neo4j to get directory structure and node counts
+    2. Builds work units with dynamic splitting for large directories
+    3. Creates a Celery chord with run_inference_unit workers
+    4. Sets finalize_project_after_inference as callback
+
+    Args:
+        task_instance: Celery task instance (for db access)
+        project_id: Project ID
+        user_id: User ID
+
+    Returns:
+        Dict with chord info (work_units count, etc.)
+    """
+    from celery import chord
+    from app.core.config_provider import config_provider
+    from neo4j import GraphDatabase
+    from collections import defaultdict
+
+    logger.info(f"Building inference work units for project {project_id}")
+
+    # Initialize driver to None for proper cleanup
+    driver = None
+
+    try:
+        # Connect to Neo4j
+        neo4j_config = config_provider.get_neo4j_config()
+        driver = GraphDatabase.driver(
+            neo4j_config["uri"],
+            auth=(neo4j_config["username"], neo4j_config["password"]),
+        )
+
+        with driver.session() as session:
+            # Query to get node counts per directory
+            result = session.run("""
+                MATCH (n:NODE {repoId: $repo_id})
+                WHERE n.file_path IS NOT NULL AND n.file_path <> ''
+                WITH n.file_path AS file_path
+                WITH
+                    CASE
+                        WHEN file_path CONTAINS '/'
+                        THEN split(file_path, '/')[0..-1]
+                        ELSE []
+                    END AS path_parts
+                WITH
+                    CASE
+                        WHEN size(path_parts) = 0 THEN '<ROOT>'
+                        ELSE reduce(p = '', part IN path_parts | p + '/' + part)
+                    END AS directory
+                RETURN directory, count(*) AS node_count
+                ORDER BY node_count DESC
+            """, repo_id=project_id)
+
+            directory_counts = {
+                record["directory"]: record["node_count"]
+                for record in result
+            }
+
+        logger.info(
+            f"Found {len(directory_counts)} directories for project {project_id}"
+        )
+
+        # Build work units with dynamic splitting (no driver needed here, query complete)
+        work_units = []
+        max_nodes_per_unit = int(os.getenv('MAX_INFERENCE_NODES_PER_UNIT', '2000'))
+
+        for directory, node_count in directory_counts.items():
+            is_root = (directory == '<ROOT>')
+
+            if node_count > max_nodes_per_unit:
+                # Split large directories into multiple units
+                num_splits = (node_count // max_nodes_per_unit) + 1
+                logger.info(
+                    f"Splitting directory '{directory}' ({node_count} nodes) "
+                    f"into {num_splits} units"
+                )
+
+                for split_index in range(num_splits):
+                    work_units.append({
+                        'project_id': project_id,
+                        'user_id': user_id,
+                        'directory_path': None if is_root else directory.lstrip('/'),
+                        'is_root': is_root,
+                        'split_index': split_index,
+                        'total_splits': num_splits,
+                    })
+            else:
+                # Single unit for this directory
+                work_units.append({
+                    'project_id': project_id,
+                    'user_id': user_id,
+                    'directory_path': None if is_root else directory.lstrip('/'),
+                    'is_root': is_root,
+                    'split_index': None,
+                    'total_splits': None,
+                })
+
+        logger.info(
+            f"Created {len(work_units)} inference work units for project {project_id}"
+        )
+
+        # Create chord: workers + callback
+        inference_chord = chord(
+            [
+                run_inference_unit.signature(
+                    kwargs=unit,
+                    queue=os.getenv('CELERY_QUEUE_NAME', 'staging') + '_process_repository'
+                )
+                for unit in work_units
+            ]
+        )(
+            finalize_project_after_inference.signature(
+                kwargs={
+                    'project_id': project_id,
+                    'user_id': user_id,
+                },
+                queue=os.getenv('CELERY_QUEUE_NAME', 'staging') + '_process_repository'
+            )
+        )
+
+        logger.info(
+            f"Spawned inference chord for project {project_id}: "
+            f"{len(work_units)} workers, chord_id={inference_chord.id}"
+        )
+
+        return {
+            'success': True,
+            'work_units': len(work_units),
+            'chord_id': inference_chord.id,
+        }
+
+    except Exception as e:
+        logger.exception(f"Error building inference work units: {e}")
+        raise
+
+    finally:
+        # Always close driver if it was created
+        if driver is not None:
+            try:
+                driver.close()
+                logger.debug(f"Closed Neo4j driver for project {project_id}")
+            except Exception as close_error:
+                logger.error(f"Error closing Neo4j driver: {close_error}")
+
+
 @celery_app.task(
     bind=True,
     base=BaseTask,
@@ -738,11 +887,53 @@ def resolve_cross_directory_references(
             f"{total_edges_created} edges created from {len(all_references)} references in {elapsed:.2f}s"
         )
 
-        return {
-            'success': True,
-            'edges_created': total_edges_created,
-            'duration_seconds': elapsed
-        }
+        # INTEGRATION: Spawn inference chord after reference resolution
+        # This is where we integrate the missing inference step
+        try:
+            inference_chord_result = spawn_inference_chord(
+                self, project_id, user_id
+            )
+            logger.info(
+                f"Spawned inference chord for project {project_id}: "
+                f"{inference_chord_result['work_units']} inference units"
+            )
+
+            return {
+                'success': True,
+                'edges_created': total_edges_created,
+                'duration_seconds': elapsed,
+                'inference_spawned': True,
+                'inference_units': inference_chord_result['work_units'],
+            }
+        except Exception as inference_error:
+            logger.exception(
+                f"Failed to spawn inference chord for project {project_id}: {inference_error}"
+            )
+            # Mark project as ERROR since inference is critical
+            from app.modules.projects.projects_service import ProjectService
+            from app.modules.projects.projects_schema import ProjectStatusEnum
+
+            try:
+                project_service = ProjectService(self.db)
+
+                async def mark_error():
+                    logger.error(f"Inference setup failed: {str(inference_error)}")
+                    await project_service.update_project_status(
+                        project_id=project_id,
+                        status=ProjectStatusEnum.ERROR,
+                    )
+
+                self.run_async(mark_error())
+            except Exception as status_error:
+                logger.exception(f"Failed to update project status: {status_error}")
+
+            return {
+                'success': False,
+                'edges_created': total_edges_created,
+                'duration_seconds': elapsed,
+                'inference_spawned': False,
+                'error': str(inference_error),
+            }
 
     except Exception as e:
         logger.exception("Error resolving cross-directory references")
@@ -750,6 +941,356 @@ def resolve_cross_directory_references(
             'success': False,
             'error': str(e),
             'edges_created': 0
+        }
+
+
+@celery_app.task(
+    bind=True,
+    base=BaseTask,
+    name="app.celery.tasks.parsing_tasks.run_inference_unit",
+    time_limit=3600,  # 1 hour
+)
+def run_inference_unit(
+    self,
+    project_id: str,
+    user_id: str,
+    directory_path: str = None,
+    is_root: bool = False,
+    split_index: int = None,
+    total_splits: int = None,
+) -> Dict[str, Any]:
+    """
+    Worker task for running inference on a directory or directory split.
+
+    Uses Redis distributed semaphore for global rate limiting and processes
+    nodes in streaming fashion to avoid OOM.
+
+    Args:
+        project_id: Project ID
+        user_id: User ID
+        directory_path: Directory to process (None = entire repo)
+        is_root: Whether this is the root directory
+        split_index: Index of split for large directories (0-based)
+        total_splits: Total number of splits for this directory
+
+    Returns:
+        Dict with results (nodes_processed, batches_processed, etc.)
+    """
+    from app.modules.parsing.knowledge_graph.inference_service import InferenceService
+    from app.celery.redis_semaphore import get_redis_semaphore
+    import time
+
+    unit_desc = (
+        f"root" if is_root
+        else f"directory '{directory_path}'" if directory_path and not split_index
+        else f"directory '{directory_path}' split {split_index + 1}/{total_splits}"
+        if split_index is not None
+        else "entire repo"
+    )
+
+    logger.info(
+        f"Starting inference for project {project_id}, {unit_desc}"
+    )
+    start_time = time.time()
+
+    try:
+        inference_service = InferenceService(self.db, user_id)
+
+        # Get Redis semaphore for global rate limiting
+        semaphore = get_redis_semaphore(
+            key_suffix=f"inference:{project_id}",
+            max_concurrent=int(os.getenv("MAX_GLOBAL_LLM_REQUESTS", "50")),
+            ttl=300,  # 5 minutes
+        )
+
+        async def run_inference_with_semaphore():
+            """
+            Run inference with global rate limiting via Redis semaphore.
+
+            This wraps the entire process_nodes_streaming call with semaphore
+            to ensure we don't exceed MAX_GLOBAL_LLM_REQUESTS across all workers.
+            """
+            # Acquire semaphore for the duration of processing
+            async with semaphore.acquire(timeout=120):
+                logger.info(
+                    f"Acquired global semaphore for {unit_desc} "
+                    f"(current: {semaphore.get_current_count()}/{semaphore.max_concurrent})"
+                )
+
+                result = await inference_service.process_nodes_streaming(
+                    repo_id=project_id,
+                    directory_path=directory_path,
+                    is_root=is_root,
+                    chunk_size=500,
+                )
+
+                return result
+
+        result = self.run_async(run_inference_with_semaphore())
+        inference_service.close()
+
+        elapsed = time.time() - start_time
+        logger.info(
+            f"Inference complete for {unit_desc}: "
+            f"{result['total_nodes_processed']} nodes processed in {elapsed:.2f}s"
+        )
+
+        return {
+            'success': True,
+            'directory_path': directory_path,
+            'is_root': is_root,
+            'split_index': split_index,
+            'total_splits': total_splits,
+            'nodes_processed': result['total_nodes_processed'],
+            'batches_processed': result['total_batches_processed'],
+            'nodes_indexed': result['nodes_indexed'],
+            'duration_seconds': elapsed,
+        }
+
+    except Exception as e:
+        logger.exception(
+            f"Error during inference for {unit_desc}"
+        )
+        return {
+            'success': False,
+            'directory_path': directory_path,
+            'is_root': is_root,
+            'split_index': split_index,
+            'error': str(e),
+            'nodes_processed': 0,
+        }
+
+
+@celery_app.task(
+    bind=True,
+    base=BaseTask,
+    name="app.celery.tasks.parsing_tasks.finalize_project_after_inference",
+    time_limit=600,  # 10 minutes
+)
+def finalize_project_after_inference(
+    self,
+    inference_results: list,
+    project_id: str,
+    user_id: str,
+) -> Dict[str, Any]:
+    """
+    Callback task after all inference units complete.
+
+    This task:
+    1. Aggregates results from all workers
+    2. Commits search indices (single transaction)
+    3. Spawns async vector index creation task
+    4. Updates project status based on completion rate
+    5. Handles partial failures gracefully
+
+    Args:
+        inference_results: List of results from run_inference_unit tasks
+        project_id: Project ID
+        user_id: User ID
+
+    Returns:
+        Dict with finalization results
+    """
+    from app.modules.projects.projects_service import ProjectService
+    from app.modules.search.search_service import SearchService
+    from app.modules.projects.projects_schema import ProjectStatusEnum
+    import time
+
+    logger.info(
+        f"Finalizing project {project_id} after inference: "
+        f"{len(inference_results)} units processed"
+    )
+    start_time = time.time()
+
+    try:
+        # Aggregate results
+        successful_units = [r for r in inference_results if r.get('success')]
+        failed_units = [r for r in inference_results if not r.get('success')]
+
+        total_nodes_processed = sum(
+            r.get('nodes_processed', 0) for r in successful_units
+        )
+        total_batches_processed = sum(
+            r.get('batches_processed', 0) for r in successful_units
+        )
+
+        logger.info(
+            f"Inference aggregation: {len(successful_units)}/{len(inference_results)} "
+            f"units succeeded, {total_nodes_processed} total nodes processed"
+        )
+
+        # Calculate completion rate with explicit edge case handling
+        if not inference_results or len(inference_results) == 0:
+            completion_rate = 0.0
+            logger.warning(
+                f"No inference results to calculate completion rate for project {project_id}"
+            )
+        elif len(successful_units) == 0:
+            completion_rate = 0.0
+            logger.error(
+                f"All inference units failed for project {project_id}: "
+                f"0/{len(inference_results)} succeeded"
+            )
+        else:
+            completion_rate = len(successful_units) / len(inference_results)
+            logger.info(
+                f"Completion rate for project {project_id}: "
+                f"{completion_rate:.1%} ({len(successful_units)}/{len(inference_results)})"
+            )
+
+        # Commit search indices (single transaction to avoid contention)
+        search_service = SearchService(self.db)
+
+        async def commit_search_indices():
+            await search_service.commit_indices()
+            logger.info(f"Search indices committed for project {project_id}")
+
+        self.run_async(commit_search_indices())
+
+        # Spawn async vector index creation task (don't block on it)
+        create_vector_index_async.apply_async(
+            args=[project_id, user_id],
+            priority=5,  # Lower priority
+        )
+        logger.info(f"Spawned vector index creation task for project {project_id}")
+
+        # Determine final status based on completion rate
+        project_service = ProjectService(self.db)
+
+        if completion_rate >= 0.95:
+            # 95%+ success - mark as READY (with warning if not 100%)
+            final_status = ProjectStatusEnum.READY
+            status_message = (
+                "Inference completed successfully"
+                if completion_rate == 1.0
+                else f"Inference completed with {len(failed_units)} failed units"
+            )
+        elif completion_rate >= 0.75:
+            # 75-95% success - mark as PARTIALLY_READY
+            final_status = ProjectStatusEnum.PARTIALLY_READY
+            status_message = (
+                f"Inference partially completed: {len(successful_units)}/{len(inference_results)} "
+                f"units succeeded. Some functionality may be limited."
+            )
+        else:
+            # <75% success - mark as ERROR
+            final_status = ProjectStatusEnum.ERROR
+            status_message = (
+                f"Inference failed: only {len(successful_units)}/{len(inference_results)} "
+                f"units succeeded"
+            )
+
+        # Update project status
+        async def update_project_status():
+            # Log status message for tracking
+            if final_status != ProjectStatusEnum.READY:
+                logger.warning(f"Project {project_id}: {status_message}")
+
+            await project_service.update_project_status(
+                project_id=project_id,
+                status=final_status,
+            )
+            logger.info(
+                f"Project {project_id} status updated to {final_status.value}: {status_message}"
+            )
+
+        self.run_async(update_project_status())
+
+        elapsed = time.time() - start_time
+        logger.info(
+            f"Finalization complete for project {project_id} in {elapsed:.2f}s"
+        )
+
+        return {
+            'success': True,
+            'project_id': project_id,
+            'final_status': final_status.value,
+            'total_units': len(inference_results),
+            'successful_units': len(successful_units),
+            'failed_units': len(failed_units),
+            'total_nodes_processed': total_nodes_processed,
+            'total_batches_processed': total_batches_processed,
+            'completion_rate': completion_rate,
+            'duration_seconds': elapsed,
+        }
+
+    except Exception as e:
+        logger.exception(f"Error finalizing project {project_id}")
+
+        # Best effort: try to mark project as ERROR
+        try:
+            project_service = ProjectService(self.db)
+
+            async def mark_error():
+                logger.error(f"Finalization failed: {str(e)}")
+                await project_service.update_project_status(
+                    project_id=project_id,
+                    status=ProjectStatusEnum.ERROR,
+                )
+
+            self.run_async(mark_error())
+        except Exception as inner_e:
+            logger.exception(f"Failed to mark project {project_id} as ERROR: {inner_e}")
+
+        return {
+            'success': False,
+            'error': str(e),
+            'project_id': project_id,
+        }
+
+
+@celery_app.task(
+    bind=True,
+    base=BaseTask,
+    name="app.celery.tasks.parsing_tasks.create_vector_index_async",
+    time_limit=7200,  # 2 hours for very large repos
+)
+def create_vector_index_async(
+    self,
+    project_id: str,
+    user_id: str,
+) -> Dict[str, Any]:
+    """
+    Async task to create Neo4j vector index.
+
+    This runs in the background to avoid blocking project finalization.
+    For very large repos (500k+ nodes), index creation can take hours.
+
+    Args:
+        project_id: Project ID
+        user_id: User ID
+
+    Returns:
+        Dict with results
+    """
+    from app.modules.parsing.knowledge_graph.inference_service import InferenceService
+    import time
+
+    logger.info(f"Creating vector index for project {project_id}")
+    start_time = time.time()
+
+    try:
+        inference_service = InferenceService(self.db, user_id)
+        inference_service.create_vector_index()
+        inference_service.close()
+
+        elapsed = time.time() - start_time
+        logger.info(
+            f"Vector index created for project {project_id} in {elapsed:.2f}s"
+        )
+
+        return {
+            'success': True,
+            'project_id': project_id,
+            'duration_seconds': elapsed,
+        }
+
+    except Exception as e:
+        logger.exception(f"Error creating vector index for project {project_id}")
+        return {
+            'success': False,
+            'error': str(e),
+            'project_id': project_id,
         }
 
 

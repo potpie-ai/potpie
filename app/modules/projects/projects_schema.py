@@ -9,6 +9,7 @@ class ProjectStatusEnum(str, Enum):
     PARSED = "parsed"
     PROCESSING = "processing"
     READY = "ready"
+    PARTIALLY_READY = "partially_ready"  # Inference completed with 75-95% success rate
     ERROR = "error"
 
 

@@ -60,6 +60,15 @@ def configure_celery(queue_prefix: str):
             "app.celery.tasks.parsing_tasks.resolve_cross_directory_references": {
                 "queue": f"{queue_prefix}_process_repository"
             },
+            "app.celery.tasks.parsing_tasks.run_inference_unit": {
+                "queue": f"{queue_prefix}_process_repository"
+            },
+            "app.celery.tasks.parsing_tasks.finalize_project_after_inference": {
+                "queue": f"{queue_prefix}_process_repository"
+            },
+            "app.celery.tasks.parsing_tasks.create_vector_index_async": {
+                "queue": f"{queue_prefix}_process_repository"
+            },
             "app.celery.tasks.agent_tasks.execute_agent_background": {
                 "queue": f"{queue_prefix}_agent_tasks"
             },

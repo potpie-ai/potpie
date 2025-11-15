@@ -114,9 +114,21 @@ class SearchService:
         self.db.execute(delete_stmt)
         self.db.commit()
 
-    async def bulk_create_search_indices(self, nodes: List[Dict]):
+    async def bulk_create_search_indices(self, nodes: List[Dict], auto_commit: bool = True):
+        """
+        Create index entries for all nodes in bulk.
+
+        Args:
+            nodes: List of node dictionaries to index
+            auto_commit: If True, commit immediately. If False, defer commit for later.
+                        Use False when creating indices in batches across multiple workers
+                        to avoid database lock contention.
+        """
         # Create index entries for all nodes in bulk
         self.db.bulk_insert_mappings(SearchIndex, nodes)
+
+        if auto_commit:
+            await self.commit_indices()
 
     async def clone_search_indices(self, input_project_id: str, output_project_id: str):
         """Clone all search indices from input project to output project."""
