@@ -474,9 +474,11 @@ class ParseHelper:
         except Exception as e:
             logger.exception("ParsingHelper: Unexpected error in tarball download")
             raise ParsingFailedError("Unexpected error during repository download") from e
+        # Include user_id in tarball path to prevent collisions between concurrent downloads
+        # Even with locking, this provides additional safety
         tarball_path = os.path.join(
             target_dir,
-            f"{repo.full_name.replace('/', '-').replace('.', '-')}-{branch.replace('/', '-').replace('.', '-')}.tar.gz",
+            f"{repo.full_name.replace('/', '-').replace('.', '-')}-{branch.replace('/', '-').replace('.', '-')}-{user_id}.tar.gz",
         )
 
         final_dir = os.path.join(
@@ -492,6 +494,13 @@ class ParseHelper:
             with open(tarball_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
+            
+            # Check if file exists and get size (handle race conditions)
+            if not os.path.exists(tarball_path):
+                error_msg = f"Tarball file was not created at {tarball_path}. Download may have failed or file was deleted by another process."
+                logger.error(f"ParsingHelper: {error_msg}")
+                raise ParsingFailedError(error_msg)
+            
             tarball_size = os.path.getsize(tarball_path)
             logger.info(
                 f"ParsingHelper: Successfully downloaded tarball, size: {tarball_size} bytes"
@@ -599,8 +608,13 @@ class ParseHelper:
                 logger.error(f"ParsingHelper: Tarball path: {tarball_path}, size: {os.path.getsize(tarball_path) if os.path.exists(tarball_path) else 'N/A'}")
                 raise ParsingFailedError(error_msg) from e
 
-        except (IOError, tarfile.TarError, shutil.Error) as e:
+        except (IOError, OSError, tarfile.TarError, shutil.Error) as e:
+            # OSError includes FileNotFoundError which can occur if tarball is deleted by another process
             logger.error(f"Error handling tarball: {e}")
+            if isinstance(e, FileNotFoundError):
+                error_msg = f"Tarball file not found: {tarball_path}. This may indicate a race condition with concurrent downloads or a failed download."
+                logger.error(f"ParsingHelper: {error_msg}")
+                raise ParsingFailedError(error_msg) from e
             raise ParsingFailedError("Failed to process repository archive") from e
         finally:
             if os.path.exists(tarball_path):
