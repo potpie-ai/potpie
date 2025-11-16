@@ -324,6 +324,10 @@ class ParseHelper:
     async def download_and_extract_tarball(
         self, repo, branch, target_dir, auth, repo_details, user_id
     ):
+        # Ensure target_dir is an absolute path to avoid path issues in celery workers
+        target_dir = os.path.abspath(target_dir)
+        logger.info(f"ParsingHelper: Using absolute target_dir: {target_dir}")
+
         # Get repo name for logging - handle both Repo objects and repo objects with full_name
         repo_name = (
             repo.working_tree_dir
@@ -452,7 +456,7 @@ class ParseHelper:
                 status_code = e.response.status_code
             elif '401' in str(e):
                 status_code = 401
-            
+
             if status_code == 401:
                 provider_type = os.getenv("CODE_PROVIDER", "github").lower()
                 if provider_type == "gitbucket":
@@ -624,10 +628,15 @@ class ParseHelper:
 
         logger.info(f"ParsingHelper: Cloning repository '{repo_name}' branch '{branch}' using git")
 
+        # Ensure target_dir is an absolute path to avoid path issues in celery workers
+        target_dir = os.path.abspath(target_dir)
+        logger.info(f"ParsingHelper: Using absolute target_dir: {target_dir}")
+
         final_dir = os.path.join(
             target_dir,
             f"{repo.full_name.replace('/', '-').replace('.', '-')}-{branch.replace('/', '-').replace('.', '-')}-{user_id}",
         )
+        logger.info(f"ParsingHelper: Final clone directory will be: {final_dir}")
 
         # Create temporary clone directory
         temp_clone_dir = os.path.join(target_dir, f"{uuid.uuid4()}_temp_clone")
@@ -755,6 +764,11 @@ class ParseHelper:
                 logger.info(f"ParsingHelper: Cleaned up temporary clone directory: {temp_clone_dir}")
             except Exception as e:
                 logger.warning(f"ParsingHelper: Failed to clean up temp clone directory: {e}")
+
+            logger.info(f"ParsingHelper: Git clone completed successfully, returning final_dir: {final_dir}")
+            logger.info(f"ParsingHelper: Verifying final_dir exists: {os.path.exists(final_dir)}")
+            if os.path.exists(final_dir):
+                logger.info(f"ParsingHelper: final_dir contains {len(os.listdir(final_dir))} items")
 
             return final_dir
 
