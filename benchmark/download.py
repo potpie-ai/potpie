@@ -1,209 +1,327 @@
+import concurrent.futures
 import subprocess
-import sys
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from collections import defaultdict
 from pathlib import Path
+from typing import Any, Iterable, Tuple
 
-import pandas as pd
 from loguru import logger
-from pandas import DataFrame
 
 
-def _normalize_repo_url(url: str) -> str:
+def run_cmd(
+    cmd: list,
+    cwd: Path | None = None,
+    capture_output: bool = True,
+    check: bool = False,
+    env: dict | None = None,
+    timeout: int | None = None,
+) -> subprocess.CompletedProcess:
+    """Wrapper for subprocess.run to simplify calls."""
+    return subprocess.run(
+        cmd,
+        cwd=str(cwd) if cwd else None,
+        stdout=subprocess.PIPE if capture_output else None,
+        stderr=subprocess.PIPE if capture_output else None,
+        text=True,
+        check=check,
+        env=env,
+        timeout=timeout,
+    )
+
+
+def clone_bare_repo(repo_url: str, bare_parent: Path) -> Path:
     """
-    Normalize a repository URL by stripping whitespace and adding .git suffix if needed.
-
-    Args:
-        url: Repository URL to normalize
-
-    Returns:
-        Normalized URL ending with .git
+    Ensure bare clone exists at bare_parent/<repo_name>.git
+    Returns path to bare repo.
     """
-    url = url.strip().rstrip("/")
-    if not url.endswith(".git"):
-        url += ".git"
-    return url
+    name = repo_url.rstrip("/").split("/")[-1]
+    if name.endswith(".git"):
+        name = name[:-4]
+    bare_path = (bare_parent / f"{name}.git").resolve()
+    bare_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if bare_path.exists():
+        logger.debug("Bare repo already exists at {}.", bare_path)
+        return bare_path
+
+    logger.bind(path=bare_path).info("Cloning bare repository.")
+    cmd = ["git", "clone", "--bare", repo_url, str(bare_path)]
+    cp = run_cmd(cmd, capture_output=True)
+    if cp.returncode != 0:
+        logger.error("Failed to clone repo: {}", cp.stderr.strip())
+        raise RuntimeError(f"Failed to clone {repo_url}: {cp.stderr.strip()}")
+    logger.bind(path=bare_path).info("Successfully cloned bare repo.")
+    return bare_path
 
 
-def get_unique_repo_and_commits(csv_path: Path | str) -> dict[str, list[str]]:
-    csv_file_path = Path(csv_path)
-    required_columns = [
-        "repo_url",
-        "commit_id",
+def ensure_controller_for_bare(bare_repo_path: Path) -> Path:
+    """
+    For a bare repo at <X>.git, ensure controller at <X>.git.workcontroller exists:
+      git clone --local --no-checkout <bare> <controller>
+    Return path to controller repo.
+    """
+    controller = bare_repo_path.parent / (bare_repo_path.name + ".workcontroller")
+    if controller.exists():
+        logger.debug("Controller already exists at {}", controller)
+        return controller.resolve()
+
+    logger.debug("Creating controller repo at {}", controller)
+    cmd = [
+        "git",
+        "clone",
+        "--local",
+        "--no-checkout",
+        str(bare_repo_path),
+        str(controller),
     ]
-    df: DataFrame = pd.read_csv(
-        csv_file_path, usecols=required_columns
-    )  # pyright: ignore[reportUnknownMemberType]
-    df.dropna(inplace=True)
-    df["repo_url"] = df["repo_url"].apply(
-        _normalize_repo_url
-    )  # pyright: ignore[reportUnknownMemberType]
-    repo_commit_dict = (
-        df.groupby("repo_url")["commit_id"].apply(set).to_dict()
-    )  # pyright: ignore[reportUnknownMemberType]
-    return repo_commit_dict
-
-
-def clone_bare_repository(repo_url: str, bare_repo_path: Path) -> tuple[str, str]:
-    # Clone as bare repository
-    if bare_repo_path.exists():
-        logger.info(f"Repository already exists at {bare_repo_path}. Skipping cloning.")
-    else:
-        _ = subprocess.run(
-            ["git", "clone", "--bare", repo_url, str(bare_repo_path)],
-            check=True,
-            capture_output=True,
-            text=True,
+    cp = run_cmd(cmd, capture_output=True)
+    if cp.returncode != 0:
+        logger.error(
+            "Failed to create controller for {}: {}", bare_repo_path, cp.stderr.strip()
         )
+        raise RuntimeError(
+            f"Failed to create controller for {bare_repo_path}: {cp.stderr.strip()}"
+        )
+    logger.debug(f"Successfully created controller at {controller}")
+    return controller.resolve()
 
-    # Fetch all references
-    _ = subprocess.run(
-        ["git", "--git-dir", str(bare_repo_path), "fetch", "--all", "--tags"],
-        check=True,
-        capture_output=True,
-        text=True,
+
+def controller_has_commit(controller_path: Path, commit_id: str) -> bool:
+    """Return True if controller repo knows about commit_id."""
+    try:
+        cp = run_cmd(
+            ["git", "rev-parse", "--verify", f"{commit_id}^{{commit}}"],
+            cwd=controller_path,
+            capture_output=True,
+        )
+        return cp.returncode == 0
+    except Exception:
+        return False
+
+
+def fetch_all_into_controller(controller_path: Path) -> None:
+    """Run git fetch --all --tags in the controller to ensure refs/objects are present."""
+    logger.debug(f"Fetching all refs into controller at {controller_path}")
+    cp = run_cmd(
+        ["git", "fetch", "--all", "--tags"], cwd=controller_path, capture_output=True
     )
+    if cp.returncode != 0:
+        logger.error("git fetch failed for {}: {}", controller_path, cp.stderr.strip())
+        raise RuntimeError(
+            f"git fetch failed for {controller_path}: {cp.stderr.strip()}"
+        )
+    logger.debug("Successfully fetched refs for {}.", controller_path)
 
-    return repo_url, str(bare_repo_path.absolute())
 
-
-def create_worktree(
-    bare_repo_path: Path, worktree_path: Path, commit_id: str
-) -> tuple[Path, str]:
-    # Remove existing worktree if it exists
+def add_worktree_for_commit(
+    controller_path: Path, worktree_path: Path, commit_id: str
+) -> None:
+    """
+    Run: git worktree add <worktree_path> <commit_id>
+    If already exists, silently return.
+    """
     if worktree_path.exists():
-        _ = subprocess.run(
-            cwd=str(worktree_path.parent),
-            args=["git", "worktree", "remove", "--force", str(worktree_path)],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        # already created (idempotent behavior)
+        logger.debug("Worktree already exists at {}", worktree_path)
+        return
 
-    # Create new worktree
-    _ = subprocess.run(
-        [
-            "git",
-            "--git-dir",
-            str(bare_repo_path),
-            "worktree",
-            "add",
-            "--detach",
-            str(worktree_path),
-            commit_id,
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
+    worktree_path.parent.mkdir(parents=True, exist_ok=True)
+
+    logger.bind(worktree_path=worktree_path, commit_id=commit_id).debug(
+        "Adding worktree"
     )
+    cmd = ["git", "worktree", "add", str(worktree_path), commit_id]
+    cp = run_cmd(cmd, cwd=controller_path, capture_output=True)
+    if cp.returncode != 0:
+        # Stderr for debugging
+        logger.error(
+            "Failed to add worktree at {}: {}", worktree_path, cp.stderr.strip()
+        )
+        raise RuntimeError(
+            f"Failed to add worktree {worktree_path} at {commit_id}: {cp.stderr.strip()}"
+        )
+    logger.debug(f"Successfully added worktree at {worktree_path}")
 
-    return worktree_path.absolute(), commit_id
+
+def group_rows_by_repo(
+    rows: Iterable[dict[str, str]],
+) -> dict[str, list[Tuple[str, str]]]:
+    """
+    Group rows by repo_url.
+    Input row should have keys: 'repo_url', 'commit_id', 'problem_id'
+    Returns mapping: repo_url -> list of (commit_id, problem_id)
+    """
+    mapping: dict[str, list[Tuple[str, str]]] = {}
+    for r in rows:
+        repo = r["repo_url"]
+        commit = r["commit_id"]
+        prob = r["problem_id"]
+        mapping.setdefault(repo, []).append((commit, prob))
+    return mapping
 
 
-def setup_all_worktrees(
-    repo_dicts: dict[str, list[str]], base_directory: Path
-) -> dict[tuple[str, str], Path]:
-    successful_repos: list[str] = []
-    worktree_map: dict[tuple[str, str], Path] = {}
+def process_single_repo(
+    repo_url: str,
+    entries: list[Tuple[str, str]],
+    base_dir: Path,
+    batch_no: int,
+    skip_if_exists: bool = True,
+) -> tuple[dict[tuple[str, str], dict[tuple[str, int], Path]], dict[str, Any]]:
+    """
+    For a single repo_url with entries [(commit_id, problem_id), ...]:
+      - clone bare repo (if missing) at base_dir/bare/<repo_name>.git
+      - create controller repo
+      - for each entry and for batch_index in 0..batch_no-1, create worktree
+    Returns summary dict with counts and failures.
+    """
+    summary = {"repo_url": repo_url, "created": [], "skipped": [], "failed": []}
+    repo_mapping: dict[tuple[str, str], dict[tuple[str, int], Path]] = defaultdict(dict)
 
-    # Parallel bare repository cloning
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures_dict: dict[Future[tuple[str, str]], str] = {}
+    try:
+        bare_parent = base_dir / "bare"
+        with logger.contextualize(repo_url=repo_url):
+            bare_repo = clone_bare_repo(repo_url, bare_parent)
+            controller = ensure_controller_for_bare(bare_repo)
 
-        for repo_url in repo_dicts.keys():
-            repo_name = get_repo_name(repo_url)
-            bare_repo_path = base_directory / f"{repo_name}.git"
-            future = executor.submit(clone_bare_repository, repo_url, bare_repo_path)
-            futures_dict[future] = repo_url
+        # process each commit/problem pair
+        for idx, (commit_id, problem_id) in enumerate(entries, 1):
+            # sanitize parts for filesystem
+            for batch_index in range(batch_no):
+                wt_name = f"{commit_id}_{problem_id}_{batch_index}"
+                # choose parent for worktrees: base_dir/worktrees/<repo_name>/<wt_name>
+                repo_name = bare_repo.name
+                worktree_parent = base_dir / "worktrees" / repo_name
+                worktree_path = (worktree_parent / wt_name).resolve()
 
-        for future in as_completed(futures_dict.keys()):
+                if skip_if_exists and worktree_path.exists():
+                    repo_mapping[(repo_url, commit_id)].update(
+                        {(problem_id, batch_index): worktree_path}
+                    )
+                    summary["skipped"].append(str(worktree_path))
+                    continue
+
+                # ensure the controller knows the commit; otherwise fetch
+                if not controller_has_commit(controller, commit_id):
+                    logger.warning(
+                        f"Commit {commit_id} not found in controller, fetching..."
+                    )
+                    try:
+                        with logger.contextualize(repo_url=repo_url):
+                            fetch_all_into_controller(controller)
+                    except Exception as e:
+                        logger.bind(repo_url=repo_url, commit_id=commit_id).error(
+                            "Fetch failed for commit"
+                        )
+                        summary["failed"].append(
+                            {
+                                "worktree": str(worktree_path),
+                                "commit": commit_id,
+                                "error": f"fetch_failed: {e}",
+                            }
+                        )
+                        continue  # go to next worktree
+
+                    # check again
+                    if not controller_has_commit(controller, commit_id):
+                        logger.error(f"Commit {commit_id} still not found after fetch")
+                        summary["failed"].append(
+                            {
+                                "worktree": str(worktree_path),
+                                "commit": commit_id,
+                                "error": "commit_not_found_after_fetch",
+                            }
+                        )
+                        continue
+
+                # add the worktree
+                try:
+                    with logger.contextualize(repo_url=repo_url, commit_id=commit_id):
+                        add_worktree_for_commit(controller, worktree_path, commit_id)
+                    repo_mapping[(repo_url, commit_id)].update(
+                        {(problem_id, batch_index): worktree_path}
+                    )
+                    summary["created"].append(str(worktree_path))
+                    logger.bind(
+                        repo=repo_url, step="{}/{}".format(batch_index, batch_no)
+                    ).debug("Created worktree: {}", worktree_path.name)
+                except Exception as e:
+                    logger.error(f"Failed to create worktree {worktree_path.name}: {e}")
+                    summary["failed"].append(
+                        {
+                            "worktree": str(worktree_path),
+                            "commit": commit_id,
+                            "error": str(e),
+                        }
+                    )
+    except Exception as e:
+        logger.bind(repo_url=repo_url).error("Repo setup failed")
+        summary["failed"].append({"repo_setup": repo_url, "error": str(e)})
+
+    # commit_id: {(problem_id, commit_id): worktree}
+
+    logger.bind(
+        repo_url=repo_url,
+        created=len(summary["created"]),
+        skipped=len(summary["skipped"]),
+        failed=len(summary["failed"]),
+    ).info("Completed repo")
+    return repo_mapping, summary
+
+
+def prepare_worktrees(
+    rows: Iterable[dict[str, Any]],
+    base_dir: str,
+    batch_no: int,
+    max_workers: int = 8,
+    skip_if_exists: bool = True,
+) -> tuple[dict[tuple[str, str], dict[tuple[str, int], Path]], list[dict[str, Any]]]:
+    """
+    rows: iterable of dicts with keys 'repo_url','commit_id','problem_id'
+    base_dir: root directory where we will create:
+        - base_dir/bare/<repo_name>.git
+        - base_dir/worktrees/<repo_name>/<worktree_name>
+    batch_no: number of batch copies to create per (commit,problem)
+    max_workers: number of threads for parallel repo processing
+    Returns a list of per-repo summaries.
+    """
+    logger.bind(base_dir=base_dir, batch_no=batch_no, max_worker=max_workers).info(
+        "Starting dataset processing"
+    )
+    base = Path(base_dir).resolve()
+    base.mkdir(parents=True, exist_ok=True)
+
+    grouped = group_rows_by_repo(rows)
+    summaries = []
+    repo_map: dict[tuple[str, str], dict[tuple[str, int], Path]] = {}
+
+    # Process different repos in parallel, but each repo is processed serially inside process_single_repo
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = {
+            ex.submit(
+                process_single_repo, repo, grouped[repo], base, batch_no, skip_if_exists
+            ): repo
+            for repo in grouped
+        }
+        for fut in concurrent.futures.as_completed(futures):
+            repo = futures[fut]
             try:
-                repo_url, bare_repo_path = (
-                    future.result()
-                )  # This will raise if clone failed
-                successful_repos.append(repo_url)
-                logger.info("Successfully cloned bare repository.", repo_url=repo_url)
-            except (
-                Exception
-            ) as e:  # TODO: Specialize the exception later like CalledProcessError or OSError
-                logger.error(
-                    "Failed to clone bare repository",
-                    error=e,
-                    repo_url=futures_dict[future],
-                )
-
-    #  Parallel worktree creation
-    with ThreadPoolExecutor(max_workers=6) as executor:
-        worktree_futures: dict[Future[tuple[Path, str]], str] = {}
-
-        for repo_url in successful_repos:
-            repo_name = get_repo_name(repo_url)
-            bare_repo_path = base_directory / f"{repo_name}.git"
-
-            for commit_id in repo_dicts[repo_url]:
-                worktree_path = bare_repo_path / commit_id
-                worktree_path.parent.mkdir(exist_ok=True)
-
-                future = executor.submit(
-                    create_worktree,
-                    bare_repo_path,
-                    worktree_path,
-                    commit_id,
-                )
-                worktree_futures[future] = repo_url
-
-        # Collect worktree results
-        for future in as_completed(worktree_futures):
-            try:
-                worktree_path, commit_id = future.result()
-                repo_url = worktree_futures[future]
-                worktree_map[(repo_url, commit_id)] = worktree_path
-                logger.debug("Created worktree for commit {}", commit_id[:8])
+                _repo_map, summary = fut.result()
+                repo_map.update(_repo_map)
             except Exception as e:
-                logger.error("Failed to create worktree: {}", str(e))
+                logger.bind(repo=repo).error("Unhandled exception processing repo.")
+                summary = {
+                    "repo_url": repo,
+                    "created": [],
+                    "skipped": [],
+                    "failed": [{"error": f"unhandled_exception: {e}"}],
+                }
+            summaries.append(summary)
 
-    return worktree_map
-
-
-def get_repo_name(repo_url: str) -> str:
-    """
-    Get the name of the repository from the URL.
-
-    Args:
-        repo_url: The URL of the repository. Expected to be in the format
-            "https://<provider>.com/username/repository.git".
-
-    Returns:
-        The name of the repository.
-    """
-    repo_slug_split = repo_url.strip().split("/")[-2:]
-    return "_".join(repo_slug_split)[:-4]
-
-
-# To be used with atexit
-def cleanup_downloaded_repos(base_directory: Path) -> None:
-    """
-    Clean up all downloaded repositories in the specified base directory.
-
-    Args:
-        base_directory: Base directory for repositories and worktrees
-    """
-    if base_directory.exists():
-        logger.warning("Cleaning up all repositories in {}", base_directory)
-        import shutil
-
-        shutil.rmtree(base_directory)
-        logger.success("Cleanup completed")
-    else:
-        logger.debug("No repositories to cleanup")
-
-
-if __name__ == "__main__":
-    logger.add(sys.stdout, format=" | {extra}")
-    csv_path = Path("benchmark.csv")
-    base_directory = Path("repos")
-    base_directory.mkdir(parents=True, exist_ok=True)
-    # csv_entries, worktree_map = setup_benchmark_repositories(csv_path, base_directory)
-    repo_dict = get_unique_repo_and_commits(csv_path)
-    # pprint(repo_dict)
-    worktree_map = setup_all_worktrees(repo_dict, base_directory)
-    print(worktree_map)
+    total_created = sum(len(s["created"]) for s in summaries)
+    total_skipped = sum(len(s["skipped"]) for s in summaries)
+    total_failed = sum(len(s["failed"]) for s in summaries)
+    logger.bind(
+        total_created=total_created,
+        total_skipped=total_skipped,
+        total_failed=total_failed,
+    ).info("Dataset processing complete.")
+    return repo_map, summaries
