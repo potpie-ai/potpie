@@ -1023,8 +1023,14 @@ async def confluence_oauth_callback(
 async def get_confluence_status(
     user_id: str,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> ConfluenceIntegrationStatus:
     """Get Confluence integration status for a user"""
+    # Verify the authenticated user matches the requested user_id
+    if user["user_id"] != user_id:
+        raise HTTPException(
+            status_code=403, detail="Cannot access other users' integration status"
+        )
     return await integrations_service.get_confluence_integration_status(user_id)
 
 
@@ -1033,8 +1039,15 @@ async def revoke_confluence_access(
     user_id: str,
     confluence_oauth: ConfluenceOAuth = Depends(get_confluence_oauth),
     integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
 ) -> Dict[str, Any]:
     """Revoke Confluence OAuth access for a user"""
+    # Verify the authenticated user matches the requested user_id
+    if user["user_id"] != user_id:
+        raise HTTPException(
+            status_code=403, detail="Cannot revoke other users' integrations"
+        )
+
     tokens_removed = confluence_oauth.revoke_access(user_id)
     deactivated = (
         await integrations_service.deactivate_confluence_integrations_for_user(user_id)
@@ -1065,12 +1078,14 @@ async def get_confluence_resources(
                 status_code=403, detail="Integration not found or access denied"
             )
 
-        resources = await integrations_service.get_confluence_accessible_resources(
+        result = await integrations_service.get_confluence_accessible_resources(
             integration_id
         )
         return {
             "status": "success",
-            "resources": resources,
+            "resources": result.get("resources", []),
+            "site_id": result.get("site_id"),
+            "site_url": result.get("site_url"),
             "integration_id": integration_id,
         }
     except HTTPException:

@@ -936,10 +936,6 @@ class IntegrationsService:
                 if db_integration.integration_type == "jira":
                     await self._cleanup_jira_webhooks(db_integration)
 
-                # Clean up Jira webhooks if this is a Jira integration
-                if db_integration.integration_type == "jira":
-                    await self._cleanup_jira_webhooks(db_integration)
-
                 # Perform the deletion
                 self.db.delete(db_integration)
                 self.db.commit()
@@ -1378,10 +1374,6 @@ class IntegrationsService:
             logging.info(
                 f"Deleting integration (schema): integration_id='{integration_schema.integration_id}', name='{integration_schema.name}', type='{integration_schema.integration_type}', status='{integration_schema.status}', created_by='{integration_schema.created_by}', created_at='{integration_schema.created_at}'"
             )
-
-            # Clean up Jira webhooks if this is a Jira integration
-            if db_integration.integration_type == "jira":
-                await self._cleanup_jira_webhooks(db_integration)
 
             # Clean up Jira webhooks if this is a Jira integration
             if db_integration.integration_type == "jira":
