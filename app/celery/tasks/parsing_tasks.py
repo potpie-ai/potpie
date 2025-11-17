@@ -1,7 +1,5 @@
 import logging
 import os
-import fcntl
-import time as time_module
 from typing import Any, Dict
 
 from app.celery.celery_app import celery_app
@@ -10,190 +8,6 @@ from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
 
 logger = logging.getLogger(__name__)
-
-
-def _acquire_clone_lock(repo_path: str, timeout: int = 300) -> int:
-    """
-    Acquire a file lock for cloning operations to prevent race conditions.
-    Uses a lock file to coordinate between multiple workers.
-
-    Args:
-        repo_path: The target repository path
-        timeout: Maximum seconds to wait for lock
-
-    Returns:
-        File descriptor of the lock file (must be kept open until release)
-    """
-    lock_file = f"{repo_path}.lock"
-    lock_dir = os.path.dirname(lock_file)
-
-    # Ensure lock directory exists
-    if lock_dir and not os.path.exists(lock_dir):
-        os.makedirs(lock_dir, exist_ok=True)
-
-    # Open lock file (create if not exists)
-    fd = os.open(lock_file, os.O_CREAT | os.O_RDWR, 0o644)
-
-    start_time = time_module.time()
-    while True:
-        try:
-            # Try to acquire exclusive lock (non-blocking)
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            logger.debug(f"Acquired clone lock for {repo_path}")
-            return fd
-        except (IOError, OSError):
-            # Lock is held by another process
-            if time_module.time() - start_time > timeout:
-                os.close(fd)
-                raise TimeoutError(f"Timeout waiting for clone lock on {repo_path}")
-            # Wait and retry
-            time_module.sleep(0.5)
-
-
-def _release_clone_lock(fd: int, repo_path: str):
-    """
-    Release the clone lock.
-
-    Args:
-        fd: File descriptor from _acquire_clone_lock
-        repo_path: The target repository path (for lock file cleanup)
-    """
-    try:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        os.close(fd)
-        logger.debug(f"Released clone lock for {repo_path}")
-    except Exception as e:
-        logger.warning(f"Error releasing clone lock: {e}")
-
-
-def _increment_repo_refcount(repo_path: str) -> int:
-    """
-    Atomically increment the reference count for a cloned repository.
-    Used to track how many workers are using the repository.
-
-    Args:
-        repo_path: Path to the repository
-
-    Returns:
-        New reference count
-    """
-    refcount_file = f"{repo_path}.refcount"
-    lock_file = f"{repo_path}.refcount.lock"
-
-    # Use a separate lock for refcount operations
-    with open(lock_file, 'w') as lock_f:
-        fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)
-        try:
-            # Read current count
-            if os.path.exists(refcount_file):
-                with open(refcount_file, 'r') as f:
-                    count = int(f.read().strip() or '0')
-            else:
-                count = 0
-
-            # Increment and write back
-            count += 1
-            with open(refcount_file, 'w') as f:
-                f.write(str(count))
-
-            logger.debug(f"Incremented refcount for {repo_path} to {count}")
-            return count
-        finally:
-            fcntl.flock(lock_f.fileno(), fcntl.LOCK_UN)
-
-
-def _decrement_repo_refcount(repo_path: str) -> int:
-    """
-    Atomically decrement the reference count for a cloned repository.
-
-    Args:
-        repo_path: Path to the repository
-
-    Returns:
-        New reference count (0 means no more users)
-    """
-    refcount_file = f"{repo_path}.refcount"
-    lock_file = f"{repo_path}.refcount.lock"
-
-    if not os.path.exists(refcount_file):
-        return 0
-
-    # Use a separate lock for refcount operations
-    with open(lock_file, 'w') as lock_f:
-        fcntl.flock(lock_f.fileno(), fcntl.LOCK_EX)
-        try:
-            # Read current count
-            with open(refcount_file, 'r') as f:
-                count = int(f.read().strip() or '0')
-
-            # Decrement
-            count = max(0, count - 1)
-
-            # Write back or cleanup
-            if count == 0:
-                # No more users, cleanup refcount file
-                try:
-                    os.remove(refcount_file)
-                except OSError:
-                    pass
-            else:
-                with open(refcount_file, 'w') as f:
-                    f.write(str(count))
-
-            logger.debug(f"Decremented refcount for {repo_path} to {count}")
-            return count
-        finally:
-            fcntl.flock(lock_f.fileno(), fcntl.LOCK_UN)
-
-
-def _cleanup_repo_if_last_user(repo_path: str, work_unit_index: int) -> bool:
-    """
-    Cleanup repository only if this is the last user (refcount reaches 0).
-
-    Args:
-        repo_path: Path to the repository
-        work_unit_index: For logging
-
-    Returns:
-        True if cleanup was performed, False otherwise
-    """
-    import shutil
-
-    # Decrement refcount and check if we're the last user
-    remaining = _decrement_repo_refcount(repo_path)
-
-    if remaining == 0:
-        # We're the last user, safe to cleanup
-        logger.info(
-            f"[Unit {work_unit_index}] Last user of repository, cleaning up: {repo_path}"
-        )
-        try:
-            if os.path.exists(repo_path):
-                shutil.rmtree(repo_path)
-                logger.info(
-                    f"[Unit {work_unit_index}] Successfully cleaned up cloned repository"
-                )
-
-            # Also cleanup lock files
-            for ext in ['.lock', '.refcount.lock']:
-                lock_file = f"{repo_path}{ext}"
-                if os.path.exists(lock_file):
-                    try:
-                        os.remove(lock_file)
-                    except OSError:
-                        pass
-
-            return True
-        except Exception as cleanup_error:
-            logger.warning(
-                f"[Unit {work_unit_index}] Failed to cleanup cloned repository: {cleanup_error}"
-            )
-            return False
-    else:
-        logger.info(
-            f"[Unit {work_unit_index}] Repository still in use by {remaining} other workers, skipping cleanup"
-        )
-        return False
 
 
 @celery_app.task(
@@ -356,7 +170,8 @@ def process_parsing_distributed(
             project_id=project_id,
             user_id=user_id,
             total_work_units=len(work_units),
-            start_time=start_time
+            start_time=start_time,
+            repo_path=project_path  # For cleanup after all workers finish
         )
 
         # Execute chord: (group of tasks) | callback
@@ -431,156 +246,14 @@ def parse_directory_unit(
     from app.core.config_provider import config_provider
     from neo4j import GraphDatabase
     import time
-    import os
 
     logger.info(
         f"[Unit {work_unit_index}] Starting: {directory_path or 'root'} "
         f"({len(files)} files)"
     )
     start_time = time.time()
-    cloned_on_this_worker = False  # Track if we cloned, for cleanup later
-    actual_repo_path = repo_path  # Track the actual path we'll use
-    clone_lock_fd = None  # File descriptor for clone lock
 
     try:
-        # Step 0: Ensure repository exists on this worker with proper locking
-        logger.info(f"[Unit {work_unit_index}] Checking if repo exists at: {repo_path}")
-
-        # Acquire lock before checking/cloning to prevent race conditions
-        clone_lock_fd = _acquire_clone_lock(repo_path, timeout=300)
-
-        try:
-            # Double-check after acquiring lock (another worker may have cloned while we waited)
-            if not os.path.exists(repo_path):
-                logger.warning(
-                    f"[Unit {work_unit_index}] Repository not found on this worker. "
-                    f"This worker needs to clone the repository."
-                )
-
-                # Clone the repository on this worker
-                from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
-                from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
-                from app.modules.projects.projects_service import ProjectService
-
-                # Get project details from database
-                project_service = ProjectService(self.db)
-
-                async def get_project_details():
-                    return await project_service.get_project_from_db_by_id(project_id)
-
-                project_details = self.run_async(get_project_details())
-
-                if not project_details:
-                    raise ValueError(f"Project {project_id} not found in database")
-
-                # Extract repo details
-                repo_name_from_db = project_details.get('project_name')
-                branch_name = project_details.get('branch_name')
-                commit_id = project_details.get('commit_id')
-                repo_path_from_db = project_details.get('repo_path')
-
-                logger.info(
-                    f"[Unit {work_unit_index}] Cloning repo on worker: {repo_name_from_db}, "
-                    f"branch: {branch_name}, commit: {commit_id}"
-                )
-
-                # Create parsing request
-                parse_helper = ParseHelper(self.db)
-
-                # If this is a local repo, we can't clone it on workers - fail with clear error
-                if repo_path_from_db:
-                    raise ValueError(
-                        f"[Unit {work_unit_index}] This project uses a local repository path "
-                        f"({repo_path_from_db}), which cannot be accessed from distributed workers. "
-                        f"Local repositories can only be parsed on a single worker."
-                    )
-
-                # Clone remote repository
-                repo_details_dict = {
-                    'repo_name': repo_name_from_db,
-                    'branch_name': branch_name,
-                    'commit_id': commit_id,
-                    'repo_path': None
-                }
-
-                async def clone_repo():
-                    return await parse_helper.clone_or_copy_repository(
-                        ParsingRequest(**repo_details_dict),
-                        user_id
-                    )
-
-                async def setup_project_dir(repo, auth):
-                    return await parse_helper.setup_project_directory(
-                        repo,
-                        branch_name,
-                        auth,
-                        ParsingRequest(**repo_details_dict),
-                        user_id,
-                        project_id,
-                        commit_id=commit_id
-                    )
-
-                # Clone and setup with rollback on failure
-                repo = None
-                actual_repo_path = None  # Initialize to track what was created
-                try:
-                    repo, owner, auth = self.run_async(clone_repo())
-                    logger.info(f"[Unit {work_unit_index}] Repository cloned successfully")
-
-                    actual_repo_path, _ = self.run_async(setup_project_dir(repo, auth))
-                    logger.info(
-                        f"[Unit {work_unit_index}] Repository setup complete at: {actual_repo_path}"
-                    )
-                except Exception as clone_error:
-                    # Rollback: Clean up partial clone if setup failed
-                    logger.error(
-                        f"[Unit {work_unit_index}] Clone/setup failed, performing rollback: {clone_error}"
-                    )
-                    # Try to clean up any partial directory that might have been created
-                    # If actual_repo_path was set, use it; otherwise try to predict the path
-                    cleanup_paths = []
-                    if actual_repo_path and actual_repo_path != repo_path and os.path.exists(actual_repo_path):
-                        cleanup_paths.append(actual_repo_path)
-                    else:
-                        # Predict the path that setup_project_directory would create
-                        # This matches the pattern in parsing_helper.py:download_and_extract_tarball
-                        project_path_env = os.getenv("PROJECT_PATH", "projects/")
-                        if repo_name_from_db and branch_name:
-                            predicted_path = os.path.join(
-                                project_path_env,
-                                f"{repo_name_from_db.replace('/', '-').replace('.', '-')}-"
-                                f"{branch_name.replace('/', '-').replace('.', '-')}-{user_id}"
-                            )
-                            if os.path.exists(predicted_path) and predicted_path != repo_path:
-                                cleanup_paths.append(predicted_path)
-                    
-                    # Clean up any partial directories
-                    for cleanup_path in cleanup_paths:
-                        try:
-                            import shutil
-                            shutil.rmtree(cleanup_path)
-                            logger.info(f"[Unit {work_unit_index}] Rolled back partial clone at {cleanup_path}")
-                        except Exception as rollback_error:
-                            logger.warning(f"[Unit {work_unit_index}] Rollback cleanup failed for {cleanup_path}: {rollback_error}")
-                    raise
-
-                cloned_on_this_worker = True  # Mark for cleanup
-            else:
-                logger.info(f"[Unit {work_unit_index}] Repository already exists on this worker")
-                actual_repo_path = repo_path
-
-            # Increment reference count to track usage
-            _increment_repo_refcount(actual_repo_path)
-
-        finally:
-            # Release clone lock after clone check/operation
-            if clone_lock_fd is not None:
-                _release_clone_lock(clone_lock_fd, repo_path)
-                clone_lock_fd = None
-
-        # Use actual_repo_path from here on for consistency
-        repo_path = actual_repo_path
-
         # Step 1: Initialize services
         repo_map = RepoMap(
             root=repo_path,
@@ -697,28 +370,6 @@ def parse_directory_unit(
             'defines': {},
             'references': []
         }
-
-    finally:
-        # Cleanup: Use reference counting to safely cleanup shared repository
-        # Only the last user (refcount reaches 0) will actually delete the repository
-        if actual_repo_path and os.path.exists(actual_repo_path):
-            try:
-                logger.info(
-                    f"[Unit {work_unit_index}] Releasing repository reference at: {actual_repo_path}"
-                )
-                _cleanup_repo_if_last_user(actual_repo_path, work_unit_index)
-            except Exception as cleanup_error:
-                logger.warning(
-                    f"[Unit {work_unit_index}] Failed during repository cleanup: {cleanup_error}"
-                )
-                # Don't fail the task due to cleanup errors
-
-        # Ensure clone lock is released if still held (shouldn't happen, but safety check)
-        if clone_lock_fd is not None:
-            try:
-                _release_clone_lock(clone_lock_fd, repo_path)
-            except Exception:
-                pass
 
 
 def _resolve_intra_directory_references(G, defines, references) -> int:
@@ -857,7 +508,8 @@ def aggregate_and_resolve_references(
     project_id: str,
     user_id: str,
     total_work_units: int,
-    start_time: float
+    start_time: float,
+    repo_path: str = None  # Optional for backward compatibility
 ) -> Dict[str, Any]:
     """
     Callback task that aggregates parsing results and triggers reference resolution.
@@ -870,11 +522,13 @@ def aggregate_and_resolve_references(
         user_id: User ID
         total_work_units: Total number of work units processed
         start_time: Start time of the entire parsing operation
+        repo_path: Path to cloned repository (for cleanup after all workers finish)
 
     Returns:
         Dictionary with final parsing results
     """
     import time
+    import shutil
     from collections import defaultdict
 
     logger.info(
@@ -931,6 +585,19 @@ def aggregate_and_resolve_references(
 
         elapsed = time.time() - start_time
 
+        # Cleanup: Remove cloned repository after all workers are done
+        # This is safe because all parsing tasks have completed (shared storage)
+        cleanup_success = False
+        if repo_path and os.path.exists(repo_path):
+            try:
+                logger.info(f"Cleaning up cloned repository at: {repo_path}")
+                shutil.rmtree(repo_path)
+                cleanup_success = True
+                logger.info(f"Successfully cleaned up repository: {repo_path}")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup repository {repo_path}: {cleanup_error}")
+                # Don't fail the task due to cleanup errors
+
         return {
             'success': len(failed_units) == 0,
             'project_id': project_id,
@@ -944,11 +611,21 @@ def aggregate_and_resolve_references(
             'duration_seconds': elapsed,
             'workers_used': total_work_units,
             'resolution_task_id': resolve_task.id,
-            'status': 'resolving_references'
+            'status': 'resolving_references',
+            'repo_cleanup': cleanup_success
         }
 
     except Exception as e:
         logger.exception("Error aggregating parsing results")
+
+        # Best effort cleanup even on error
+        if repo_path and os.path.exists(repo_path):
+            try:
+                logger.info(f"Cleaning up repository on error: {repo_path}")
+                shutil.rmtree(repo_path)
+            except Exception:
+                pass
+
         return {
             'success': False,
             'error': str(e),

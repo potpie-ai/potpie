@@ -786,15 +786,55 @@ class ParseHelper:
 
             return final_dir
 
-        except GitCommandError as e:
-            logger.error(f"ParsingHelper: Git clone failed: {e}")
-            # Clean up temp directory on error
-            if os.path.exists(temp_clone_dir):
-                try:
-                    shutil.rmtree(temp_clone_dir)
-                except Exception:
-                    pass
-            raise ParsingFailedError(f"Failed to clone repository: {e}") from e
+        except GitCommandError as e:            # Exit code 128 typically indicates authentication/permission issues
+            exit_code = getattr(e, 'status', None) or getattr(e, 'returncode', None)
+            error_msg = str(e)
+            
+            logger.error(f"ParsingHelper: Git clone failed with exit code {exit_code}: {error_msg}")
+            
+            # Provide specific error messages based on exit code
+            if exit_code == 128:
+                # Common causes: authentication failure, permission denied, invalid URL
+                diagnostic_msg = (
+                    f"Git clone failed with exit code 128 (authentication/permission error). "
+                    f"Possible causes:\n"
+                    f"  1. Invalid credentials (username/password)\n"
+                    f"  2. Repository not found or inaccessible\n"
+                    f"  3. URL format issue (check CODE_PROVIDER_BASE_URL)\n"
+                    f"  4. Network connectivity issue\n"
+                    f"Repository: {repo.full_name}, Branch: {branch}\n"
+                    f"Base URL: {base_url}, Repo path: {repo_path}\n"
+                    f"Username: {username if username else 'NOT SET'}"
+                )
+                logger.error(f"ParsingHelper: {diagnostic_msg}")
+                
+                # Check if credentials are set
+                if not username or not password:
+                    raise ParsingFailedError(
+                        "GitBucket credentials not configured. "
+                        "Set GITBUCKET_USERNAME and GITBUCKET_PASSWORD environment variables."
+                    ) from e
+                
+                # Check URL format (construct safe URL for logging)
+                safe_url_check = urlunparse((
+                    parsed.scheme,
+                    parsed.netloc,
+                    repo_path,
+                    "", "", ""
+                ))
+                if not clone_url_with_auth.startswith(('http://', 'https://')):
+                    raise ParsingFailedError(
+                        f"Invalid clone URL format: {safe_url_check}. "
+                        f"Check CODE_PROVIDER_BASE_URL configuration."
+                    ) from e
+                
+                raise ParsingFailedError(
+                    f"Git clone authentication failed. Verify credentials and repository access. "
+                    f"Error: {error_msg}"
+                ) from e
+            else:
+                # Other git errors
+                raise ParsingFailedError(f"Failed to clone repository (exit code {exit_code}): {error_msg}") from e
         except Exception as e:
             logger.error(f"ParsingHelper: Unexpected error during git clone: {e}")
             # Clean up temp directory on error
