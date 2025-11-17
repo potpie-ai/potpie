@@ -103,15 +103,14 @@ class GetConfluenceSpacePagesTool:
                 }
 
             # Get Confluence client
-            async with await get_confluence_client_for_user(
-                self.user_id, self.db
-            ) as client:
-                if not client:
-                    return {
-                        "success": False,
-                        "error": "Failed to initialize Confluence client",
-                    }
+            client = await get_confluence_client_for_user(self.user_id, self.db)
+            if not client:
+                return {
+                    "success": False,
+                    "error": "Failed to initialize Confluence client",
+                }
 
+            try:
                 # Get space pages
                 status_param = None if status == "any" else status
                 response = await client.get_space_pages(
@@ -137,14 +136,16 @@ class GetConfluenceSpacePagesTool:
                     }
                     pages.append(page_info)
 
-            return {
-                "success": True,
-                "space_id": space_id,
-                "pages": pages,
-                "total": len(pages),
-                "status_filter": status,
-                "has_more": "_links" in response and "next" in response["_links"],
-            }
+                return {
+                    "success": True,
+                    "space_id": space_id,
+                    "pages": pages,
+                    "total": len(pages),
+                    "status_filter": status,
+                    "has_more": "_links" in response and "next" in response["_links"],
+                }
+            finally:
+                await client.close()
 
         except Exception as e:
             logging.error(f"Error getting space pages: {str(e)}")

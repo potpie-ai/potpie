@@ -113,15 +113,14 @@ class AddConfluenceCommentTool:
                 }
 
             # Get Confluence client
-            async with await get_confluence_client_for_user(
-                self.user_id, self.db
-            ) as client:
-                if not client:
-                    return {
-                        "success": False,
-                        "error": "Failed to initialize Confluence client",
-                    }
+            client = await get_confluence_client_for_user(self.user_id, self.db)
+            if not client:
+                return {
+                    "success": False,
+                    "error": "Failed to initialize Confluence client",
+                }
 
+            try:
                 # Add comment
                 comment_response = await client.add_comment(
                     page_id=page_id,
@@ -143,12 +142,14 @@ class AddConfluenceCommentTool:
                     "_links": comment_response.get("_links", {}),
                 }
 
-            comment_type = "reply" if parent_comment_id else "comment"
-            return {
-                "success": True,
-                "comment": comment_data,
-                "message": f"Successfully added {comment_type} to page {page_id}",
-            }
+                comment_type = "reply" if parent_comment_id else "comment"
+                return {
+                    "success": True,
+                    "comment": comment_data,
+                    "message": f"Successfully added {comment_type} to page {page_id}",
+                }
+            finally:
+                await client.close()
 
         except Exception as e:
             logging.error(f"Error adding Confluence comment: {str(e)}")
