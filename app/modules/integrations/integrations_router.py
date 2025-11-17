@@ -321,7 +321,7 @@ async def linear_oauth_callback(
 
                 # Save the integration (this will exchange code for tokens)
                 save_result = await integrations_service.save_linear_integration(
-                    save_request, 
+                    save_request,
                     user_id,
                 )
 
