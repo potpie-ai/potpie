@@ -9,7 +9,6 @@ import base64
 import json
 import time
 import logging
-import time
 import urllib.parse
 import jwt
 
@@ -932,11 +931,11 @@ async def confluence_oauth_callback(
 
         # If we have an authorization code, exchange it for tokens and save to database
         if code:
-            try:
-                # Create DB session and service
-                from app.core.database import SessionLocal
+            # Create DB session and service
+            from app.core.database import SessionLocal
 
-                db = SessionLocal()
+            db = SessionLocal()
+            try:
                 integrations_service = IntegrationsService(db)
 
                 from .integrations_schema import ConfluenceSaveRequest
@@ -969,9 +968,6 @@ async def confluence_oauth_callback(
                     save_request, user_id
                 )
 
-                # Close DB session
-                db.close()
-
                 # Redirect to frontend with success
                 frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
                 if frontend_url and not frontend_url.startswith(
@@ -995,6 +991,9 @@ async def confluence_oauth_callback(
                 error_message = urllib.parse.quote(str(save_error), safe="")
                 redirect_url = f"{frontend_url}/integrations/confluence/redirect?error={error_message}&user_id={user_id}"
                 return RedirectResponse(url=redirect_url)
+            finally:
+                # Always close the database session to prevent connection leaks
+                db.close()
         else:
             # No code provided — redirect to frontend with error
             config = Config()

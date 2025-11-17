@@ -97,39 +97,40 @@ class GetConfluenceSpacesTool:
                     "error": "Failed to initialize Confluence client",
                 }
 
-            # Get spaces
-            space_type_param = None if space_type == "all" else space_type
-            response = await client.get_spaces(limit=limit, type=space_type_param)
+            try:
+                # Get spaces
+                space_type_param = None if space_type == "all" else space_type
+                response = await client.get_spaces(limit=limit, type=space_type_param)
 
-            spaces = []
-            for space in response.get("results", []):
-                # Handle description which can be null or an object
-                description = ""
-                desc_obj = space.get("description")
-                if desc_obj and isinstance(desc_obj, dict):
-                    plain_obj = desc_obj.get("plain", {})
-                    if plain_obj and isinstance(plain_obj, dict):
-                        description = plain_obj.get("value", "")
+                spaces = []
+                for space in response.get("results", []):
+                    # Handle description which can be null or an object
+                    description = ""
+                    desc_obj = space.get("description")
+                    if desc_obj and isinstance(desc_obj, dict):
+                        plain_obj = desc_obj.get("plain", {})
+                        if plain_obj and isinstance(plain_obj, dict):
+                            description = plain_obj.get("value", "")
 
-                space_info = {
-                    "id": space.get("id"),
-                    "key": space.get("key"),
-                    "name": space.get("name"),
-                    "type": space.get("type"),
-                    "status": space.get("status"),
-                    "homepage_id": space.get("homepageId"),
-                    "description": description,
+                    space_info = {
+                        "id": space.get("id"),
+                        "key": space.get("key"),
+                        "name": space.get("name"),
+                        "type": space.get("type"),
+                        "status": space.get("status"),
+                        "homepage_id": space.get("homepageId"),
+                        "description": description,
+                    }
+                    spaces.append(space_info)
+
+                return {
+                    "success": True,
+                    "spaces": spaces,
+                    "total": len(spaces),
+                    "has_more": "_links" in response and "next" in response["_links"],
                 }
-                spaces.append(space_info)
-
-            await client.close()
-
-            return {
-                "success": True,
-                "spaces": spaces,
-                "total": len(spaces),
-                "has_more": "_links" in response and "next" in response["_links"],
-            }
+            finally:
+                await client.close()
 
         except Exception as e:
             logging.error(f"Error getting Confluence spaces: {str(e)}")

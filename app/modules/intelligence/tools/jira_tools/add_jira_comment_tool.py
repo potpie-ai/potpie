@@ -58,12 +58,11 @@ class AddJiraCommentTool:
                 }
 
             # Get the user-specific Jira client
-            client = await get_jira_client_for_user(self.user_id, self.db)
-
-            # Add the comment
-            result = await client.add_comment(
-                issue_key=issue_key, comment_body=comment
-            )
+            async with await get_jira_client_for_user(self.user_id, self.db) as client:
+                # Add the comment
+                result = await client.add_comment(
+                    issue_key=issue_key, comment_body=comment
+                )
 
             return {
                 "success": True,

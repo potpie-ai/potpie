@@ -125,36 +125,37 @@ class CreateConfluencePageTool:
                     "error": "Failed to initialize Confluence client",
                 }
 
-            # Create page
-            page = await client.create_page(
-                space_id=space_id,
-                title=title,
-                body=body,
-                parent_id=parent_id,
-                status=status,
-            )
+            try:
+                # Create page
+                page = await client.create_page(
+                    space_id=space_id,
+                    title=title,
+                    body=body,
+                    parent_id=parent_id,
+                    status=status,
+                )
 
-            # Extract created page information
-            page_data = {
-                "id": page.get("id"),
-                "status": page.get("status"),
-                "title": page.get("title"),
-                "space_id": page.get("spaceId"),
-                "parent_id": page.get("parentId"),
-                "parent_type": page.get("parentType"),
-                "author_id": page.get("authorId"),
-                "created_at": page.get("createdAt"),
-                "version": page.get("version", {}).get("number"),
-                "_links": page.get("_links", {}),
-            }
+                # Extract created page information
+                page_data = {
+                    "id": page.get("id"),
+                    "status": page.get("status"),
+                    "title": page.get("title"),
+                    "space_id": page.get("spaceId"),
+                    "parent_id": page.get("parentId"),
+                    "parent_type": page.get("parentType"),
+                    "author_id": page.get("authorId"),
+                    "created_at": page.get("createdAt"),
+                    "version": page.get("version", {}).get("number"),
+                    "_links": page.get("_links", {}),
+                }
 
-            await client.close()
-
-            return {
-                "success": True,
-                "page": page_data,
-                "message": f"Successfully created page '{title}' in space {space_id}",
-            }
+                return {
+                    "success": True,
+                    "page": page_data,
+                    "message": f"Successfully created page '{title}' in space {space_id}",
+                }
+            finally:
+                await client.close()
 
         except Exception as e:
             logging.error(f"Error creating Confluence page: {str(e)}")

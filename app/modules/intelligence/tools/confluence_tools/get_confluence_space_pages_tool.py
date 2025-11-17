@@ -103,39 +103,37 @@ class GetConfluenceSpacePagesTool:
                 }
 
             # Get Confluence client
-            client = await get_confluence_client_for_user(self.user_id, self.db)
-            if not client:
-                return {
-                    "success": False,
-                    "error": "Failed to initialize Confluence client",
-                }
+            async with await get_confluence_client_for_user(self.user_id, self.db) as client:
+                if not client:
+                    return {
+                        "success": False,
+                        "error": "Failed to initialize Confluence client",
+                    }
 
-            # Get space pages
-            status_param = None if status == "any" else status
-            response = await client.get_space_pages(
-                space_id=space_id,
-                limit=limit,
-                status=status_param,
-            )
+                # Get space pages
+                status_param = None if status == "any" else status
+                response = await client.get_space_pages(
+                    space_id=space_id,
+                    limit=limit,
+                    status=status_param,
+                )
 
-            # Extract page information
-            pages = []
-            for page in response.get("results", []):
-                page_info = {
-                    "id": page.get("id"),
-                    "status": page.get("status"),
-                    "title": page.get("title"),
-                    "space_id": page.get("spaceId"),
-                    "parent_id": page.get("parentId"),
-                    "parent_type": page.get("parentType"),
-                    "position": page.get("position"),
-                    "author_id": page.get("authorId"),
-                    "created_at": page.get("createdAt"),
-                    "version": page.get("version", {}).get("number"),
-                }
-                pages.append(page_info)
-
-            await client.close()
+                # Extract page information
+                pages = []
+                for page in response.get("results", []):
+                    page_info = {
+                        "id": page.get("id"),
+                        "status": page.get("status"),
+                        "title": page.get("title"),
+                        "space_id": page.get("spaceId"),
+                        "parent_id": page.get("parentId"),
+                        "parent_type": page.get("parentType"),
+                        "position": page.get("position"),
+                        "author_id": page.get("authorId"),
+                        "created_at": page.get("createdAt"),
+                        "version": page.get("version", {}).get("number"),
+                    }
+                    pages.append(page_info)
 
             return {
                 "success": True,

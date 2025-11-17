@@ -148,7 +148,7 @@ class ConfluenceClient:
         space_id: str,
         limit: int = 25,
         cursor: Optional[str] = None,
-        status: str = "current",
+        status: Optional[str] = "current",
     ) -> Dict[str, Any]:
         """
         Get pages in a space.
@@ -159,12 +159,14 @@ class ConfluenceClient:
             space_id: The space ID
             limit: Maximum number of pages to return
             cursor: Cursor for pagination
-            status: Page status (current, archived, deleted, draft, trashed)
+            status: Page status (current, archived, deleted, draft, trashed). Pass None to get all statuses.
 
         Returns:
             Response with pages list and pagination info
         """
-        params = {"limit": min(limit, 250), "status": status}
+        params = {"limit": min(limit, 250)}
+        if status is not None:
+            params["status"] = status
         if cursor:
             params["cursor"] = cursor
 

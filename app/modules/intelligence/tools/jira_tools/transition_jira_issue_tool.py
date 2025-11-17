@@ -62,12 +62,11 @@ class TransitionJiraIssueTool:
                 }
 
             # Get the user-specific Jira client
-            client = await get_jira_client_for_user(self.user_id, self.db)
-
-            # Transition the issue
-            issue = await client.transition_issue(
-                issue_key=issue_key, transition_name=transition
-            )
+            async with await get_jira_client_for_user(self.user_id, self.db) as client:
+                # Transition the issue
+                issue = await client.transition_issue(
+                    issue_key=issue_key, transition_name=transition
+                )
 
             return {
                 "success": True,
@@ -84,10 +83,10 @@ class TransitionJiraIssueTool:
                 or "available transitions" in error_msg.lower()
             ):
                 try:
-                    client = await get_jira_client_for_user(self.user_id, self.db)
-                    transitions = await client.get_transitions(
-                        issue_key=issue_key
-                    )
+                    async with await get_jira_client_for_user(self.user_id, self.db) as client:
+                        transitions = await client.get_transitions(
+                            issue_key=issue_key
+                        )
                     available = [t["name"] for t in transitions]
                     error_msg = f"{error_msg}\n\nAvailable transitions for {issue_key}: {', '.join(available)}"
                 except Exception as e:

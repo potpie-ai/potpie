@@ -131,56 +131,57 @@ class UpdateConfluencePageTool:
                     "error": "Failed to initialize Confluence client",
                 }
 
-            # If neither title nor body provided, return error
-            if title is None and body is None:
-                return {
-                    "success": False,
-                    "error": "Must provide at least title or body to update",
+            try:
+                # If neither title nor body provided, return error
+                if title is None and body is None:
+                    return {
+                        "success": False,
+                        "error": "Must provide at least title or body to update",
+                    }
+
+                # Get current page to use existing values if not provided
+                current_page = await client.get_page(page_id=page_id)
+
+                # Use provided values or fall back to current
+                update_title = title if title is not None else current_page.get("title")
+                update_body = body
+                if update_body is None:
+                    # Extract current body
+                    current_body = current_page.get("body", {})
+                    if "storage" in current_body:
+                        update_body = current_body["storage"].get("value", "")
+                    else:
+                        update_body = ""
+
+                # Update page
+                page = await client.update_page(
+                    page_id=page_id,
+                    version_number=version_number,
+                    title=update_title,
+                    body=update_body,
+                    status=status,
+                )
+
+                # Extract updated page information
+                page_data = {
+                    "id": page.get("id"),
+                    "status": page.get("status"),
+                    "title": page.get("title"),
+                    "space_id": page.get("spaceId"),
+                    "parent_id": page.get("parentId"),
+                    "version": page.get("version", {}).get("number"),
+                    "author_id": page.get("authorId"),
+                    "created_at": page.get("createdAt"),
+                    "_links": page.get("_links", {}),
                 }
 
-            # Get current page to use existing values if not provided
-            current_page = await client.get_page(page_id=page_id)
-
-            # Use provided values or fall back to current
-            update_title = title if title is not None else current_page.get("title")
-            update_body = body
-            if update_body is None:
-                # Extract current body
-                current_body = current_page.get("body", {})
-                if "storage" in current_body:
-                    update_body = current_body["storage"].get("value", "")
-                else:
-                    update_body = ""
-
-            # Update page
-            page = await client.update_page(
-                page_id=page_id,
-                version_number=version_number,
-                title=update_title,
-                body=update_body,
-                status=status,
-            )
-
-            # Extract updated page information
-            page_data = {
-                "id": page.get("id"),
-                "status": page.get("status"),
-                "title": page.get("title"),
-                "space_id": page.get("spaceId"),
-                "parent_id": page.get("parentId"),
-                "version": page.get("version", {}).get("number"),
-                "author_id": page.get("authorId"),
-                "created_at": page.get("createdAt"),
-                "_links": page.get("_links", {}),
-            }
-
-            await client.close()
-
-            return {
-                "success": True,
-                "page": page_data,
-                "message": f"Successfully updated page {page_id} to version {page.get('version', {}).get('number')}",
-            }
+                return {
+                    "success": True,
+                    "page": page_data,
+                    "message": f"Successfully updated page {page_id} to version {page.get('version', {}).get('number')}",
+                }
+            finally:
+                await client.close()
 
         except Exception as e:
             logging.error(f"Error updating Confluence page: {str(e)}")

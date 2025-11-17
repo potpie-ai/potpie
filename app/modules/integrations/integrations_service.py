@@ -2525,6 +2525,7 @@ class IntegrationsService:
 
         auth_data = getattr(db_integration, "auth_data", {}) or {}
         metadata = getattr(db_integration, "integration_metadata", {}) or {}
+        scope_data = getattr(db_integration, "scope_data", {}) or {}
 
         encrypted_access_token = auth_data.get("access_token")
         if not encrypted_access_token:
@@ -2532,9 +2533,13 @@ class IntegrationsService:
 
         access_token = decrypt_token(encrypted_access_token)
 
+        site_id = metadata.get("site_id") or scope_data.get("org_slug")
+        if not site_id:
+            raise Exception("Confluence site identifier not available for integration")
+
         return {
             "access_token": access_token,
-            "site_id": metadata.get("site_id"),
+            "site_id": site_id,
             "site_url": metadata.get("site_url"),
             "site_name": metadata.get("site_name"),
             "integration": db_integration,
@@ -2569,6 +2574,8 @@ class IntegrationsService:
         context = await self._get_confluence_context(integration_id)
         access_token = context["access_token"]
         site_id = context["site_id"]
+        if not site_id:
+            raise Exception("Confluence site_id missing in context")
 
         url = f"{self.confluence_oauth.API_BASE_URL}/ex/confluence/{site_id}/wiki/api/v2/spaces"
 

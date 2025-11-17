@@ -122,53 +122,54 @@ class SearchConfluencePagesTool:
                     "error": "Failed to initialize Confluence client",
                 }
 
-            # Search pages
-            response = await client.search_pages(
-                cql=cql,
-                limit=limit,
-                include_archived=include_archived,
-            )
+            try:
+                # Search pages
+                response = await client.search_pages(
+                    cql=cql,
+                    limit=limit,
+                    include_archived=include_archived,
+                )
 
-            # Extract page results from v1 API response
-            # v1 API returns results with a different structure than v2
-            pages = []
-            for result in response.get("results", []):
-                # In v1, content info is in result.content
-                content = result.get("content", {})
+                # Extract page results from v1 API response
+                # v1 API returns results with a different structure than v2
+                pages = []
+                for result in response.get("results", []):
+                    # In v1, content info is in result.content
+                    content = result.get("content", {})
 
-                page_info = {
-                    "id": content.get("id"),
-                    "status": content.get("status"),
-                    "title": result.get("title") or content.get("title"),
-                    "url": result.get("url"),
-                    "excerpt": result.get("excerpt", ""),
-                    "last_modified": result.get("lastModified"),
-                    "entity_type": result.get("entityType"),
+                    page_info = {
+                        "id": content.get("id"),
+                        "status": content.get("status"),
+                        "title": result.get("title") or content.get("title"),
+                        "url": result.get("url"),
+                        "excerpt": result.get("excerpt", ""),
+                        "last_modified": result.get("lastModified"),
+                        "entity_type": result.get("entityType"),
+                    }
+
+                    # Add space info if available
+                    space = result.get("space") or content.get("space", {})
+                    if space:
+                        page_info["space_key"] = space.get("key")
+                        page_info["space_name"] = space.get("name")
+
+                    # Add version info if available
+                    version = content.get("version", {})
+                    if version:
+                        page_info["version"] = version.get("number")
+
+                    pages.append(page_info)
+
+                return {
+                    "success": True,
+                    "pages": pages,
+                    "total": response.get("totalSize", len(pages)),
+                    "limit": response.get("limit", limit),
+                    "has_more": response.get("size", 0) < response.get("totalSize", 0),
+                    "query": cql,
                 }
-
-                # Add space info if available
-                space = result.get("space") or content.get("space", {})
-                if space:
-                    page_info["space_key"] = space.get("key")
-                    page_info["space_name"] = space.get("name")
-
-                # Add version info if available
-                version = content.get("version", {})
-                if version:
-                    page_info["version"] = version.get("number")
-
-                pages.append(page_info)
-
-            await client.close()
-
-            return {
-                "success": True,
-                "pages": pages,
-                "total": response.get("totalSize", len(pages)),
-                "limit": response.get("limit", limit),
-                "has_more": response.get("size", 0) < response.get("totalSize", 0),
-                "query": cql,
-            }
+            finally:
+                await client.close()
 
         except Exception as e:
             logging.error(f"Error searching Confluence pages: {str(e)}")

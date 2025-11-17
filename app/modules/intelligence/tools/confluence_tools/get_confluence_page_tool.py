@@ -104,64 +104,65 @@ class GetConfluencePageTool:
                     "error": "Failed to initialize Confluence client",
                 }
 
-            # Get page
-            page = await client.get_page(
-                page_id=page_id,
-                body_format=body_format,
-                get_draft=get_draft,
-            )
-
-            # Extract page information
-            page_data = {
-                "id": page.get("id"),
-                "status": page.get("status"),
-                "title": page.get("title"),
-                "space_id": page.get("spaceId"),
-                "parent_id": page.get("parentId"),
-                "parent_type": page.get("parentType"),
-                "position": page.get("position"),
-                "author_id": page.get("authorId"),
-                "created_at": page.get("createdAt"),
-                "version": {
-                    "number": page.get("version", {}).get("number"),
-                    "message": page.get("version", {}).get("message", ""),
-                    "created_at": page.get("version", {}).get("createdAt"),
-                },
-            }
-
-            # Extract body content based on format
-            body = page.get("body", {})
-            if body_format == "storage" and "storage" in body:
-                page_data["content"] = body["storage"].get("value", "")
-                page_data["content_format"] = "storage"
-            elif body_format == "atlas_doc_format" and "atlas_doc_format" in body:
-                page_data["content"] = body["atlas_doc_format"].get("value", "")
-                page_data["content_format"] = "atlas_doc_format"
-            elif body_format == "view" and "view" in body:
-                page_data["content"] = body["view"].get("value", "")
-                page_data["content_format"] = "view"
-            else:
-                page_data["content"] = ""
-                page_data["content_format"] = body_format
-
-            # Extract labels
-            labels = []
-            for label in page.get("labels", {}).get("results", []):
-                labels.append(
-                    {
-                        "id": label.get("id"),
-                        "name": label.get("name"),
-                        "prefix": label.get("prefix"),
-                    }
+            try:
+                # Get page
+                page = await client.get_page(
+                    page_id=page_id,
+                    body_format=body_format,
+                    get_draft=get_draft,
                 )
-            page_data["labels"] = labels
 
-            await client.close()
+                # Extract page information
+                page_data = {
+                    "id": page.get("id"),
+                    "status": page.get("status"),
+                    "title": page.get("title"),
+                    "space_id": page.get("spaceId"),
+                    "parent_id": page.get("parentId"),
+                    "parent_type": page.get("parentType"),
+                    "position": page.get("position"),
+                    "author_id": page.get("authorId"),
+                    "created_at": page.get("createdAt"),
+                    "version": {
+                        "number": page.get("version", {}).get("number"),
+                        "message": page.get("version", {}).get("message", ""),
+                        "created_at": page.get("version", {}).get("createdAt"),
+                    },
+                }
 
-            return {
-                "success": True,
-                "page": page_data,
-            }
+                # Extract body content based on format
+                body = page.get("body", {})
+                if body_format == "storage" and "storage" in body:
+                    page_data["content"] = body["storage"].get("value", "")
+                    page_data["content_format"] = "storage"
+                elif body_format == "atlas_doc_format" and "atlas_doc_format" in body:
+                    page_data["content"] = body["atlas_doc_format"].get("value", "")
+                    page_data["content_format"] = "atlas_doc_format"
+                elif body_format == "view" and "view" in body:
+                    page_data["content"] = body["view"].get("value", "")
+                    page_data["content_format"] = "view"
+                else:
+                    page_data["content"] = ""
+                    page_data["content_format"] = body_format
+
+                # Extract labels
+                labels = []
+                for label in page.get("labels", {}).get("results", []):
+                    labels.append(
+                        {
+                            "id": label.get("id"),
+                            "name": label.get("name"),
+                            "prefix": label.get("prefix"),
+                        }
+                    )
+                page_data["labels"] = labels
+
+                return {
+                    "success": True,
+                    "page": page_data,
+                }
+            finally:
+                await client.close()
 
         except Exception as e:
             logging.error(f"Error getting Confluence page: {str(e)}")

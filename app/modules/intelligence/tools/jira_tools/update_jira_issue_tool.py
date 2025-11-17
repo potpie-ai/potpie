@@ -80,29 +80,28 @@ class UpdateJiraIssueTool:
                 }
 
             # Get the user-specific Jira client
-            client = await get_jira_client_for_user(self.user_id, self.db)
+            async with await get_jira_client_for_user(self.user_id, self.db) as client:
+                # Build fields dictionary
+                fields = {}
+                if summary is not None:
+                    fields["summary"] = summary
+                if description is not None:
+                    fields["description"] = description
+                if priority is not None:
+                    fields["priority"] = {"name": priority}
+                if not fields and not assignee_id:
+                    return {
+                        "success": False,
+                        "error": "No fields provided to update",
+                        "message": "You must provide at least one field to update (summary, description, priority, or assignee_id)",
+                    }
 
-            # Build fields dictionary
-            fields = {}
-            if summary is not None:
-                fields["summary"] = summary
-            if description is not None:
-                fields["description"] = description
-            if priority is not None:
-                fields["priority"] = {"name": priority}
-            if not fields and not assignee_id:
-                return {
-                    "success": False,
-                    "error": "No fields provided to update",
-                    "message": "You must provide at least one field to update (summary, description, priority, or assignee_id)",
-                }
-
-            # Update the issue
-            issue = await client.update_issue(
-                issue_key=issue_key,
-                fields=fields,
-                assignee_id=assignee_id,
-            )
+                # Update the issue
+                issue = await client.update_issue(
+                    issue_key=issue_key,
+                    fields=fields,
+                    assignee_id=assignee_id,
+                )
 
             return {
                 "success": True,

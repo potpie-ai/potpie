@@ -113,35 +113,33 @@ class AddConfluenceCommentTool:
                 }
 
             # Get Confluence client
-            client = await get_confluence_client_for_user(self.user_id, self.db)
-            if not client:
-                return {
-                    "success": False,
-                    "error": "Failed to initialize Confluence client",
+            async with await get_confluence_client_for_user(self.user_id, self.db) as client:
+                if not client:
+                    return {
+                        "success": False,
+                        "error": "Failed to initialize Confluence client",
+                    }
+
+                # Add comment
+                comment_response = await client.add_comment(
+                    page_id=page_id,
+                    comment=comment,
+                    parent_comment_id=parent_comment_id,
+                    status=status,
+                )
+
+                # Extract comment information
+                comment_data = {
+                    "id": comment_response.get("id"),
+                    "status": comment_response.get("status"),
+                    "title": comment_response.get("title"),
+                    "page_id": comment_response.get("pageId"),
+                    "parent_comment_id": comment_response.get("parentCommentId"),
+                    "version": comment_response.get("version", {}).get("number"),
+                    "author_id": comment_response.get("authorId"),
+                    "created_at": comment_response.get("createdAt"),
+                    "_links": comment_response.get("_links", {}),
                 }
-
-            # Add comment
-            comment_response = await client.add_comment(
-                page_id=page_id,
-                comment=comment,
-                parent_comment_id=parent_comment_id,
-                status=status,
-            )
-
-            # Extract comment information
-            comment_data = {
-                "id": comment_response.get("id"),
-                "status": comment_response.get("status"),
-                "title": comment_response.get("title"),
-                "page_id": comment_response.get("pageId"),
-                "parent_comment_id": comment_response.get("parentCommentId"),
-                "version": comment_response.get("version", {}).get("number"),
-                "author_id": comment_response.get("authorId"),
-                "created_at": comment_response.get("createdAt"),
-                "_links": comment_response.get("_links", {}),
-            }
-
-            await client.close()
 
             comment_type = "reply" if parent_comment_id else "comment"
             return {
