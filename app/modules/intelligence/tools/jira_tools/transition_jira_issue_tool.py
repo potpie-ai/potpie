@@ -83,10 +83,10 @@ class TransitionJiraIssueTool:
                 or "available transitions" in error_msg.lower()
             ):
                 try:
-                    async with await get_jira_client_for_user(self.user_id, self.db) as client:
-                        transitions = await client.get_transitions(
-                            issue_key=issue_key
-                        )
+                    async with await get_jira_client_for_user(
+                        self.user_id, self.db
+                    ) as client:
+                        transitions = await client.get_transitions(issue_key=issue_key)
                     available = [t["name"] for t in transitions]
                     error_msg = f"{error_msg}\n\nAvailable transitions for {issue_key}: {', '.join(available)}"
                 except Exception as e:

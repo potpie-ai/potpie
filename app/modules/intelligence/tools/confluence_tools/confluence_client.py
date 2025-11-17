@@ -8,7 +8,7 @@ API Reference: https://developer.atlassian.com/cloud/confluence/rest/v2/intro/
 """
 
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 import httpx
 

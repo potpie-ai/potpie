@@ -98,7 +98,9 @@ def _sign_oauth_state(raw_state: str | None, expires: int = 600) -> str | None:
     payload = {"u": raw_state, "e": expiry}
     payload_json = json.dumps(payload, separators=(",", ":"))
     payload_b64 = base64.urlsafe_b64encode(payload_json.encode("utf-8")).decode("utf-8")
-    sig = hmac.new(secret.encode("utf-8"), payload_b64.encode("utf-8"), hashlib.sha256).hexdigest()
+    sig = hmac.new(
+        secret.encode("utf-8"), payload_b64.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
     return f"{payload_b64}.{sig}"
 
 
@@ -120,10 +122,14 @@ def _verify_oauth_state(token: str | None) -> Optional[str]:
         if "." not in token:
             return None
         payload_b64, sig = token.rsplit(".", 1)
-        expected = hmac.new(secret.encode("utf-8"), payload_b64.encode("utf-8"), hashlib.sha256).hexdigest()
+        expected = hmac.new(
+            secret.encode("utf-8"), payload_b64.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
         if not hmac.compare_digest(sig, expected):
             return None
-        payload_json = base64.urlsafe_b64decode(payload_b64.encode("utf-8")).decode("utf-8")
+        payload_json = base64.urlsafe_b64decode(payload_b64.encode("utf-8")).decode(
+            "utf-8"
+        )
         payload = json.loads(payload_json)
         expiry = int(payload.get("e", 0))
         if int(time.time()) > expiry:
@@ -146,7 +152,11 @@ async def initiate_sentry_oauth(
         logging.info(f"State: {request.state}")
 
         # Generate authorization URL. Sign the state to prevent tampering.
-        signed_state = _sign_oauth_state(request.state) if getattr(request, "state", None) else None
+        signed_state = (
+            _sign_oauth_state(request.state)
+            if getattr(request, "state", None)
+            else None
+        )
         auth_url = sentry_oauth.get_authorization_url(
             redirect_uri=request.redirect_uri, state=signed_state
         )
@@ -181,7 +191,9 @@ async def sentry_oauth_callback(
         state = request.query_params.get("state")
         user_id = _verify_oauth_state(state)
         if not user_id:
-            raise HTTPException(status_code=400, detail="Invalid or missing OAuth state")
+            raise HTTPException(
+                status_code=400, detail="Invalid or missing OAuth state"
+            )
 
         result = sentry_oauth.handle_callback(request, user_id)
         return OAuthStatusResponse(**result)
@@ -366,7 +378,9 @@ async def linear_oauth_callback(
         # Verify signed state to get user_id
         user_id = _verify_oauth_state(state)
         if not user_id:
-            raise HTTPException(status_code=400, detail="Invalid or missing OAuth state")
+            raise HTTPException(
+                status_code=400, detail="Invalid or missing OAuth state"
+            )
 
         # If we have an authorization code, exchange it for tokens and save to database
         if code:
@@ -553,7 +567,11 @@ async def initiate_jira_oauth(
             request.state,
         )
 
-        signed_state = _sign_oauth_state(request.state) if getattr(request, "state", None) else None
+        signed_state = (
+            _sign_oauth_state(request.state)
+            if getattr(request, "state", None)
+            else None
+        )
         auth_url = jira_oauth.get_authorization_url(
             redirect_uri=request.redirect_uri, state=signed_state
         )
@@ -592,7 +610,9 @@ async def jira_oauth_callback(
         # Verify signed state to get user_id
         user_id = _verify_oauth_state(state)
         if not user_id:
-            raise HTTPException(status_code=400, detail="Invalid or missing OAuth state")
+            raise HTTPException(
+                status_code=400, detail="Invalid or missing OAuth state"
+            )
 
         # If we have an authorization code, exchange it for tokens and save to database
         if code:
@@ -889,7 +909,11 @@ async def initiate_confluence_oauth(
             request.redirect_uri,
             request.state,
         )
-        signed_state = _sign_oauth_state(request.state) if getattr(request, "state", None) else None
+        signed_state = (
+            _sign_oauth_state(request.state)
+            if getattr(request, "state", None)
+            else None
+        )
         auth_url = confluence_oauth.get_authorization_url(
             redirect_uri=request.redirect_uri, state=signed_state
         )
@@ -927,7 +951,9 @@ async def confluence_oauth_callback(
         # Verify signed state to get user_id
         user_id = _verify_oauth_state(state)
         if not user_id:
-            raise HTTPException(status_code=400, detail="Invalid or missing OAuth state")
+            raise HTTPException(
+                status_code=400, detail="Invalid or missing OAuth state"
+            )
 
         # If we have an authorization code, exchange it for tokens and save to database
         if code:
@@ -1142,7 +1168,9 @@ async def save_confluence_integration(
     try:
         # Use authenticated user id and pass to service
         user_id = user["user_id"]
-        result = await integrations_service.save_confluence_integration(request, user_id)
+        result = await integrations_service.save_confluence_integration(
+            request, user_id
+        )
         return ConfluenceSaveResponse(success=True, data=result, error=None)
     except Exception as e:
         logging.error(f"Error saving Confluence integration: {str(e)}")

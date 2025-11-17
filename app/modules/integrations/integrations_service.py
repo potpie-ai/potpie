@@ -34,6 +34,7 @@ from datetime import datetime, timedelta, timezone
 
 from .token_encryption import decrypt_token
 
+
 class IntegrationsService:
     """Service layer for integrations"""
 

@@ -65,9 +65,7 @@ class GetJiraProjectDetailsTool:
             # Get the user-specific Jira client
             async with await get_jira_client_for_user(self.user_id, self.db) as client:
                 # Fetch project details
-                details = await client.get_project_details(
-                    project_key=project_key
-                )
+                details = await client.get_project_details(project_key=project_key)
 
             return {
                 "success": True,

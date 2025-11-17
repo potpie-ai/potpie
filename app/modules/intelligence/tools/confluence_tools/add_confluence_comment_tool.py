@@ -113,7 +113,9 @@ class AddConfluenceCommentTool:
                 }
 
             # Get Confluence client
-            async with await get_confluence_client_for_user(self.user_id, self.db) as client:
+            async with await get_confluence_client_for_user(
+                self.user_id, self.db
+            ) as client:
                 if not client:
                     return {
                         "success": False,

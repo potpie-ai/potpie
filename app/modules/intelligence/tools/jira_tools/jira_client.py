@@ -222,7 +222,9 @@ class JiraClient:
                     "labels",
                 ]
 
-            response = await self.client.get(f"/rest/api/3/issue/{issue_key}", params=params)
+            response = await self.client.get(
+                f"/rest/api/3/issue/{issue_key}", params=params
+            )
             response.raise_for_status()
             issue = response.json()
             return self._issue_to_dict(issue)
@@ -452,7 +454,9 @@ class JiraClient:
                 fields["assignee"] = {"id": assignee_id}
 
             payload = {"fields": fields}
-            response = await self.client.put(f"/rest/api/3/issue/{issue_key}", json=payload)
+            response = await self.client.put(
+                f"/rest/api/3/issue/{issue_key}", json=payload
+            )
             response.raise_for_status()
             logging.info(f"Updated issue {issue_key}")
             # Fetch fresh data after update
@@ -505,7 +509,9 @@ class JiraClient:
             logging.error(f"Failed to add comment to {issue_key}: {str(e)}")
             raise Exception(f"Failed to add comment: {str(e)}")
 
-    async def transition_issue(self, issue_key: str, transition_name: str) -> Dict[str, Any]:
+    async def transition_issue(
+        self, issue_key: str, transition_name: str
+    ) -> Dict[str, Any]:
         """
         Transition an issue to a new status.
 
@@ -563,7 +569,9 @@ class JiraClient:
             List of available transitions
         """
         try:
-            response = await self.client.get(f"/rest/api/3/issue/{issue_key}/transitions")
+            response = await self.client.get(
+                f"/rest/api/3/issue/{issue_key}/transitions"
+            )
             response.raise_for_status()
             data = response.json()
             transitions = data.get("transitions", [])
@@ -874,7 +882,9 @@ class JiraClient:
             )
             raise Exception(f"Failed to link issues: {str(e)}")
 
-    async def get_projects(self, start_at: int = 0, max_results: int = 50) -> Dict[str, Any]:
+    async def get_projects(
+        self, start_at: int = 0, max_results: int = 50
+    ) -> Dict[str, Any]:
         """
         Get all projects accessible to the user.
 
@@ -891,7 +901,9 @@ class JiraClient:
                 "maxResults": max_results,
             }
 
-            response = await self.client.get("/rest/api/3/project/search", params=params)
+            response = await self.client.get(
+                "/rest/api/3/project/search", params=params
+            )
             response.raise_for_status()
             data = response.json()
 
