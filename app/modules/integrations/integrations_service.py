@@ -844,7 +844,6 @@ class IntegrationsService:
                 self.db.query(Integration)
                 .filter(Integration.integration_type == "linear")
                 .filter(Integration.active == True)  # noqa: E712
-                .filter(Integration.active == True)  # noqa: E712
                 .filter(Integration.unique_identifier == organization_id)
                 .first()
             )
@@ -2600,7 +2599,7 @@ class IntegrationsService:
             raise Exception(f"Confluence integration {integration_id} not found")
 
         auth_data = getattr(db_integration, "auth_data", {}) or {}
-        metadata = getattr(db_integration, "metadata", {}) or {}
+        metadata = getattr(db_integration, "integration_metadata", {}) or {}
 
         encrypted_access_token = auth_data.get("access_token")
         if not encrypted_access_token:
