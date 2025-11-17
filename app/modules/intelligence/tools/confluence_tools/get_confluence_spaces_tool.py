@@ -36,21 +36,21 @@ class GetConfluenceSpacesTool:
 
     name = "Get Confluence Spaces"
     description = """Get list of Confluence spaces available to the user.
-    
+
     Use this tool when you need to:
     - Discover available Confluence spaces before creating or searching for pages
     - Find the space ID or key needed for other operations
     - List all spaces accessible to the user
     - Filter spaces by type (global team spaces vs personal spaces)
-    
+
     This is typically the FIRST tool to use when working with Confluence - you need
     to know which spaces exist before you can create pages or search for content.
-    
+
     Once you have a space_id, you can:
     - Use 'Get Confluence Space Pages' to list all pages in that space
     - Use 'Create Confluence Page' to add new documentation to that space
     - Use 'Search Confluence Pages' with space filter in CQL query
-    
+
     Returns:
     - List of spaces with ID, key, name, type, status, and description
     - Total count and pagination info
@@ -159,24 +159,24 @@ def get_confluence_spaces_tool(db: Session, user_id: str) -> StructuredTool:
         func=tool_instance.run,
         name="Get Confluence Spaces",
         description="""Get list of Confluence spaces available to the user.
-        
+
         Use this as the FIRST step when working with Confluence to discover available spaces.
-        
+
         Use this when you need to:
         - Find which spaces exist and are accessible
         - Get space ID (required for listing/creating pages) or key (used in URLs)
         - Distinguish between global (team) and personal spaces
-        
+
         Inputs:
         - limit (int): Maximum spaces to return (default: 25, max: 250)
         - space_type (str): Filter by 'global', 'personal', or 'all' (default: 'all')
-        
+
         IMPORTANT: Returns space 'id' field which is REQUIRED for:
         - 'Get Confluence Space Pages' (needs space_id parameter)
         - 'Create Confluence Page' (needs space_id parameter)
 
         Also use 'Search Confluence Pages' with space filter to find content.
-        
+
         Returns list of spaces with ID (numeric), key (string identifier), name, type, and description.""",
         args_schema=GetConfluenceSpacesInput,
     )

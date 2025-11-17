@@ -39,22 +39,22 @@ class GetConfluenceSpacePagesTool:
 
     name = "Get Confluence Space Pages"
     description = """List all pages within a specific Confluence space.
-    
+
     Use this tool when you need to:
     - Browse all documentation pages in a space
     - Discover the structure of documentation in a space
     - Find page hierarchies (parent-child relationships)
     - See which pages exist before creating new ones
     - List draft or archived pages in a space
-    
-    IMPORTANT: Requires the numeric space_id (NOT the space key). 
+
+    IMPORTANT: Requires the numeric space_id (NOT the space key).
     - First use 'Get Confluence Spaces' to get the space 'id' field
     - The 'id' is numeric like '1245186'
     - Do NOT use the 'key' field (like 'OOP' or '~712020...')
-    
+
     This tool is useful for exploring a space's content, while 'Search Confluence Pages'
     is better for finding specific pages by keywords or criteria.
-    
+
     After getting the page list:
     - Use 'Get Confluence Page' to read full content of a specific page
     - Use 'Create Confluence Page' to add new pages to this space
@@ -178,27 +178,27 @@ def get_confluence_space_pages_tool(db: Session, user_id: str) -> StructuredTool
         func=tool_instance.run,
         name="Get Confluence Space Pages",
         description="""List all pages within a specific Confluence space.
-        
+
         Use this when you need to:
         - Browse all pages in a space to understand its structure
         - Find page hierarchies (parent-child relationships)
         - Discover existing pages before creating new ones
         - List draft or archived pages
-        
+
         Inputs:
         - space_id (str): The numeric space ID (NOT the key). Get the 'id' field from 'Get Confluence Spaces' tool output.
         - limit (int): Maximum pages to return (default: 25, max: 250)
         - status (str): Filter by 'current' (published), 'draft', 'archived', or 'any' (default: 'current')
-        
+
         CRITICAL: Must use the space 'id' (numeric like '1245186'), NOT the 'key' (like 'OOP' or '~712020...').
         First call 'Get Confluence Spaces' and use the 'id' field from the returned spaces.
-        
+
         This tool lists ALL pages in a space, while 'Search Confluence Pages' finds specific pages by keywords.
-        
+
         After getting pages:
         - Use 'Get Confluence Page' to read full content of a specific page (using page_id)
         - Use 'Create Confluence Page' to add new documentation to this space
-        
+
         Returns list of pages with title, ID, status, parent info, position, version, dates.""",
         args_schema=GetConfluenceSpacePagesInput,
     )

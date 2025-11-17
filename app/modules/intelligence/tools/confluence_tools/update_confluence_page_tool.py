@@ -44,38 +44,38 @@ class UpdateConfluencePageTool:
 
     name = "Update Confluence Page"
     description = """Update an existing Confluence page's title or content.
-    
+
     CRITICAL REQUIREMENT:
     MUST use 'Get Confluence Page' tool FIRST to retrieve the current version number.
     Confluence requires the version number to prevent edit conflicts.
-    
+
     Use this tool when you need to:
     - Update documentation with new information
     - Correct errors or outdated content
     - Add sections to existing pages
     - Modify page titles
     - Update content based on code changes or feedback
-    
+
     Workflow:
     1. Use 'Get Confluence Page' to get current page (returns page.version.number)
     2. Use this tool with the version number to update
     3. Version is automatically incremented after update
-    
+
     Update Options:
     - Update title only: Provide title, omit body
     - Update content only: Provide body, omit title
     - Update both: Provide both title and body
-    
+
     Content Format:
     - Body can be HTML or plain text
     - For HTML: Use standard tags (<p>, <h1>, <ul>, etc.)
     - For plain text: Will be wrapped in <p> tags
-    
+
     After updating:
     - Page version increments automatically
     - Previous versions remain in page history
     - Use 'Add Confluence Comment' to explain changes
-    
+
     Returns:
     - Updated page with new version number, title, and metadata
     """
@@ -217,32 +217,32 @@ def update_confluence_page_tool(db: Session, user_id: str) -> StructuredTool:
         func=tool_instance.run,
         name="Update Confluence Page",
         description="""Update an existing Confluence page's title or content.
-        
+
         CRITICAL: MUST use 'Get Confluence Page' tool FIRST to get current version number.
-        
+
         Use this when you need to:
         - Update documentation with new information
         - Correct errors or outdated content
         - Modify page titles or add new sections
-        
+
         Inputs:
         - page_id (str): Page ID to update
         - version_number (int): Current version number (REQUIRED - get from 'Get Confluence Page')
         - title (str, optional): New title (omit to keep current)
         - body (str, optional): New content in HTML or plain text (omit to keep current)
         - status (str): 'current' or 'draft' (default: 'current')
-        
+
         Required Workflow:
         1. Call 'Get Confluence Page' to get page.version.number
         2. Call this tool with that version number
         3. Version increments automatically
-        
+
         Must provide at least title OR body to update.
-        
+
         Content Tips:
         - Use HTML for formatting: <h1>, <p>, <ul>, <strong>, etc.
         - Plain text is wrapped in <p> tags
-        
+
         Returns updated page with new version number and metadata.""",
         args_schema=UpdateConfluencePageInput,
     )

@@ -38,7 +38,7 @@ class AddConfluenceCommentTool:
 
     name = "Add Confluence Comment"
     description = """Add a comment to a Confluence page or reply to an existing comment.
-    
+
     Use this tool when you need to:
     - Provide feedback on documentation
     - Ask questions about page content
@@ -46,27 +46,27 @@ class AddConfluenceCommentTool:
     - Reply to existing comments or discussions
     - Explain changes made to a page
     - Add notes without modifying the main page content
-    
+
     Comment Types:
     - Top-level comment: Omit parent_comment_id (comments on the page itself)
     - Reply comment: Provide parent_comment_id (creates a threaded discussion)
-    
+
     Content Format:
     - Comment can be plain text or HTML
     - For HTML: Use standard tags (<p>, <strong>, <em>, <ul>, etc.)
     - For plain text: Will be wrapped in <p> tags
-    
+
     Best Practices:
     - Use comments for questions, feedback, or discussion
     - Use 'Update Confluence Page' to modify actual page content
     - Comment on pages after making major updates to explain changes
     - Reply to existing comments to continue discussions
-    
+
     After adding comment:
     - Comment appears on the page for all users to see
     - Users receive notifications about new comments
     - Comments can be edited or deleted later via Confluence UI
-    
+
     Returns:
     - Created comment with ID, author, timestamp, and view URL
     """
@@ -183,33 +183,33 @@ def add_confluence_comment_tool(db: Session, user_id: str) -> StructuredTool:
         func=tool_instance.run,
         name="Add Confluence Comment",
         description="""Add a comment to a Confluence page or reply to an existing comment.
-        
+
         Use this when you need to:
         - Provide feedback on documentation
         - Ask questions about page content
         - Reply to existing comments (create discussion threads)
         - Explain changes made to a page
         - Add notes without modifying page content
-        
+
         Inputs:
         - page_id (str): Page ID to comment on (get from 'Search Confluence Pages' or 'Get Confluence Page')
         - comment (str): Comment text (plain text or HTML)
         - parent_comment_id (str, optional): Parent comment ID to create a reply (omit for top-level comment)
         - status (str): 'current' (published) or 'draft' (default: 'current')
-        
+
         Comment Types:
         - Top-level: Omit parent_comment_id (comments on page)
         - Reply: Provide parent_comment_id (threaded discussion)
-        
+
         Content Tips:
         - Use plain text for simple comments
         - Use HTML for formatted comments: <strong>, <em>, <ul>, etc.
-        
+
         Best Practices:
         - Use comments for discussion, not content changes
         - Use 'Update Confluence Page' to modify page content
         - Comment after major updates to explain changes
-        
+
         Returns created comment with ID, author, timestamp, and URL.""",
         args_schema=AddConfluenceCommentInput,
     )

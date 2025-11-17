@@ -57,11 +57,11 @@ class SearchConfluencePagesTool:
 
     name = "Search Confluence Pages"
     description = """Search for Confluence pages using CQL (Confluence Query Language).
-    
+
     PRIMARY tool for finding documentation in Confluence.
-    
+
     Most common use: text ~ "keyword" to search across titles and page content.
-    
+
     Examples:
     - text ~ "authentication" - Find pages about authentication
     - space=DEV AND text ~ "API" - Search within DEV space
@@ -69,9 +69,9 @@ class SearchConfluencePagesTool:
     - title ~ "getting started" - Search by title
     - label=api - Pages tagged with 'api' label
     - space=PROD AND label=backend - Combine space and label filters
-    
+
     After finding pages, use 'Get Confluence Page' to read full content.
-    
+
     Returns: List of pages with title, ID, space, URL, excerpt
     """
 
@@ -203,9 +203,9 @@ def search_confluence_pages_tool(db: Session, user_id: str) -> StructuredTool:
         func=tool_instance.run,
         name="Search Confluence Pages",
         description="""Search Confluence for documentation using CQL (Confluence Query Language).
-        
+
         Primary use: Finding documentation by searching text content.
-        
+
         Common patterns:
         • text ~ "keyword" - Search page content
         • space=DEV AND text ~ "API" - Search in specific space
@@ -213,16 +213,16 @@ def search_confluence_pages_tool(db: Session, user_id: str) -> StructuredTool:
         • title ~ "getting started" - Search titles
         • label=api - Pages with 'api' label
         • space=PROD AND label=backend - Combine filters
-        
+
         The 'text' field searches across page titles, body content, and labels.
-        
+
         Inputs:
         - cql: CQL query string
         - limit: Max results (default: 25, max: 250)
         - include_archived: Include archived pages (default: False)
-        
+
         Returns: Pages with title, id, space_key, space_name, url, excerpt
-        
+
         Next step: Use 'Get Confluence Page' with the page id to read full content.""",
         args_schema=SearchConfluencePagesInput,
     )

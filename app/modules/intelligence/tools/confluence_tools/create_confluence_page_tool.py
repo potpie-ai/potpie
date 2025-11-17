@@ -41,35 +41,35 @@ class CreateConfluencePageTool:
 
     name = "Create Confluence Page"
     description = """Create a new documentation page in Confluence.
-    
+
     Use this tool when you need to:
     - Create new documentation pages
     - Document a new feature or API
     - Create meeting notes or project documentation
     - Add a new page to existing documentation structure
     - Create a child page under an existing parent
-    
+
     IMPORTANT Prerequisites:
     1. Get numeric space_id first using 'Get Confluence Spaces' tool (use the 'id' field, NOT the 'key')
     2. If creating a child page, get parent_id using 'Search Confluence Pages' or 'Get Confluence Space Pages'
-    
+
     Content Format:
     - Body can be HTML or plain text
     - For HTML: Use standard HTML tags (<p>, <h1>, <ul>, etc.)
     - For plain text: Will be wrapped in <p> tags automatically
-    
+
     Page Hierarchy:
     - Omit parent_id to create a top-level page in the space
     - Provide parent_id to create a child page (nested documentation)
-    
+
     Status Options:
     - 'current': Page is published immediately (visible to all users)
     - 'draft': Page is saved as draft (visible only to you)
-    
+
     After creating:
     - Use 'Update Confluence Page' to modify content later
     - Use 'Add Confluence Comment' to add comments
-    
+
     Returns:
     - Created page with ID, version, status, and view URL
     """
@@ -191,31 +191,31 @@ def create_confluence_page_tool(db: Session, user_id: str) -> StructuredTool:
         func=tool_instance.run,
         name="Create Confluence Page",
         description="""Create a new documentation page in a Confluence space.
-        
+
         Use this when you need to:
         - Create new documentation pages
         - Document features, APIs, or processes
         - Add pages to existing documentation structure
         - Create child pages under existing pages
-        
+
         Inputs:
         - space_id (str): Numeric space ID (get 'id' field from 'Get Confluence Spaces', NOT 'key'). Example: '1245186'
         - title (str): Page title (required)
         - body (str): Page content in HTML or plain text (required)
         - parent_id (str, optional): Parent page ID to create as child page (get from 'Search Confluence Pages')
         - status (str): 'current' (published) or 'draft' (default: 'current')
-        
+
         CRITICAL: Use the numeric space 'id' field from 'Get Confluence Spaces', NOT the 'key' field.
         The 'id' is numeric like '1245186', while 'key' is alphanumeric like 'OOP' or '~712020...'.
-        
+
         Content Tips:
         - Use HTML for rich formatting: <h1>, <p>, <ul>, <li>, <strong>, etc.
         - Plain text is automatically wrapped in <p> tags
-        
+
         After creating:
         - Use 'Update Confluence Page' to modify (requires version number from this response)
         - Use 'Add Confluence Comment' to add comments
-        
+
         Returns created page with ID, version, status, and view URL.""",
         args_schema=CreateConfluencePageInput,
     )

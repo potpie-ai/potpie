@@ -37,22 +37,22 @@ class GetConfluencePageTool:
 
     name = "Get Confluence Page"
     description = """Fetch detailed content and metadata of a specific Confluence page by ID.
-    
+
     Use this tool when you need to:
     - Read the full content of a specific documentation page
     - Get page metadata (author, version, labels, parent page)
     - Check the current status of a page (published/draft/archived)
     - Retrieve page content before updating it (to get version number)
     - Extract information from a known page
-    
+
     IMPORTANT: You need the page_id to use this tool. Get it from:
     - 'Search Confluence Pages' tool (search by title or content)
     - 'Get Confluence Space Pages' tool (browse pages in a space)
-    
+
     Once you have the page data:
     - Use 'Update Confluence Page' to modify the content (requires version number from this tool)
     - Use 'Add Confluence Comment' to comment on the page
-    
+
     Returns:
     - Page title, content, author, version info, labels, space ID, parent page info
     """
@@ -196,24 +196,24 @@ def get_confluence_page_tool(db: Session, user_id: str) -> StructuredTool:
         func=tool_instance.run,
         name="Get Confluence Page",
         description="""Get content and metadata of a specific Confluence page by ID.
-        
+
         Use this when you need to:
         - Read the full content of a documentation page
         - Get page metadata (title, author, version, labels, dates)
         - Retrieve page before updating (to get current version number)
         - Check page status (published/draft/archived)
-        
+
         Inputs:
         - page_id (str): The page ID (get from 'Search Confluence Pages' or 'Get Confluence Space Pages')
         - body_format (str): Content format - 'storage' (HTML, default), 'atlas_doc_format' (ADF), or 'view' (rendered)
         - get_draft (bool): Get draft version instead of published (default: False)
-        
+
         IMPORTANT: To update a page, you MUST use this tool first to get the current version number.
-        
+
         After getting page:
         - Use 'Update Confluence Page' to modify content (requires version.number from this response)
         - Use 'Add Confluence Comment' to comment on the page
-        
+
         Returns page with title, content, author, version info, labels, space ID, parent info.""",
         args_schema=GetConfluencePageInput,
     )
