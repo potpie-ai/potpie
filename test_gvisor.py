@@ -51,10 +51,16 @@ def test_gvisor_availability():
         # On Mac/Windows, gVisor can be available via Docker Desktop
         # Only assert False if Docker is not available (which would make gVisor unavailable)
         if not docker_available:
-            print(f"✓ Expected: gVisor not available on {platform.system()} (Docker not available)")
-            assert not available, "gVisor should not be available on non-Linux platforms without Docker"
+            print(
+                f"✓ Expected: gVisor not available on {platform.system()} (Docker not available)"
+            )
+            assert (
+                not available
+            ), "gVisor should not be available on non-Linux platforms without Docker"
         else:
-            print(f"✓ gVisor may be available on {platform.system()} via Docker Desktop")
+            print(
+                f"✓ gVisor may be available on {platform.system()} via Docker Desktop"
+            )
     else:
         print("Platform is Linux - gVisor may be available if installed")
 

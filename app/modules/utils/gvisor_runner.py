@@ -450,7 +450,9 @@ def _run_with_docker_gvisor(
     import shlex
 
     if runsc_path:
-        logger.info(f"[GVISOR] Using Docker with gVisor runtime (runsc at {runsc_path})")
+        logger.info(
+            f"[GVISOR] Using Docker with gVisor runtime (runsc at {runsc_path})"
+        )
     else:
         logger.info(
             "[GVISOR] Using Docker with gVisor runtime (runsc provided by Docker runtime)"

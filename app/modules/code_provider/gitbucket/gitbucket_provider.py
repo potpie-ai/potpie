@@ -99,13 +99,13 @@ class GitBucketProvider(ICodeProvider):
     def _get_repo(self, repo_name: str):
         """
         Get repository object with normalized repo name conversion.
-        
+
         Converts normalized repo name (e.g., 'user/repo') back to GitBucket's
         actual identifier format (e.g., 'root/repo') for API calls.
-        
+
         Args:
             repo_name: Normalized repository name
-            
+
         Returns:
             Repository object from PyGithub
         """
@@ -238,9 +238,7 @@ class GitBucketProvider(ICodeProvider):
         try:
             repo = self._get_repo(repo_name)
         except GithubException as e:
-            logger.error(
-                f"GitBucket: Failed to get repository '{repo_name}': {e}"
-            )
+            logger.error(f"GitBucket: Failed to get repository '{repo_name}': {e}")
             raise
         except Exception as e:
             logger.error(
