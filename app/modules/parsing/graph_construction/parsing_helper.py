@@ -92,6 +92,37 @@ class ParseHelper:
 
         return repo, owner, auth
 
+    def is_allowed_for_gitbucket(self, file_path):
+        """
+        Check if file extension is allowed for GitBucket private repo parsing.
+        Only specific file types are supported to reduce processing overhead.
+
+        Allowed extensions: cs, c, cpp, h, xml, json, sql, js, ts, py, css
+        """
+        allowed_extensions = [
+            "cs",    # C#
+            "c",     # C
+            "cpp",   # C++
+            "cxx",   # C++ alternative
+            "cc",    # C++ alternative
+            "h",     # C/C++ headers
+            "hpp",   # C++ headers
+            "json",  # JSON
+            "sql",   # SQL
+            "js",    # JavaScript
+            "jsx",   # React JSX
+            "ts",    # TypeScript
+            "tsx",   # React TSX
+            "py",    # Python
+            "css",  # CSS
+            "md",    # Markdown
+            "txt",   # Text
+            "yaml"   # YAML
+        ]
+
+        ext = file_path.split(".")[-1].lower()
+        return ext in allowed_extensions
+
     def is_text_file(self, file_path):
         """
         Determine if a file is a text file by checking extension and content.
@@ -551,7 +582,13 @@ class ParseHelper:
                     text_files_count = 0
                     skipped_files_count = 0
                     error_files_count = 0
-                    
+
+                    # Check if this is a GitBucket private repo to apply extension filter
+                    provider_type = os.getenv("CODE_PROVIDER", "github").lower()
+                    is_gitbucket_private = provider_type == "gitbucket"
+                    if is_gitbucket_private:
+                        logger.info("ParsingHelper: GitBucket private repo detected - applying extension filter (cs, c, cpp, h, xml, json, sql, js, ts, py, css)")
+
                     for root, dirs, files in os.walk(extracted_dir):
                         logger.debug(f"ParsingHelper: Processing directory: {root} with {len(files)} files")
                         for file in files:
@@ -560,8 +597,15 @@ class ParseHelper:
                                 skipped_files_count += 1
                                 continue
                             file_path = os.path.join(root, file)
+
+                            # For GitBucket private repos, only allow specific extensions
+                            if is_gitbucket_private and not self.is_allowed_for_gitbucket(file_path):
+                                logger.debug(f"ParsingHelper: Skipping non-allowed extension for GitBucket: {file_path}")
+                                skipped_files_count += 1
+                                continue
+
                             logger.debug(f"ParsingHelper: Checking if file is text: {file_path}")
-                            
+
                             try:
                                 is_text = self.is_text_file(file_path)
                                 logger.debug(f"ParsingHelper: File {file_path} is_text={is_text}")
@@ -711,7 +755,13 @@ class ParseHelper:
             text_files_count = 0
             skipped_files_count = 0
             error_files_count = 0
-            
+
+            # Check if this is a GitBucket private repo to apply extension filter
+            provider_type = os.getenv("CODE_PROVIDER", "github").lower()
+            is_gitbucket_private = provider_type == "gitbucket"
+            if is_gitbucket_private:
+                logger.info("ParsingHelper: GitBucket private repo detected - applying extension filter (cs, c, cpp, h, xml, json, sql, js, ts, py, css)")
+
             logger.debug(f"ParsingHelper: Starting to walk through cloned directory: {temp_clone_dir}")
             for root, dirs, files in os.walk(temp_clone_dir):
                 # Skip .git directory
@@ -723,7 +773,7 @@ class ParseHelper:
                 if any(part.startswith('.') for part in root.split(os.sep)):
                     logger.debug(f"ParsingHelper: Skipping hidden directory: {root}")
                     continue
-                
+
                 logger.debug(f"ParsingHelper: Processing directory: {root} with {len(files)} files")
 
                 for file in files:
@@ -734,6 +784,13 @@ class ParseHelper:
                         continue
 
                     file_path = os.path.join(root, file)
+
+                    # For GitBucket private repos, only allow specific extensions
+                    if is_gitbucket_private and not self.is_allowed_for_gitbucket(file_path):
+                        logger.debug(f"ParsingHelper: Skipping non-allowed extension for GitBucket: {file_path}")
+                        skipped_files_count += 1
+                        continue
+
                     logger.debug(f"ParsingHelper: Checking if file is text: {file_path}")
 
                     # Filter using is_text_file check
