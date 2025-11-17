@@ -1,7 +1,20 @@
+"""
+Local Repository Service
+
+DEPRECATED: This service is being phased out in favor of LocalProvider,
+which implements the standard ICodeProvider interface.
+
+New code should use CodeProviderFactory.create_provider_with_fallback()
+instead of instantiating LocalRepoService directly.
+
+This class is maintained for backward compatibility only.
+"""
+
 import asyncio
 import logging
 import os
 import re
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Union
 import pathspec
@@ -17,6 +30,12 @@ logger = logging.getLogger(__name__)
 
 class LocalRepoService:
     def __init__(self, db: Session):
+        warnings.warn(
+            "LocalRepoService is deprecated. Use LocalProvider via "
+            "CodeProviderFactory.create_provider_with_fallback() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.db = db
         self.project_manager = ProjectService(db)
         self.projects_dir = os.path.join(os.getcwd(), "projects")
