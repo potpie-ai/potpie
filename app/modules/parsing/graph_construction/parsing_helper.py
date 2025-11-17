@@ -713,8 +713,8 @@ class ParseHelper:
                                 lang_count["markdown"] += 1
                             elif ext in [".xml", ".xsq"]:
                                 lang_count["xml"] += 1
-                            else:
-                                lang_count["other"] += 1
+                            # else:
+                            #     lang_count["other"] += 1
                         except Exception as e:
                             logger.warning(f"Error processing file {file_path}: {e}")
                             continue

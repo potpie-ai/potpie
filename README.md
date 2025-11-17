@@ -264,6 +264,14 @@ Potpie provides a set of tools that agents can use to interact with the knowledg
    - Start the FastAPI application
    - Start the Celery worker
 
+**Optional: Phoenix Tracing Setup (Local Only)**
+
+   To monitor LLM traces and agent operations with Phoenix in local development:
+   ```bash
+   phoenix serve
+   ```
+   Run this in a new terminal to start the Phoenix server. Traces will be available at `http://localhost:6006` (default). Phoenix tracing is automatically initialized when Potpie starts, but you need to run `phoenix serve` separately to view the traces. **Note:** This setup is for local development only.
+
 3. **Stop Potpie**
 
    To stop all Potpie services:
