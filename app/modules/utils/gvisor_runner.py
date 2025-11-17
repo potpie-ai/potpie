@@ -64,9 +64,10 @@ def is_gvisor_available() -> bool:
     elif system in ["darwin", "windows"]:
         # Mac/Windows - can use Docker Desktop with runsc runtime
         # Docker Desktop runs a Linux VM, so gVisor can work there
-        if _check_docker_available():
-            # Docker is available, check if runsc runtime is configured
-            return _check_docker_available()  # This already checks for runsc runtime
+        docker_ready = _check_docker_available()
+        if docker_ready:
+            # Docker is available, and the probe already confirmed runsc works
+            return True
         return False
     else:
         return False
@@ -226,18 +227,12 @@ def run_command_isolated(
         )
 
     runsc_path = get_runsc_binary()
-    if not runsc_path:
-        logger.warning(
-            "[GVISOR] gVisor runsc binary not found, falling back to regular subprocess (less secure)"
+    if runsc_path:
+        logger.info(f"[GVISOR] gVisor available, using runsc at {runsc_path}")
+    else:
+        logger.info(
+            "[GVISOR] runsc binary not found locally; will rely on Docker runtime when available"
         )
-        return _run_command_regular(
-            command=command,
-            working_dir=working_dir,
-            env=env,
-            timeout=timeout,
-        )
-
-    logger.info(f"[GVISOR] gVisor available, using runsc at {runsc_path}")
 
     try:
         # Determine the best method based on environment:
@@ -252,13 +247,23 @@ def run_command_isolated(
             logger.info(
                 "[GVISOR] Running in container environment, attempting to use runsc directly"
             )
-            return _run_with_runsc_direct(
+            if runsc_path:
+                return _run_with_runsc_direct(
+                    command=command,
+                    working_dir=working_dir,
+                    repo_path=repo_path,
+                    env=env,
+                    timeout=timeout,
+                    runsc_path=runsc_path,
+                )
+            logger.warning(
+                "[GVISOR] runsc binary unavailable inside container; using regular subprocess (container already provides isolation)"
+            )
+            return _run_command_regular(
                 command=command,
                 working_dir=working_dir,
-                repo_path=repo_path,
                 env=env,
                 timeout=timeout,
-                runsc_path=runsc_path,
             )
         else:
             # On host (Linux, Mac, or Windows): Try Docker with runsc runtime
@@ -286,16 +291,26 @@ def run_command_isolated(
             else:
                 # No Docker, try direct runsc (only works on Linux)
                 if system == "linux":
+                    if runsc_path:
+                        logger.warning(
+                            "[GVISOR] Docker not available, attempting direct runsc usage (Linux only)"
+                        )
+                        return _run_with_runsc_direct(
+                            command=command,
+                            working_dir=working_dir,
+                            repo_path=repo_path,
+                            env=env,
+                            timeout=timeout,
+                            runsc_path=runsc_path,
+                        )
                     logger.warning(
-                        "[GVISOR] Docker not available, attempting direct runsc usage (Linux only)"
+                        "[GVISOR] Docker not available and runsc binary missing on Linux, falling back to regular subprocess (less secure)"
                     )
-                    return _run_with_runsc_direct(
+                    return _run_command_regular(
                         command=command,
                         working_dir=working_dir,
-                        repo_path=repo_path,
                         env=env,
                         timeout=timeout,
-                        runsc_path=runsc_path,
                     )
                 else:
                     # Mac/Windows without Docker - fall back to regular subprocess
@@ -424,7 +439,7 @@ def _run_with_docker_gvisor(
     repo_path: Optional[str],
     env: Optional[Dict[str, str]],
     timeout: Optional[int],
-    runsc_path: Path,
+    runsc_path: Optional[Path],
 ) -> CommandResult:
     """
     Run command using Docker with gVisor (runsc) runtime.
@@ -434,7 +449,12 @@ def _run_with_docker_gvisor(
     import uuid
     import shlex
 
-    logger.info(f"[GVISOR] Using Docker with gVisor runtime (runsc at {runsc_path})")
+    if runsc_path:
+        logger.info(f"[GVISOR] Using Docker with gVisor runtime (runsc at {runsc_path})")
+    else:
+        logger.info(
+            "[GVISOR] Using Docker with gVisor runtime (runsc provided by Docker runtime)"
+        )
     container_name = f"gvisor_cmd_{uuid.uuid4().hex[:8]}"
     docker_cmd = [
         "docker",

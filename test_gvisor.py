@@ -18,6 +18,7 @@ from app.modules.utils.gvisor_runner import (
     run_shell_command_isolated,
     get_runsc_binary,
     _is_running_in_container,
+    _check_docker_available,
 )
 
 
@@ -45,8 +46,15 @@ def test_gvisor_availability():
     print(f"runsc binary path: {runsc_path}")
 
     if platform.system().lower() != "linux":
-        print(f"✓ Expected: gVisor not available on {platform.system()}")
-        assert not available, "gVisor should not be available on non-Linux platforms"
+        docker_available = _check_docker_available()
+        print(f"Docker with runsc runtime available: {docker_available}")
+        # On Mac/Windows, gVisor can be available via Docker Desktop
+        # Only assert False if Docker is not available (which would make gVisor unavailable)
+        if not docker_available:
+            print(f"✓ Expected: gVisor not available on {platform.system()} (Docker not available)")
+            assert not available, "gVisor should not be available on non-Linux platforms without Docker"
+        else:
+            print(f"✓ gVisor may be available on {platform.system()} via Docker Desktop")
     else:
         print("Platform is Linux - gVisor may be available if installed")
 
@@ -179,8 +187,12 @@ def main():
         print("  - Fallback working: ✓")
         print("  - Commands execute correctly: ✓")
         print()
-        print("On Mac/Windows, gVisor is not available, but the system")
-        print("correctly falls back to regular subprocess execution.")
+        if platform.system().lower() != "linux":
+            if is_gvisor_available():
+                print("On Mac/Windows, gVisor is available via Docker Desktop.")
+            else:
+                print("On Mac/Windows, gVisor is not available, but the system")
+                print("correctly falls back to regular subprocess execution.")
         print()
 
         return 0

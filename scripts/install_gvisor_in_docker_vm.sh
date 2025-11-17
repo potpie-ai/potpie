@@ -45,11 +45,14 @@ else
 fi
 
 if [ "$SUCCESS" = "0" ]; then
-    # Fallback method (if needed in future)
     if [ "$VERBOSE" = "1" ]; then
         echo "⚠️  Installation method 1 failed (may need different approach)"
         echo "Alternative installation script would be created if needed."
+        echo "$INSTALL_OUTPUT"
+    else
+        echo "❌ Failed to install runsc into Docker Desktop VM."
     fi
+    exit 1
 fi
 
 # Only show next steps if verbose mode

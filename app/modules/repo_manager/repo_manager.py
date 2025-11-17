@@ -66,6 +66,9 @@ class RepoManager(IRepoManager):
 
     def _metadata_dir(self, repo_name: str) -> Path:
         """Return the metadata directory for a given repository."""
+        # Prevent path traversal
+        if ".." in repo_name or Path(repo_name).is_absolute():
+            raise ValueError(f"Invalid repo_name: {repo_name}")
         return self.metadata_base_path / Path(repo_name)
 
     def _metadata_filename(
@@ -211,7 +214,8 @@ class RepoManager(IRepoManager):
         """Normalize a raw metadata dict into the public repo info shape."""
         branch = raw_data.get("branch") or None
         commit_id = raw_data.get("commit_id") or None
-        repo_key = self._get_repo_key(repo_name, branch, commit_id)
+        user_id = raw_data.get("user_id") or None
+        repo_key = self._get_repo_key(repo_name, branch, commit_id, user_id)
 
         metadata_raw = raw_data.get("metadata") or {}
         if isinstance(metadata_raw, str):
@@ -245,16 +249,22 @@ class RepoManager(IRepoManager):
         repo_name: str,
         branch: Optional[str] = None,
         commit_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> str:
         parts = [repo_name]
         if branch:
             parts.append(f"branch:{branch}")
         if commit_id:
             parts.append(f"commit:{commit_id}")
+        if user_id:
+            parts.append(f"user:{user_id}")
         return ":".join(parts)
 
     def _get_repo_local_path(self, repo_name: str) -> Path:
         """Expose repository location for callers that already rely on it."""
+        # Prevent path traversal
+        if ".." in repo_name or Path(repo_name).is_absolute():
+            raise ValueError(f"Invalid repo_name: {repo_name}")
         return self.repos_base_path / Path(repo_name)
 
     def is_repo_available(
@@ -302,7 +312,7 @@ class RepoManager(IRepoManager):
         }
 
         self._write_metadata_entry(repo_name, branch, commit_id, data)
-        repo_key = self._get_repo_key(repo_name, branch, commit_id)
+        repo_key = self._get_repo_key(repo_name, branch, commit_id, user_id)
         logger.info("Registered repo %s at %s", repo_key, local_path)
         return repo_key
 
@@ -407,8 +417,8 @@ class RepoManager(IRepoManager):
                 else:
                     os.remove(local_path)
                 logger.info("Deleted local repo copy at %s", local_path)
-            except OSError as exc:
-                logger.error("Failed to delete local repo copy %s: %s", local_path, exc)
+            except OSError:
+                logger.exception("Failed to delete local repo copy at %s", local_path)
 
         logger.info(
             "Evicted repo %s (branch=%s, commit=%s)",

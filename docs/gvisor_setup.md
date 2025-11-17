@@ -10,7 +10,7 @@ gVisor provides a user-space kernel for better security isolation when running c
 
 - **K8s/Linux Containers**: gVisor is automatically installed in the Docker image and will be used when available
 - **Local Linux**: Can use gVisor with Docker runtime (optional setup)
-- **Local Mac/Windows**: Automatically falls back to regular subprocess (gVisor not supported)
+- **Local Mac/Windows**: gVisor is fully supported via Docker Desktop when configured with the runsc runtime. If Docker Desktop is not configured with runsc, the system automatically falls back to regular subprocess execution.
 
 The system automatically detects the environment and uses the appropriate method.
 
@@ -130,6 +130,41 @@ Then restart Docker:
 ```bash
 sudo systemctl restart docker
 ```
+
+## Docker Desktop Integration (Mac/Windows)
+
+For Mac/Windows users, gVisor can work through Docker Desktop, which runs a Linux VM:
+
+### Setup Steps
+
+1. **Install Docker Desktop** (if not already installed)
+   - Download from: https://www.docker.com/products/docker-desktop
+   - Or install via Homebrew: `brew install --cask docker`
+
+2. **Install gVisor in Docker Desktop**
+
+   Use the provided setup script:
+   ```bash
+   bash scripts/setup_gvisor_docker.sh
+   ```
+
+   Or follow the detailed guide: [docker_desktop_gvisor_config.md](./docker_desktop_gvisor_config.md)
+
+3. **Restart Docker Desktop**
+
+   After running the setup script, restart Docker Desktop completely for changes to take effect.
+
+4. **Verify Installation**
+
+   ```bash
+   # Check if runsc runtime is available
+   docker info --format "{{.Runtimes}}" | grep runsc
+
+   # Test with a simple container
+   docker run --rm --runtime=runsc busybox echo "Hello from gVisor"
+   ```
+
+**Note**: If Docker Desktop + runsc is not configured, the system will automatically fall back to regular subprocess execution, which works seamlessly for local development.
 
 ## Usage in Code
 

@@ -565,8 +565,8 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
 
         try:
             for item in os.listdir(full_path):
-                # Skip hidden files and .git directory
-                if item.startswith("."):
+                # Skip .git directory only
+                if item == ".git":
                     continue
 
                 item_path = os.path.join(full_path, item)

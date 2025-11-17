@@ -225,8 +225,8 @@ class LocalRepoService:
             # Filter out files with excluded extensions, hidden files/folders, and gitignore matches
             filtered_contents = []
             for item in contents:
-                # Skip hidden files and directories (starting with .)
-                if item["name"].startswith(".") and item["name"] != ".gitignore":
+                # Skip .git directory only
+                if item["name"] == ".git":
                     continue
 
                 # Skip files with excluded extensions

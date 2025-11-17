@@ -125,18 +125,49 @@ if [ -f "$DAEMON_JSON" ]; then
     echo ""
 fi
 
-# Create or update daemon.json
-cat > "$DAEMON_JSON" <<EOF
-{
-  "runtimes": {
-    "runsc": {
-      "path": "$LOCAL_BIN/runsc"
-    }
-  }
-}
-EOF
+# Merge runtime configuration into existing daemon.json using Python
+# This preserves any existing Docker daemon settings (registry mirrors, insecure registries, etc.)
+python3 <<PYTHON_SCRIPT
+import json
+import os
+import sys
 
-echo "✓ Docker daemon.json configured"
+daemon_json_path = "$DAEMON_JSON"
+runsc_path = "$LOCAL_BIN/runsc"
+
+# Load existing config if it exists
+config = {}
+if os.path.exists(daemon_json_path):
+    try:
+        with open(daemon_json_path, 'r') as f:
+            config = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"⚠️  Warning: Existing daemon.json is invalid JSON: {e}", file=sys.stderr)
+        print("   Creating new config file...", file=sys.stderr)
+        config = {}
+    except Exception as e:
+        print(f"⚠️  Warning: Error reading existing daemon.json: {e}", file=sys.stderr)
+        print("   Creating new config file...", file=sys.stderr)
+        config = {}
+
+# Initialize runtimes dict if it doesn't exist
+if "runtimes" not in config:
+    config["runtimes"] = {}
+
+# Add or update runsc runtime
+config["runtimes"]["runsc"] = {
+    "path": runsc_path
+}
+
+# Write merged config back to file
+try:
+    with open(daemon_json_path, 'w') as f:
+        json.dump(config, f, indent=2)
+    print("✓ Docker daemon.json configured (merged with existing settings)")
+except Exception as e:
+    print(f"❌ Error writing daemon.json: {e}", file=sys.stderr)
+    sys.exit(1)
+PYTHON_SCRIPT
 echo ""
 
 # Note: On Docker Desktop, we need to restart Docker Desktop for changes to take effect
