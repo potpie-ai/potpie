@@ -69,6 +69,7 @@ class LowLevelDesignAgent(ChatAgent):
                 "get_jira_project_users",
                 "fetch_file",
                 "analyze_code_structure",
+                "bash_command",
             ]
         )
 

@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional, Set
 import chardet
 from github import Github
 from github.GithubException import GithubException
@@ -96,13 +96,32 @@ class GitBucketProvider(ICodeProvider):
         if not self.client:
             raise RuntimeError("Provider not authenticated. Call authenticate() first.")
 
+    def _get_repo(self, repo_name: str):
+        """
+        Get repository object with normalized repo name conversion.
+        
+        Converts normalized repo name (e.g., 'user/repo') back to GitBucket's
+        actual identifier format (e.g., 'root/repo') for API calls.
+        
+        Args:
+            repo_name: Normalized repository name
+            
+        Returns:
+            Repository object from PyGithub
+        """
+        from app.modules.parsing.utils.repo_name_normalizer import (
+            get_actual_repo_name_for_lookup,
+        )
+
+        actual_repo_name = get_actual_repo_name_for_lookup(repo_name, "gitbucket")
+        return self.client.get_repo(actual_repo_name)
+
     # ============ Repository Operations ============
 
     def get_repository(self, repo_name: str) -> Dict[str, Any]:
         """Get repository details."""
         self._ensure_authenticated()
 
-        # Convert normalized repo name back to GitBucket format for API calls
         from app.modules.parsing.utils.repo_name_normalizer import (
             get_actual_repo_name_for_lookup,
             normalize_repo_name,
@@ -114,7 +133,7 @@ class GitBucketProvider(ICodeProvider):
             f"GitBucket: Attempting to get repository '{repo_name}' (actual: '{actual_repo_name}')"
         )
         try:
-            repo = self.client.get_repo(actual_repo_name)
+            repo = self._get_repo(repo_name)
             logger.info(
                 f"GitBucket: Successfully retrieved repository '{repo_name}' - ID: {repo.id}, Default branch: {repo.default_branch}"
             )
@@ -183,14 +202,7 @@ class GitBucketProvider(ICodeProvider):
         """Get file content."""
         self._ensure_authenticated()
 
-        # Convert normalized repo name back to GitBucket format for API calls
-        from app.modules.parsing.utils.repo_name_normalizer import (
-            get_actual_repo_name_for_lookup,
-        )
-
-        actual_repo_name = get_actual_repo_name_for_lookup(repo_name, "gitbucket")
-
-        repo = self.client.get_repo(actual_repo_name)
+        repo = self._get_repo(repo_name)
         file_contents = repo.get_contents(file_path, ref=ref)
 
         # Decode content
@@ -223,23 +235,16 @@ class GitBucketProvider(ICodeProvider):
         """Get repository structure recursively."""
         self._ensure_authenticated()
 
-        # Convert normalized repo name back to GitBucket format for API calls
-        from app.modules.parsing.utils.repo_name_normalizer import (
-            get_actual_repo_name_for_lookup,
-        )
-
-        actual_repo_name = get_actual_repo_name_for_lookup(repo_name, "gitbucket")
-
         try:
-            repo = self.client.get_repo(actual_repo_name)
+            repo = self._get_repo(repo_name)
         except GithubException as e:
             logger.error(
-                f"GitBucket: Failed to get repository '{actual_repo_name}': {e}"
+                f"GitBucket: Failed to get repository '{repo_name}': {e}"
             )
             raise
         except Exception as e:
             logger.error(
-                f"GitBucket: Unexpected error getting repository '{actual_repo_name}': {e}"
+                f"GitBucket: Unexpected error getting repository '{repo_name}': {e}"
             )
             raise
 
@@ -449,14 +454,7 @@ class GitBucketProvider(ICodeProvider):
         """List branches."""
         self._ensure_authenticated()
 
-        # Convert normalized repo name back to GitBucket format for API calls
-        from app.modules.parsing.utils.repo_name_normalizer import (
-            get_actual_repo_name_for_lookup,
-        )
-
-        actual_repo_name = get_actual_repo_name_for_lookup(repo_name, "gitbucket")
-
-        repo = self.client.get_repo(actual_repo_name)
+        repo = self._get_repo(repo_name)
         branches = [branch.name for branch in repo.get_branches()]
 
         # Put default branch first
@@ -471,7 +469,6 @@ class GitBucketProvider(ICodeProvider):
         """Get branch details."""
         self._ensure_authenticated()
 
-        # Convert normalized repo name back to GitBucket format for API calls
         from app.modules.parsing.utils.repo_name_normalizer import (
             get_actual_repo_name_for_lookup,
         )
@@ -482,7 +479,7 @@ class GitBucketProvider(ICodeProvider):
             f"GitBucket: Getting branch '{branch_name}' for repository '{repo_name}' (actual: '{actual_repo_name}')"
         )
         try:
-            repo = self.client.get_repo(actual_repo_name)
+            repo = self._get_repo(repo_name)
             branch = repo.get_branch(branch_name)
 
             branch_data = {
@@ -521,7 +518,7 @@ class GitBucketProvider(ICodeProvider):
         self._ensure_authenticated()
 
         try:
-            repo = self.client.get_repo(repo_name)
+            repo = self._get_repo(repo_name)
 
             # Get base branch ref
             base_ref = repo.get_git_ref(f"heads/{base_branch}")
@@ -575,20 +572,24 @@ class GitBucketProvider(ICodeProvider):
         self._ensure_authenticated()
 
         try:
-            repo = self.client.get_repo(repo_name)
+            repo = self._get_repo(repo_name)
 
             # Get commits on the head branch
             logging.info(f"[GITBUCKET] Getting commits for branch: {head_branch}")
             head_commits = repo.get_commits(sha=head_branch)
 
+            max_commits = 50  # Safety limit
+
             # Get commits on the base branch for comparison
-            base_commits = list(repo.get_commits(sha=base_branch))
-            base_commit_shas = {c.sha for c in base_commits}
+            base_commit_shas: Set[str] = set()
+            for idx, base_commit in enumerate(repo.get_commits(sha=base_branch)):
+                base_commit_shas.add(base_commit.sha)
+                if idx + 1 >= max_commits:
+                    break
 
             # Track files and their patches
             files_dict = {}
             commit_count = 0
-            max_commits = 50  # Safety limit
 
             # Iterate through head branch commits until we find common ancestor
             for commit in head_commits:
@@ -650,7 +651,7 @@ class GitBucketProvider(ICodeProvider):
         """List pull requests."""
         self._ensure_authenticated()
 
-        repo = self.client.get_repo(repo_name)
+        repo = self._get_repo(repo_name)
         pulls = repo.get_pulls(state=state)[:limit]
 
         return [
@@ -674,7 +675,7 @@ class GitBucketProvider(ICodeProvider):
         """Get pull request details."""
         self._ensure_authenticated()
 
-        repo = self.client.get_repo(repo_name)
+        repo = self._get_repo(repo_name)
         pr = repo.get_pull(pr_number)
 
         result = {
@@ -719,7 +720,7 @@ class GitBucketProvider(ICodeProvider):
         self._ensure_authenticated()
 
         try:
-            repo = self.client.get_repo(repo_name)
+            repo = self._get_repo(repo_name)
 
             # Validate branches exist
             try:
@@ -783,7 +784,7 @@ class GitBucketProvider(ICodeProvider):
         self._ensure_authenticated()
 
         try:
-            repo = self.client.get_repo(repo_name)
+            repo = self._get_repo(repo_name)
             pr = repo.get_pull(pr_number)
 
             if path and line:
@@ -819,7 +820,7 @@ class GitBucketProvider(ICodeProvider):
         self._ensure_authenticated()
 
         try:
-            repo = self.client.get_repo(repo_name)
+            repo = self._get_repo(repo_name)
             pr = repo.get_pull(pr_number)
 
             commits = list(pr.get_commits())
@@ -856,7 +857,7 @@ class GitBucketProvider(ICodeProvider):
         """List issues."""
         self._ensure_authenticated()
 
-        repo = self.client.get_repo(repo_name)
+        repo = self._get_repo(repo_name)
         issues = repo.get_issues(state=state)[:limit]
 
         return [
@@ -876,7 +877,7 @@ class GitBucketProvider(ICodeProvider):
         """Get issue details."""
         self._ensure_authenticated()
 
-        repo = self.client.get_repo(repo_name)
+        repo = self._get_repo(repo_name)
         issue = repo.get_issue(issue_number)
 
         return {
@@ -897,7 +898,7 @@ class GitBucketProvider(ICodeProvider):
         self._ensure_authenticated()
 
         try:
-            repo = self.client.get_repo(repo_name)
+            repo = self._get_repo(repo_name)
             issue = repo.create_issue(title=title, body=body, labels=labels or [])
 
             return {
@@ -928,7 +929,7 @@ class GitBucketProvider(ICodeProvider):
         self._ensure_authenticated()
 
         try:
-            repo = self.client.get_repo(repo_name)
+            repo = self._get_repo(repo_name)
 
             # Check if file exists
             try:
@@ -1057,7 +1058,7 @@ class GitBucketProvider(ICodeProvider):
         )
 
         try:
-            repo = self.client.get_repo(actual_repo_name)
+            repo = self._get_repo(repo_name)
 
             # GitBucket uses a different URL format than GitHub API
             # The correct format is: http://hostname/owner/repo/archive/ref.format

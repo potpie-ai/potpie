@@ -74,3 +74,4 @@ package-lock.json
 thoughts/
 .codex/
 worktrees/
+.repos/
