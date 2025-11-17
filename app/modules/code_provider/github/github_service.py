@@ -231,7 +231,7 @@ class GithubService:
                     break
         return links
 
-    async def get_repos_for_user(self, user_id: str):
+    async def get_repos_for_user(self, user_id: str, user_email: Optional[str] = None):
         if self.is_development_mode:
             return {"repositories": []}
 
@@ -240,6 +240,21 @@ class GithubService:
         start_time = time.time()  # Start timing the entire method
         try:
             user = self.db.query(User).filter(User.uid == user_id).first()
+            if user is None and user_email:
+                user = (
+                    self.db.query(User)
+                    .filter(User.email == user_email)
+                    .first()
+                )
+                if user:
+                    logger.info(
+                        "Updating user uid to match Firebase token for email %s",
+                        user_email,
+                    )
+                    user.uid = user_id
+                    self.db.commit()
+                    self.db.refresh(user)
+
             if user is None:
                 raise HTTPException(status_code=404, detail="User not found")
 
@@ -486,6 +501,8 @@ class GithubService:
 
                 return {"repositories": repo_list}
 
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Failed to fetch repositories: {str(e)}", exc_info=True)
             raise HTTPException(
@@ -497,7 +514,9 @@ class GithubService:
                 f"get_repos_for_user executed in {total_duration:.2f} seconds"
             )  # Log total duration
 
-    async def get_combined_user_repos(self, user_id: str):
+    async def get_combined_user_repos(
+        self, user_id: str, user_email: Optional[str] = None
+    ):
         subquery = (
             self.db.query(Project.repo_name, func.min(Project.id).label("min_id"))
             .filter(Project.user_id == user_id)
@@ -532,7 +551,7 @@ class GithubService:
             if projects is not None
             else []
         )
-        user_repo_response = await self.get_repos_for_user(user_id)
+        user_repo_response = await self.get_repos_for_user(user_id, user_email=user_email)
         user_repos = user_repo_response["repositories"]
         db_project_full_names = {project["full_name"] for project in project_list}
 

@@ -112,18 +112,166 @@ class ParsingService:
                     commit_id=repo_details.commit_id,
                 )
 
-            if isinstance(repo, Repo):
-                language = self.parse_helper.detect_repo_language(extracted_dir)
-            else:
-                languages = repo.get_languages()
-                if languages:
-                    language = max(languages, key=languages.get).lower()
-                else:
-                    language = self.parse_helper.detect_repo_language(extracted_dir)
+            supported_languages = {
+                "c_sharp",
+                "c",
+                "cpp",
+                "elisp",
+                "elixir",
+                "elm",
+                "go",
+                "java",
+                "javascript",
+                "ocaml",
+                "php",
+                "python",
+                "ql",
+                "ruby",
+                "rust",
+                "typescript",
+            }
 
+            # Always use file-based detection as the primary method (counts files, excludes "other")
+            # This is more reliable than percentage-based detection from GitHub API
+            file_based_language = self.parse_helper.detect_repo_language(extracted_dir)
+            logger.info(f"File-based language detection result: {file_based_language}")
+
+            # Collect all detected languages from GitHub API if available (for LSP indexing)
+            detected_languages = []
+            if not isinstance(repo, Repo):
+                languages = repo.get_languages()
+                logger.info(f"GitHub API languages: {languages}")
+                if languages:
+                    # Get all languages with significant code (e.g., > 5% of codebase)
+                    # Filter out "other" and unsupported languages
+                    detected_languages = [
+                        lang.lower()
+                        for lang, percentage in languages.items()
+                        if percentage > 5 and lang.lower() in supported_languages
+                    ]
+                    logger.info(
+                        f"Filtered detected languages from API: {detected_languages}"
+                    )
+
+            # For local repos or when API doesn't provide languages, use file-based detection
+            # Add file-based language to detected_languages if it's valid and not already included
+            if (
+                file_based_language
+                and file_based_language != "other"
+                and file_based_language in supported_languages
+            ):
+                if file_based_language not in detected_languages:
+                    detected_languages.append(file_based_language)
+                    logger.info(
+                        f"Added file-based language '{file_based_language}' to detected_languages for LSP indexing"
+                    )
+
+            # Use file-based language detection result, which already excludes "other"
+            if (
+                file_based_language
+                and file_based_language != "other"
+                and file_based_language in supported_languages
+            ):
+                language = file_based_language
+                logger.info(f"Using file-based language detection: {language}")
+            elif detected_languages:
+                # Fallback to first detected language from GitHub API if file-based detection failed
+                language = detected_languages[0]
+                logger.info(
+                    f"Using first detected language from API as fallback: {language}"
+                )
+            else:
+                # Last resort: try to find any supported language in the repo
+                language = file_based_language if file_based_language else "other"
+                logger.warning(
+                    f"Could not detect a supported language, using: {language}"
+                )
+                logger.warning(
+                    f"File-based result: {file_based_language}, API languages: {detected_languages}"
+                )
+
+            # Run graph construction and inference first
             await self.analyze_directory(
                 extracted_dir, project_id, user_id, self.db, language, user_email
             )
+
+            # Get the worktree path from RepoManager for LSP indexing
+            # This ensures we index the persistent worktree, not a temporary directory
+            # LSP indexing happens after inference to ensure the worktree is fully set up
+            worktree_path_for_indexing = extracted_dir
+            if self.parse_helper.repo_manager:
+                import asyncio
+
+                # Wait a bit for worktree to be fully created and registered
+                await asyncio.sleep(0.5)
+
+                try:
+                    details = await self.project_service.get_project_from_db_by_id(
+                        project_id
+                    )
+                    if details:
+                        repo_name = details.get("project_name")
+                        branch = details.get("branch_name")
+                        commit_id = details.get("commit_id")
+
+                        # Try to get worktree path with retries
+                        worktree_path = None
+                        for attempt in range(3):
+                            worktree_path = (
+                                self.parse_helper.repo_manager.get_repo_path(
+                                    repo_name, branch=branch, commit_id=commit_id
+                                )
+                            )
+                            if worktree_path and os.path.exists(worktree_path):
+                                break
+                            if attempt < 2:
+                                await asyncio.sleep(0.5)  # Wait and retry
+
+                        if worktree_path and os.path.exists(worktree_path):
+                            worktree_path_for_indexing = worktree_path
+                            logger.info(
+                                f"[LSP] Using worktree path from RepoManager for indexing: {worktree_path}"
+                            )
+                        else:
+                            logger.warning(
+                                f"[LSP] Worktree not found in RepoManager after retries, "
+                                f"using extracted_dir: {extracted_dir}. "
+                                f"Repo: {repo_name}, Branch: {branch}, Commit: {commit_id}"
+                            )
+                except Exception as exc:
+                    logger.warning(
+                        f"[LSP] Failed to get worktree path from RepoManager, using extracted_dir: {exc}",
+                        exc_info=True,
+                    )
+
+            # Index workspace with LSP servers after inference
+            # This must succeed for parsing to be considered successful
+            logger.info(
+                f"[LSP] Starting LSP indexing for project {project_id} "
+                f"at workspace {worktree_path_for_indexing} with languages {detected_languages}"
+            )
+            logger.info(
+                f"[LSP] Waiting for LSP indexing to complete for project {project_id}..."
+            )
+            indexing_success = await self._index_workspace_with_lsp(
+                project_id, worktree_path_for_indexing, detected_languages
+            )
+            logger.info(
+                f"[LSP] LSP indexing completed for project {project_id}: success={indexing_success}"
+            )
+            if not indexing_success:
+                error_msg = (
+                    f"LSP indexing failed for project {project_id}. "
+                    "Parsing cannot complete without successful indexing."
+                )
+                await project_manager.update_project_status(
+                    project_id, ProjectStatusEnum.ERROR
+                )
+                await ParseWebhookHelper().send_slack_notification(
+                    project_id, error_msg
+                )
+                raise HTTPException(status_code=500, detail=error_msg)
+
             message = "The project has been parsed successfully"
             return {"message": message, "id": project_id}
 
@@ -161,6 +309,138 @@ class ParsingService:
                 and extracted_dir.startswith(os.getenv("PROJECT_PATH"))
             ):
                 shutil.rmtree(extracted_dir, ignore_errors=True)
+
+    async def _index_workspace_with_lsp(
+        self, project_id: int, workspace_root: str, languages: list
+    ) -> bool:
+        """
+        Index the workspace with LSP servers for the detected languages.
+
+        This pre-indexes the workspace so that LSP queries are fast when users
+        start chatting. This is a required step - parsing will fail if indexing fails.
+
+        Returns:
+            True if indexing succeeded (or was skipped for valid reasons), False otherwise
+        """
+        try:
+            # Check if repo manager is enabled
+            repo_manager_enabled = (
+                os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
+            )
+            if not repo_manager_enabled:
+                logger.info(
+                    f"[LSP] Skipping LSP indexing for project {project_id}: "
+                    "REPO_MANAGER_ENABLED is not set"
+                )
+                # If repo manager is disabled, we can't index, but this is acceptable
+                return True
+
+            # Import here to avoid circular dependencies
+            from app.modules.intelligence.tools.code_query_tools.lsp_server_manager import (
+                get_lsp_server_manager,
+            )
+            from app.modules.intelligence.tools.code_query_tools.lsp_query_tool import (
+                LspQueryTool,
+            )
+
+            # Initialize LSP query tool to configure language servers
+            # This ensures language servers are registered
+            lsp_tool = LspQueryTool(self.db, "")
+            if not lsp_tool.repo_manager:
+                logger.warning(
+                    f"[LSP] LSP indexing failed for project {project_id}: "
+                    "RepoManager not available"
+                )
+                return False
+
+            # Get the LSP server manager
+            server_manager = get_lsp_server_manager()
+
+            # Map parsing language names to LSP language identifiers
+            # Some languages use different names in parsing vs LSP (e.g., c_sharp -> csharp)
+            language_name_map = {
+                "c_sharp": "csharp",
+            }
+
+            # Convert language names to LSP identifiers
+            # Filter out None values to ensure type safety
+            lsp_languages = [
+                language_name_map.get(lang, lang)
+                for lang in languages
+                if lang is not None
+            ]
+
+            # Filter to only languages that have LSP servers configured
+            supported_languages = [
+                lang
+                for lang in lsp_languages
+                if lang and server_manager.is_language_registered(lang)
+            ]
+
+            if not supported_languages:
+                logger.info(
+                    f"[LSP] No supported LSP languages found for project {project_id} "
+                    f"(detected: {languages}). Skipping LSP indexing."
+                )
+                # If no supported languages, this is acceptable (e.g., unsupported language)
+                return True
+
+            logger.info(
+                f"[LSP] Starting LSP indexing for project {project_id} "
+                f"with languages: {supported_languages} at workspace: {workspace_root}"
+            )
+
+            # Index the workspace
+            logger.info(f"[LSP] Calling index_workspace for project {project_id}...")
+            results = await server_manager.index_workspace(
+                project_id=str(project_id),
+                workspace_root=workspace_root,
+                languages=supported_languages,
+            )
+
+            # Check if all languages were indexed successfully
+            all_succeeded = True
+            failed_languages = []
+
+            for lang, result in results.items():
+                status_messages = result.get("status_messages", [])
+                if result.get("success"):
+                    logger.info(
+                        f"[LSP] Successfully indexed {lang} for project {project_id}"
+                    )
+                    # Log all status messages for detailed progress
+                    for msg in status_messages:
+                        logger.info(f"[LSP] [{lang}] {msg}")
+                else:
+                    all_succeeded = False
+                    error_msg = result.get("error", "Unknown error")
+                    failed_languages.append(f"{lang}: {error_msg}")
+                    logger.error(
+                        f"[LSP] Failed to index {lang} for project {project_id}: {error_msg}"
+                    )
+                    # Log status messages even for failures to help debug
+                    for msg in status_messages:
+                        logger.warning(f"[LSP] [{lang}] {msg}")
+
+            if not all_succeeded:
+                logger.error(
+                    f"[LSP] LSP indexing failed for project {project_id}. "
+                    f"Failed languages: {', '.join(failed_languages)}"
+                )
+                return False
+
+            logger.info(
+                f"[LSP] Successfully completed LSP indexing for project {project_id} "
+                f"with all languages: {supported_languages}"
+            )
+            return True
+
+        except Exception as exc:
+            logger.error(
+                f"[LSP] LSP indexing failed for project {project_id}: {exc}",
+                exc_info=True,
+            )
+            return False
 
     def create_neo4j_indices(self, graph_manager):
         # Create existing indices from blar_graph

@@ -374,6 +374,9 @@ class ProviderService:
         self.db = db
         self.user_id = user_id
 
+        # Cache for API keys to avoid repeated GCP Secret Manager calls
+        self._api_key_cache: Dict[str, Optional[str]] = {}
+
         # Load user preferences
         user_pref = db.query(UserPreferences).filter_by(user_id=user_id).first()
         user_config = (
@@ -459,19 +462,28 @@ class ProviderService:
         return {"message": "AI provider configuration updated successfully"}
 
     def _get_api_key(self, provider: str) -> str:
-        """Get API key for the specified provider."""
+        """Get API key for the specified provider with caching to avoid repeated GCP calls."""
+        # Check cache first
+        if provider in self._api_key_cache:
+            return self._api_key_cache[provider]
+
         env_key = os.getenv("LLM_API_KEY", None)
         if env_key:
+            self._api_key_cache[provider] = env_key
             return env_key
 
         try:
             secret = SecretManager.get_secret(provider, self.user_id, self.db)
+            self._api_key_cache[provider] = secret
             return secret
         except Exception as e:
             if "404" in str(e):
                 env_key = os.getenv(f"{provider.upper()}_API_KEY")
                 if env_key:
+                    self._api_key_cache[provider] = env_key
                     return env_key
+                # Cache None to avoid repeated failed lookups
+                self._api_key_cache[provider] = None
                 return None
             raise e
 

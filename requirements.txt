@@ -68,8 +68,15 @@ pydantic[email]==2.10.3
 firecrawl-py==1.11.1
 pydantic_ai==0.4.3
 pathspec==0.12.1
+pygls==1.3.1
+jedi==0.19.1
+compiledb==0.10.1
 pytest
 pytest-asyncio
 Pillow==10.0.1
 python-multipart>=0.0.7
 asyncpg==0.30.0
+
+# Note: LSP language servers are not Python packages and must be installed separately.
+# Run scripts/install_lsp_servers.sh to install Python LSP servers (pyright) and OmniSharp (C#).
+# Other LSP servers (clangd, gopls, rust-analyzer, etc.) must be installed via their respective package managers.
