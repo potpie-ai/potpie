@@ -88,9 +88,8 @@ def configure_celery(queue_prefix: str):
         task_acks_late=True,
         task_track_started=True,
         task_time_limit=54000,  # 900 minutes in seconds
-        # Add fair task distribution settings
-        worker_max_tasks_per_child=200,  # Restart worker after 200 tasks to prevent memory leaks
-        worker_max_memory_per_child=2000000,  # Restart worker if using more than 2GB
+        # Fair task distribution settings (optimized for 1 worker per pod with 4GB memory)
+        worker_max_memory_per_child=3500000,  # Restart worker if using more than 3.5GB (leave buffer for OS)
         task_default_rate_limit="10/m",  # Limit tasks to 10 per minute per worker
         task_reject_on_worker_lost=True,  # Requeue tasks if worker dies
         broker_transport_options={
