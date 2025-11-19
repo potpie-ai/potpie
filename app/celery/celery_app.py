@@ -89,11 +89,11 @@ def configure_celery(queue_prefix: str):
         task_track_started=True,
         task_time_limit=54000,  # 900 minutes in seconds
         # Fair task distribution settings (optimized for 1 worker per pod with 4GB memory)
-        worker_max_memory_per_child=3500000,  # Restart worker if using more than 3.5GB (leave buffer for OS)
+        worker_max_memory_per_child=3750000,  # Restart worker if using more than 3.5GB (leave buffer for OS)
         task_default_rate_limit="10/m",  # Limit tasks to 10 per minute per worker
         task_reject_on_worker_lost=True,  # Requeue tasks if worker dies
         broker_transport_options={
-            "visibility_timeout": 54000
+            "visibility_timeout": 540
         },  # 45 minutes visibility timeout
     )
 
