@@ -93,7 +93,7 @@ def configure_celery(queue_prefix: str):
         task_default_rate_limit="10/m",  # Limit tasks to 10 per minute per worker
         task_reject_on_worker_lost=True,  # Requeue tasks if worker dies
         broker_transport_options={
-            "visibility_timeout": 540
+            "visibility_timeout": 3600
         },  # 45 minutes visibility timeout
     )
 
