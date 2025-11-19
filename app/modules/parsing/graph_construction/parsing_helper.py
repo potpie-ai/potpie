@@ -520,6 +520,23 @@ class ParseHelper:
         logger.info(f"ParsingHelper: Tarball path: {tarball_path}")
         logger.info(f"ParsingHelper: Final directory: {final_dir}")
 
+        # CRITICAL: Remove existing directory if present (leftover from failed cleanup)
+        if os.path.exists(final_dir):
+            logger.warning(
+                f"ParsingHelper: Directory {final_dir} already exists from previous run. "
+                f"Removing to ensure clean workspace."
+            )
+            try:
+                shutil.rmtree(final_dir)
+                logger.info("ParsingHelper: Successfully removed existing directory")
+            except Exception as cleanup_error:
+                logger.error(
+                    f"ParsingHelper: Failed to remove existing directory {final_dir}: {cleanup_error}"
+                )
+                raise ParsingFailedError(
+                    f"Cannot clean existing directory {final_dir}: {cleanup_error}"
+                ) from cleanup_error
+
         try:
             logger.info(f"ParsingHelper: Writing tarball to {tarball_path}")
             with open(tarball_path, "wb") as f:
@@ -640,7 +657,7 @@ class ParseHelper:
                     logger.debug(f"ParsingHelper: Removing temporary directory: {temp_dir}")
                     try:
                         shutil.rmtree(temp_dir)
-                        logger.debug(f"ParsingHelper: Successfully removed temporary directory")
+                        logger.debug("ParsingHelper: Successfully removed temporary directory")
                     except OSError as e:
                         logger.error(f"ParsingHelper: Error removing temporary directory: {e}")
                         pass
@@ -696,6 +713,23 @@ class ParseHelper:
         )
         logger.info(f"ParsingHelper: Final clone directory will be: {final_dir}")
 
+        # CRITICAL: Remove existing directory if present (leftover from failed cleanup)
+        if os.path.exists(final_dir):
+            logger.warning(
+                f"ParsingHelper: Directory {final_dir} already exists from previous run. "
+                f"Removing to ensure clean workspace."
+            )
+            try:
+                shutil.rmtree(final_dir)
+                logger.info("ParsingHelper: Successfully removed existing directory")
+            except Exception as cleanup_error:
+                logger.error(
+                    f"ParsingHelper: Failed to remove existing directory {final_dir}: {cleanup_error}"
+                )
+                raise ParsingFailedError(
+                    f"Cannot clean existing directory {final_dir}: {cleanup_error}"
+                ) from cleanup_error
+
         # Create temporary clone directory
         temp_clone_dir = os.path.join(target_dir, f"{uuid.uuid4()}_temp_clone")
 
@@ -744,7 +778,7 @@ class ParseHelper:
 
         try:
             # Clone the repository to temporary directory with shallow clone for faster download
-            repo_obj = Repo.clone_from(clone_url_with_auth, temp_clone_dir, branch=branch, depth=1)
+            Repo.clone_from(clone_url_with_auth, temp_clone_dir, branch=branch, depth=1)
             logger.info(f"ParsingHelper: Successfully cloned repository to temporary directory: {temp_clone_dir}")
 
             # Filter and copy only text files to final directory
@@ -1256,7 +1290,7 @@ class ParseHelper:
                 logger.error(f"ParsingHelper: Cannot list local repository contents: {e}")
                 raise
             
-            logger.info(f"ParsingHelper: Validated local repository is accessible")
+            logger.info("ParsingHelper: Validated local repository is accessible")
             return repo_path, project_id
         if isinstance(repo_details, Repo):
             extracted_dir = repo_details.working_tree_dir
@@ -1339,7 +1373,7 @@ class ParseHelper:
                     logger.error(f"ParsingHelper: Cannot list extracted directory contents: {e}")
                     raise
                 
-                logger.info(f"ParsingHelper: Validated extracted directory is accessible and contains files")
+                logger.info("ParsingHelper: Validated extracted directory is accessible and contains files")
                 
             except ParsingFailedError as e:
                 logger.exception("Failed to download repository")

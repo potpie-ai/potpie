@@ -54,7 +54,7 @@ def process_parsing(
         raise
 
 
-def resume_parsing_session(db_session, session) -> Dict[str, Any]:
+def resume_parsing_session(db_session, session, task_instance) -> Dict[str, Any]:
     """
     Resume parsing from an existing session.
 
@@ -69,7 +69,7 @@ def resume_parsing_session(db_session, session) -> Dict[str, Any]:
     )
 
     if session.stage == 'parsing':
-        return resume_parsing_stage(db_session, session)
+        return resume_parsing_stage(db_session, session, task_instance)
     elif session.stage == 'aggregating':
         # For now, just log - aggregation resume not yet implemented
         logger.warning("Aggregation stage resume not yet implemented")
@@ -79,13 +79,20 @@ def resume_parsing_session(db_session, session) -> Dict[str, Any]:
         return {'success': False, 'error': f'Stage {session.stage} resume not implemented'}
 
 
-def resume_parsing_stage(db_session, session) -> Dict[str, Any]:
-    """Resume parsing stage by spawning tasks for incomplete work units"""
+def resume_parsing_stage(db_session, session, task_instance) -> Dict[str, Any]:
+    """
+    Resume parsing stage by spawning tasks for incomplete work units.
+
+    Now properly clones the repository by fetching project metadata from database.
+    """
     from app.modules.parsing.parsing_work_unit_model import ParsingWorkUnit
+    from app.modules.projects.projects_model import Project
+    from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
+    from app.modules.parsing.graph_construction.parsing_service import ParsingRequest
     from datetime import datetime
     from celery import chord
 
-    # Query incomplete work units
+    # Step 1: Query incomplete work units
     incomplete_units = db_session.query(ParsingWorkUnit).filter(
         ParsingWorkUnit.project_id == session.project_id,
         ParsingWorkUnit.commit_id == session.commit_id,
@@ -104,40 +111,95 @@ def resume_parsing_stage(db_session, session) -> Dict[str, Any]:
             'message': 'All work units completed'
         }
 
-    logger.info(f"Resuming {len(incomplete_units)} incomplete work units")
+    logger.info(f"Found {len(incomplete_units)} incomplete work units to resume")
 
-    # Reset to pending and increment attempt counter
+    # Step 2: Fetch project metadata to reconstruct repo_details
+    project = db_session.query(Project).filter(
+        Project.id == session.project_id
+    ).first()
+
+    if not project:
+        error_msg = f"Project {session.project_id} not found in database"
+        logger.error(error_msg)
+        return {
+            'success': False,
+            'error': error_msg,
+            'session_id': str(session.id)
+        }
+
+    logger.info(f"Found project: {project.repo_name} (branch: {project.branch_name})")
+
+    # Step 3: Reconstruct repo_details from project
+    repo_details = {
+        'repo_name': project.repo_name,
+        'branch_name': project.branch_name,
+        'commit_id': session.commit_id,
+        'repo_path': project.repo_path,
+    }
+
+    # Step 4: Clone/setup repository
+    parse_helper = ParseHelper(db_session)
+
+    async def setup_repo():
+        return await parse_helper.clone_or_copy_repository(
+            ParsingRequest(**repo_details),
+            user_id=project.user_id
+        )
+
+    async def setup_project_dir(repo, auth):
+        return await parse_helper.setup_project_directory(
+            repo,
+            project.branch_name,
+            auth,
+            ParsingRequest(**repo_details),
+            user_id=project.user_id,
+            project_id=session.project_id,
+            commit_id=session.commit_id
+        )
+
+    try:
+        logger.info(f"Cloning repository for resume: {project.repo_name}")
+        repo, owner, auth = task_instance.run_async(setup_repo())
+        repo_path, _ = task_instance.run_async(setup_project_dir(repo, auth))
+        logger.info(f"Repository cloned successfully to: {repo_path}")
+    except Exception as e:
+        logger.exception(f"Failed to clone repository for resume: {e}")
+        return {
+            'success': False,
+            'error': f"Repository clone failed: {str(e)}",
+            'session_id': str(session.id)
+        }
+
+    # Step 5: Reset work units to pending and increment attempt counter
     for work_unit in incomplete_units:
         work_unit.status = 'pending'
         work_unit.attempt_count += 1
 
     db_session.commit()
 
-    # Create task signatures using existing parse_directory_unit
+    # Step 6: Create task signatures using existing parse_directory_unit
     parsing_tasks = []
     for work_unit in incomplete_units:
-        # We need to get the repo path - this is a simplification
-        # In production, this would need to be handled more carefully
         task = parse_directory_unit.s(
             work_unit_index=work_unit.work_unit_index,
             directory_path=work_unit.directory_path,
             files=work_unit.files,
-            repo_path=f"projects/{session.project_id}",  # Simplified
+            repo_path=repo_path,  # Now properly cloned!
             project_id=session.project_id,
-            user_id=session.project_id,  # Simplified - should be actual user_id
-            repo_name=session.project_id,  # Simplified
-            commit_id=session.commit_id,  # Actual commit ID
-            work_unit_db_id=str(work_unit.id)  # UUID for DB operations
+            user_id=project.user_id,
+            repo_name=project.repo_name,
+            commit_id=session.commit_id,
+            work_unit_db_id=str(work_unit.id)
         )
         parsing_tasks.append(task)
 
-    # Create chord with existing aggregate callback
+    # Step 7: Create chord with existing aggregate callback
     callback = aggregate_and_resolve_references.s(
         project_id=session.project_id,
-        user_id=session.project_id,  # Simplified
+        user_id=project.user_id,
         total_work_units=session.total_work_units,
         start_time=0,
-        repo_path=f"projects/{session.project_id}"  # Simplified
+        repo_path=repo_path  # Use cloned repo path
     )
 
     chord_task = chord(parsing_tasks)(callback)
@@ -203,9 +265,14 @@ def bootstrap_and_resume(
         )
 
     repo, owner, auth = task_instance.run_async(setup_repo())
-    project_path, _ = task_instance.run_async(setup_project_dir(repo, auth))
+    project_path, actual_commit_id = task_instance.run_async(setup_project_dir(repo, auth))
 
     logger.info(f"Repository setup complete: {project_path}")
+
+    # Use the actual commit ID from setup if the passed one was None
+    if not commit_id:
+        commit_id = actual_commit_id
+        logger.info(f"Using commit ID from repository setup: {commit_id}")
 
     # Optional: Selective cleanup of failed work units
     if cleanup_graph:
@@ -345,7 +412,7 @@ def process_parsing_distributed(
 
         if resume and existing_session:
             logger.info(f"Resuming existing session {existing_session.id}")
-            return resume_parsing_session(self.db, existing_session)
+            return resume_parsing_session(self.db, existing_session, self)
 
         # NEW: Check for partial parsing in Neo4j (bootstrap case)
         if resume and not existing_session:
@@ -722,6 +789,19 @@ def parse_directory_unit(
         finally:
             code_graph_service.close()
 
+        # Step 9: Update work unit status to completed (for bootstrap/resume path)
+        if work_unit_db_id:
+            work_unit = self.db.query(ParsingWorkUnit).filter(
+                ParsingWorkUnit.id == work_unit_db_id
+            ).first()
+            if work_unit:
+                work_unit.status = 'completed'
+                work_unit.completed_at = datetime.utcnow()
+                work_unit.nodes_created = nodes_created
+                work_unit.edges_created = edges_created + immediate_edges
+                self.db.commit()
+                logger.info(f"[Unit {work_unit_index}] Marked work unit as completed in database")
+
         elapsed = time.time() - start_time
         logger.info(
             f"[Unit {work_unit_index}] Complete: {len(files_to_parse)} files parsed "
@@ -729,7 +809,7 @@ def parse_directory_unit(
             f"({nodes_created} nodes, {edges_created + immediate_edges} edges total)"
         )
 
-        # Step 9: Export defines and ONLY unresolved references for cross-directory resolution
+        # Step 10: Export defines and ONLY unresolved references for cross-directory resolution
         # Convert sets to lists for JSON serialization
         defines_serializable = {
             ident: list(node_set) for ident, node_set in defines.items()
