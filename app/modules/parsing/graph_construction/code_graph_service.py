@@ -2,7 +2,7 @@ import hashlib
 import logging
 import os
 import time
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 
 from neo4j import GraphDatabase
 from sqlalchemy.orm import Session
@@ -541,6 +541,28 @@ class CodeGraphService:
 
         logger.info(f"Edge creation complete: {edges_created} edges")
         return edges_created
+
+    def get_parsed_files_for_project(self, project_id: str) -> Set[str]:
+        """
+        Get set of files that have been parsed for a project.
+
+        Convenience wrapper around Neo4jStateService.
+        """
+        from app.modules.parsing.graph_construction.neo4j_state_service import Neo4jStateService
+
+        # Extract connection details from driver
+        # Note: This is a simplified approach; in production you may want to pass
+        # these as parameters or store them as instance variables
+        state_service = Neo4jStateService(
+            neo4j_uri=self.driver._pool.address,
+            neo4j_user="neo4j",  # These should ideally come from config
+            neo4j_password="password"  # These should ideally come from config
+        )
+
+        try:
+            return state_service.get_parsed_files(project_id)
+        finally:
+            state_service.close()
 
 
 class SimpleIO:

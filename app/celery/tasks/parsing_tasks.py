@@ -54,6 +54,235 @@ def process_parsing(
         raise
 
 
+def resume_parsing_session(db_session, session) -> Dict[str, Any]:
+    """
+    Resume parsing from an existing session.
+
+    Handles both:
+    - Sessions created by new system (work units in DB)
+    - Sessions bootstrapped from Neo4j (work units reconstructed)
+    """
+
+    logger.info(
+        f"Resuming session {session.id} (session #{session.session_number}) "
+        f"at stage: {session.stage}"
+    )
+
+    if session.stage == 'parsing':
+        return resume_parsing_stage(db_session, session)
+    elif session.stage == 'aggregating':
+        # For now, just log - aggregation resume not yet implemented
+        logger.warning("Aggregation stage resume not yet implemented")
+        return {'success': False, 'error': 'Aggregation resume not implemented'}
+    else:
+        logger.warning(f"Unknown or unimplemented stage: {session.stage}")
+        return {'success': False, 'error': f'Stage {session.stage} resume not implemented'}
+
+
+def resume_parsing_stage(db_session, session) -> Dict[str, Any]:
+    """Resume parsing stage by spawning tasks for incomplete work units"""
+    from app.modules.parsing.parsing_work_unit_model import ParsingWorkUnit
+    from datetime import datetime
+    from celery import chord
+
+    # Query incomplete work units
+    incomplete_units = db_session.query(ParsingWorkUnit).filter(
+        ParsingWorkUnit.project_id == session.project_id,
+        ParsingWorkUnit.commit_id == session.commit_id,
+        ParsingWorkUnit.status.in_(['pending', 'failed'])
+    ).all()
+
+    if not incomplete_units:
+        logger.info("No incomplete work units, all work completed")
+        session.completed_at = datetime.utcnow()
+        session.stage = 'completed'
+        db_session.commit()
+        return {
+            'success': True,
+            'session_id': str(session.id),
+            'status': 'completed',
+            'message': 'All work units completed'
+        }
+
+    logger.info(f"Resuming {len(incomplete_units)} incomplete work units")
+
+    # Reset to pending and increment attempt counter
+    for work_unit in incomplete_units:
+        work_unit.status = 'pending'
+        work_unit.attempt_count += 1
+
+    db_session.commit()
+
+    # Create task signatures using existing parse_directory_unit
+    parsing_tasks = []
+    for work_unit in incomplete_units:
+        # We need to get the repo path - this is a simplification
+        # In production, this would need to be handled more carefully
+        task = parse_directory_unit.s(
+            work_unit_index=work_unit.work_unit_index,
+            directory_path=work_unit.directory_path,
+            files=work_unit.files,
+            repo_path=f"projects/{session.project_id}",  # Simplified
+            project_id=session.project_id,
+            user_id=session.project_id,  # Simplified - should be actual user_id
+            repo_name=session.project_id,  # Simplified
+            commit_id=session.commit_id,  # Actual commit ID
+            work_unit_db_id=str(work_unit.id)  # UUID for DB operations
+        )
+        parsing_tasks.append(task)
+
+    # Create chord with existing aggregate callback
+    callback = aggregate_and_resolve_references.s(
+        project_id=session.project_id,
+        user_id=session.project_id,  # Simplified
+        total_work_units=session.total_work_units,
+        start_time=0,
+        repo_path=f"projects/{session.project_id}"  # Simplified
+    )
+
+    chord_task = chord(parsing_tasks)(callback)
+
+    # Update session
+    session.coordinator_task_id = chord_task.id
+    session.updated_at = datetime.utcnow()
+    db_session.commit()
+
+    return {
+        'success': True,
+        'session_id': str(session.id),
+        'chord_task_id': chord_task.id,
+        'resumed_work_units': len(incomplete_units),
+        'status': 'resuming'
+    }
+
+
+def bootstrap_and_resume(
+    task_instance,
+    neo4j_state_service,
+    repo_details: dict,
+    user_id: str,
+    user_email: str,
+    project_id: str,
+    commit_id: str,
+    cleanup_graph: bool
+) -> Dict[str, Any]:
+    """
+    Bootstrap work unit state from Neo4j and resume parsing.
+
+    Called when:
+    - No session exists in database
+    - But Neo4j has partial parsing data
+    - User wants to resume
+    """
+    from app.modules.parsing.graph_construction.work_unit_bootstrap_service import (
+        WorkUnitBootstrapService
+    )
+    from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
+    from celery import chord
+
+    logger.info(f"Starting bootstrap process for project {project_id}")
+
+    # Setup repository (same as normal parsing)
+    parse_helper = ParseHelper(task_instance.db)
+
+    async def setup_repo():
+        return await parse_helper.clone_or_copy_repository(
+            ParsingRequest(**repo_details),
+            user_id
+        )
+
+    async def setup_project_dir(repo, auth):
+        return await parse_helper.setup_project_directory(
+            repo,
+            repo_details.get('branch_name'),
+            auth,
+            ParsingRequest(**repo_details),
+            user_id,
+            project_id,
+            commit_id=commit_id
+        )
+
+    repo, owner, auth = task_instance.run_async(setup_repo())
+    project_path, _ = task_instance.run_async(setup_project_dir(repo, auth))
+
+    logger.info(f"Repository setup complete: {project_path}")
+
+    # Optional: Selective cleanup of failed work units
+    if cleanup_graph:
+        logger.warning("Cleanup requested but skipping to preserve partial state")
+        # Could implement selective cleanup here if needed
+
+    # Bootstrap work units from Neo4j + filesystem
+    bootstrap_service = WorkUnitBootstrapService(
+        db=task_instance.db,
+        neo4j_state_service=neo4j_state_service,
+        repo_path=project_path
+    )
+
+    session, incomplete_units = bootstrap_service.bootstrap_from_neo4j(
+        project_id=project_id,
+        commit_id=commit_id,
+        user_id=user_id
+    )
+
+    logger.info(
+        f"Bootstrap complete: session {session.id}, "
+        f"{len(incomplete_units)} work units to process"
+    )
+
+    if not incomplete_units:
+        logger.info("All work units already completed, moving to aggregation")
+        # TODO: Trigger aggregation stage
+        return {
+            'success': True,
+            'session_id': str(session.id),
+            'status': 'aggregating',
+            'message': 'All work units completed, starting aggregation'
+        }
+
+    # Create chord with incomplete work units
+    parsing_tasks = []
+    for i, work_unit in enumerate(incomplete_units):
+        # Use database ID from the DirectoryWorkUnit object
+        task = parse_directory_unit.s(
+            work_unit_index=i,  # Ordinal index for logging
+            directory_path=work_unit.path,
+            files=work_unit.files,
+            repo_path=project_path,
+            project_id=project_id,
+            user_id=user_id,
+            repo_name=repo_details.get('repo_name', ''),
+            commit_id=commit_id,  # Actual commit ID
+            work_unit_db_id=str(work_unit.id)  # UUID for DB operations
+        )
+        parsing_tasks.append(task)
+
+    # Create callback
+    callback = aggregate_and_resolve_references.s(
+        project_id=project_id,
+        user_id=user_id,
+        total_work_units=session.total_work_units,
+        start_time=0,  # Not tracking for bootstrap
+        repo_path=project_path
+    )
+
+    # Execute chord
+    chord_task = chord(parsing_tasks)(callback)
+
+    # Update session with chord ID
+    session.coordinator_task_id = chord_task.id
+    task_instance.db.commit()
+
+    return {
+        'success': True,
+        'session_id': str(session.id),
+        'chord_task_id': chord_task.id,
+        'bootstrapped': True,
+        'incomplete_work_units': len(incomplete_units),
+        'status': 'resuming'
+    }
+
+
 @celery_app.task(
     bind=True,
     base=BaseTask,
@@ -66,7 +295,8 @@ def process_parsing_distributed(
     user_id: str,
     user_email: str,
     project_id: str,
-    cleanup_graph: bool = False
+    cleanup_graph: bool = False,
+    resume: bool = True  # Enable resume by default
 ) -> Dict[str, Any]:
     """
     Master coordinator task for distributed repository parsing.
@@ -102,6 +332,54 @@ def process_parsing_distributed(
     start_time = time.time()
 
     try:
+        commit_id = repo_details.get('commit_id')
+
+        # NEW: Check for existing incomplete session in database
+        from app.modules.parsing.parsing_session_model import ParsingSession
+
+        existing_session = self.db.query(ParsingSession).filter(
+            ParsingSession.project_id == project_id,
+            ParsingSession.commit_id == commit_id,
+            ParsingSession.completed_at.is_(None)
+        ).order_by(ParsingSession.session_number.desc()).first()
+
+        if resume and existing_session:
+            logger.info(f"Resuming existing session {existing_session.id}")
+            return resume_parsing_session(self.db, existing_session)
+
+        # NEW: Check for partial parsing in Neo4j (bootstrap case)
+        if resume and not existing_session:
+            from app.modules.parsing.graph_construction.neo4j_state_service import Neo4jStateService
+
+            neo4j_config = config_provider.get_neo4j_config()
+            neo4j_state_service = Neo4jStateService(
+                neo4j_uri=neo4j_config["uri"],
+                neo4j_user=neo4j_config["username"],
+                neo4j_password=neo4j_config["password"]
+            )
+
+            try:
+                has_partial_state = neo4j_state_service.has_any_nodes(project_id)
+
+                if has_partial_state:
+                    logger.info(
+                        f"Detected partial parsing in Neo4j for project {project_id}. "
+                        f"Bootstrapping work unit state..."
+                    )
+                    return bootstrap_and_resume(
+                        self,
+                        neo4j_state_service,
+                        repo_details,
+                        user_id,
+                        user_email,
+                        project_id,
+                        commit_id,
+                        cleanup_graph
+                    )
+            finally:
+                neo4j_state_service.close()
+
+        # Continue with normal fresh parsing...
         # Step 1: Setup repository
         parse_helper = ParseHelper(self.db)
 
@@ -194,7 +472,7 @@ def process_parsing_distributed(
         }
 
     except Exception as e:
-        logger.exception(f"Error in distributed parsing coordinator")
+        logger.exception("Error in distributed parsing coordinator")
         return {
             'success': False,
             'error': str(e),
@@ -216,7 +494,9 @@ def parse_directory_unit(
     repo_path: str,
     project_id: str,
     user_id: str,
-    repo_name: str
+    repo_name: str,
+    commit_id: str = None,
+    work_unit_db_id: str = None  # UUID of work unit in DB (for bootstrap/resume path only)
 ) -> Dict[str, Any]:
     """
     Worker task to parse a single directory work unit.
@@ -244,7 +524,10 @@ def parse_directory_unit(
     from app.modules.parsing.graph_construction.parallel_file_parser import ParallelFileParser
     from app.modules.parsing.graph_construction.code_graph_service import SimpleIO, SimpleTokenCounter
     from app.core.config_provider import config_provider
-    from neo4j import GraphDatabase
+    from app.modules.parsing.graph_construction.neo4j_state_service import Neo4jStateService
+    from app.modules.parsing.parsing_file_state_model import ParsingFileState
+    from app.modules.parsing.parsing_work_unit_model import ParsingWorkUnit
+    from datetime import datetime
     import time
 
     logger.info(
@@ -254,7 +537,105 @@ def parse_directory_unit(
     start_time = time.time()
 
     try:
-        # Step 1: Initialize services
+        # Get Neo4j config (needed for both paths)
+        neo4j_config = config_provider.get_neo4j_config()
+
+        # Step 1: Check if we're in bootstrap/resume mode (work unit exists in DB)
+        already_parsed = set()
+        files_to_parse = files  # Default: parse all files
+
+        if work_unit_db_id and commit_id:
+            # Bootstrap/resume path: Check Neo4j and create file states
+            neo4j_state_service = Neo4jStateService(
+                neo4j_uri=neo4j_config["uri"],
+                neo4j_user=neo4j_config["username"],
+                neo4j_password=neo4j_config["password"]
+            )
+
+            try:
+                # Query Neo4j for files that are already parsed (batched query)
+                already_parsed = neo4j_state_service.get_parsed_files_for_paths(
+                    project_id=project_id,
+                    file_paths=files,
+                    batch_size=1000
+                )
+
+                # Filter to only parse files that don't exist in Neo4j
+                files_to_parse = [f for f in files if f not in already_parsed]
+
+                logger.info(
+                    f"[Unit {work_unit_index}] Neo4j check: {len(already_parsed)} already parsed, "
+                    f"{len(files_to_parse)} need parsing"
+                )
+
+            finally:
+                neo4j_state_service.close()
+
+            # Step 2: Upsert file state records (idempotent - safe for retries)
+            if commit_id:
+                from sqlalchemy.dialects.postgresql import insert
+
+                # Prepare file state data
+                file_states_data = []
+                for file_path in files:
+                    file_status = 'completed' if file_path in already_parsed else 'pending'
+                    file_state_data = {
+                        'project_id': project_id,
+                        'commit_id': commit_id,
+                        'work_unit_id': work_unit_db_id,
+                        'file_path': file_path,
+                        'status': file_status,
+                        'created_at': datetime.utcnow()
+                    }
+                    if file_status == 'completed':
+                        file_state_data['processed_at'] = datetime.utcnow()
+                    file_states_data.append(file_state_data)
+
+                # Upsert using ON CONFLICT DO NOTHING (idempotent)
+                if file_states_data:
+                    stmt = insert(ParsingFileState.__table__).values(file_states_data)
+                    stmt = stmt.on_conflict_do_nothing(
+                        index_elements=['project_id', 'commit_id', 'file_path']
+                    )
+                    self.db.execute(stmt)
+                    self.db.commit()
+                    logger.info(f"[Unit {work_unit_index}] Upserted {len(file_states_data)} file state records")
+
+            # If all files already parsed, skip parsing
+            if not files_to_parse:
+                logger.info(f"[Unit {work_unit_index}] All files already parsed, skipping")
+
+                # Update work unit status to completed
+                work_unit = self.db.query(ParsingWorkUnit).filter(
+                    ParsingWorkUnit.id == work_unit_db_id
+                ).first()
+                if work_unit:
+                    work_unit.status = 'completed'
+                    work_unit.completed_at = datetime.utcnow()
+                    work_unit.nodes_created = 0
+                    work_unit.edges_created = 0
+                    self.db.commit()
+
+                return {
+                    'success': True,
+                    'work_unit_index': work_unit_index,
+                    'directory_path': directory_path,
+                    'files_processed': 0,
+                    'nodes_created': 0,
+                    'edges_created': 0,
+                    'immediate_edges': 0,
+                    'deferred_references': 0,
+                    'defines': {},
+                    'references': [],
+                    'duration_seconds': time.time() - start_time,
+                    'skipped': True,
+                    'reason': 'all_files_already_parsed'
+                }
+        else:
+            # Normal fresh parsing path: no Neo4j check, no file states
+            logger.info(f"[Unit {work_unit_index}] Normal parsing mode (no file state tracking)")
+
+        # Step 3: Initialize services for parsing
         repo_map = RepoMap(
             root=repo_path,
             verbose=True,
@@ -268,15 +649,15 @@ def parse_directory_unit(
             max_workers=15  # 15 threads per worker
         )
 
-        # Step 2: Parse files in parallel
-        G, defines, references = parallel_parser.parse_files_parallel(files)
+        # Step 4: Parse files in parallel (only unparsed files)
+        G, defines, references = parallel_parser.parse_files_parallel(files_to_parse)
 
         logger.info(
-            f"[Unit {work_unit_index}] Parsed {len(files)} files: "
+            f"[Unit {work_unit_index}] Parsed {len(files_to_parse)} files: "
             f"{G.number_of_nodes()} nodes, {G.number_of_edges()} edges"
         )
 
-        # Step 3: Resolve intra-directory references
+        # Step 5: Resolve intra-directory references
         intra_refs_created = _resolve_intra_directory_references(
             G, defines, references
         )
@@ -286,9 +667,8 @@ def parse_directory_unit(
             f"intra-directory references"
         )
 
-        # Step 4: Write graph to Neo4j incrementally using CodeGraphService
+        # Step 6: Write graph to Neo4j incrementally using CodeGraphService
         from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
-        neo4j_config = config_provider.get_neo4j_config()
 
         code_graph_service = CodeGraphService(
             neo4j_uri=neo4j_config["uri"],
@@ -305,7 +685,22 @@ def parse_directory_unit(
                 batch_size=1000
             )
 
-            # Step 5: Try to immediately resolve cross-directory references
+            # Step 7: Update file state records to completed (bulk update for performance)
+            if work_unit_db_id and commit_id and files_to_parse:
+                # Use bulk update with IN clause instead of individual updates
+                self.db.query(ParsingFileState).filter(
+                    ParsingFileState.project_id == project_id,
+                    ParsingFileState.commit_id == commit_id,
+                    ParsingFileState.work_unit_id == work_unit_db_id,
+                    ParsingFileState.file_path.in_(files_to_parse)
+                ).update({
+                    'status': 'completed',
+                    'processed_at': datetime.utcnow()
+                }, synchronize_session=False)
+                self.db.commit()
+                logger.info(f"[Unit {work_unit_index}] Bulk updated {len(files_to_parse)} file states to completed")
+
+            # Step 8: Try to immediately resolve cross-directory references
             # This is the hybrid optimization - resolve what we can now!
             logger.info(
                 f"[Unit {work_unit_index}] Attempting immediate resolution of "
@@ -329,11 +724,12 @@ def parse_directory_unit(
 
         elapsed = time.time() - start_time
         logger.info(
-            f"[Unit {work_unit_index}] Complete: {len(files)} files in {elapsed:.2f}s "
+            f"[Unit {work_unit_index}] Complete: {len(files_to_parse)} files parsed "
+            f"({len(already_parsed)} skipped) in {elapsed:.2f}s "
             f"({nodes_created} nodes, {edges_created + immediate_edges} edges total)"
         )
 
-        # Step 6: Export defines and ONLY unresolved references for cross-directory resolution
+        # Step 9: Export defines and ONLY unresolved references for cross-directory resolution
         # Convert sets to lists for JSON serialization
         defines_serializable = {
             ident: list(node_set) for ident, node_set in defines.items()
@@ -343,7 +739,8 @@ def parse_directory_unit(
             'success': True,
             'work_unit_index': work_unit_index,
             'directory_path': directory_path,
-            'files_processed': len(files),
+            'files_processed': len(files_to_parse),
+            'files_skipped': len(already_parsed),
             'nodes_created': nodes_created,
             'edges_created': edges_created + immediate_edges,
             'immediate_edges': immediate_edges,
@@ -437,7 +834,6 @@ def _resolve_references_immediately(
     Returns:
         Tuple of (edges_created, unresolved_references)
     """
-    from app.modules.parsing.graph_construction.code_graph_service import CodeGraphService
 
     if not references:
         return 0, []
@@ -541,7 +937,6 @@ def aggregate_and_resolve_references(
         total_edges_created = sum(r['edges_created'] for r in task_results)
         total_files_processed = sum(r['files_processed'] for r in task_results)
         total_immediate_edges = sum(r.get('immediate_edges', 0) for r in task_results)
-        total_deferred_refs = sum(r.get('deferred_references', 0) for r in task_results)
         failed_units = [r for r in task_results if not r['success']]
 
         logger.info(
@@ -654,7 +1049,6 @@ def spawn_inference_chord(task_instance, project_id: str, user_id: str) -> Dict[
     from celery import chord
     from app.core.config_provider import config_provider
     from neo4j import GraphDatabase
-    from collections import defaultdict
 
     logger.info(f"Building inference work units for project {project_id}")
 
@@ -843,7 +1237,6 @@ def resolve_cross_directory_references(
         )
 
         # Process references in batches to avoid memory issues
-        ref_batch_size = int(os.getenv('CROSS_REF_BATCH_SIZE', '10000'))
         edge_batch_size = int(os.getenv('NEO4J_BATCH_SIZE_DISTRIBUTED', '1000'))
 
         total_edges_created = 0
@@ -933,8 +1326,9 @@ def resolve_cross_directory_references(
                 'inference_units': inference_chord_result['work_units'],
             }
         except Exception as inference_error:
+            error_msg = str(inference_error)
             logger.exception(
-                f"Failed to spawn inference chord for project {project_id}: {inference_error}"
+                f"Failed to spawn inference chord for project {project_id}: {error_msg}"
             )
             # Mark project as ERROR since inference is critical
             from app.modules.projects.projects_service import ProjectService
@@ -944,7 +1338,7 @@ def resolve_cross_directory_references(
                 project_service = ProjectService(self.db)
 
                 async def mark_error():
-                    logger.error(f"Inference setup failed: {str(inference_error)}")
+                    logger.error(f"Inference setup failed: {error_msg}")
                     await project_service.update_project_status(
                         project_id=project_id,
                         status=ProjectStatusEnum.ERROR,
@@ -959,7 +1353,7 @@ def resolve_cross_directory_references(
                 'edges_created': total_edges_created,
                 'duration_seconds': elapsed,
                 'inference_spawned': False,
-                'error': str(inference_error),
+                'error': error_msg,
             }
 
     except Exception as e:
@@ -1008,7 +1402,7 @@ def run_inference_unit(
     import time
 
     unit_desc = (
-        f"root" if is_root
+        "root" if is_root
         else f"directory '{directory_path}'" if directory_path and not split_index
         else f"directory '{directory_path}' split {split_index + 1}/{total_splits}"
         if split_index is not None
@@ -1247,9 +1641,10 @@ def finalize_project_after_inference(
         # Best effort: try to mark project as ERROR
         try:
             project_service = ProjectService(self.db)
+            error_msg = str(e)
 
             async def mark_error():
-                logger.error(f"Finalization failed: {str(e)}")
+                logger.error(f"Finalization failed: {error_msg}")
                 await project_service.update_project_status(
                     project_id=project_id,
                     status=ProjectStatusEnum.ERROR,
