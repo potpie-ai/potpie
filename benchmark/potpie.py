@@ -261,14 +261,16 @@ async def send_message(
     coordinator: ReadinessCoordinator,
     project_id: str,
     content: str,
+    agent_id: str = "codebase_qna_agent",
 ) -> str:
     await coordinator.wait_ready(project_id)
-    return await client.send_message(project_id, content)
+    return await client.send_message(project_id, content, agent_id)
 
 
 async def get_all_st_answers(
     problems: list[dict[str, str]],
     repo_dict: dict[tuple[str, str], dict[tuple[str, int], Path]],
+    task: str = "qa",
 ):
     project_cache = diskcache.Cache("project_cache")
     user_id = os.environ["defaultUsername"]
@@ -282,9 +284,16 @@ async def get_all_st_answers(
         question_tasks: list[Awaitable[str]] = []
         try:
             for problem in problems:
-                repo_url = problem["repo_url"]
-                commit_id = problem["commit_id"]
-                problem_id = problem["problem_id"]
+                if task == "codegen":
+                    # SWE-bench format: "django/django" -> "https://github.com/django/django"
+                    repo_url = f"https://github.com/{problem['repo']}"
+                    commit_id = problem["base_commit"]
+                    problem_id = problem["instance_id"]
+                else:
+                    repo_url = problem["repo_url"]
+                    commit_id = problem["commit_id"]
+                    problem_id = problem["problem_id"]
+                
                 worktree_maps = repo_dict[(repo_url, commit_id)]
                 # select a repo for project id caching
                 # All worktrees are the same for now
@@ -322,6 +331,98 @@ async def get_all_st_answers(
                     i += 1
 
             answers = await asyncio.gather(*question_tasks)
+            return answers
+        finally:
+            await worker.stop()
+            worker_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker_task
+
+
+async def get_all_codegen_answers(
+    problems: list[dict[str, str]],
+    repo_dict: dict[tuple[str, str], dict[tuple[str, int], Path]],
+):
+    """Get code generation answers from Potpie using the code_generation_agent.
+    
+    Important: Unlike QA, code generation requires SEPARATE project_ids for each batch
+    because the agent modifies files. Each batch must operate on its own isolated worktree
+    to prevent test contamination.
+    
+    Args:
+        problems: List of problems with repo_url, commit_id, problem_id, and problem_statement
+        repo_dict: Dictionary mapping (repo_url, commit_id) to {(problem_id, batch_idx): worktree_path}
+    
+    Returns:
+        List of generated code/patch strings
+    """
+    project_cache = diskcache.Cache("project_cache_codegen")
+    user_id = os.environ["defaultUsername"]
+    user_token = os.environ["INTERNAL_ADMIN_SECRET"]
+    coordinator = ReadinessCoordinator()
+    queue: asyncio.Queue[str] = asyncio.Queue()
+
+    async with PotpieClient(user_id=user_id, user_token=user_token) as client:
+        worker = PollingWorker(client, coordinator, queue)
+        worker_task = asyncio.create_task(worker.run())
+        codegen_tasks: list[Awaitable[str]] = []
+        try:
+            for problem in problems:
+                repo_url = f"https://github.com/{problem['repo']}"
+                commit_id = problem["base_commit"]
+                problem_id = problem["instance_id"]
+                worktree_maps = repo_dict[(repo_url, commit_id)]
+
+                # For code generation: Parse EACH worktree separately to get independent project_ids
+                i = 0
+                while (problem_id, i) in worktree_maps:
+                    repo_path = worktree_maps[(problem_id, i)]
+                    cache_key = f"{repo_url}_{commit_id}_{problem_id}_{i}"
+                    cached_project_id = project_cache.get(cache_key)
+                    project_id = None
+                    
+                    if cached_project_id is not None:
+                        existing_projects = await client.get_available_projects()
+                        existing_project_ids = {
+                            project["id"] for project in existing_projects
+                        }
+                        if cached_project_id in existing_project_ids:
+                            logger.info(
+                                "Using cached project_id for worktree",
+                                project_id=cached_project_id,
+                                repo_url=repo_url,
+                                commit_id=commit_id,
+                                problem_id=problem_id,
+                                batch=i,
+                            )
+                            project_id = str(cached_project_id)
+
+                    if project_id is None:
+                        project_id = await client.post_parse(commit_id, repo_path)
+                        project_cache[cache_key] = project_id
+                        logger.info(
+                            "Parsed new worktree for code generation",
+                            project_id=project_id,
+                            repo_url=repo_url,
+                            problem_id=problem_id,
+                            batch=i,
+                        )
+                    
+                    await _enqueue_project(coordinator, queue, project_id)
+                    
+                    # Each task uses its own project_id (pointing to its own worktree)
+                    codegen_tasks.append(
+                        send_message(
+                            client,
+                            coordinator,
+                            project_id,
+                            problem["problem_statement"],
+                            agent_id="code_generation_agent",
+                        )
+                    )
+                    i += 1
+
+            answers = await asyncio.gather(*codegen_tasks)
             return answers
         finally:
             await worker.stop()
