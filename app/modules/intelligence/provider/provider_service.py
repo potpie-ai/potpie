@@ -373,6 +373,9 @@ class ProviderService:
         litellm.modify_params = True
         self.db = db
         self.user_id = user_id
+        
+        # Add API key cache to avoid repeated secret fetches
+        self._api_key_cache = {}
 
         # Load user preferences
         user_pref = db.query(UserPreferences).filter_by(user_id=user_id).first()
@@ -460,18 +463,28 @@ class ProviderService:
 
     def _get_api_key(self, provider: str) -> str:
         """Get API key for the specified provider."""
+        # Check cache first
+        if provider in self._api_key_cache:
+            return self._api_key_cache[provider]
+        
         env_key = os.getenv("LLM_API_KEY", None)
         if env_key:
+            self._api_key_cache[provider] = env_key
             return env_key
 
         try:
             secret = SecretManager.get_secret(provider, self.user_id, self.db)
+            # Cache the result
+            self._api_key_cache[provider] = secret
             return secret
         except Exception as e:
             if "404" in str(e):
                 env_key = os.getenv(f"{provider.upper()}_API_KEY")
                 if env_key:
+                    self._api_key_cache[provider] = env_key
                     return env_key
+                # Cache None to avoid retrying
+                self._api_key_cache[provider] = None
                 return None
             raise e
 
