@@ -83,6 +83,7 @@ class CodeGenAgent(ChatAgent):
                 "get_jira_project_users",
                 "fetch_file",
                 "analyze_code_structure",
+                "bash_command",
             ]
         )
         supports_pydantic = self.llm_provider.supports_pydantic("chat")
