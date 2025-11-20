@@ -59,11 +59,26 @@ class MainApp:
 
     def setup_sentry(self):
         if os.getenv("ENV") == "production":
-            sentry_sdk.init(
-                dsn=os.getenv("SENTRY_DSN"),
-                traces_sample_rate=0.25,
-                profiles_sample_rate=1.0,
-            )
+            try:
+                # Explicitly configure integrations to avoid auto-enabling Strawberry
+                # which causes crashes when Strawberry is not installed
+                from sentry_sdk.integrations.fastapi import FastApiIntegration
+                from sentry_sdk.integrations.logging import LoggingIntegration
+                from sentry_sdk.integrations.stdlib import StdlibIntegration
+
+                sentry_sdk.init(
+                    dsn=os.getenv("SENTRY_DSN"),
+                    traces_sample_rate=0.25,
+                    profiles_sample_rate=1.0,
+                    default_integrations=False,
+                    integrations=[
+                        FastApiIntegration(),
+                        LoggingIntegration(),
+                        StdlibIntegration(),
+                    ],
+                )
+            except Exception as e:
+                logging.warning(f"Sentry initialization failed (non-fatal): {e}")
 
     def setup_phoenix_tracing(self):
         try:
