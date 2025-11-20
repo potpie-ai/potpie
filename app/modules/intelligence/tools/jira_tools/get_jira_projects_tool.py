@@ -65,9 +65,7 @@ class GetJiraProjectsTool:
             # Limit max_results to reasonable bounds
             max_results = min(max(1, max_results), 100)
 
-            result = await asyncio.to_thread(
-                client.get_projects, start_at=0, max_results=max_results
-            )
+            result = await client.get_projects(start_at=0, max_results=max_results)
 
             return {
                 "success": True,

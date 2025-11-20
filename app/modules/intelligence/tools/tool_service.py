@@ -79,6 +79,15 @@ from app.modules.intelligence.tools.jira_tools import (
     get_jira_project_users_tool,
     link_jira_issues_tool,
 )
+from app.modules.intelligence.tools.confluence_tools import (
+    get_confluence_spaces_tool,
+    get_confluence_page_tool,
+    search_confluence_pages_tool,
+    get_confluence_space_pages_tool,
+    create_confluence_page_tool,
+    update_confluence_page_tool,
+    add_confluence_comment_tool,
+)
 from app.modules.intelligence.tools.web_tools.web_search_tool import web_search_tool
 from app.modules.intelligence.provider.provider_service import ProviderService
 from langchain_core.tools import StructuredTool
@@ -157,6 +166,13 @@ class ToolService:
                 self.db, self.user_id
             ),
             "link_jira_issues": link_jira_issues_tool(self.db, self.user_id),
+            "get_confluence_spaces": get_confluence_spaces_tool(self.db, self.user_id),
+            "get_confluence_page": get_confluence_page_tool(self.db, self.user_id),
+            "search_confluence_pages": search_confluence_pages_tool(self.db, self.user_id),
+            "get_confluence_space_pages": get_confluence_space_pages_tool(self.db, self.user_id),
+            "create_confluence_page": create_confluence_page_tool(self.db, self.user_id),
+            "update_confluence_page": update_confluence_page_tool(self.db, self.user_id),
+            "add_confluence_comment": add_confluence_comment_tool(self.db, self.user_id),
             "intelligent_code_graph": get_intelligent_code_graph_tool(
                 self.db, self.provider_service, self.user_id
             ),

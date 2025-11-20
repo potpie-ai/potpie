@@ -3,8 +3,12 @@ from sqlalchemy.orm import Session
 from starlette.config import Config
 from starlette.responses import RedirectResponse
 from typing import Dict, Any, Optional
-import logging
+import hmac
+import hashlib
+import base64
+import json
 import time
+import logging
 import urllib.parse
 import jwt
 
@@ -15,6 +19,7 @@ from app.modules.auth.auth_service import AuthService
 from .sentry_oauth_v2 import SentryOAuthV2
 from .linear_oauth import LinearOAuth
 from .jira_oauth import JiraOAuth
+from .confluence_oauth import ConfluenceOAuth
 from .integrations_service import IntegrationsService
 from .integrations_schema import (
     OAuthInitiateRequest,
@@ -28,6 +33,9 @@ from .integrations_schema import (
     JiraIntegrationStatus,
     JiraSaveRequest,
     JiraSaveResponse,
+    ConfluenceIntegrationStatus,
+    ConfluenceSaveRequest,
+    ConfluenceSaveResponse,
     IntegrationCreateRequest,
     IntegrationUpdateRequest,
     IntegrationResponse,
@@ -59,9 +67,76 @@ def get_jira_oauth() -> JiraOAuth:
     return JiraOAuth(config)
 
 
+def get_confluence_oauth() -> ConfluenceOAuth:
+    """Dependency to get Confluence OAuth integration instance"""
+    config = Config()
+    return ConfluenceOAuth(config)
+
+
 def get_integrations_service(db: Session = Depends(get_db)) -> IntegrationsService:
     """Dependency to get integrations service instance with database session"""
     return IntegrationsService(db)
+
+
+def _sign_oauth_state(raw_state: str | None, expires: int = 600) -> str | None:
+    """Sign a state string with HMAC to protect against tampering.
+
+    Returns a token of the form: base64(payload).hex(hmac)
+    payload is JSON: {"u": <raw_state>, "e": <expiry_ts>} encoded in utf-8 then base64-url-safe.
+    If raw_state is None or empty, returns None.
+    """
+    if not raw_state:
+        return None
+
+    config = Config()
+    secret = config("OAUTH_STATE_SECRET", default="")
+    if not secret:
+        # If no secret configured, avoid signing (dev fallback)
+        return raw_state
+
+    expiry = int(time.time()) + int(expires)
+    payload = {"u": raw_state, "e": expiry}
+    payload_json = json.dumps(payload, separators=(",", ":"))
+    payload_b64 = base64.urlsafe_b64encode(payload_json.encode("utf-8")).decode("utf-8")
+    sig = hmac.new(
+        secret.encode("utf-8"), payload_b64.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    return f"{payload_b64}.{sig}"
+
+
+def _verify_oauth_state(token: str | None) -> Optional[str]:
+    """Verify signed state token and return the embedded user_id (raw_state).
+
+    Returns None if verification fails. If no secret configured, returns token unchanged.
+    """
+    if not token:
+        return None
+
+    config = Config()
+    secret = config("OAUTH_STATE_SECRET", default="")
+    if not secret:
+        # No secret configured – assume token is raw state
+        return token
+
+    try:
+        if "." not in token:
+            return None
+        payload_b64, sig = token.rsplit(".", 1)
+        expected = hmac.new(
+            secret.encode("utf-8"), payload_b64.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return None
+        payload_json = base64.urlsafe_b64decode(payload_b64.encode("utf-8")).decode(
+            "utf-8"
+        )
+        payload = json.loads(payload_json)
+        expiry = int(payload.get("e", 0))
+        if int(time.time()) > expiry:
+            return None
+        return payload.get("u")
+    except Exception:
+        return None
 
 
 @router.post("/sentry/initiate")
@@ -76,9 +151,14 @@ async def initiate_sentry_oauth(
         logging.info(f"Redirect URI: {request.redirect_uri}")
         logging.info(f"State: {request.state}")
 
-        # Generate authorization URL
+        # Generate authorization URL. Sign the state to prevent tampering.
+        signed_state = (
+            _sign_oauth_state(request.state)
+            if getattr(request, "state", None)
+            else None
+        )
         auth_url = sentry_oauth.get_authorization_url(
-            redirect_uri=request.redirect_uri, state=request.state or None
+            redirect_uri=request.redirect_uri, state=signed_state
         )
 
         logging.info(f"Generated authorization URL: {auth_url}")
@@ -103,13 +183,22 @@ async def initiate_sentry_oauth(
 @router.get("/sentry/callback")
 async def sentry_oauth_callback(
     request: Request,
-    user_id: str,
     sentry_oauth: SentryOAuthV2 = Depends(get_sentry_oauth),
 ) -> OAuthStatusResponse:
-    """Handle Sentry OAuth callback"""
+    """Handle Sentry OAuth callback. Uses signed state to identify user."""
     try:
+        # Extract and verify state to get user_id
+        state = request.query_params.get("state")
+        user_id = _verify_oauth_state(state)
+        if not user_id:
+            raise HTTPException(
+                status_code=400, detail="Invalid or missing OAuth state"
+            )
+
         result = sentry_oauth.handle_callback(request, user_id)
         return OAuthStatusResponse(**result)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"OAuth callback failed: {str(e)}")
 
@@ -254,13 +343,14 @@ async def linear_oauth_redirect(
 
         # Get state parameter if provided
         state = request.query_params.get("state")
+        signed_state = _sign_oauth_state(state) if state else None
 
         # Get scope parameter if provided (default to read)
         scope = request.query_params.get("scope", "read")
 
         # Generate authorization URL
         auth_url = linear_oauth.get_authorization_url(
-            redirect_uri=redirect_uri, state=state, scope=scope
+            redirect_uri=redirect_uri, state=signed_state, scope=scope
         )
 
         # Redirect to Linear OAuth
@@ -275,7 +365,6 @@ async def linear_oauth_redirect(
 @router.get("/linear/callback")
 async def linear_oauth_callback(
     request: Request,
-    user_id: Optional[str] = None,
     linear_oauth: LinearOAuth = Depends(get_linear_oauth),
 ):
     """Handle Linear OAuth callback"""
@@ -286,16 +375,12 @@ async def linear_oauth_callback(
         error = request.query_params.get("error")
         error_description = request.query_params.get("error_description")
 
-        # If no user_id provided, use a default or extract from state
+        # Verify signed state to get user_id
+        user_id = _verify_oauth_state(state)
         if not user_id:
-            # Try to get user_id from state parameter if it contains user info
-            if state and state != "SECURE_RANDOM":
-                # If state contains user info, extract it
-                user_id = state
-            else:
-                # Use a default user_id for now
-                user_id = "default_user"
-                logging.warning("No user_id provided in callback, using default_user")
+            raise HTTPException(
+                status_code=400, detail="Invalid or missing OAuth state"
+            )
 
         # If we have an authorization code, exchange it for tokens and save to database
         if code:
@@ -483,8 +568,13 @@ async def initiate_jira_oauth(
             request.state,
         )
 
+        signed_state = (
+            _sign_oauth_state(request.state)
+            if getattr(request, "state", None)
+            else None
+        )
         auth_url = jira_oauth.get_authorization_url(
-            redirect_uri=request.redirect_uri, state=request.state
+            redirect_uri=request.redirect_uri, state=signed_state
         )
 
         return {
@@ -508,7 +598,6 @@ async def initiate_jira_oauth(
 @router.get("/jira/callback")
 async def jira_oauth_callback(
     request: Request,
-    user_id: Optional[str] = None,
     jira_oauth: JiraOAuth = Depends(get_jira_oauth),
 ) -> Dict[str, Any]:
     """Handle Jira OAuth callback."""
@@ -519,12 +608,12 @@ async def jira_oauth_callback(
         error = request.query_params.get("error")
         error_description = request.query_params.get("error_description")
 
-        # Determine user_id: prefer explicit param, fall back to state or a default
+        # Verify signed state to get user_id
+        user_id = _verify_oauth_state(state)
         if not user_id:
-            if state and state != "SECURE_RANDOM":
-                user_id = state
-            else:
-                user_id = "default_user"
+            raise HTTPException(
+                status_code=400, detail="Invalid or missing OAuth state"
+            )
 
         # If we have an authorization code, exchange it for tokens and save to database
         if code:
@@ -806,6 +895,290 @@ async def save_jira_integration(
             success=False,
             data=None,
             error=f"Failed to save Jira integration: {str(e)}",
+        )
+
+
+@router.post("/confluence/initiate")
+async def initiate_confluence_oauth(
+    request: OAuthInitiateRequest,
+    confluence_oauth: ConfluenceOAuth = Depends(get_confluence_oauth),
+) -> Dict[str, Any]:
+    """Initiate Confluence OAuth flow."""
+    try:
+        logging.info(
+            "Initiating Confluence OAuth flow with redirect_uri=%s state=%s",
+            request.redirect_uri,
+            request.state,
+        )
+        signed_state = (
+            _sign_oauth_state(request.state)
+            if getattr(request, "state", None)
+            else None
+        )
+        auth_url = confluence_oauth.get_authorization_url(
+            redirect_uri=request.redirect_uri, state=signed_state
+        )
+        return {
+            "status": "success",
+            "authorization_url": auth_url,
+            "message": "Confluence OAuth flow initiated successfully",
+            "debug_info": {
+                "redirect_uri": request.redirect_uri,
+                "state": request.state,
+                "auth_url": auth_url,
+            },
+        }
+    except Exception as exc:
+        logging.error("Confluence OAuth initiation failed: %s", exc)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to initiate Confluence OAuth flow: {str(exc)}",
+        )
+
+
+@router.get("/confluence/callback")
+async def confluence_oauth_callback(
+    request: Request,
+    confluence_oauth: ConfluenceOAuth = Depends(get_confluence_oauth),
+) -> Dict[str, Any]:
+    """Handle Confluence OAuth callback."""
+    try:
+        # Extract OAuth params
+        code = request.query_params.get("code")
+        state = request.query_params.get("state")
+        error = request.query_params.get("error")
+        error_description = request.query_params.get("error_description")
+
+        # Verify signed state to get user_id
+        user_id = _verify_oauth_state(state)
+        if not user_id:
+            raise HTTPException(
+                status_code=400, detail="Invalid or missing OAuth state"
+            )
+
+        # If we have an authorization code, exchange it for tokens and save to database
+        if code:
+            # Create DB session and service
+            from app.core.database import SessionLocal
+
+            db = SessionLocal()
+            try:
+                integrations_service = IntegrationsService(db)
+
+                from .integrations_schema import ConfluenceSaveRequest
+                from datetime import datetime
+
+                # Prefer configured redirect URI so it exactly matches what's registered
+                config = Config()
+                redirect_uri = config("CONFLUENCE_REDIRECT_URI", default=None)
+
+                # If not configured, build a fallback using the incoming request's scheme/host/port
+                if not redirect_uri:
+                    scheme = request.url.scheme
+                    host = request.headers.get("host", "localhost")
+                    redirect_uri = (
+                        f"{scheme}://{host}/api/v1/integrations/confluence/callback"
+                    )
+
+                # Build the save request
+                save_request = ConfluenceSaveRequest(
+                    code=code,
+                    redirect_uri=redirect_uri,
+                    instance_name=f"Confluence-{datetime.now().strftime('%Y%m%d')}",
+                    user_id=user_id,
+                    integration_type="confluence",
+                    timestamp=datetime.now().isoformat(),
+                )
+
+                # Save the integration
+                result = await integrations_service.save_confluence_integration(
+                    save_request, user_id
+                )
+
+                # Redirect to frontend with success
+                frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
+                if frontend_url and not frontend_url.startswith(
+                    ("http://", "https://")
+                ):
+                    frontend_url = f"https://{frontend_url}"
+
+                redirect_url = f"{frontend_url}/integrations/confluence/redirect?success=true&user_id={user_id}&integration_id={result.get('integration_id', '')}"
+                return RedirectResponse(url=redirect_url)
+
+            except Exception as save_error:
+                logging.error(f"Error saving Confluence integration: {save_error}")
+                # Redirect to frontend with error
+                config = Config()
+                frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
+                if frontend_url and not frontend_url.startswith(
+                    ("http://", "https://")
+                ):
+                    frontend_url = f"https://{frontend_url}"
+
+                error_message = urllib.parse.quote(str(save_error), safe="")
+                redirect_url = f"{frontend_url}/integrations/confluence/redirect?error={error_message}&user_id={user_id}"
+                return RedirectResponse(url=redirect_url)
+            finally:
+                # Always close the database session to prevent connection leaks
+                db.close()
+        else:
+            # No code provided — redirect to frontend with error
+            config = Config()
+            frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
+            if frontend_url and not frontend_url.startswith(("http://", "https://")):
+                frontend_url = f"https://{frontend_url}"
+
+            error_msg = "No authorization code received from Confluence"
+            if error:
+                error_msg = f"OAuth error: {error}"
+            elif error_description:
+                error_msg = f"OAuth error: {error_description}"
+
+            error_message = urllib.parse.quote(error_msg, safe="")
+            redirect_url = f"{frontend_url}/integrations/confluence/redirect?error={error_message}&user_id={user_id}"
+            return RedirectResponse(url=redirect_url)
+
+    except Exception as exc:
+        logging.error("Confluence OAuth callback failed: %s", exc)
+        raise HTTPException(
+            status_code=400, detail=f"Confluence OAuth callback failed: {str(exc)}"
+        )
+
+
+@router.get("/confluence/status/{user_id}")
+async def get_confluence_status(
+    user_id: str,
+    integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
+) -> ConfluenceIntegrationStatus:
+    """Get Confluence integration status for a user"""
+    # Verify the authenticated user matches the requested user_id
+    if user["user_id"] != user_id:
+        raise HTTPException(
+            status_code=403, detail="Cannot access other users' integration status"
+        )
+    return await integrations_service.get_confluence_integration_status(user_id)
+
+
+@router.delete("/confluence/revoke/{user_id}")
+async def revoke_confluence_access(
+    user_id: str,
+    confluence_oauth: ConfluenceOAuth = Depends(get_confluence_oauth),
+    integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
+) -> Dict[str, Any]:
+    """Revoke Confluence OAuth access for a user"""
+    # Verify the authenticated user matches the requested user_id
+    if user["user_id"] != user_id:
+        raise HTTPException(
+            status_code=403, detail="Cannot revoke other users' integrations"
+        )
+
+    tokens_removed = confluence_oauth.revoke_access(user_id)
+    deactivated = (
+        await integrations_service.deactivate_confluence_integrations_for_user(user_id)
+    )
+
+    if tokens_removed or deactivated:
+        return {
+            "status": "success",
+            "message": "Confluence access revoked successfully",
+            "user_id": user_id,
+            "deactivated_integrations": deactivated,
+        }
+    raise HTTPException(status_code=500, detail="Failed to revoke Confluence access")
+
+
+@router.get("/confluence/{integration_id}/resources")
+async def get_confluence_resources(
+    integration_id: str,
+    integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
+) -> Dict[str, Any]:
+    """Get accessible Confluence resources for an integration"""
+    try:
+        # Verify the user owns this integration
+        integration = await integrations_service.get_integration_by_id(integration_id)
+        if not integration or integration.get("created_by") != user["user_id"]:
+            raise HTTPException(
+                status_code=403, detail="Integration not found or access denied"
+            )
+
+        result = await integrations_service.get_confluence_accessible_resources(
+            integration_id
+        )
+        return {
+            "status": "success",
+            "resources": result.get("resources", []),
+            "site_id": result.get("site_id"),
+            "site_url": result.get("site_url"),
+            "integration_id": integration_id,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logging.error(
+            f"Error fetching Confluence resources for integration {integration_id}: {exc}"
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch Confluence resources: {str(exc)}",
+        )
+
+
+@router.get("/confluence/{integration_id}/spaces")
+async def get_confluence_spaces(
+    integration_id: str,
+    integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
+) -> Dict[str, Any]:
+    """Get Confluence spaces for an integration"""
+    try:
+        # Verify the user owns this integration
+        integration = await integrations_service.get_integration_by_id(integration_id)
+        if not integration or integration.get("created_by") != user["user_id"]:
+            raise HTTPException(
+                status_code=403, detail="Integration not found or access denied"
+            )
+
+        spaces = await integrations_service.get_confluence_spaces(integration_id)
+        return {
+            "status": "success",
+            "spaces": spaces,
+            "integration_id": integration_id,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logging.error(
+            f"Error fetching Confluence spaces for integration {integration_id}: {exc}"
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch Confluence spaces: {str(exc)}",
+        )
+
+
+@router.post("/confluence/save")
+async def save_confluence_integration(
+    request: ConfluenceSaveRequest,
+    integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
+) -> ConfluenceSaveResponse:
+    """Save Confluence integration after OAuth callback"""
+    try:
+        # Use authenticated user id and pass to service
+        user_id = user["user_id"]
+        result = await integrations_service.save_confluence_integration(
+            request, user_id
+        )
+        return ConfluenceSaveResponse(success=True, data=result, error=None)
+    except Exception as e:
+        logging.error(f"Error saving Confluence integration: {str(e)}")
+        return ConfluenceSaveResponse(
+            success=False,
+            data=None,
+            error=f"Failed to save Confluence integration: {str(e)}",
         )
 
 
