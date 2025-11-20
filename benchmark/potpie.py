@@ -293,7 +293,7 @@ async def get_all_st_answers(
                     repo_url = problem["repo_url"]
                     commit_id = problem["commit_id"]
                     problem_id = problem["problem_id"]
-                
+
                 worktree_maps = repo_dict[(repo_url, commit_id)]
                 # select a repo for project id caching
                 # All worktrees are the same for now
@@ -344,15 +344,15 @@ async def get_all_codegen_answers(
     repo_dict: dict[tuple[str, str], dict[tuple[str, int], Path]],
 ):
     """Get code generation answers from Potpie using the code_generation_agent.
-    
+
     Important: Unlike QA, code generation requires SEPARATE project_ids for each batch
     because the agent modifies files. Each batch must operate on its own isolated worktree
     to prevent test contamination.
-    
+
     Args:
         problems: List of problems with repo_url, commit_id, problem_id, and problem_statement
         repo_dict: Dictionary mapping (repo_url, commit_id) to {(problem_id, batch_idx): worktree_path}
-    
+
     Returns:
         List of generated code/patch strings
     """
@@ -380,7 +380,7 @@ async def get_all_codegen_answers(
                     cache_key = f"{repo_url}_{commit_id}_{problem_id}_{i}"
                     cached_project_id = project_cache.get(cache_key)
                     project_id = None
-                    
+
                     if cached_project_id is not None:
                         existing_projects = await client.get_available_projects()
                         existing_project_ids = {
@@ -407,9 +407,9 @@ async def get_all_codegen_answers(
                             problem_id=problem_id,
                             batch=i,
                         )
-                    
+
                     await _enqueue_project(coordinator, queue, project_id)
-                    
+
                     # Each task uses its own project_id (pointing to its own worktree)
                     codegen_tasks.append(
                         send_message(

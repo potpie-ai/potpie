@@ -373,7 +373,7 @@ class ProviderService:
         litellm.modify_params = True
         self.db = db
         self.user_id = user_id
-        
+
         # Add API key cache to avoid repeated secret fetches
         self._api_key_cache = {}
 
@@ -466,7 +466,7 @@ class ProviderService:
         # Check cache first
         if provider in self._api_key_cache:
             return self._api_key_cache[provider]
-        
+
         env_key = os.getenv("LLM_API_KEY", None)
         if env_key:
             self._api_key_cache[provider] = env_key

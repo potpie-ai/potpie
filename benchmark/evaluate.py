@@ -79,10 +79,10 @@ Examples:
         print(f"Error: Input file '{args.input}' not found.", file=sys.stderr)
         sys.exit(1)
 
-    assert all(agent in get_available_agents() for agent in args.agents), (
-        "Invalid Agent(s): {}".format(
-            ", ".join(set(args.agents) - set(get_available_agents()))
-        )
+    assert all(
+        agent in get_available_agents() for agent in args.agents
+    ), "Invalid Agent(s): {}".format(
+        ", ".join(set(args.agents) - set(get_available_agents()))
     )
 
     logger.info("Evaluating tools: {}", ", ".join(args.agents))
@@ -96,7 +96,11 @@ Examples:
     )
 
     repo_map, summary = prepare_worktrees(
-        problem_sets, base_dir="/tmp/repos_batch", batch_no=nbatch, max_workers=6, task=args.task
+        problem_sets,
+        base_dir="/tmp/repos_batch",
+        batch_no=nbatch,
+        max_workers=6,
+        task=args.task,
     )
     # repo_dict = worktree_results
 
@@ -105,10 +109,10 @@ Examples:
         metric = code_correctness
         expected_column = "patch"  # SWE-bench uses "patch" for expected output
         input_column = "problem_statement"
-        
+
         # Don't pass expected output to the tools
         problem_sets_without_expected = problem_sets.remove_columns(expected_column)
-        
+
         result_awaitables = []
         for agent in args.agents:
             if agent == "potpie":
@@ -123,10 +127,10 @@ Examples:
         metric = correctness
         expected_column = "expected_answer"
         input_column = "question"
-        
+
         # Don't pass expected answers to the tools
         problem_sets_without_expected = problem_sets.remove_columns(expected_column)
-        
+
         result_awaitables = []
         for agent in args.agents:
             if agent == "potpie":

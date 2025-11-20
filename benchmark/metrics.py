@@ -90,9 +90,9 @@ code_correctness = GEval(
     name="CodeCorrectness",
     criteria=CODE_EVAL_CRITERIA,
     evaluation_params=[
-        LLMTestCaseParams.INPUT,         
-        LLMTestCaseParams.ACTUAL_OUTPUT,  
-        LLMTestCaseParams.EXPECTED_OUTPUT
+        LLMTestCaseParams.INPUT,
+        LLMTestCaseParams.ACTUAL_OUTPUT,
+        LLMTestCaseParams.EXPECTED_OUTPUT,
     ],
     strict_mode=True,
 )

@@ -148,11 +148,11 @@ def group_rows_by_repo(
 ) -> dict[str, list[Tuple[str, str]]]:
     """
     Group rows by repo URL.
-    
+
     Args:
         rows: Iterable of row dictionaries
         task: "qa" for legacy format, "codegen" for SWE-bench format
-    
+
     Returns mapping: repo_url -> list of (commit_id, problem_id)
     """
     mapping: dict[str, list[Tuple[str, str]]] = {}
@@ -166,7 +166,7 @@ def group_rows_by_repo(
             repo_url = r["repo_url"]
             commit = r["commit_id"]
             prob = r["problem_id"]
-        
+
         mapping.setdefault(repo_url, []).append((commit, prob))
     return mapping
 
