@@ -144,18 +144,30 @@ def add_worktree_for_commit(
 
 def group_rows_by_repo(
     rows: Iterable[dict[str, str]],
+    task: str = "qa",
 ) -> dict[str, list[Tuple[str, str]]]:
     """
-    Group rows by repo_url.
-    Input row should have keys: 'repo_url', 'commit_id', 'problem_id'
+    Group rows by repo URL.
+
+    Args:
+        rows: Iterable of row dictionaries
+        task: "qa" for legacy format, "codegen" for SWE-bench format
+
     Returns mapping: repo_url -> list of (commit_id, problem_id)
     """
     mapping: dict[str, list[Tuple[str, str]]] = {}
     for r in rows:
-        repo = r["repo_url"]
-        commit = r["commit_id"]
-        prob = r["problem_id"]
-        mapping.setdefault(repo, []).append((commit, prob))
+        if task == "codegen":
+            # SWE-bench format: "django/django" -> "https://github.com/django/django"
+            repo_url = f"https://github.com/{r['repo']}"
+            commit = r["base_commit"]
+            prob = r["instance_id"]
+        else:
+            repo_url = r["repo_url"]
+            commit = r["commit_id"]
+            prob = r["problem_id"]
+
+        mapping.setdefault(repo_url, []).append((commit, prob))
     return mapping
 
 
@@ -273,14 +285,16 @@ def prepare_worktrees(
     batch_no: int,
     max_workers: int = 8,
     skip_if_exists: bool = True,
+    task: str = "qa",
 ) -> tuple[dict[tuple[str, str], dict[tuple[str, int], Path]], list[dict[str, Any]]]:
     """
-    rows: iterable of dicts with keys 'repo_url','commit_id','problem_id'
+    rows: iterable of dicts with keys 'repo_url','commit_id','problem_id' (QA) or 'repo','base_commit','instance_id' (codegen)
     base_dir: root directory where we will create:
         - base_dir/bare/<repo_name>.git
         - base_dir/worktrees/<repo_name>/<worktree_name>
     batch_no: number of batch copies to create per (commit,problem)
     max_workers: number of threads for parallel repo processing
+    task: "qa" for legacy format, "codegen" for SWE-bench format
     Returns a list of per-repo summaries.
     """
     logger.bind(base_dir=base_dir, batch_no=batch_no, max_worker=max_workers).info(
@@ -289,7 +303,7 @@ def prepare_worktrees(
     base = Path(base_dir).resolve()
     base.mkdir(parents=True, exist_ok=True)
 
-    grouped = group_rows_by_repo(rows)
+    grouped = group_rows_by_repo(rows, task=task)
     summaries = []
     repo_map: dict[tuple[str, str], dict[tuple[str, int], Path]] = {}
 

@@ -10,8 +10,11 @@ from dotenv import load_dotenv
 from loguru import logger
 
 from .download import prepare_worktrees
-from .metrics import correctness
-from .potpie import get_all_st_answers as get_all_st_answers_potpie
+from .metrics import code_correctness, correctness
+from .potpie import (
+    get_all_codegen_answers as get_all_codegen_answers_potpie,
+    get_all_st_answers as get_all_st_answers_potpie,
+)
 
 
 def get_available_agents() -> list[str]:
@@ -40,6 +43,14 @@ Examples:
     )
 
     parser.add_argument(
+        "--task",
+        type=str,
+        choices=["qa", "codegen"],
+        default="qa",
+        help="Type of evaluation to perform (default: qa)",
+    )
+
+    parser.add_argument(
         "--input",
         type=str,
         default="benchmark.csv",
@@ -53,18 +64,25 @@ Examples:
         help="Output CSV file for results (default: evaluation_results.csv)",
     )
 
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=2,
+        help="Number of batch copies to create per problem (default: 2)",
+    )
+
     args = parser.parse_args()
 
-    nbatch = 2
+    nbatch = args.batch_size
 
     if not Path(args.input).exists():
         print(f"Error: Input file '{args.input}' not found.", file=sys.stderr)
         sys.exit(1)
 
-    assert all(agent in get_available_agents() for agent in args.agents), (
-        "Invalid Agent(s): {}".format(
-            ", ".join(set(args.agents) - set(get_available_agents()))
-        )
+    assert all(
+        agent in get_available_agents() for agent in args.agents
+    ), "Invalid Agent(s): {}".format(
+        ", ".join(set(args.agents) - set(get_available_agents()))
     )
 
     logger.info("Evaluating tools: {}", ", ".join(args.agents))
@@ -78,47 +96,73 @@ Examples:
     )
 
     repo_map, summary = prepare_worktrees(
-        problem_sets, base_dir="/tmp/repos_batch", batch_no=nbatch, max_workers=6
+        problem_sets,
+        base_dir="/tmp/repos_batch",
+        batch_no=nbatch,
+        max_workers=6,
+        task=args.task,
     )
     # repo_dict = worktree_results
 
-    # Don't pass expected answers to the tools
-    problem_sets_without_expected_answers = problem_sets.remove_columns(
-        "expected_answer"
-    )
+    # Select metric and generation function based on task type
+    if args.task == "codegen":
+        metric = code_correctness
+        expected_column = "patch"  # SWE-bench uses "patch" for expected output
+        input_column = "problem_statement"
 
-    result_awaitables = []
-    for agent in args.agents:
-        if agent == "potpie":
-            result_awaitables.append(
-                get_all_st_answers_potpie(
-                    problem_sets_without_expected_answers, repo_map
+        # Don't pass expected output to the tools
+        problem_sets_without_expected = problem_sets.remove_columns(expected_column)
+
+        result_awaitables = []
+        for agent in args.agents:
+            if agent == "potpie":
+                result_awaitables.append(
+                    get_all_codegen_answers_potpie(
+                        problem_sets_without_expected, repo_map
+                    )
                 )
-            )
-        else:
-            ...
+            else:
+                ...
+    else:  # args.task == "qa"
+        metric = correctness
+        expected_column = "expected_answer"
+        input_column = "question"
+
+        # Don't pass expected answers to the tools
+        problem_sets_without_expected = problem_sets.remove_columns(expected_column)
+
+        result_awaitables = []
+        for agent in args.agents:
+            if agent == "potpie":
+                result_awaitables.append(
+                    get_all_st_answers_potpie(
+                        problem_sets_without_expected, repo_map, task=args.task
+                    )
+                )
+            else:
+                ...
 
     answers = await asyncio.gather(*result_awaitables)
     print(f"len answers : {len(answers[0])}")
-    expected_answers = problem_sets.select_columns("expected_answer")
-    questions = problem_sets.select_columns("question")
-    questions_batched = [item["question"] for item in questions for _ in range(nbatch)]
+    expected_outputs = problem_sets.select_columns(expected_column)
+    inputs = problem_sets.select_columns(input_column)
+    inputs_batched = [item[input_column] for item in inputs for _ in range(nbatch)]
     answers_flattened = [item for sublist in answers for item in sublist]
 
-    expected_answers_batched = [
-        item["expected_answer"] for item in expected_answers for _ in range(nbatch)
+    expected_outputs_batched = [
+        item[expected_column] for item in expected_outputs for _ in range(nbatch)
     ]
     test_cases = [
         LLMTestCase(
-            input=question, actual_output=answer, expected_output=expected_answer
+            input=input_text, actual_output=answer, expected_output=expected_output
         )
-        for question, answer, expected_answer in zip(
-            questions_batched, answers_flattened, expected_answers_batched
+        for input_text, answer, expected_output in zip(
+            inputs_batched, answers_flattened, expected_outputs_batched
         )
     ]
 
     results = evaluate(
-        metrics=[correctness],
+        metrics=[metric],
         test_cases=test_cases,
     )
     metrics = [test_result.success for test_result in results.test_results]

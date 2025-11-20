@@ -45,10 +45,52 @@ Your final output must contain:
 Do NOT include any text outside the JSON object.
 """
 
+CODE_EVAL_CRITERIA = """
+You are a senior software engineer evaluating a code fix or implementation.
+Your task is to assess the quality and correctness of the GENERATED CODE compared to the EXPECTED SOLUTION (or based on the PROBLEM DESCRIPTION).
+
+Evaluate using the following criteria:
+1. Functional Correctness (50%): Does the code solve the stated problem?
+2. Code Quality & Best Practices (30%): Is the code idiomatic, safe, and maintainable?
+3. Logic Similarity (20%): Does it follow a similar (or better) valid approach to the reference solution?
+
+Output ONLY a JSON object with:
+{
+  "score": <number_between_0_and_1>,
+  "reason": "<brief explanation>"
+}
+
+Where:
+- 0.0 = The generated code fails to address the problem or is fundamentally incorrect.
+- 1.0 = The generated code completely solves the problem with high quality and matches the reference approach or improves upon it.
+
+Scoring Rules:
+- Functional Correctness is paramount. If the code doesn't solve the problem, the score should be low (<0.5).
+- Code Quality matters. Correct but messy code should be penalized slightly.
+- Logic Similarity allows for different valid approaches, but they must solve the same root cause.
+
+Your final output must contain:
+- A numeric "score" between 0 and 1.
+- A short "reason" describing the main factors affecting the score.
+
+Do NOT include any text outside the JSON object.
+"""
+
 correctness = GEval(
     name="Correctness",
     criteria=EVAL_CRITERIA,
     evaluation_params=[
+        LLMTestCaseParams.ACTUAL_OUTPUT,
+        LLMTestCaseParams.EXPECTED_OUTPUT,
+    ],
+    strict_mode=True,
+)
+
+code_correctness = GEval(
+    name="CodeCorrectness",
+    criteria=CODE_EVAL_CRITERIA,
+    evaluation_params=[
+        LLMTestCaseParams.INPUT,
         LLMTestCaseParams.ACTUAL_OUTPUT,
         LLMTestCaseParams.EXPECTED_OUTPUT,
     ],
