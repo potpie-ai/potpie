@@ -306,9 +306,17 @@ class PydanticMultiAgent(ChatAgent):
         # Store agent instances
         self._agent_instances: Dict[AgentType, Agent] = {}
         self._supervisor_agent: Optional[Agent] = None
+        # Track the current supervisor run to extract message history for subagents
+        self._current_supervisor_run: Optional[Any] = None
 
     # Constants for agent instructions
     DELEGATE_AGENT_INSTRUCTIONS = """You are a focused task execution agent with access to all available tools. Execute the assigned task efficiently and provide clear, concise results.
+
+**PARENT AGENT CONTEXT:**
+- You have access to the parent agent's full conversation history up to this point
+- This includes all previous messages, tool calls, and tool responses from the supervisor
+- Use this context to understand what has already been done and avoid redundant work
+- You can reference previous tool results and analysis from the parent agent's conversation
 
 **CODE MANAGEMENT:**
 - Use code changes tools (add_file_to_changes, update_file_lines, insert_lines, delete_lines) instead of including code in response text
@@ -318,6 +326,7 @@ class PydanticMultiAgent(ChatAgent):
 **EXECUTION:**
 - Execute tasks completely without asking for clarification unless absolutely critical
 - Make reasonable assumptions and mention them
+- Leverage the parent agent's context to avoid re-fetching information already obtained
 - Use tools to gather information and perform actions
 - Return focused, actionable results"""
 
@@ -417,18 +426,30 @@ class PydanticMultiAgent(ChatAgent):
 **PROJECT CONTEXT:**
 {full_context}
 
+**PARENT AGENT CONTEXT:**
+You have access to the parent agent's full conversation history, including:
+- All previous messages and responses
+- All tool calls made by the parent agent
+- All tool call results and responses
+- Any analysis or information already gathered
+
 **YOUR MISSION:**
 Execute the task above and return ONLY the specific, actionable result the supervisor needs.
+- Leverage the parent agent's context to avoid redundant work
+- Reference previous tool results and analysis when relevant
+- Build upon what the parent agent has already discovered
 
 **OUTPUT FORMAT:**
 Start your response with "## Task Result" and then provide the focused answer.
 
 **CRITICAL GUIDELINES:**
-1. Use tools to gather information, analyze code, or perform actions as needed
-2. Be specific and concise - avoid broad explanations or context gathering
-3. Focus on answering the exact question or completing the exact task
-4. If you make code changes, use show_updated_file and show_diff to display them
-5. Don't restate the problem - just solve it and report the result
+1. Review the parent agent's conversation history to understand what has already been done
+2. Use tools to gather additional information, analyze code, or perform actions as needed
+3. Be specific and concise - avoid broad explanations or redundant context gathering
+4. Focus on answering the exact question or completing the exact task
+5. If you make code changes, use show_updated_file and show_diff to display them
+6. Don't restate the problem - just solve it and report the result
+7. Reference relevant information from the parent agent's context when it's useful
 
 **RESULT:** Should be specific, actionable, and immediately usable by the supervisor."""
 
@@ -484,13 +505,17 @@ Start your response with "## Task Result" and then provide the focused answer.
 
     @staticmethod
     async def _collect_agent_streaming_response(
-        agent: Agent, user_prompt: str, agent_type: str = "agent"
+        agent: Agent,
+        user_prompt: str,
+        agent_type: str = "agent",
+        message_history: Optional[List[ModelMessage]] = None,
     ) -> str:
         """Collect streaming response from an agent run"""
         full_response = ""
 
         async with agent.iter(
             user_prompt=user_prompt,
+            message_history=message_history or [],
             usage_limits=UsageLimits(request_limit=None),
         ) as run:
             async for node in run:
@@ -658,9 +683,9 @@ Start your response with "## Task Result" and then provide the focused answer.
         delegation_tools = []
         for agent_type in self.delegate_agents.keys():
             if agent_type == AgentType.THINK_EXECUTE:
-                description = "🔨 DELEGATE TO TASK EXECUTION AGENT - Delegate focused work to save your context! Great for: information gathering, code searches, targeted implementations, debugging specific issues, analyzing code sections. The subagent will return clean, focused results. Use this liberally to break down complex tasks! IMPORTANT: Use the 'context' parameter to pass already-fetched information (file paths, code snippets, analysis results) to avoid redundant work - this is critical for efficiency!"
+                description = "🔨 DELEGATE TO TASK EXECUTION AGENT - Delegate focused work to save your context! Great for: information gathering, code searches, targeted implementations, debugging specific issues, analyzing code sections. The subagent will return clean, focused results and has access to your full conversation history (all messages, tool calls, and responses) up to this point. Use this liberally to break down complex tasks! IMPORTANT: The subagent automatically receives your conversation context, but you can also use the 'context' parameter to pass specific already-fetched information (file paths, code snippets, analysis results) to highlight key details - this is critical for efficiency!"
             else:
-                description = f"🤖 DELEGATE TO {agent_type.value.upper()} - Delegate focused work to save your context! The subagent will return clean, focused results. Use this liberally to break down complex tasks! IMPORTANT: Use the 'context' parameter to pass already-fetched information (file paths, code snippets, analysis results) to avoid redundant work - this is critical for efficiency!"
+                description = f"🤖 DELEGATE TO {agent_type.value.upper()} - Delegate focused work to save your context! The subagent will return clean, focused results and has access to your full conversation history (all messages, tool calls, and responses) up to this point. Use this liberally to break down complex tasks! IMPORTANT: The subagent automatically receives your conversation context, but you can also use the 'context' parameter to pass specific already-fetched information (file paths, code snippets, analysis results) to highlight key details - this is critical for efficiency!"
 
             delegation_tools.append(
                 Tool(
@@ -687,14 +712,18 @@ Start your response with "## Task Result" and then provide the focused answer.
 
 You receive tasks that have clear, specific expected outputs. Your job is to provide exactly what the supervisor needs - no more, no less.
 
+IMPORTANT: You have access to the parent agent's full conversation history, including all previous messages, tool calls, and tool responses. Use this context to understand what has already been done and avoid redundant work.
+
 CRITICAL: Do ALL your work inside the "## Task Result" section.
 
 Your approach:
-1. Understand exactly what specific information is needed
-2. Start the "## Task Result" section immediately
-3. Provide the specific answer/information requested
-4. Keep results concise and focused
-5. Include only what the supervisor needs to make a decision
+1. Review the parent agent's conversation history to understand what has already been discovered
+2. Understand exactly what specific information is needed
+3. Start the "## Task Result" section immediately
+4. Provide the specific answer/information requested
+5. Keep results concise and focused
+6. Include only what the supervisor needs to make a decision
+7. Leverage previous tool results and analysis from the parent agent when relevant
 
 You are used for specific lookups, small implementations, and focused tasks - not broad analysis or context gathering.""",
                 tasks=[
@@ -703,12 +732,20 @@ You are used for specific lookups, small implementations, and focused tasks - no
 
 This task has a clear expected output. Provide exactly what the supervisor needs.
 
+PARENT AGENT CONTEXT:
+- You have access to the parent agent's full conversation history (all messages, tool calls, and responses)
+- Review this context to understand what has already been done
+- Reference previous tool results and analysis when relevant
+- Avoid re-fetching information the parent agent has already gathered
+
 CRITICAL INSTRUCTIONS:
+- Review the parent agent's conversation history first to understand the context
 - Do ALL your work inside the "## Task Result" section
 - Provide the specific information/answer requested
 - Keep results concise and focused
 - Don't provide broad analysis or context gathering
 - Be efficient - supervisor needs specific information
+- Leverage the parent agent's previous work to avoid redundant operations
 
 TASK RESULT SECTION REQUIREMENTS:
 - Start with "## Task Result" immediately
@@ -717,7 +754,7 @@ TASK RESULT SECTION REQUIREMENTS:
 - Keep it focused on what the supervisor asked for
 - End with the specific result requested
 
-Remember: You are used for specific lookups and focused tasks, not broad analysis.""",
+Remember: You are used for specific lookups and focused tasks, not broad analysis. Use the parent agent's context to work efficiently.""",
                         expected_output="Specific task completion with concrete execution results and deliverables",
                     )
                 ],
@@ -781,9 +818,11 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
 
             **How to delegate effectively:**
             - Break tasks into focused chunks with clear success criteria
-            - **CRITICAL:** Pass already-fetched context via `context` parameter (file paths, code snippets, analysis results, config values)
+            - **AUTOMATIC CONTEXT:** Subagents automatically receive your full conversation history (all messages, tool calls, and responses) up to the delegation point - they can see everything you've done
+            - **OPTIONAL HIGHLIGHTING:** Use the `context` parameter to highlight specific key information (file paths, code snippets, analysis results, config values) that are most relevant to the task
             - Group related tasks to share context efficiently
             - Example context: "Main function in app/main.py:45-67 uses Config class from app/core/config.py with 'database_url' property. Error at line 52."
+            - Subagents can reference your previous tool results and analysis, so they won't need to re-fetch information you've already gathered
 
             **Code Management:**
             - **CRITICAL:** All your code changes for this session are tracked in the code changes manager - it persists throughout the conversation
@@ -850,6 +889,52 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
                     f"Delegating task to {agent_type.value} agent: {task_description}"
                 )
 
+                # Extract parent agent's conversation history up to this point
+                # This includes all messages, tool calls, and responses from the supervisor
+                parent_message_history = []
+                try:
+                    # Try to get messages from the stored supervisor run
+                    # This run contains all messages (user messages, model responses, tool calls, tool results)
+                    run_messages = None
+
+                    # Method 1: Use the stored supervisor run reference
+                    if self._current_supervisor_run:
+                        # Try to get messages from the run's state
+                        run_state = getattr(self._current_supervisor_run, "state", None)
+                        if run_state:
+                            run_messages = getattr(run_state, "messages", None)
+
+                        # If not in state, try direct access
+                        if not run_messages:
+                            run_messages = getattr(
+                                self._current_supervisor_run, "messages", None
+                            )
+
+                    # Method 2: Try accessing from RunContext as fallback
+                    if not run_messages:
+                        if hasattr(ctx, "messages"):
+                            run_messages = ctx.messages
+
+                    if run_messages:
+                        # Convert to list and ensure it's in the right format
+                        if isinstance(run_messages, (list, tuple)):
+                            parent_message_history = list(run_messages)
+                            logger.info(
+                                f"Extracted {len(parent_message_history)} messages from parent agent context for subagent"
+                            )
+                        else:
+                            logger.warning(
+                                f"Run messages is not a list/tuple: {type(run_messages)}"
+                            )
+                    else:
+                        logger.debug(
+                            "Could not find messages in supervisor run. Subagent will run without parent context."
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"Could not extract parent agent message history: {e}. Subagent will run without parent context."
+                    )
+
                 # Create the delegate agent
                 delegate_agent = self._create_agent(agent_type, self._current_context)
 
@@ -864,11 +949,17 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
                 )
 
                 # Run the delegate agent with independent usage tracking and streaming
-                logger.info(f"Starting {agent_type.value} agent execution...")
+                # Pass parent agent's conversation history so subagent has full context
+                logger.info(
+                    f"Starting {agent_type.value} agent execution with parent context..."
+                )
 
-                # Collect streaming response using helper
+                # Collect streaming response using helper, passing parent message history
                 full_response = await self._collect_agent_streaming_response(
-                    delegate_agent, full_task, agent_type.value
+                    delegate_agent,
+                    full_task,
+                    agent_type.value,
+                    message_history=parent_message_history,
                 )
 
                 logger.info(
@@ -1384,10 +1475,16 @@ Image Analysis Notes:
                     request_limit=None
                 ),  # No request limit for long-running tasks
             ) as run:
-                async for response in self._process_agent_run_nodes(
-                    run, "multimodal multi-agent"
-                ):
-                    yield response
+                # Store the supervisor run so delegation functions can access its message history
+                self._current_supervisor_run = run
+                try:
+                    async for response in self._process_agent_run_nodes(
+                        run, "multimodal multi-agent"
+                    ):
+                        yield response
+                finally:
+                    # Clear the reference when done
+                    self._current_supervisor_run = None
 
         except Exception as e:
             logger.error(
@@ -1418,10 +1515,16 @@ Image Analysis Notes:
                             request_limit=None
                         ),  # No request limit for long-running tasks
                     ) as run:
-                        async for response in self._process_agent_run_nodes(
-                            run, "multi-agent"
-                        ):
-                            yield response
+                        # Store the supervisor run so delegation functions can access its message history
+                        self._current_supervisor_run = run
+                        try:
+                            async for response in self._process_agent_run_nodes(
+                                run, "multi-agent"
+                            ):
+                                yield response
+                        finally:
+                            # Clear the reference when done
+                            self._current_supervisor_run = None
 
             except (TimeoutError, anyio.WouldBlock, Exception) as mcp_error:
                 error_detail = f"{type(mcp_error).__name__}: {str(mcp_error)}"
@@ -1449,10 +1552,16 @@ Image Analysis Notes:
                         request_limit=None
                     ),  # No request limit for long-running tasks
                 ) as run:
-                    async for response in self._process_agent_run_nodes(
-                        run, "multi-agent"
-                    ):
-                        yield response
+                    # Store the supervisor run so delegation functions can access its message history
+                    self._current_supervisor_run = run
+                    try:
+                        async for response in self._process_agent_run_nodes(
+                            run, "multi-agent"
+                        ):
+                            yield response
+                    finally:
+                        # Clear the reference when done
+                        self._current_supervisor_run = None
 
         except Exception as e:
             logger.error(
