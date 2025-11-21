@@ -168,11 +168,21 @@ class ToolService:
             "link_jira_issues": link_jira_issues_tool(self.db, self.user_id),
             "get_confluence_spaces": get_confluence_spaces_tool(self.db, self.user_id),
             "get_confluence_page": get_confluence_page_tool(self.db, self.user_id),
-            "search_confluence_pages": search_confluence_pages_tool(self.db, self.user_id),
-            "get_confluence_space_pages": get_confluence_space_pages_tool(self.db, self.user_id),
-            "create_confluence_page": create_confluence_page_tool(self.db, self.user_id),
-            "update_confluence_page": update_confluence_page_tool(self.db, self.user_id),
-            "add_confluence_comment": add_confluence_comment_tool(self.db, self.user_id),
+            "search_confluence_pages": search_confluence_pages_tool(
+                self.db, self.user_id
+            ),
+            "get_confluence_space_pages": get_confluence_space_pages_tool(
+                self.db, self.user_id
+            ),
+            "create_confluence_page": create_confluence_page_tool(
+                self.db, self.user_id
+            ),
+            "update_confluence_page": update_confluence_page_tool(
+                self.db, self.user_id
+            ),
+            "add_confluence_comment": add_confluence_comment_tool(
+                self.db, self.user_id
+            ),
             "intelligent_code_graph": get_intelligent_code_graph_tool(
                 self.db, self.provider_service, self.user_id
             ),
