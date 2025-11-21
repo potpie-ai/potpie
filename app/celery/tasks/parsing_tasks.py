@@ -1005,7 +1005,7 @@ def aggregate_and_resolve_references(
     """
     import time
     import shutil
-    from collections import defaultdict
+    # from collections import defaultdict  # No longer needed - not collecting defines/references
 
     logger.info(
         f"Aggregating results from {len(task_results)} work units for project {project_id}"
@@ -1030,33 +1030,87 @@ def aggregate_and_resolve_references(
         if failed_units:
             logger.warning(f"{len(failed_units)} work units failed")
 
+        # COMMENTED OUT: No longer needed since cross-directory resolution is skipped
         # Collect all references from task results
         # IMPORTANT: With hybrid resolution, these are ONLY the unresolved references!
         # Most references were already resolved by workers
-        all_defines = defaultdict(set)
-        all_references = []
-        for r in task_results:
-            # Merge defines by unioning sets for each identifier
-            for ident, node_list in r.get('defines', {}).items():
-                # Convert list to set and union with existing
-                all_defines[ident].update(node_list)
-            all_references.extend(r.get('references', []))
+        # all_defines = defaultdict(set)
+        # all_references = []
+        # for r in task_results:
+        #     # Merge defines by unioning sets for each identifier
+        #     for ident, node_list in r.get('defines', {}).items():
+        #         # Convert list to set and union with existing
+        #         all_defines[ident].update(node_list)
+        #     all_references.extend(r.get('references', []))
+        #
+        # # Convert defaultdict back to regular dict with lists for serialization
+        # all_defines = {ident: list(node_set) for ident, node_set in all_defines.items()}
 
-        # Convert defaultdict back to regular dict with lists for serialization
-        all_defines = {ident: list(node_set) for ident, node_set in all_defines.items()}
+        # Count unresolved references for logging only
+        total_unresolved_references = sum(len(r.get('references', [])) for r in task_results)
 
         logger.info(
             f"Hybrid resolution stats: "
             f"{total_immediate_edges} refs resolved immediately by workers, "
-            f"{len(all_references)} deferred for final resolution "
-            f"({len(all_defines)} unique identifiers)"
+            f"{total_unresolved_references} deferred (will remain unresolved)"
         )
 
-        # Trigger reference resolution task asynchronously
-        # This is safe because this callback task is separate from the coordinator
-        resolve_task = resolve_cross_directory_references.apply_async(
-            args=[project_id, user_id, all_defines, all_references]
+        # SKIP: Cross-directory reference resolution disabled
+        # Only using local distributed resolution (intra-directory + immediate)
+        logger.info(
+            f"Skipping cross-directory reference resolution task. "
+            f"{total_unresolved_references} references remain unresolved."
         )
+
+        # Spawn inference chord directly (previously done in resolve_cross_directory_references)
+        try:
+            inference_chord_result = spawn_inference_chord(
+                self, project_id, user_id
+            )
+            logger.info(
+                f"Spawned inference chord for project {project_id}: "
+                f"{inference_chord_result['work_units']} inference units"
+            )
+        except Exception as inference_error:
+            error_msg = str(inference_error)
+            logger.exception(
+                f"Failed to spawn inference chord for project {project_id}: {error_msg}"
+            )
+            # Mark project as ERROR since inference is critical
+            from app.modules.projects.projects_service import ProjectService
+            from app.modules.projects.projects_schema import ProjectStatusEnum
+
+            try:
+                project_service = ProjectService(self.db)
+
+                async def mark_error():
+                    logger.error(f"Inference setup failed: {error_msg}")
+                    await project_service.update_project_status(
+                        project_id=project_id,
+                        status=ProjectStatusEnum.ERROR,
+                    )
+
+                self.run_async(mark_error())
+            except Exception as status_error:
+                logger.exception(f"Failed to update project status: {status_error}")
+
+            # Cleanup: Remove cloned repository before returning on error
+            cleanup_success = False
+            if repo_path and os.path.exists(repo_path):
+                try:
+                    logger.info(f"Cleaning up cloned repository at: {repo_path} (inference failure)")
+                    shutil.rmtree(repo_path)
+                    cleanup_success = True
+                    logger.info(f"Successfully cleaned up repository: {repo_path}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to cleanup repository {repo_path}: {cleanup_error}")
+
+            return {
+                'success': False,
+                'error': error_msg,
+                'project_id': project_id,
+                'repo_cleanup': cleanup_success
+            }
 
         elapsed = time.time() - start_time
 
@@ -1080,13 +1134,16 @@ def aggregate_and_resolve_references(
             'total_nodes': total_nodes_created,
             'total_edges': total_edges_created,
             'immediate_edges': total_immediate_edges,
-            'deferred_references': len(all_references),
+            'deferred_references': total_unresolved_references,
+            'unresolved_references': total_unresolved_references,
             'work_units': total_work_units,
             'failed_units': len(failed_units),
             'duration_seconds': elapsed,
             'workers_used': total_work_units,
-            'resolution_task_id': resolve_task.id,
-            'status': 'resolving_references',
+            'cross_directory_resolution_skipped': True,
+            'inference_spawned': True,
+            'inference_units': inference_chord_result['work_units'],
+            'status': 'running_inference',
             'repo_cleanup': cleanup_success
         }
 
