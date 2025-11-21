@@ -159,7 +159,7 @@ def group_rows_by_repo(
     for r in rows:
         repo_url_value = r.get("repo_url", "")
         is_url_format = repo_url_value.startswith(("http://", "https://"))
-        
+
         if is_url_format:
             repo_url = r["repo_url"]
             commit = r["commit_id"]
