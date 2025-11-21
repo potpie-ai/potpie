@@ -373,6 +373,7 @@ class ProviderService:
         litellm.modify_params = True
         self.db = db
         self.user_id = user_id
+        self._api_key_secrets = {}
 
         # Load user preferences
         user_pref = db.query(UserPreferences).filter_by(user_id=user_id).first()
@@ -460,18 +461,25 @@ class ProviderService:
 
     def _get_api_key(self, provider: str) -> str:
         """Get API key for the specified provider."""
+        if provider in self._api_key_secrets:
+            return self._api_key_secrets[provider]
+        
         env_key = os.getenv("LLM_API_KEY", None)
         if env_key:
+            self._api_key_secrets[provider] = env_key
             return env_key
 
         try:
             secret = SecretManager.get_secret(provider, self.user_id, self.db)
+            self._api_key_secrets[provider] = secret
             return secret
         except Exception as e:
             if "404" in str(e):
                 env_key = os.getenv(f"{provider.upper()}_API_KEY")
                 if env_key:
+                    self._api_key_secrets[provider] = env_key
                     return env_key
+                self._api_key_secrets[provider] = None
                 return None
             raise e
 
