@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from loguru import logger
 
 from .download import prepare_worktrees
-from .metrics import code_correctness, correctness
+from .metrics import code_correctness, qa_correctness
 from .potpie import (
     get_all_codegen_answers as get_all_codegen_answers_potpie,
     get_all_st_answers as get_all_st_answers_potpie,
@@ -124,7 +124,7 @@ Examples:
             else:
                 ...
     else:  # args.task == "qa"
-        metric = correctness
+        metric = qa_correctness
         expected_column = "expected_answer"
         input_column = "question"
 

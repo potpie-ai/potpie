@@ -76,7 +76,7 @@ Your final output must contain:
 Do NOT include any text outside the JSON object.
 """
 
-correctness = GEval(
+qa_correctness = GEval(
     name="Correctness",
     criteria=EVAL_CRITERIA,
     evaluation_params=[

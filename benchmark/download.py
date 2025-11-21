@@ -151,21 +151,23 @@ def group_rows_by_repo(
 
     Args:
         rows: Iterable of row dictionaries
-        task: "qa" for legacy format, "codegen" for SWE-bench format
+        task: "qa" or "codegen"
 
     Returns mapping: repo_url -> list of (commit_id, problem_id)
     """
     mapping: dict[str, list[Tuple[str, str]]] = {}
     for r in rows:
-        if task == "codegen":
-            # SWE-bench format: "django/django" -> "https://github.com/django/django"
-            repo_url = f"https://github.com/{r['repo']}"
-            commit = r["base_commit"]
-            prob = r["instance_id"]
-        else:
+        repo_url_value = r.get("repo_url", "")
+        is_url_format = repo_url_value.startswith(("http://", "https://"))
+        
+        if is_url_format:
             repo_url = r["repo_url"]
             commit = r["commit_id"]
             prob = r["problem_id"]
+        else:
+            repo_url = f"https://github.com/{r['repo']}"
+            commit = r["base_commit"]
+            prob = r["instance_id"]
 
         mapping.setdefault(repo_url, []).append((commit, prob))
     return mapping
@@ -288,13 +290,13 @@ def prepare_worktrees(
     task: str = "qa",
 ) -> tuple[dict[tuple[str, str], dict[tuple[str, int], Path]], list[dict[str, Any]]]:
     """
-    rows: iterable of dicts with keys 'repo_url','commit_id','problem_id' (QA) or 'repo','base_commit','instance_id' (codegen)
+    rows: iterable of dicts with keys 'repo_url','commit_id','problem_id' (URL format) or 'repo','base_commit','instance_id' (slug format)
     base_dir: root directory where we will create:
         - base_dir/bare/<repo_name>.git
         - base_dir/worktrees/<repo_name>/<worktree_name>
     batch_no: number of batch copies to create per (commit,problem)
     max_workers: number of threads for parallel repo processing
-    task: "qa" for legacy format, "codegen" for SWE-bench format
+    task: Deprecated, kept for backward compatibility. Auto-detects format.
     Returns a list of per-repo summaries.
     """
     logger.bind(base_dir=base_dir, batch_no=batch_no, max_worker=max_workers).info(
