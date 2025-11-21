@@ -463,7 +463,7 @@ class ProviderService:
         """Get API key for the specified provider."""
         if provider in self._api_key_secrets:
             return self._api_key_secrets[provider]
-
+        
         env_key = os.getenv("LLM_API_KEY", None)
         if env_key:
             self._api_key_secrets[provider] = env_key
@@ -479,7 +479,6 @@ class ProviderService:
                 if env_key:
                     self._api_key_secrets[provider] = env_key
                     return env_key
-                self._api_key_secrets[provider] = None
                 return None
             raise e
 
