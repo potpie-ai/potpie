@@ -274,7 +274,7 @@ AVAILABLE_MODELS = [
         description="reasoning model",
         provider="openai",
         is_chat_model=True,
-        is_inference_model=True,
+        is_inference_model=False,
     ),
     AvailableModelOption(
         id="anthropic/claude-sonnet-4-5-20250929",
