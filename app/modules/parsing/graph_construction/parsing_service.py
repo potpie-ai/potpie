@@ -365,13 +365,19 @@ class ParsingService:
                     {"project_id": project_id, "status": "Parsed"},
                 )
 
-                # Generate docstrings using InferenceService
-                logger.info(f"ParsingService: Starting inference for project {project_id}")
-                await self.inference_service.run_inference(project_id)
-                logger.info(f"ParsingService: Inference completed for project {project_id}")
-                logger.info(f"DEBUGNEO4J: After inference project {project_id}")
-                self.inference_service.log_graph_stats(project_id)
-                
+                # Check if inference is enabled via environment variable
+                enable_inference = os.getenv("ENABLE_INFERENCE", "false").lower() == "true"
+
+                if enable_inference:
+                    # Generate docstrings using InferenceService
+                    logger.info(f"ParsingService: Starting inference for project {project_id}")
+                    await self.inference_service.run_inference(project_id)
+                    logger.info(f"ParsingService: Inference completed for project {project_id}")
+                    logger.info(f"DEBUGNEO4J: After inference project {project_id}")
+                    self.inference_service.log_graph_stats(project_id)
+                else:
+                    logger.info(f"ParsingService: Skipping inference for project {project_id} (ENABLE_INFERENCE=false)")
+
                 logger.info(f"ParsingService: Updating project status to READY")
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.READY
@@ -436,14 +442,20 @@ class ParsingService:
                     project_id, ProjectStatusEnum.PARSED
                 )
                 logger.info(f"ParsingService: Project status updated to PARSED")
-                
-                # Generate docstrings using InferenceService
-                logger.info(f"ParsingService: Starting inference for project {project_id}")
-                await self.inference_service.run_inference(project_id)
-                logger.info(f"ParsingService: Inference completed for project {project_id}")
-                logger.info(f"DEBUGNEO4J: After inference project {project_id}")
-                self.inference_service.log_graph_stats(project_id)
-                
+
+                # Check if inference is enabled via environment variable
+                enable_inference = os.getenv("ENABLE_INFERENCE", "false").lower() == "true"
+
+                if enable_inference:
+                    # Generate docstrings using InferenceService
+                    logger.info(f"ParsingService: Starting inference for project {project_id}")
+                    await self.inference_service.run_inference(project_id)
+                    logger.info(f"ParsingService: Inference completed for project {project_id}")
+                    logger.info(f"DEBUGNEO4J: After inference project {project_id}")
+                    self.inference_service.log_graph_stats(project_id)
+                else:
+                    logger.info(f"ParsingService: Skipping inference for project {project_id} (ENABLE_INFERENCE=false)")
+
                 logger.info(f"ParsingService: Updating project status to READY")
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.READY

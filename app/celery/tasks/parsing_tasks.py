@@ -692,8 +692,7 @@ def parse_directory_unit(
                     'edges_created': 0,
                     'immediate_edges': 0,
                     'deferred_references': 0,
-                    'defines': {},
-                    'references': [],
+                    'defines_count': 0,
                     'duration_seconds': time.time() - start_time,
                     'skipped': True,
                     'reason': 'all_files_already_parsed'
@@ -809,12 +808,6 @@ def parse_directory_unit(
             f"({nodes_created} nodes, {edges_created + immediate_edges} edges total)"
         )
 
-        # Step 10: Export defines and ONLY unresolved references for cross-directory resolution
-        # Convert sets to lists for JSON serialization
-        defines_serializable = {
-            ident: list(node_set) for ident, node_set in defines.items()
-        }
-
         return {
             'success': True,
             'work_unit_index': work_unit_index,
@@ -825,8 +818,7 @@ def parse_directory_unit(
             'edges_created': edges_created + immediate_edges,
             'immediate_edges': immediate_edges,
             'deferred_references': len(unresolved_refs),
-            'defines': defines_serializable,
-            'references': unresolved_refs,  # Only unresolved ones!
+            'defines_count': len(defines),
             'duration_seconds': elapsed
         }
 
@@ -844,8 +836,7 @@ def parse_directory_unit(
             'edges_created': 0,
             'immediate_edges': 0,
             'deferred_references': 0,
-            'defines': {},
-            'references': []
+            'defines_count': 0
         }
 
 
@@ -1046,8 +1037,8 @@ def aggregate_and_resolve_references(
         # # Convert defaultdict back to regular dict with lists for serialization
         # all_defines = {ident: list(node_set) for ident, node_set in all_defines.items()}
 
-        # Count unresolved references for logging only
-        total_unresolved_references = sum(len(r.get('references', [])) for r in task_results)
+        # Count unresolved references for logging only (now a direct sum)
+        total_unresolved_references = sum(r.get('deferred_references', 0) for r in task_results)
 
         logger.info(
             f"Hybrid resolution stats: "
@@ -1062,55 +1053,78 @@ def aggregate_and_resolve_references(
             f"{total_unresolved_references} references remain unresolved."
         )
 
-        # Spawn inference chord directly (previously done in resolve_cross_directory_references)
-        try:
-            inference_chord_result = spawn_inference_chord(
-                self, project_id, user_id
-            )
-            logger.info(
-                f"Spawned inference chord for project {project_id}: "
-                f"{inference_chord_result['work_units']} inference units"
-            )
-        except Exception as inference_error:
-            error_msg = str(inference_error)
-            logger.exception(
-                f"Failed to spawn inference chord for project {project_id}: {error_msg}"
-            )
-            # Mark project as ERROR since inference is critical
+        # Check if inference is enabled via environment variable
+        enable_inference = os.getenv("ENABLE_INFERENCE", "false").lower() == "true"
+
+        if enable_inference:
+            # Spawn inference chord directly (previously done in resolve_cross_directory_references)
+            try:
+                inference_chord_result = spawn_inference_chord(
+                    self, project_id, user_id
+                )
+                logger.info(
+                    f"Spawned inference chord for project {project_id}: "
+                    f"{inference_chord_result['work_units']} inference units"
+                )
+            except Exception as inference_error:
+                error_msg = str(inference_error)
+                logger.exception(
+                    f"Failed to spawn inference chord for project {project_id}: {error_msg}"
+                )
+                # Mark project as ERROR since inference is critical
+                from app.modules.projects.projects_service import ProjectService
+                from app.modules.projects.projects_schema import ProjectStatusEnum
+
+                try:
+                    project_service = ProjectService(self.db)
+
+                    async def mark_error():
+                        logger.error(f"Inference setup failed: {error_msg}")
+                        await project_service.update_project_status(
+                            project_id=project_id,
+                            status=ProjectStatusEnum.ERROR,
+                        )
+
+                    self.run_async(mark_error())
+                except Exception as status_error:
+                    logger.exception(f"Failed to update project status: {status_error}")
+
+                # Cleanup: Remove cloned repository before returning on error
+                cleanup_success = False
+                if repo_path and os.path.exists(repo_path):
+                    try:
+                        logger.info(f"Cleaning up cloned repository at: {repo_path} (inference failure)")
+                        shutil.rmtree(repo_path)
+                        cleanup_success = True
+                        logger.info(f"Successfully cleaned up repository: {repo_path}")
+                    except Exception as cleanup_error:
+                        logger.warning(f"Failed to cleanup repository {repo_path}: {cleanup_error}")
+
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'project_id': project_id,
+                    'repo_cleanup': cleanup_success
+                }
+        else:
+            # Inference is disabled, update project status to READY directly
+            logger.info(f"Skipping inference for project {project_id} (ENABLE_INFERENCE=false)")
             from app.modules.projects.projects_service import ProjectService
             from app.modules.projects.projects_schema import ProjectStatusEnum
 
             try:
                 project_service = ProjectService(self.db)
 
-                async def mark_error():
-                    logger.error(f"Inference setup failed: {error_msg}")
+                async def mark_ready():
                     await project_service.update_project_status(
                         project_id=project_id,
-                        status=ProjectStatusEnum.ERROR,
+                        status=ProjectStatusEnum.READY,
                     )
+                    logger.info(f"Project {project_id} status updated to READY (inference skipped)")
 
-                self.run_async(mark_error())
+                self.run_async(mark_ready())
             except Exception as status_error:
-                logger.exception(f"Failed to update project status: {status_error}")
-
-            # Cleanup: Remove cloned repository before returning on error
-            cleanup_success = False
-            if repo_path and os.path.exists(repo_path):
-                try:
-                    logger.info(f"Cleaning up cloned repository at: {repo_path} (inference failure)")
-                    shutil.rmtree(repo_path)
-                    cleanup_success = True
-                    logger.info(f"Successfully cleaned up repository: {repo_path}")
-                except Exception as cleanup_error:
-                    logger.warning(f"Failed to cleanup repository {repo_path}: {cleanup_error}")
-
-            return {
-                'success': False,
-                'error': error_msg,
-                'project_id': project_id,
-                'repo_cleanup': cleanup_success
-            }
+                logger.exception(f"Failed to update project status to READY: {status_error}")
 
         elapsed = time.time() - start_time
 
@@ -1127,7 +1141,8 @@ def aggregate_and_resolve_references(
                 logger.warning(f"Failed to cleanup repository {repo_path}: {cleanup_error}")
                 # Don't fail the task due to cleanup errors
 
-        return {
+        # Build return dict based on whether inference was enabled
+        result = {
             'success': len(failed_units) == 0,
             'project_id': project_id,
             'total_files': total_files_processed,
@@ -1141,11 +1156,18 @@ def aggregate_and_resolve_references(
             'duration_seconds': elapsed,
             'workers_used': total_work_units,
             'cross_directory_resolution_skipped': True,
-            'inference_spawned': True,
-            'inference_units': inference_chord_result['work_units'],
-            'status': 'running_inference',
+            'inference_spawned': enable_inference,
             'repo_cleanup': cleanup_success
         }
+
+        if enable_inference:
+            result['inference_units'] = inference_chord_result['work_units']
+            result['status'] = 'running_inference'
+        else:
+            result['status'] = 'ready'
+            result['inference_skipped'] = True
+
+        return result
 
     except Exception as e:
         logger.exception("Error aggregating parsing results")
