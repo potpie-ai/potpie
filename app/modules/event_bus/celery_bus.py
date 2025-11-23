@@ -44,20 +44,34 @@ class CeleryEventBus(EventBusInterface):
         with event_source set to the integration type.
         """
         try:
+            # Extract unique_identifier for Jira (format: jira-{cloud_id})
+            unique_identifier = None
+            if integration_type == "jira" and headers:
+                cloud_id = headers.get("X-Jira-Cloud-Id")
+                if cloud_id:
+                    unique_identifier = f"jira-{cloud_id}"
+
+            # Create webhook event data
+            event_data = {
+                "integration_id": integration_id,
+                "integration_type": integration_type,
+                "event_type": event_type,
+                "event_source": integration_type,  # Set event_source to integration_type
+                "payload": payload,
+                "headers": headers,
+                "source_ip": source_ip,
+                "metadata": {
+                    "source": "webhook",
+                    "correlation_id": headers.get("X-Correlation-ID") if headers else None,
+                },
+            }
+
+            # Add unique_identifier if available (for Jira)
+            if unique_identifier:
+                event_data["unique_identifier"] = unique_identifier
+
             # Create webhook event
-            webhook_event = WebhookEvent(
-                integration_id=integration_id,
-                integration_type=integration_type,
-                event_type=event_type,
-                event_source=integration_type,  # Set event_source to integration_type
-                payload=payload,
-                headers=headers,
-                source_ip=source_ip,
-                metadata=EventMetadata(
-                    source="webhook",
-                    correlation_id=headers.get("X-Correlation-ID") if headers else None,
-                ),
-            )
+            webhook_event = WebhookEvent(**event_data)
 
             # Queue the event to the single external-event queue
             task = self.celery_app.send_task(

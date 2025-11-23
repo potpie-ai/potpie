@@ -1266,12 +1266,18 @@ async def jira_webhook(
             event_bus = CeleryEventBus(celery_app)
 
             try:
+                # Prepare headers with site_id for trigger hash matching
+                headers_dict = dict(request.headers)
+                if site_id:
+                    # Add site_id to headers for event bus processing
+                    headers_dict["X-Jira-Cloud-Id"] = site_id
+
                 event_id = await event_bus.publish_webhook_event(
                     integration_id=integration_id,
                     integration_type="jira",
                     event_type=event_type,
                     payload=webhook_data,
-                    headers=dict(request.headers),
+                    headers=headers_dict,
                     source_ip=request.client.host if request.client else None,
                 )
 
