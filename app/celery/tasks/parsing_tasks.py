@@ -2,6 +2,7 @@ import logging
 import os
 from typing import Any, Dict
 
+from sqlalchemy import func
 from app.celery.celery_app import celery_app
 from app.celery.tasks.base_task import BaseTask
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
     bind=True,
     base=BaseTask,
     name="app.celery.tasks.parsing_tasks.process_parsing",
+    ignore_result=False,  # Store results for monitoring and debugging
 )
 def process_parsing(
     self,
@@ -170,14 +172,23 @@ def resume_parsing_stage(db_session, session, task_instance) -> Dict[str, Any]:
             'session_id': str(session.id)
         }
 
-    # Step 5: Reset work units to pending and increment attempt counter
+    # Step 5: Reset Redis counter for resume (important for coordination)
+    from app.celery.coordination import ParsingCoordinator
+    try:
+        redis_client = task_instance.app.backend.client
+        ParsingCoordinator.reset_counter(redis_client, session.project_id)
+        logger.info(f"Reset Redis completion counter for project {session.project_id}")
+    except Exception as redis_error:
+        logger.error(f"Failed to reset Redis counter: {redis_error}")
+
+    # Step 6: Reset work units to pending and increment attempt counter
     for work_unit in incomplete_units:
         work_unit.status = 'pending'
         work_unit.attempt_count += 1
 
     db_session.commit()
 
-    # Step 6: Create task signatures using existing parse_directory_unit
+    # Step 7: Create task signatures using existing parse_directory_unit
     parsing_tasks = []
     for work_unit in incomplete_units:
         task = parse_directory_unit.s(
@@ -193,26 +204,23 @@ def resume_parsing_stage(db_session, session, task_instance) -> Dict[str, Any]:
         )
         parsing_tasks.append(task)
 
-    # Step 7: Create chord with existing aggregate callback
-    callback = aggregate_and_resolve_references.s(
-        project_id=session.project_id,
-        user_id=project.user_id,
-        total_work_units=session.total_work_units,
-        start_time=0,
-        repo_path=repo_path  # Use cloned repo path
+    # Step 8: Execute as group (no callback - workers coordinate via Redis)
+    from celery import group
+    group_task = group(parsing_tasks).apply_async()
+
+    logger.info(
+        f"Dispatched {len(incomplete_units)} work units for resume (group_id={group_task.id})"
     )
 
-    chord_task = chord(parsing_tasks)(callback)
-
     # Update session
-    session.coordinator_task_id = chord_task.id
+    session.coordinator_task_id = str(group_task.id)
     session.updated_at = datetime.utcnow()
     db_session.commit()
 
     return {
         'success': True,
         'session_id': str(session.id),
-        'chord_task_id': chord_task.id,
+        'group_task_id': str(group_task.id),
         'resumed_work_units': len(incomplete_units),
         'status': 'resuming'
     }
@@ -307,7 +315,16 @@ def bootstrap_and_resume(
             'message': 'All work units completed, starting aggregation'
         }
 
-    # Create chord with incomplete work units
+    # Reset Redis counter for bootstrap (important for coordination)
+    from app.celery.coordination import ParsingCoordinator
+    try:
+        redis_client = task_instance.app.backend.client
+        ParsingCoordinator.reset_counter(redis_client, project_id)
+        logger.info(f"Reset Redis completion counter for project {project_id}")
+    except Exception as redis_error:
+        logger.error(f"Failed to reset Redis counter: {redis_error}")
+
+    # Create group with incomplete work units (no callback - workers coordinate via Redis)
     parsing_tasks = []
     for i, work_unit in enumerate(incomplete_units):
         # Use database ID from the DirectoryWorkUnit object
@@ -324,26 +341,22 @@ def bootstrap_and_resume(
         )
         parsing_tasks.append(task)
 
-    # Create callback
-    callback = aggregate_and_resolve_references.s(
-        project_id=project_id,
-        user_id=user_id,
-        total_work_units=session.total_work_units,
-        start_time=0,  # Not tracking for bootstrap
-        repo_path=project_path
+    # Execute as group (no callback - workers coordinate via Redis)
+    from celery import group
+    group_task = group(parsing_tasks).apply_async()
+
+    logger.info(
+        f"Dispatched {len(incomplete_units)} work units for bootstrap (group_id={group_task.id})"
     )
 
-    # Execute chord
-    chord_task = chord(parsing_tasks)(callback)
-
-    # Update session with chord ID
-    session.coordinator_task_id = chord_task.id
+    # Update session with group ID
+    session.coordinator_task_id = str(group_task.id)
     task_instance.db.commit()
 
     return {
         'success': True,
         'session_id': str(session.id),
-        'chord_task_id': chord_task.id,
+        'group_task_id': str(group_task.id),
         'bootstrapped': True,
         'incomplete_work_units': len(incomplete_units),
         'status': 'resuming'
@@ -355,6 +368,7 @@ def bootstrap_and_resume(
     base=BaseTask,
     name="app.celery.tasks.parsing_tasks.process_parsing_distributed",
     time_limit=7200,  # 2 hours
+    ignore_result=False,  # Store results for monitoring and chord coordination
 )
 def process_parsing_distributed(
     self,
@@ -415,7 +429,12 @@ def process_parsing_distributed(
             return resume_parsing_session(self.db, existing_session, self)
 
         # NEW: Check for partial parsing in Neo4j (bootstrap case)
-        if resume and not existing_session:
+        # Only bootstrap if:
+        # 1. Resume is enabled
+        # 2. No existing session found
+        # 3. cleanup_graph is False (if cleanup requested, do fresh parse)
+        # 4. Neo4j has nodes (potential incomplete parse)
+        if resume and not existing_session and not cleanup_graph:
             from app.modules.parsing.graph_construction.neo4j_state_service import Neo4jStateService
 
             neo4j_config = config_provider.get_neo4j_config()
@@ -443,8 +462,18 @@ def process_parsing_distributed(
                         commit_id,
                         cleanup_graph
                     )
+                else:
+                    logger.info(
+                        f"No partial state found in Neo4j for project {project_id}, "
+                        f"proceeding with fresh parse"
+                    )
             finally:
                 neo4j_state_service.close()
+        elif resume and not existing_session and cleanup_graph:
+            logger.info(
+                f"cleanup_graph=True for project {project_id}, "
+                f"skipping resume/bootstrap and proceeding with fresh parse"
+            )
 
         # Continue with normal fresh parsing...
         # Step 1: Setup repository
@@ -471,9 +500,14 @@ def process_parsing_distributed(
         repo, owner, auth = self.run_async(setup_repo())
         logger.info("Repository cloned/copied successfully")
 
-        # Setup project directory
-        project_path, _ = self.run_async(setup_project_dir(repo, auth))
+        # Setup project directory and get actual commit ID
+        project_path, actual_commit_id = self.run_async(setup_project_dir(repo, auth))
         logger.info(f"Project directory setup: {project_path}")
+
+        # Use the actual commit ID from repository setup if not provided
+        if not commit_id:
+            commit_id = actual_commit_id
+            logger.info(f"Using commit ID from repository setup: {commit_id}")
 
         # Cleanup existing graph if requested
         if cleanup_graph:
@@ -496,6 +530,9 @@ def process_parsing_distributed(
         )
 
         # Step 3: Create task group for parallel processing
+        # NOTE: We no longer use chord with callback to avoid OOM from loading
+        # hundreds of task results. Instead, workers coordinate via Redis counter
+        # and the last worker triggers finalization.
         parsing_tasks = []
         for i, work_unit in enumerate(work_units):
             task = parse_directory_unit.s(
@@ -505,22 +542,57 @@ def process_parsing_distributed(
                 repo_path=project_path,
                 project_id=project_id,
                 user_id=user_id,
-                repo_name=repo_details.get('repo_name', '')
+                repo_name=repo_details.get('repo_name', ''),
+                commit_id=commit_id  # Pass commit_id for worker coordination
             )
             parsing_tasks.append(task)
 
-        # Step 4: Use chord to execute tasks in parallel with callback
-        # The callback (aggregate_and_resolve) will be called after all parsing tasks complete
-        callback = aggregate_and_resolve_references.s(
-            project_id=project_id,
-            user_id=user_id,
-            total_work_units=len(work_units),
-            start_time=start_time,
-            repo_path=project_path  # For cleanup after all workers finish
+        # Step 4: Execute as group (no callback - workers coordinate via Redis)
+        from celery import group
+        group_task = group(parsing_tasks).apply_async()
+
+        logger.info(
+            f"Dispatched {len(work_units)} work units as group (group_id={group_task.id})"
         )
 
-        # Execute chord: (group of tasks) | callback
-        chord_task = chord(parsing_tasks)(callback)
+        # Create or update session for worker coordination
+        from app.modules.parsing.parsing_session_model import ParsingSession
+        from datetime import datetime
+
+        # Check if session already exists (from bootstrap/resume)
+        session = self.db.query(ParsingSession).filter(
+            ParsingSession.project_id == project_id,
+            ParsingSession.commit_id == commit_id,
+            ParsingSession.completed_at.is_(None)
+        ).first()
+
+        if not session:
+            # Create new session
+            session_number = self.db.query(
+                func.max(ParsingSession.session_number)
+            ).filter(
+                ParsingSession.project_id == project_id,
+                ParsingSession.commit_id == commit_id
+            ).scalar() or 0
+
+            session = ParsingSession(
+                project_id=project_id,
+                commit_id=commit_id,
+                session_number=session_number + 1,
+                coordinator_task_id=str(group_task.id),
+                total_work_units=len(work_units),
+                total_files=scanner.total_files,
+                stage='parsing',
+                processed_files=0
+            )
+            self.db.add(session)
+        else:
+            # Update existing session
+            session.coordinator_task_id = str(group_task.id)
+            session.total_work_units = len(work_units)
+            session.total_files = scanner.total_files
+
+        self.db.commit()
 
         elapsed = time.time() - start_time
 
@@ -534,12 +606,22 @@ def process_parsing_distributed(
             'work_units': len(work_units),
             'total_files': scanner.total_files,
             'setup_duration_seconds': elapsed,
-            'chord_task_id': chord_task.id,
+            'group_task_id': group_task.id,
+            'session_id': str(session.id),
             'status': 'processing'
         }
 
     except Exception as e:
         logger.exception("Error in distributed parsing coordinator")
+
+        # Reset Redis counter so retry can work
+        from app.celery.coordination import ParsingCoordinator
+        try:
+            redis_client = self.app.backend.client
+            ParsingCoordinator.reset_counter(redis_client, project_id)
+        except Exception as redis_error:
+            logger.error(f"Failed to reset Redis counter: {redis_error}")
+
         return {
             'success': False,
             'error': str(e),
@@ -552,6 +634,7 @@ def process_parsing_distributed(
     base=BaseTask,
     name="app.celery.tasks.parsing_tasks.parse_directory_unit",
     time_limit=1800,  # 30 minutes
+    ignore_result=False,  # Results must be stored for chord callback aggregation
 )
 def parse_directory_unit(
     self,
@@ -801,6 +884,46 @@ def parse_directory_unit(
                 self.db.commit()
                 logger.info(f"[Unit {work_unit_index}] Marked work unit as completed in database")
 
+        # Step 10: Check if this is the last worker to complete
+        if work_unit_db_id and commit_id:
+            from app.celery.coordination import ParsingCoordinator
+            from app.modules.parsing.parsing_session_model import ParsingSession
+
+            # Get total work units from session
+            session = self.db.query(ParsingSession).filter(
+                ParsingSession.project_id == project_id,
+                ParsingSession.commit_id == commit_id,
+                ParsingSession.completed_at.is_(None)
+            ).first()
+
+            if session:
+                redis_client = self.app.backend.client
+                completed_count, is_last = ParsingCoordinator.increment_completed(
+                    redis_client,
+                    project_id,
+                    session.total_work_units
+                )
+
+                logger.info(
+                    f"[Unit {work_unit_index}] Completion tracking: "
+                    f"{completed_count}/{session.total_work_units}"
+                )
+
+                if is_last:
+                    logger.info(
+                        f"[Unit {work_unit_index}] Last worker completed - triggering finalization"
+                    )
+                    # Trigger finalization asynchronously with delay to ensure all DB writes complete
+                    finalize_parsing.apply_async(
+                        kwargs={
+                            'project_id': project_id,
+                            'user_id': user_id,
+                            'repo_path': repo_path,
+                            'commit_id': commit_id
+                        },
+                        countdown=5  # 5 second delay
+                    )
+
         elapsed = time.time() - start_time
         logger.info(
             f"[Unit {work_unit_index}] Complete: {len(files_to_parse)} files parsed "
@@ -966,105 +1089,97 @@ def _resolve_references_immediately(
 @celery_app.task(
     bind=True,
     base=BaseTask,
-    name="app.celery.tasks.parsing_tasks.aggregate_and_resolve_references",
+    name="app.celery.tasks.parsing_tasks.finalize_parsing",
     time_limit=1800,  # 30 minutes
+    ignore_result=False,
 )
-def aggregate_and_resolve_references(
+def finalize_parsing(
     self,
-    task_results: list,
     project_id: str,
     user_id: str,
-    total_work_units: int,
-    start_time: float,
-    repo_path: str = None  # Optional for backward compatibility
+    repo_path: str = None,
+    commit_id: str = None
 ) -> Dict[str, Any]:
     """
-    Callback task that aggregates parsing results and triggers reference resolution.
+    Finalize parsing by querying aggregated stats from database.
 
-    This is executed automatically by Celery chord after all parse_directory_unit tasks complete.
+    Triggered by last worker to complete (no chord callback needed).
+    This replaces aggregate_and_resolve_references to avoid OOM from loading
+    hundreds of task results into memory.
 
     Args:
-        task_results: List of results from all parse_directory_unit tasks
         project_id: Project ID
         user_id: User ID
-        total_work_units: Total number of work units processed
-        start_time: Start time of the entire parsing operation
-        repo_path: Path to cloned repository (for cleanup after all workers finish)
+        repo_path: Path to cloned repository (for cleanup)
+        commit_id: Commit ID for this parsing session
 
     Returns:
-        Dictionary with final parsing results
+        Dictionary with finalization results
     """
     import time
     import shutil
-    # from collections import defaultdict  # No longer needed - not collecting defines/references
+    from app.modules.parsing.parsing_work_unit_model import ParsingWorkUnit
+    from app.modules.parsing.parsing_session_model import ParsingSession
+    from datetime import datetime
 
-    logger.info(
-        f"Aggregating results from {len(task_results)} work units for project {project_id}"
-    )
+    logger.info(f"Finalizing parsing for project {project_id}")
+    start_time = time.time()
 
     try:
-        # Aggregate results
-        total_nodes_created = sum(r['nodes_created'] for r in task_results)
-        total_edges_created = sum(r['edges_created'] for r in task_results)
-        total_files_processed = sum(r['files_processed'] for r in task_results)
-        total_immediate_edges = sum(r.get('immediate_edges', 0) for r in task_results)
-        failed_units = [r for r in task_results if not r['success']]
+        # Check if already finalized (idempotency)
+        session = self.db.query(ParsingSession).filter(
+            ParsingSession.project_id == project_id,
+            ParsingSession.commit_id == commit_id
+        ).first()
+
+        if session and session.completed_at:
+            logger.info(f"Project {project_id} already finalized at {session.completed_at}, skipping")
+            return {
+                'success': True,
+                'project_id': project_id,
+                'status': 'already_completed',
+                'completed_at': session.completed_at.isoformat()
+            }
+
+        # Query work units from database for aggregation
+        work_units = self.db.query(ParsingWorkUnit).filter(
+            ParsingWorkUnit.project_id == project_id,
+            ParsingWorkUnit.commit_id == commit_id
+        ).all()
+
+        if not work_units:
+            logger.warning(f"No work units found for project {project_id}, commit {commit_id}")
+            return {
+                'success': False,
+                'error': 'No work units found',
+                'project_id': project_id
+            }
+
+        # Aggregate stats from database
+        total_nodes = sum(u.nodes_created or 0 for u in work_units)
+        total_edges = sum(u.edges_created or 0 for u in work_units)
+        total_files = sum(u.file_count or 0 for u in work_units)
+
+        completed_units = [u for u in work_units if u.status == 'completed']
+        failed_units = [u for u in work_units if u.status == 'failed']
 
         logger.info(
-            f"Parallel parsing complete: "
-            f"{total_files_processed} files, "
-            f"{total_nodes_created} nodes, "
-            f"{total_edges_created} edges "
-            f"(including {total_immediate_edges} immediate cross-directory refs)"
+            f"Aggregation complete: {len(completed_units)}/{len(work_units)} units succeeded, "
+            f"{total_files} files, {total_nodes} nodes, {total_edges} edges"
         )
 
         if failed_units:
             logger.warning(f"{len(failed_units)} work units failed")
 
-        # COMMENTED OUT: No longer needed since cross-directory resolution is skipped
-        # Collect all references from task results
-        # IMPORTANT: With hybrid resolution, these are ONLY the unresolved references!
-        # Most references were already resolved by workers
-        # all_defines = defaultdict(set)
-        # all_references = []
-        # for r in task_results:
-        #     # Merge defines by unioning sets for each identifier
-        #     for ident, node_list in r.get('defines', {}).items():
-        #         # Convert list to set and union with existing
-        #         all_defines[ident].update(node_list)
-        #     all_references.extend(r.get('references', []))
-        #
-        # # Convert defaultdict back to regular dict with lists for serialization
-        # all_defines = {ident: list(node_set) for ident, node_set in all_defines.items()}
-
-        # Count unresolved references for logging only (now a direct sum)
-        total_unresolved_references = sum(r.get('deferred_references', 0) for r in task_results)
-
-        logger.info(
-            f"Hybrid resolution stats: "
-            f"{total_immediate_edges} refs resolved immediately by workers, "
-            f"{total_unresolved_references} deferred (will remain unresolved)"
-        )
-
-        # SKIP: Cross-directory reference resolution disabled
-        # Only using local distributed resolution (intra-directory + immediate)
-        logger.info(
-            f"Skipping cross-directory reference resolution task. "
-            f"{total_unresolved_references} references remain unresolved."
-        )
-
-        # Check if inference is enabled via environment variable
+        # Spawn inference if enabled
         enable_inference = os.getenv("ENABLE_INFERENCE", "false").lower() == "true"
 
         if enable_inference:
-            # Spawn inference chord directly (previously done in resolve_cross_directory_references)
             try:
-                inference_chord_result = spawn_inference_chord(
-                    self, project_id, user_id
-                )
+                inference_result = spawn_inference_chord(self, project_id, user_id)
                 logger.info(
                     f"Spawned inference chord for project {project_id}: "
-                    f"{inference_chord_result['work_units']} inference units"
+                    f"{inference_result['work_units']} inference units"
                 )
             except Exception as inference_error:
                 error_msg = str(inference_error)
@@ -1126,10 +1241,7 @@ def aggregate_and_resolve_references(
             except Exception as status_error:
                 logger.exception(f"Failed to update project status to READY: {status_error}")
 
-        elapsed = time.time() - start_time
-
         # Cleanup: Remove cloned repository after all workers are done
-        # This is safe because all parsing tasks have completed (shared storage)
         cleanup_success = False
         if repo_path and os.path.exists(repo_path):
             try:
@@ -1139,29 +1251,32 @@ def aggregate_and_resolve_references(
                 logger.info(f"Successfully cleaned up repository: {repo_path}")
             except Exception as cleanup_error:
                 logger.warning(f"Failed to cleanup repository {repo_path}: {cleanup_error}")
-                # Don't fail the task due to cleanup errors
+
+        # Mark session as complete
+        if session:
+            session.completed_at = datetime.utcnow()
+            session.stage = 'completed'
+            self.db.commit()
+            logger.info(f"Marked session {session.id} as completed")
+
+        elapsed = time.time() - start_time
 
         # Build return dict based on whether inference was enabled
         result = {
             'success': len(failed_units) == 0,
             'project_id': project_id,
-            'total_files': total_files_processed,
-            'total_nodes': total_nodes_created,
-            'total_edges': total_edges_created,
-            'immediate_edges': total_immediate_edges,
-            'deferred_references': total_unresolved_references,
-            'unresolved_references': total_unresolved_references,
-            'work_units': total_work_units,
+            'total_files': total_files,
+            'total_nodes': total_nodes,
+            'total_edges': total_edges,
+            'work_units': len(work_units),
             'failed_units': len(failed_units),
             'duration_seconds': elapsed,
-            'workers_used': total_work_units,
-            'cross_directory_resolution_skipped': True,
             'inference_spawned': enable_inference,
             'repo_cleanup': cleanup_success
         }
 
         if enable_inference:
-            result['inference_units'] = inference_chord_result['work_units']
+            result['inference_units'] = inference_result.get('work_units', 0)
             result['status'] = 'running_inference'
         else:
             result['status'] = 'ready'
@@ -1170,7 +1285,7 @@ def aggregate_and_resolve_references(
         return result
 
     except Exception as e:
-        logger.exception("Error aggregating parsing results")
+        logger.exception(f"Error finalizing parsing for project {project_id}")
 
         # Best effort cleanup even on error
         if repo_path and os.path.exists(repo_path):
@@ -1185,6 +1300,50 @@ def aggregate_and_resolve_references(
             'error': str(e),
             'project_id': project_id
         }
+
+
+@celery_app.task(
+    bind=True,
+    base=BaseTask,
+    name="app.celery.tasks.parsing_tasks.aggregate_and_resolve_references",
+    time_limit=1800,  # 30 minutes
+    ignore_result=False,  # Store results for monitoring and inference coordination
+)
+def aggregate_and_resolve_references(
+    self,
+    task_results: list,
+    project_id: str,
+    user_id: str,
+    total_work_units: int,
+    start_time: float,
+    repo_path: str = None  # Optional for backward compatibility
+) -> Dict[str, Any]:
+    """
+    DEPRECATED: Replaced by finalize_parsing + Redis coordination.
+
+    This callback caused OOM with large chord results (811+ tasks).
+    Now using Redis atomic counters instead of chord callbacks.
+
+    This function is kept for backward compatibility with existing
+    parsing sessions but should not be called for new sessions.
+    """
+    logger.warning(
+        f"DEPRECATED: aggregate_and_resolve_references called for project {project_id}. "
+        f"This function is deprecated and replaced by finalize_parsing. "
+        f"Received {len(task_results)} task results."
+    )
+
+    # For backward compatibility, if this gets called, try to finalize properly
+    # by delegating to the new finalize_parsing function
+    logger.info(f"Delegating to finalize_parsing for project {project_id}")
+
+    return finalize_parsing(
+        self,
+        project_id=project_id,
+        user_id=user_id,
+        repo_path=repo_path,
+        commit_id=None  # We don't have it in old sessions
+    )
 
 
 def spawn_inference_chord(task_instance, project_id: str, user_id: str) -> Dict[str, Any]:
@@ -1340,6 +1499,7 @@ def spawn_inference_chord(task_instance, project_id: str, user_id: str) -> Dict[
     base=BaseTask,
     name="app.celery.tasks.parsing_tasks.resolve_cross_directory_references",
     time_limit=600,  # 10 minutes
+    ignore_result=False,  # Store results for monitoring
 )
 def resolve_cross_directory_references(
     self,
@@ -1529,6 +1689,7 @@ def resolve_cross_directory_references(
     base=BaseTask,
     name="app.celery.tasks.parsing_tasks.run_inference_unit",
     time_limit=3600,  # 1 hour
+    ignore_result=False,  # Results must be stored for inference chord callback
 )
 def run_inference_unit(
     self,
@@ -1646,6 +1807,7 @@ def run_inference_unit(
     base=BaseTask,
     name="app.celery.tasks.parsing_tasks.finalize_project_after_inference",
     time_limit=600,  # 10 minutes
+    ignore_result=False,  # Store results for monitoring and status tracking
 )
 def finalize_project_after_inference(
     self,
@@ -1825,6 +1987,7 @@ def finalize_project_after_inference(
     base=BaseTask,
     name="app.celery.tasks.parsing_tasks.create_vector_index_async",
     time_limit=7200,  # 2 hours for very large repos
+    ignore_result=False,  # Store results for monitoring
 )
 def create_vector_index_async(
     self,

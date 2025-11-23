@@ -55,7 +55,10 @@ def configure_celery(queue_prefix: str):
                 "queue": f"{queue_prefix}_process_repository"  # Changed to same queue as coordinator
             },
             "app.celery.tasks.parsing_tasks.aggregate_and_resolve_references": {
-                "queue": f"{queue_prefix}_process_repository"  # Added route for new callback task
+                "queue": f"{queue_prefix}_process_repository"  # Added route for callback task (deprecated)
+            },
+            "app.celery.tasks.parsing_tasks.finalize_parsing": {
+                "queue": f"{queue_prefix}_process_repository"  # New finalization task (replaces chord callback)
             },
             "app.celery.tasks.parsing_tasks.resolve_cross_directory_references": {
                 "queue": f"{queue_prefix}_process_repository"
