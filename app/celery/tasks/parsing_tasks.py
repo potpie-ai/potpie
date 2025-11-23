@@ -529,12 +529,36 @@ def process_parsing_distributed(
             f"Created {len(work_units)} work units for {scanner.total_files} files"
         )
 
+        # Step 2.5: Create work unit database records for tracking and aggregation
+        # This allows workers to update status and finalize_parsing to query stats
+        from app.modules.parsing.parsing_work_unit_model import ParsingWorkUnit
+
+        db_work_units = []
+        for i, work_unit in enumerate(work_units):
+            db_work_unit = ParsingWorkUnit(
+                project_id=project_id,
+                commit_id=commit_id,
+                work_unit_index=i,
+                directory_path=work_unit.path,
+                files=work_unit.files,
+                file_count=work_unit.file_count,
+                depth=work_unit.depth,
+                status='pending',
+                attempt_count=0
+            )
+            self.db.add(db_work_unit)
+            db_work_units.append(db_work_unit)
+
+        # Flush to get IDs
+        self.db.flush()
+        logger.info(f"Created {len(db_work_units)} work unit database records")
+
         # Step 3: Create task group for parallel processing
         # NOTE: We no longer use chord with callback to avoid OOM from loading
         # hundreds of task results. Instead, workers coordinate via Redis counter
         # and the last worker triggers finalization.
         parsing_tasks = []
-        for i, work_unit in enumerate(work_units):
+        for i, (work_unit, db_work_unit) in enumerate(zip(work_units, db_work_units)):
             task = parse_directory_unit.s(
                 work_unit_index=i,
                 directory_path=work_unit.path,
@@ -543,7 +567,8 @@ def process_parsing_distributed(
                 project_id=project_id,
                 user_id=user_id,
                 repo_name=repo_details.get('repo_name', ''),
-                commit_id=commit_id  # Pass commit_id for worker coordination
+                commit_id=commit_id,  # Pass commit_id for worker coordination
+                work_unit_db_id=str(db_work_unit.id)  # Pass DB ID for status updates
             )
             parsing_tasks.append(task)
 
@@ -885,7 +910,9 @@ def parse_directory_unit(
                 logger.info(f"[Unit {work_unit_index}] Marked work unit as completed in database")
 
         # Step 10: Check if this is the last worker to complete
-        if work_unit_db_id and commit_id:
+        # Note: For fresh parsing, we may not have work_unit_db_id, but we still need
+        # to track completion. The commit_id is required for session lookup.
+        if commit_id:
             from app.celery.coordination import ParsingCoordinator
             from app.modules.parsing.parsing_session_model import ParsingSession
 
@@ -923,6 +950,11 @@ def parse_directory_unit(
                         },
                         countdown=5  # 5 second delay
                     )
+            else:
+                logger.warning(
+                    f"[Unit {work_unit_index}] No active session found for "
+                    f"project {project_id}, commit {commit_id}. Cannot track completion."
+                )
 
         elapsed = time.time() - start_time
         logger.info(
