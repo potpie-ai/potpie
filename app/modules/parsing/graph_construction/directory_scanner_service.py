@@ -1,5 +1,6 @@
 import os
 import logging
+import math
 from typing import List, Dict, Any
 from collections import defaultdict
 from dataclasses import dataclass
@@ -49,39 +50,69 @@ class DirectoryScannerService:
         self.total_files = 0
 
         # Load configuration from environment at instance creation time
-        self.MAX_FILES_PER_TASK = int(os.getenv('MAX_FILES_PER_WORK_UNIT', '5000'))
-        self.TARGET_FILES_PER_TASK = int(os.getenv('MAX_FILES_PER_WORK_UNIT', '3000'))
-        self.MAX_DEPTH = 10
+        self.MAX_FILES_PER_TASK = int(os.getenv('MAX_FILES_PER_WORK_UNIT', '2000'))
+        self.TARGET_FILES_PER_TASK = int(os.getenv('TARGET_FILES_PER_WORK_UNIT', '1750'))
+        self.MIN_FILES_PER_TASK = int(os.getenv('MIN_FILES_PER_WORK_UNIT', '100'))
 
     def scan_and_divide(self) -> List[DirectoryWorkUnit]:
         """
-        Scan repository and create work units.
+        Scan repository and create balanced work units.
+
+        Uses a three-phase approach:
+        1. Collect all files grouped by directory
+        2. Calculate optimal distribution parameters
+        3. Create balanced work units using bin-packing
 
         Returns:
             List of DirectoryWorkUnit objects, each representing a task
         """
         logger.info(f"Scanning repository: {self.repo_path}")
-        logger.info(f"Configuration: MAX_FILES_PER_TASK={self.MAX_FILES_PER_TASK}, TARGET_FILES_PER_TASK={self.TARGET_FILES_PER_TASK}")
+        logger.info(
+            f"Configuration: MAX={self.MAX_FILES_PER_TASK}, "
+            f"TARGET={self.TARGET_FILES_PER_TASK}, "
+            f"MIN={self.MIN_FILES_PER_TASK}"
+        )
 
-        # First pass: count files per directory
-        dir_file_counts = self._count_files_per_directory()
+        # Phase 1: Collect all files grouped by directory
+        directory_files = self._collect_all_files()
 
-        # Second pass: create work units using divide-and-conquer
-        work_units = self._create_work_units(dir_file_counts)
+        if self.total_files == 0:
+            logger.warning("No parseable files found in repository")
+            return []
+
+        # Phase 2: Calculate optimal distribution
+        target_size, expected_count = self._calculate_optimal_distribution(
+            self.total_files
+        )
+
+        # Phase 3: Create balanced work units
+        work_units = self._create_balanced_work_units(
+            directory_files,
+            target_size
+        )
+
+        # Log distribution statistics
+        self._log_distribution_stats(work_units)
 
         logger.info(
             f"Created {len(work_units)} work units for {self.total_files} files"
         )
         return work_units
 
-    def _count_files_per_directory(self) -> Dict[str, int]:
+    def _is_parseable_file(self, filename: str) -> bool:
+        """Check if file should be parsed based on extension"""
+        _, ext = os.path.splitext(filename.lower())
+        return ext in self.SUPPORTED_EXTENSIONS
+
+    def _collect_all_files(self) -> Dict[str, List[str]]:
         """
-        Walk repository and count parseable files per directory.
+        Phase 1: Collect all parseable files and group by directory.
 
         Returns:
-            Dict mapping directory path -> cumulative file count (includes subdirectories)
+            Dict mapping directory path -> list of file paths in that directory
+            (files are stored with full relative paths from repo root)
         """
-        dir_counts = defaultdict(int)
+        directory_files = defaultdict(list)
 
         for root, dirs, files in os.walk(self.repo_path):
             # Skip excluded directories
@@ -91,155 +122,270 @@ class DirectoryScannerService:
             if any(part.startswith('.') for part in root.split(os.sep)):
                 continue
 
-            rel_root = os.path.relpath(root, self.repo_path)
-            if rel_root == '.':
-                rel_root = ''
+            # Get relative directory path
+            rel_dir = os.path.relpath(root, self.repo_path)
+            if rel_dir == '.':
+                rel_dir = ''
 
-            # Count parseable files in this directory
-            file_count = sum(
-                1 for f in files
-                if self._is_parseable_file(f)
-            )
+            # Collect parseable files in this directory
+            for filename in files:
+                if self._is_parseable_file(filename):
+                    file_path = os.path.join(root, filename)
+                    rel_file_path = os.path.relpath(file_path, self.repo_path)
+                    directory_files[rel_dir].append(rel_file_path)
+                    self.total_files += 1
 
-            self.total_files += file_count
+        return directory_files
 
-            # Accumulate counts for this directory and all parents
-            current = rel_root
-            while True:
-                dir_counts[current] += file_count
-                if not current:
-                    break
-                current = os.path.dirname(current)
+    def _calculate_optimal_distribution(self, total_files: int) -> tuple[int, int]:
+        """
+        Phase 2: Calculate optimal work unit size for even distribution.
 
-        return dir_counts
+        Args:
+            total_files: Total number of files to distribute
 
-    def _is_parseable_file(self, filename: str) -> bool:
-        """Check if file should be parsed based on extension"""
-        _, ext = os.path.splitext(filename.lower())
-        return ext in self.SUPPORTED_EXTENSIONS
+        Returns:
+            Tuple of (target_files_per_unit, expected_unit_count)
+        """
+        if total_files == 0:
+            return (0, 0)
 
-    def _create_work_units(
+        if total_files <= self.MIN_FILES_PER_TASK:
+            # Very small repo, single work unit
+            return (total_files, 1)
+
+        # Calculate expected number of work units based on target
+        expected_units = math.ceil(total_files / self.TARGET_FILES_PER_TASK)
+
+        # Calculate optimal size to evenly distribute files
+        optimal_size = math.ceil(total_files / expected_units)
+
+        # Ensure optimal size doesn't exceed max
+        if optimal_size > self.MAX_FILES_PER_TASK:
+            # Recalculate with MAX as constraint
+            expected_units = math.ceil(total_files / self.MAX_FILES_PER_TASK)
+            optimal_size = math.ceil(total_files / expected_units)
+
+        logger.info(
+            f"Distribution plan: {total_files} files → {expected_units} units "
+            f"of ~{optimal_size} files each (target: {self.TARGET_FILES_PER_TASK}, "
+            f"max: {self.MAX_FILES_PER_TASK})"
+        )
+
+        return (optimal_size, expected_units)
+
+    def _create_balanced_work_units(
         self,
-        dir_counts: Dict[str, int]
+        directory_files: Dict[str, List[str]],
+        target_size: int
     ) -> List[DirectoryWorkUnit]:
         """
-        Create work units using greedy directory splitting.
+        Phase 3: Create balanced work units using bin-packing algorithm.
 
-        Strategy:
-        1. Start with root directory
-        2. If directory has > MAX_FILES_PER_TASK, split into subdirectories
-        3. Recursively process subdirectories
-        4. Create work unit when directory is small enough
+        Args:
+            directory_files: Dict mapping directory path -> list of files
+            target_size: Target number of files per work unit
+
+        Returns:
+            List of balanced DirectoryWorkUnit objects
         """
-        work_units = []
+        if not directory_files or target_size == 0:
+            return []
 
-        # Process root
-        self._split_directory(
-            path='',
-            dir_counts=dir_counts,
-            depth=0,
-            work_units=work_units
+        # Data structure to track work units being built
+        # Each item: {'files': [], 'directories': set(), 'count': 0}
+        work_unit_bins = []
+
+        # Sort directories by file count (largest first) for First-Fit-Decreasing
+        sorted_dirs = sorted(
+            directory_files.items(),
+            key=lambda x: len(x[1]),
+            reverse=True
         )
+
+        logger.info(f"Distributing {len(sorted_dirs)} directories into work units")
+
+        for dir_path, files in sorted_dirs:
+            file_count = len(files)
+
+            if file_count == 0:
+                continue
+
+            # Try to find a bin that can accommodate this directory
+            placed = False
+
+            # Check if directory is too large and needs to be split
+            if file_count > self.MAX_FILES_PER_TASK:
+                # Split large directory into chunks
+                logger.info(
+                    f"Splitting large directory {dir_path or 'root'} "
+                    f"({file_count} files) into chunks"
+                )
+                self._chunk_large_directory(
+                    dir_path,
+                    files,
+                    work_unit_bins,
+                    target_size
+                )
+                placed = True
+            else:
+                # Try to fit entire directory into an existing bin
+                for bin_data in work_unit_bins:
+                    if bin_data['count'] + file_count <= self.MAX_FILES_PER_TASK:
+                        # Check if adding this would be reasonable
+                        # (don't overfill beyond target unless necessary)
+                        if bin_data['count'] + file_count <= target_size * 1.15:
+                            # Add to this bin
+                            bin_data['files'].extend(files)
+                            bin_data['directories'].add(dir_path)
+                            bin_data['count'] += file_count
+                            placed = True
+                            break
+
+            # If not placed, create new bin
+            if not placed:
+                work_unit_bins.append({
+                    'files': files.copy(),
+                    'directories': {dir_path},
+                    'count': file_count
+                })
+
+        # Convert bins to DirectoryWorkUnit objects
+        work_units = []
+        for i, bin_data in enumerate(work_unit_bins):
+            if bin_data['count'] == 0:
+                continue
+
+            # Determine path representation
+            dirs = bin_data['directories']
+            if len(dirs) == 1:
+                path = list(dirs)[0]
+            else:
+                # Multiple directories - use common prefix or "mixed"
+                path = self._get_common_prefix(list(dirs)) or 'mixed'
+
+            work_unit = DirectoryWorkUnit(
+                path=path,
+                file_count=bin_data['count'],
+                files=bin_data['files'],
+                depth=0  # Not used in new algorithm
+            )
+            work_units.append(work_unit)
+
+            logger.info(
+                f"Work unit {i+1}: {work_unit.path or 'root'} "
+                f"({work_unit.file_count} files from {len(dirs)} dir(s))"
+            )
 
         return work_units
 
-    def _split_directory(
+    def _chunk_large_directory(
         self,
-        path: str,
-        dir_counts: Dict[str, int],
-        depth: int,
-        work_units: List[DirectoryWorkUnit]
+        dir_path: str,
+        files: List[str],
+        work_unit_bins: List[Dict[str, Any]],
+        target_size: int
     ):
         """
-        Recursively split directory into work units.
+        Split a large directory into multiple chunks and distribute them.
+
+        Args:
+            dir_path: Directory path
+            files: List of files in this directory
+            work_unit_bins: List of work unit bins being built
+            target_size: Target files per work unit
         """
-        full_path = os.path.join(self.repo_path, path) if path else self.repo_path
-        file_count = dir_counts.get(path, 0)
+        # Split files into chunks of MAX size
+        chunk_size = self.MAX_FILES_PER_TASK
+        num_chunks = math.ceil(len(files) / chunk_size)
 
-        # Base cases
-        if file_count == 0:
-            return
+        for i in range(num_chunks):
+            start_idx = i * chunk_size
+            end_idx = min((i + 1) * chunk_size, len(files))
+            chunk_files = files[start_idx:end_idx]
 
-        if depth > self.MAX_DEPTH:
-            # Max depth reached, create work unit even if large
-            logger.warning(
-                f"Max depth reached for {path} with {file_count} files"
-            )
-            self._create_work_unit(path, depth, work_units)
-            return
+            # Try to add chunk to existing bin with space
+            placed = False
+            for bin_data in work_unit_bins:
+                if bin_data['count'] + len(chunk_files) <= self.MAX_FILES_PER_TASK:
+                    bin_data['files'].extend(chunk_files)
+                    bin_data['directories'].add(f"{dir_path} (chunk {i+1}/{num_chunks})")
+                    bin_data['count'] += len(chunk_files)
+                    placed = True
+                    break
 
-        if file_count <= self.MAX_FILES_PER_TASK:
-            # Small enough, create work unit
-            self._create_work_unit(path, depth, work_units)
-            return
+            # Create new bin if not placed
+            if not placed:
+                work_unit_bins.append({
+                    'files': chunk_files,
+                    'directories': {f"{dir_path} (chunk {i+1}/{num_chunks})"},
+                    'count': len(chunk_files)
+                })
 
-        # Directory too large, split into subdirectories
-        logger.info(f"Splitting {path} ({file_count} files) into subdirectories")
-
-        try:
-            subdirs = [
-                d for d in os.listdir(full_path)
-                if os.path.isdir(os.path.join(full_path, d))
-                and d not in self.SKIP_DIRS
-                and not d.startswith('.')
-            ]
-        except OSError as e:
-            logger.error(f"Error listing directory {path}: {e}")
-            return
-
-        if not subdirs:
-            # No subdirectories, must create work unit even if large
-            logger.warning(
-                f"No subdirectories in {path} with {file_count} files"
-            )
-            self._create_work_unit(path, depth, work_units)
-            return
-
-        # Recursively process subdirectories
-        for subdir in subdirs:
-            subdir_path = os.path.join(path, subdir) if path else subdir
-            self._split_directory(
-                path=subdir_path,
-                dir_counts=dir_counts,
-                depth=depth + 1,
-                work_units=work_units
-            )
-
-    def _create_work_unit(
-        self,
-        path: str,
-        depth: int,
-        work_units: List[DirectoryWorkUnit]
-    ):
+    def _get_common_prefix(self, paths: List[str]) -> str:
         """
-        Create a work unit for a directory by collecting all parseable files.
+        Get common directory prefix from a list of paths.
+
+        Args:
+            paths: List of directory paths
+
+        Returns:
+            Common prefix path, or empty string if no common prefix
         """
-        full_path = os.path.join(self.repo_path, path) if path else self.repo_path
-        files = []
+        if not paths:
+            return ''
 
-        # Walk directory tree and collect all files
-        for root, dirs, filenames in os.walk(full_path):
-            # Skip excluded directories
-            dirs[:] = [d for d in dirs if d not in self.SKIP_DIRS]
+        if len(paths) == 1:
+            return paths[0]
 
-            # Skip hidden directories
-            if any(part.startswith('.') for part in root.split(os.sep)):
-                continue
+        # Filter out empty strings
+        non_empty = [p for p in paths if p]
+        if not non_empty:
+            return ''
 
-            for filename in filenames:
-                if self._is_parseable_file(filename):
-                    file_path = os.path.join(root, filename)
-                    rel_path = os.path.relpath(file_path, self.repo_path)
-                    files.append(rel_path)
+        # Split paths into components
+        split_paths = [p.split(os.sep) for p in non_empty]
 
-        if files:
-            work_unit = DirectoryWorkUnit(
-                path=path,
-                file_count=len(files),
-                files=files,
-                depth=depth
-            )
-            work_units.append(work_unit)
-            logger.info(
-                f"Created work unit: {path or 'root'} ({len(files)} files, depth {depth})"
-            )
+        # Find common prefix
+        common = []
+        for components in zip(*split_paths):
+            if len(set(components)) == 1:
+                common.append(components[0])
+            else:
+                break
+
+        return os.sep.join(common) if common else ''
+
+    def _log_distribution_stats(self, work_units: List[DirectoryWorkUnit]):
+        """
+        Log statistics about work unit distribution.
+
+        Args:
+            work_units: List of work units to analyze
+        """
+        if not work_units:
+            return
+
+        sizes = [wu.file_count for wu in work_units]
+        min_size = min(sizes)
+        max_size = max(sizes)
+        avg_size = sum(sizes) / len(sizes)
+        median_size = sorted(sizes)[len(sizes) // 2]
+
+        logger.info("=" * 60)
+        logger.info("Work Unit Distribution Statistics:")
+        logger.info(f"  Total work units: {len(work_units)}")
+        logger.info(f"  Min size: {min_size} files")
+        logger.info(f"  Max size: {max_size} files")
+        logger.info(f"  Average size: {avg_size:.1f} files")
+        logger.info(f"  Median size: {median_size} files")
+        logger.info(f"  Target range: {self.TARGET_FILES_PER_TASK}-{self.MAX_FILES_PER_TASK} files")
+
+        # Count units in different size ranges
+        in_target = sum(1 for s in sizes if self.TARGET_FILES_PER_TASK * 0.85 <= s <= self.MAX_FILES_PER_TASK)
+        too_small = sum(1 for s in sizes if s < self.MIN_FILES_PER_TASK)
+        logger.info(f"  Units in target range: {in_target}/{len(work_units)} ({in_target*100/len(work_units):.1f}%)")
+        if too_small > 0:
+            logger.warning(f"  Units below minimum ({self.MIN_FILES_PER_TASK}): {too_small}")
+
+        logger.info("=" * 60)

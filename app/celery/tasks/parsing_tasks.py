@@ -94,7 +94,9 @@ def resume_parsing_stage(db_session, session, task_instance) -> Dict[str, Any]:
     from datetime import datetime
     from celery import chord
 
-    # Step 1: Query incomplete work units
+    # Step 1: Query incomplete work units (pending and failed only)
+    # Note: We don't check for 'processing' status because work units are never
+    # explicitly set to 'processing' - they go directly from 'pending' to 'completed' or 'failed'
     incomplete_units = db_session.query(ParsingWorkUnit).filter(
         ParsingWorkUnit.project_id == session.project_id,
         ParsingWorkUnit.commit_id == session.commit_id,
@@ -176,8 +178,11 @@ def resume_parsing_stage(db_session, session, task_instance) -> Dict[str, Any]:
     from app.celery.coordination import ParsingCoordinator
     try:
         redis_client = task_instance.app.backend.client
-        ParsingCoordinator.reset_counter(redis_client, session.project_id)
-        logger.info(f"Reset Redis completion counter for project {session.project_id}")
+        ParsingCoordinator.reset_counter(redis_client, session.project_id, session.commit_id)
+        logger.info(
+            f"Reset Redis completion counter for resume "
+            f"(project={session.project_id}, commit={session.commit_id or 'none'})"
+        )
     except Exception as redis_error:
         logger.error(f"Failed to reset Redis counter: {redis_error}")
 
@@ -189,16 +194,17 @@ def resume_parsing_stage(db_session, session, task_instance) -> Dict[str, Any]:
     db_session.commit()
 
     # Step 7: Create task signatures using existing parse_directory_unit
+    # OPTIMIZATION: Don't pass file lists - workers fetch from DB to avoid message size limits
     parsing_tasks = []
     for work_unit in incomplete_units:
         task = parse_directory_unit.s(
             work_unit_index=work_unit.work_unit_index,
             directory_path=work_unit.directory_path,
-            files=work_unit.files,
             repo_path=repo_path,  # Now properly cloned!
             project_id=session.project_id,
             user_id=project.user_id,
             repo_name=project.repo_name,
+            files=None,  # Worker will fetch from DB using work_unit_db_id
             commit_id=session.commit_id,
             work_unit_db_id=str(work_unit.id)
         )
@@ -319,23 +325,27 @@ def bootstrap_and_resume(
     from app.celery.coordination import ParsingCoordinator
     try:
         redis_client = task_instance.app.backend.client
-        ParsingCoordinator.reset_counter(redis_client, project_id)
-        logger.info(f"Reset Redis completion counter for project {project_id}")
+        ParsingCoordinator.reset_counter(redis_client, project_id, commit_id)
+        logger.info(
+            f"Reset Redis completion counter for bootstrap "
+            f"(project={project_id}, commit={commit_id or 'none'})"
+        )
     except Exception as redis_error:
         logger.error(f"Failed to reset Redis counter: {redis_error}")
 
     # Create group with incomplete work units (no callback - workers coordinate via Redis)
+    # OPTIMIZATION: Don't pass file lists - workers fetch from DB to avoid message size limits
     parsing_tasks = []
     for i, work_unit in enumerate(incomplete_units):
         # Use database ID from the DirectoryWorkUnit object
         task = parse_directory_unit.s(
             work_unit_index=i,  # Ordinal index for logging
             directory_path=work_unit.path,
-            files=work_unit.files,
             repo_path=project_path,
             project_id=project_id,
             user_id=user_id,
             repo_name=repo_details.get('repo_name', ''),
+            files=None,  # Worker will fetch from DB using work_unit_db_id
             commit_id=commit_id,  # Actual commit ID
             work_unit_db_id=str(work_unit.id)  # UUID for DB operations
         )
@@ -627,30 +637,47 @@ def process_parsing_distributed(
             self.db.add(db_work_unit)
             db_work_units.append(db_work_unit)
 
-        # Flush to get IDs
+        # Flush to get IDs, then COMMIT so workers can see these records
         self.db.flush()
-        logger.info(f"Created {len(db_work_units)} work unit database records")
+        self.db.commit()  # CRITICAL: Commit before dispatching tasks!
+        logger.info(f"Created and committed {len(db_work_units)} work unit database records")
 
         # Step 3: Create task group for parallel processing
         # NOTE: We no longer use chord with callback to avoid OOM from loading
         # hundreds of task results. Instead, workers coordinate via Redis counter
         # and the last worker triggers finalization.
+        # OPTIMIZATION: Don't pass file lists in tasks - workers fetch from DB
+        # This avoids hitting Celery message size limits with large work units (2000+ files)
         parsing_tasks = []
         for i, (work_unit, db_work_unit) in enumerate(zip(work_units, db_work_units)):
             task = parse_directory_unit.s(
                 work_unit_index=i,
                 directory_path=work_unit.path,
-                files=work_unit.files,
                 repo_path=project_path,
                 project_id=project_id,
                 user_id=user_id,
                 repo_name=repo_details.get('repo_name', ''),
+                files=None,  # Worker will fetch from DB using work_unit_db_id
                 commit_id=commit_id,  # Pass commit_id for worker coordination
-                work_unit_db_id=str(db_work_unit.id)  # Pass DB ID for status updates
+                work_unit_db_id=str(db_work_unit.id)  # Pass DB ID - worker fetches files
             )
             parsing_tasks.append(task)
 
-        # Step 4: Execute as group (no callback - workers coordinate via Redis)
+        # Step 4: Reset Redis counter before dispatch (critical for fresh parses)
+        # This prevents reusing stale counters from previous sessions
+        from app.celery.coordination import ParsingCoordinator
+        try:
+            redis_client = self.app.backend.client
+            ParsingCoordinator.reset_counter(redis_client, project_id, commit_id)
+            logger.info(
+                f"[COORDINATOR] Reset Redis completion tracking before dispatch "
+                f"(project={project_id}, commit={commit_id or 'none'})"
+            )
+        except Exception as redis_error:
+            logger.error(f"Failed to reset Redis counter: {redis_error}")
+            # Don't fail the entire task - workers will still coordinate
+
+        # Step 5: Execute as group (no callback - workers coordinate via Redis)
         from celery import group
         group_task = group(parsing_tasks).apply_async()
 
@@ -710,6 +737,7 @@ def process_parsing_distributed(
                 processed_files=0
             )
             self.db.add(session)
+            self.db.flush()  # Flush to get session ID
             logger.info(
                 f"[COORDINATOR] Created new session: id={session.id}, commit_id={commit_id}, "
                 f"session_number={session_number + 1}, total_work_units={len(work_units)}"
@@ -719,12 +747,13 @@ def process_parsing_distributed(
             session.coordinator_task_id = str(group_task.id)
             session.total_work_units = len(work_units)
             session.total_files = scanner.total_files
+            self.db.flush()  # Flush to ensure updates are ready
             logger.info(
                 f"[COORDINATOR] Updated existing session: id={session.id}, commit_id={session.commit_id}, "
                 f"session_number={session.session_number}, total_work_units={len(work_units)}"
             )
 
-        self.db.commit()
+        self.db.commit()  # Commit session (work units already committed earlier)
 
         elapsed = time.time() - start_time
 
@@ -750,7 +779,7 @@ def process_parsing_distributed(
         from app.celery.coordination import ParsingCoordinator
         try:
             redis_client = self.app.backend.client
-            ParsingCoordinator.reset_counter(redis_client, project_id)
+            ParsingCoordinator.reset_counter(redis_client, project_id, commit_id)
         except Exception as redis_error:
             logger.error(f"Failed to reset Redis counter: {redis_error}")
 
@@ -772,11 +801,11 @@ def parse_directory_unit(
     self,
     work_unit_index: int,
     directory_path: str,
-    files: list,
     repo_path: str,
     project_id: str,
     user_id: str,
     repo_name: str,
+    files: list = None,  # Optional - will fetch from DB if work_unit_db_id provided
     commit_id: str = None,
     work_unit_db_id: str = None  # UUID of work unit in DB (for bootstrap/resume path only)
 ) -> Dict[str, Any]:
@@ -811,6 +840,43 @@ def parse_directory_unit(
     from app.modules.parsing.parsing_work_unit_model import ParsingWorkUnit
     from datetime import datetime
     import time
+
+    # Step 0: Fetch files from database if not provided (for large repos)
+    # This avoids passing 2,000+ file paths in Celery task messages
+    if files is None and work_unit_db_id:
+        logger.info(
+            f"[Unit {work_unit_index}] Fetching file list from database "
+            f"(work_unit_db_id={work_unit_db_id})"
+        )
+        work_unit_record = self.db.query(ParsingWorkUnit).filter(
+            ParsingWorkUnit.id == work_unit_db_id
+        ).first()
+
+        if work_unit_record:
+            files = work_unit_record.files
+            directory_path = work_unit_record.directory_path  # Also get from DB
+            logger.info(
+                f"[Unit {work_unit_index}] Fetched {len(files)} files from database"
+            )
+        else:
+            logger.error(
+                f"[Unit {work_unit_index}] Work unit {work_unit_db_id} not found in database"
+            )
+            return {
+                'success': False,
+                'error': f'Work unit {work_unit_db_id} not found',
+                'work_unit_index': work_unit_index
+            }
+    elif files is None:
+        logger.error(
+            f"[Unit {work_unit_index}] No files provided and no work_unit_db_id "
+            f"to fetch from database"
+        )
+        return {
+            'success': False,
+            'error': 'No files provided and no work_unit_db_id',
+            'work_unit_index': work_unit_index
+        }
 
     logger.info(
         f"[Unit {work_unit_index}] Starting: {directory_path or 'root'} "
@@ -1053,7 +1119,9 @@ def parse_directory_unit(
             completed_count, is_last = ParsingCoordinator.increment_completed(
                 redis_client,
                 project_id,
-                session.total_work_units
+                commit_id,
+                session.total_work_units,
+                work_unit_id=str(work_unit_db_id) if work_unit_db_id else None
             )
 
             logger.info(
@@ -1120,11 +1188,105 @@ def parse_directory_unit(
         logger.exception(
             f"[Unit {work_unit_index}] Error processing {directory_path}"
         )
+
+        # CRITICAL: Update DB state to reflect failure
+        error_msg = str(e)
+
+        # Update work unit status if we have DB ID
+        if work_unit_db_id:
+            try:
+                work_unit = self.db.query(ParsingWorkUnit).filter(
+                    ParsingWorkUnit.id == work_unit_db_id
+                ).first()
+                if work_unit:
+                    work_unit.status = 'failed'
+                    work_unit.attempt_count += 1
+                    work_unit.error_message = error_msg[:1000]  # Truncate long errors
+                    work_unit.last_error_at = datetime.utcnow()
+                    self.db.commit()
+                    logger.info(f"[Unit {work_unit_index}] Marked work unit as failed in DB")
+            except Exception as db_error:
+                logger.error(f"Failed to update work unit status: {db_error}")
+                self.db.rollback()  # Critical: rollback to keep session usable
+
+        # Update file states to failed if we're tracking them
+        if work_unit_db_id and commit_id and files:
+            try:
+                self.db.query(ParsingFileState).filter(
+                    ParsingFileState.project_id == project_id,
+                    ParsingFileState.commit_id == commit_id,
+                    ParsingFileState.work_unit_id == work_unit_db_id,
+                    ParsingFileState.status == 'pending'
+                ).update({
+                    'status': 'failed',
+                    'error_message': f"Work unit failed: {error_msg[:500]}",
+                    'processed_at': datetime.utcnow()
+                }, synchronize_session=False)
+                self.db.commit()
+                logger.info(f"[Unit {work_unit_index}] Marked file states as failed")
+            except Exception as file_error:
+                logger.error(f"Failed to update file states: {file_error}")
+                self.db.rollback()  # Critical: rollback to keep session usable
+
+        # CRITICAL: Still increment completion counter (failures count toward total)
+        # This ensures finalization is triggered even with failures
+        from app.celery.coordination import ParsingCoordinator
+        from app.modules.parsing.parsing_session_model import ParsingSession
+
+        try:
+            session_query = self.db.query(ParsingSession).filter(
+                ParsingSession.project_id == project_id,
+                ParsingSession.completed_at.is_(None)
+            )
+
+            if commit_id is not None:
+                session_query = session_query.filter(
+                    ParsingSession.commit_id == commit_id
+                )
+            else:
+                session_query = session_query.filter(
+                    ParsingSession.commit_id.is_(None)
+                )
+
+            session = session_query.first()
+
+            if session:
+                redis_client = self.app.backend.client
+                completed_count, is_last = ParsingCoordinator.increment_completed(
+                    redis_client,
+                    project_id,
+                    commit_id,
+                    session.total_work_units,
+                    work_unit_id=str(work_unit_db_id) if work_unit_db_id else None
+                )
+
+                logger.info(
+                    f"[Unit {work_unit_index}] Failed unit counted: "
+                    f"{completed_count}/{session.total_work_units}"
+                )
+
+                # If this was the last unit (even though it failed), trigger finalization
+                if is_last:
+                    logger.warning(
+                        f"[Unit {work_unit_index}] Last worker (with failure) - triggering finalization"
+                    )
+                    finalize_parsing.apply_async(
+                        kwargs={
+                            'project_id': project_id,
+                            'user_id': user_id,
+                            'repo_path': repo_path,
+                            'commit_id': commit_id
+                        },
+                        countdown=5
+                    )
+        except Exception as coord_error:
+            logger.error(f"Failed to track failed unit completion: {coord_error}")
+
         return {
             'success': False,
             'work_unit_index': work_unit_index,
             'directory_path': directory_path,
-            'error': str(e),
+            'error': error_msg,
             'files_processed': 0,
             'nodes_created': 0,
             'edges_created': 0,
