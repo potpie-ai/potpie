@@ -655,7 +655,8 @@ def process_parsing_distributed(
         group_task = group(parsing_tasks).apply_async()
 
         logger.info(
-            f"Dispatched {len(work_units)} work units as group (group_id={group_task.id})"
+            f"[COORDINATOR] Dispatched {len(work_units)} work units as group "
+            f"(group_id={group_task.id}, commit_id={commit_id})"
         )
 
         # Create or update session for worker coordination
@@ -709,11 +710,19 @@ def process_parsing_distributed(
                 processed_files=0
             )
             self.db.add(session)
+            logger.info(
+                f"[COORDINATOR] Created new session: id={session.id}, commit_id={commit_id}, "
+                f"session_number={session_number + 1}, total_work_units={len(work_units)}"
+            )
         else:
             # Update existing session
             session.coordinator_task_id = str(group_task.id)
             session.total_work_units = len(work_units)
             session.total_files = scanner.total_files
+            logger.info(
+                f"[COORDINATOR] Updated existing session: id={session.id}, commit_id={session.commit_id}, "
+                f"session_number={session.session_number}, total_work_units={len(work_units)}"
+            )
 
         self.db.commit()
 
@@ -1014,6 +1023,11 @@ def parse_directory_unit(
         from app.modules.parsing.parsing_session_model import ParsingSession
 
         # Get total work units from session with NULL-safe commit_id comparison
+        logger.info(
+            f"[Unit {work_unit_index}] [COMPLETION TRACKING] Looking for session: "
+            f"project_id={project_id}, commit_id={commit_id}"
+        )
+
         session_query = self.db.query(ParsingSession).filter(
             ParsingSession.project_id == project_id,
             ParsingSession.completed_at.is_(None)
@@ -1031,6 +1045,10 @@ def parse_directory_unit(
         session = session_query.first()
 
         if session:
+            logger.info(
+                f"[Unit {work_unit_index}] [COMPLETION TRACKING] Found session {session.id}: "
+                f"total_work_units={session.total_work_units}, session_number={session.session_number}"
+            )
             redis_client = self.app.backend.client
             completed_count, is_last = ParsingCoordinator.increment_completed(
                 redis_client,
@@ -1058,9 +1076,23 @@ def parse_directory_unit(
                     countdown=5  # 5 second delay
                 )
         else:
-            logger.warning(
-                f"[Unit {work_unit_index}] No active session found for "
-                f"project {project_id}, commit {commit_id}. Cannot track completion."
+            # Debug: Show what sessions actually exist
+            all_incomplete_sessions = self.db.query(ParsingSession).filter(
+                ParsingSession.project_id == project_id,
+                ParsingSession.completed_at.is_(None)
+            ).all()
+
+            session_info = [
+                f"(id={s.id[:8]}, commit={s.commit_id[:8] if s.commit_id else 'None'}, "
+                f"total_units={s.total_work_units})"
+                for s in all_incomplete_sessions
+            ]
+
+            logger.error(
+                f"[Unit {work_unit_index}] [COMPLETION TRACKING FAILED] No session found for "
+                f"project={project_id}, commit_id={commit_id}. "
+                f"Found {len(all_incomplete_sessions)} incomplete sessions with different commits: {session_info}. "
+                f"THIS WILL PREVENT FINALIZATION FROM TRIGGERING!"
             )
 
         elapsed = time.time() - start_time
