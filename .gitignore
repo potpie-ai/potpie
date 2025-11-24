@@ -75,3 +75,7 @@ thoughts/
 .codex/
 worktrees/
 .repos/
+# LSP server caches (stored in .repos/.lsp_cache/)
+# Note: .pyright/ symlinks may be created in worktrees but point to .repos/.lsp_cache/
+# LSP server binaries (installed by scripts/install_lsp_servers.sh)
+.lsp_binaries/

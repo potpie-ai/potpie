@@ -30,7 +30,7 @@ class GetJiraProjectUsersInput(BaseModel):
 class GetJiraProjectUsersTool:
     """Tool for getting assignable users in a Jira project."""
 
-    def __init__(self, db: Session, user_id: int):
+    def __init__(self, db: Session, user_id: str):
         self.db = db
         self.user_id = user_id
 
@@ -104,7 +104,7 @@ class GetJiraProjectUsersTool:
         return asyncio.run(self.arun(project_key, query))
 
 
-def get_jira_project_users_tool(db: Session, user_id: int) -> StructuredTool:
+def get_jira_project_users_tool(db: Session, user_id: str) -> StructuredTool:
     """
     Factory function to create a configured GetJiraProjectUsersTool.
 

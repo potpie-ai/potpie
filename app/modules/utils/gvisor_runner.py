@@ -227,12 +227,18 @@ def run_command_isolated(
         )
 
     runsc_path = get_runsc_binary()
-    if runsc_path:
-        logger.info(f"[GVISOR] gVisor available, using runsc at {runsc_path}")
-    else:
-        logger.info(
-            "[GVISOR] runsc binary not found locally; will rely on Docker runtime when available"
+    if not runsc_path:
+        logger.warning(
+            "[GVISOR] gVisor runsc binary not found, falling back to regular subprocess (less secure)"
         )
+        return _run_command_regular(
+            command=command,
+            working_dir=working_dir,
+            env=env,
+            timeout=timeout,
+        )
+
+    logger.info(f"[GVISOR] gVisor available, using runsc at {runsc_path}")
 
     try:
         # Determine the best method based on environment:

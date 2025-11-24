@@ -21,6 +21,7 @@ The system automatically detects the environment and uses the appropriate method
 gVisor is **automatically installed** in the Docker image during build. No additional setup is required in K8s - the container will have `runsc` available at `/usr/local/bin/runsc`.
 
 The system will automatically:
+
 - Detect that it's running in a container
 - Use runsc directly for command isolation
 - Fall back gracefully if runsc isn't available or doesn't work
@@ -36,6 +37,7 @@ python scripts/install_gvisor.py
 ```
 
 This script will:
+
 - Detect your system architecture
 - Download the latest `runsc` binary
 - Install it to `.venv/bin/runsc` (or `bin/runsc` in project root)
@@ -138,12 +140,14 @@ For Mac/Windows users, gVisor can work through Docker Desktop, which runs a Linu
 ### Setup Steps
 
 1. **Install Docker Desktop** (if not already installed)
+
    - Download from: https://www.docker.com/products/docker-desktop
    - Or install via Homebrew: `brew install --cask docker`
 
 2. **Install gVisor in Docker Desktop**
 
    Use the provided setup script:
+
    ```bash
    bash scripts/setup_gvisor_docker.sh
    ```
@@ -215,6 +219,7 @@ else:
 The gVisor runner uses the following approach:
 
 1. **Primary Method**: Uses Docker with `runsc` runtime
+
    - Creates a temporary container using `busybox:latest` image
    - Mounts the working directory and repository paths
    - Executes the command in the isolated sandbox

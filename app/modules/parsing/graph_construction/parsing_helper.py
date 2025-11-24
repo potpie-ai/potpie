@@ -328,9 +328,49 @@ class ParseHelper:
                         if hasattr(repo, "owner") and hasattr(repo.owner, "login"):
                             username = repo.owner.login
                             basic_auth = requests.auth.HTTPBasicAuth(username, token)
-                            response = requests.get(
-                                tarball_url, stream=True, auth=basic_auth, timeout=30
-                            )
+                            # Retry logic for connection timeouts
+                            max_retries = 3
+                            retry_count = 0
+                            response = None
+
+                            while retry_count < max_retries:
+                                try:
+                                    # Use longer timeout: (connect_timeout, read_timeout)
+                                    response = requests.get(
+                                        tarball_url,
+                                        stream=True,
+                                        auth=basic_auth,
+                                        timeout=(30, 300),
+                                    )
+                                    response.raise_for_status()
+                                    break  # Success, exit retry loop
+                                except (
+                                    requests.exceptions.ConnectTimeout,
+                                    requests.exceptions.ConnectionError,
+                                ) as e:
+                                    retry_count += 1
+                                    if retry_count < max_retries:
+                                        wait_time = (
+                                            2 * retry_count
+                                        )  # Exponential backoff: 2s, 4s, 6s
+                                        logger.warning(
+                                            f"ParsingHelper: Connection timeout/error (attempt {retry_count}/{max_retries}). "
+                                            f"Retrying in {wait_time}s... Error: {e}"
+                                        )
+                                        import asyncio
+
+                                        await asyncio.sleep(wait_time)
+                                    else:
+                                        # Last attempt failed, re-raise
+                                        logger.error(
+                                            f"ParsingHelper: Failed to connect after {max_retries} attempts: {e}"
+                                        )
+                                        raise
+
+                            if response is None:
+                                raise requests.exceptions.RequestException(
+                                    "Failed to get response after retries"
+                                )
                             logger.debug(
                                 f"ParsingHelper: Basic Auth response status: {response.status_code}"
                             )
@@ -339,11 +379,48 @@ class ParseHelper:
                 headers = {}
                 if auth:
                     headers = {"Authorization": f"token {auth.token}"}
-                response = requests.get(
-                    tarball_url, stream=True, headers=headers, timeout=30
-                )
 
-            response.raise_for_status()
+                # Retry logic for connection timeouts
+                max_retries = 3
+                retry_count = 0
+                response = None
+
+                while retry_count < max_retries:
+                    try:
+                        # Use longer timeout: (connect_timeout, read_timeout)
+                        # 30s to connect, 300s (5min) to read data
+                        response = requests.get(
+                            tarball_url, stream=True, headers=headers, timeout=(30, 300)
+                        )
+                        response.raise_for_status()
+                        break  # Success, exit retry loop
+                    except (
+                        requests.exceptions.ConnectTimeout,
+                        requests.exceptions.ConnectionError,
+                    ) as e:
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            wait_time = (
+                                2 * retry_count
+                            )  # Exponential backoff: 2s, 4s, 6s
+                            logger.warning(
+                                f"ParsingHelper: Connection timeout/error (attempt {retry_count}/{max_retries}). "
+                                f"Retrying in {wait_time}s... Error: {e}"
+                            )
+                            import asyncio
+
+                            await asyncio.sleep(wait_time)
+                        else:
+                            # Last attempt failed, re-raise
+                            logger.error(
+                                f"ParsingHelper: Failed to connect after {max_retries} attempts: {e}"
+                            )
+                            raise
+
+                if response is None:
+                    raise requests.exceptions.RequestException(
+                        "Failed to get response after retries"
+                    )
 
         except requests.exceptions.HTTPError as e:
             # If we get 401, archive download might not be supported for private repos
@@ -367,8 +444,16 @@ class ParseHelper:
 
             logger.error(f"ParsingHelper: Failed to download repository archive: {e}")
             raise ParsingFailedError("Failed to download repository archive") from e
-        except requests.exceptions.RequestException as e:
-            logger.error(f"ParsingHelper: Error fetching tarball: {e}")
+        except (
+            requests.exceptions.RequestException,
+            requests.exceptions.ConnectTimeout,
+            requests.exceptions.ConnectionError,
+        ) as e:
+            error_type = type(e).__name__
+            logger.error(
+                f"ParsingHelper: Error fetching tarball ({error_type}): {e}. "
+                f"This might be due to network issues, firewall, or GitHub being unavailable."
+            )
             raise ParsingFailedError("Failed to download repository archive") from e
         except Exception as e:
             logger.exception("ParsingHelper: Unexpected error in tarball download")
@@ -694,9 +779,9 @@ class ParseHelper:
                             total_chars += len(content)
                             if ext == ".cs":
                                 lang_count["c_sharp"] += 1
-                            elif ext == ".c":
+                            elif ext == ".c" or ext == ".h":
                                 lang_count["c"] += 1
-                            elif ext in [".cpp", ".cxx", ".cc"]:
+                            elif ext in [".cpp", ".cxx", ".cc", ".hpp", ".hxx"]:
                                 lang_count["cpp"] += 1
                             elif ext == ".el":
                                 lang_count["elisp"] += 1
@@ -742,8 +827,40 @@ class ParseHelper:
             logger.error(f"Error accessing directory '{repo_dir}': {e}")
 
         # Determine the predominant language based on counts
-        predominant_language = max(lang_count, key=lang_count.get)
-        return predominant_language if lang_count[predominant_language] > 0 else "other"
+        # Exclude "other", "markdown", and "xml" from consideration as they're not programming languages
+        # Find the highest valid language count
+        valid_languages = {
+            "c_sharp",
+            "c",
+            "cpp",
+            "elisp",
+            "elixir",
+            "elm",
+            "go",
+            "java",
+            "javascript",
+            "ocaml",
+            "php",
+            "python",
+            "ql",
+            "ruby",
+            "rust",
+            "typescript",
+        }
+
+        # Filter to only valid languages and find the one with highest count
+        valid_lang_counts = {
+            lang: count
+            for lang, count in lang_count.items()
+            if lang in valid_languages and count > 0
+        }
+
+        if valid_lang_counts:
+            predominant_language = max(valid_lang_counts, key=valid_lang_counts.get)
+            return predominant_language
+
+        # Fallback to "other" only if no valid language files were found
+        return "other"
 
     async def setup_project_directory(
         self,
@@ -810,9 +927,64 @@ class ParseHelper:
                 repo_path=repo_path,  # Pass repo_path when registering
             )
         if repo_path is not None:
-            # Local repository detected - return the path directly without downloading tarball
-            logger.info(f"ParsingHelper: Using local repository at {repo_path}")
-            return repo_path, project_id
+            # Local repository detected - use the path directly without downloading tarball
+            repo_path_str = str(repo_path) if repo_path else None
+            logger.info(f"ParsingHelper: Using local repository at {repo_path_str}")
+
+            local_repo = None
+            latest_commit_sha = None
+            repo_metadata = {}
+
+            # Get commit SHA for local repo
+            try:
+                local_repo = Repo(repo_path_str)
+                if commit_id:
+                    latest_commit_sha = commit_id
+                elif branch:
+                    try:
+                        local_repo.git.checkout(branch)
+                        latest_commit_sha = local_repo.head.commit.hexsha
+                    except GitCommandError:
+                        # Branch might not exist, use current HEAD
+                        latest_commit_sha = local_repo.head.commit.hexsha
+                else:
+                    latest_commit_sha = local_repo.head.commit.hexsha
+            except Exception as e:
+                logger.warning(f"Could not get commit SHA for local repo: {e}")
+
+            # Extract metadata for local repo
+            if local_repo:
+                try:
+                    repo_metadata = ParseHelper.extract_repository_metadata(local_repo)
+                    repo_metadata["error_message"] = None
+                    project_metadata = json.dumps(repo_metadata).encode("utf-8")
+                    ProjectService.update_project(
+                        self.db,
+                        project_id,
+                        properties=project_metadata,
+                        commit_id=latest_commit_sha,
+                        status=ProjectStatusEnum.CLONED.value,
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not extract metadata for local repo: {e}")
+
+            # Copy local repo to .repos if repo manager is enabled
+            if self.repo_manager and repo_path_str and os.path.exists(repo_path_str):
+                try:
+                    await self._copy_repo_to_repo_manager(
+                        normalized_full_name,
+                        repo_path_str,
+                        branch,
+                        latest_commit_sha,
+                        user_id,
+                        repo_metadata,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to copy local repo to repo manager: {e}. Continuing with parsing."
+                    )
+
+            return repo_path_str, project_id
         if isinstance(repo_details, Repo):
             extracted_dir = repo_details.working_tree_dir
             try:
