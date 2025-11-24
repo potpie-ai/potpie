@@ -124,6 +124,20 @@ def get_tool_run_message(tool_name: str):
             return "Fetching Jira project users"
         case name if name in LSP_TOOL_LABELS:
             return f"Starting {LSP_TOOL_LABELS[name]}"
+        case "GetConfluenceSpaces":
+            return "Fetching Confluence spaces"
+        case "GetConfluencePage":
+            return "Retrieving Confluence page"
+        case "SearchConfluencePages":
+            return "Searching Confluence pages"
+        case "GetConfluenceSpacePages":
+            return "Fetching pages in Confluence space"
+        case "CreateConfluencePage":
+            return "Creating new Confluence page"
+        case "UpdateConfluencePage":
+            return "Updating Confluence page"
+        case "AddConfluenceComment":
+            return "Adding comment to Confluence page"
         case _:
             return "Querying data"
 
@@ -226,6 +240,20 @@ def get_tool_response_message(tool_name: str):
             return "Jira project users retrieved"
         case name if name in LSP_TOOL_LABELS:
             return f"Language server {LSP_TOOL_LABELS[name]} finished"
+        case "GetConfluenceSpaces":
+            return "Confluence spaces retrieved"
+        case "GetConfluencePage":
+            return "Confluence page retrieved"
+        case "SearchConfluencePages":
+            return "Confluence pages search completed"
+        case "GetConfluenceSpacePages":
+            return "Confluence space pages retrieved"
+        case "CreateConfluencePage":
+            return "Confluence page created successfully"
+        case "UpdateConfluencePage":
+            return "Confluence page updated successfully"
+        case "AddConfluenceComment":
+            return "Comment added to Confluence page"
         case _:
             return "Data queried successfully"
 
@@ -442,6 +470,50 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
                 f"-> {LSP_TOOL_LABELS[name]}{project_str} "
                 f"for {language or 'unknown language'}{target_str}{position_str}"
             )
+        case "GetConfluenceSpaces":
+            space_type = args.get("space_type")
+            limit = args.get("limit")
+            if space_type and space_type != "all":
+                return f"-> fetching {space_type} spaces (limit: {limit or 25})"
+            return f"-> fetching all accessible spaces (limit: {limit or 25})"
+        case "GetConfluencePage":
+            page_id = args.get("page_id")
+            if page_id:
+                return f"-> fetching page {page_id}"
+            return ""
+        case "SearchConfluencePages":
+            cql = args.get("cql")
+            if cql:
+                return f"-> CQL: {cql}"
+            return ""
+        case "GetConfluenceSpacePages":
+            space_id = args.get("space_id")
+            status = args.get("status")
+            if space_id:
+                status_text = (
+                    f" ({status} pages)" if status and status != "current" else ""
+                )
+                return f"-> fetching pages in space {space_id}{status_text}"
+            return ""
+        case "CreateConfluencePage":
+            space_id = args.get("space_id")
+            title = args.get("title")
+            if space_id and title:
+                return f"-> creating page in space {space_id}: {title}"
+            return ""
+        case "UpdateConfluencePage":
+            page_id = args.get("page_id")
+            version_number = args.get("version_number")
+            if page_id:
+                return f"-> updating page {page_id} (version {version_number})"
+            return ""
+        case "AddConfluenceComment":
+            page_id = args.get("page_id")
+            parent_comment_id = args.get("parent_comment_id")
+            if page_id:
+                comment_type = "reply" if parent_comment_id else "comment"
+                return f"-> adding {comment_type} to page {page_id}"
+            return ""
         case _:
             return ""
 
@@ -454,7 +526,7 @@ def get_tool_result_info_content(tool_name: str, content: List[Any] | str | Any)
                     res = "\n-> retrieved code snippets: \n" + "\n- content:\n".join(
                         [
                             f"""
-```{str(node.get('code_content'))[:min(len(str(node.get('code_content'))),600)]+" ..."}
+```{str(node.get("code_content"))[: min(len(str(node.get("code_content"))), 600)] + " ..."}
 ```
 """
                             for node in content
@@ -479,7 +551,7 @@ def get_tool_result_info_content(tool_name: str, content: List[Any] | str | Any)
                         path = item.get("relative_file_path")
                         code_content = item.get("code_content")
                         if code_content:
-                            text += f"{path}\n```{code_content[:min(len(code_content),300)]}``` \n"
+                            text += f"{path}\n```{code_content[: min(len(code_content), 300)]}``` \n"
                         elif item.get("error") is not None:
                             text += f"Error: {item.get('error')} \n"
                 return text
@@ -489,7 +561,7 @@ def get_tool_result_info_content(tool_name: str, content: List[Any] | str | Any)
                 return f"""-> fetched successfully
 ```
 ---------------
-{content[:min(len(content),600)]} ...
+{content[: min(len(content), 600)]} ...
 ---------------
 ```
             """

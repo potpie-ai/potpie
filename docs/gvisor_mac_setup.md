@@ -11,6 +11,7 @@ Docker Desktop on Mac runs a Linux VM, so you can configure gVisor to work insid
 ### Setup Steps
 
 1. **Install Docker Desktop** (if not already installed)
+
    ```bash
    # Download from: https://www.docker.com/products/docker-desktop
    # Or install via Homebrew:
@@ -89,34 +90,37 @@ Run a Linux VM on your Mac (using VirtualBox, VMware, Parallels, etc.) and insta
 
 Develop on a remote Linux machine (cloud instance, remote server, etc.) where gVisor runs natively.
 
-## Option 4: Use the Fallback (Current Implementation)
+## Option 4: Use the Fallback (When Docker Desktop + runsc is Not Configured)
 
-The current implementation **automatically falls back to regular subprocess execution on Mac**, which is:
+If Docker Desktop is not configured with the runsc runtime, the system **automatically falls back to regular subprocess execution on Mac**, which is:
 
 - ✅ **Simple**: No setup required
 - ✅ **Works immediately**: Commands execute normally
 - ✅ **Secure enough for local dev**: Regular subprocess is fine for local development
 - ✅ **Same API**: Your code works the same way
 
+**Note**: gVisor is fully supported on Mac when Docker Desktop is configured with runsc (see Option 1). The fallback only occurs when Docker Desktop is not available or runsc is not configured.
+
 ### When to Use Each Option
 
-| Option | Best For | Complexity |
-|--------|----------|------------|
-| **Docker Desktop + gVisor** | Testing gVisor behavior on Mac | High |
-| **Linux VM** | Full Linux development environment | Medium |
-| **Remote Linux** | Production-like testing | Low (if you have access) |
-| **Fallback (current)** | Local Mac development | None |
+| Option                                 | Best For                                                             | Complexity                 |
+| -------------------------------------- | -------------------------------------------------------------------- | -------------------------- |
+| **Docker Desktop + gVisor**            | Full gVisor support on Mac (recommended for production-like testing) | Medium (with setup script) |
+| **Linux VM**                           | Full Linux development environment                                   | Medium                     |
+| **Remote Linux**                       | Production-like testing                                              | Low (if you have access)   |
+| **Fallback (no Docker Desktop/runsc)** | Local Mac development without gVisor                                 | None                       |
 
 ## Recommendation
 
-For **local Mac development**, the current fallback approach is recommended:
+For **local Mac development**:
 
-- ✅ No setup required
-- ✅ Works immediately
-- ✅ Commands execute correctly
-- ✅ In K8s (Linux), gVisor will be used automatically
+- **With gVisor**: Use Docker Desktop + runsc runtime (Option 1) - fully supported and recommended for testing gVisor behavior
+- **Without gVisor**: The automatic fallback works seamlessly - no setup required
+- **In K8s (Linux)**: gVisor will be used automatically
 
 If you need to **test gVisor behavior specifically**, use:
+
+- Docker Desktop + runsc (Option 1) - fully supported on Mac
 - A Linux VM, or
 - A remote Linux machine, or
 - Test in your K8s environment where gVisor is already configured
@@ -124,9 +128,11 @@ If you need to **test gVisor behavior specifically**, use:
 ## Testing on Mac
 
 The current implementation will:
+
 1. Detect Mac platform
-2. Check for Docker with runsc runtime
-3. If not available, use regular subprocess (automatic fallback)
+2. Check for Docker Desktop with runsc runtime
+3. If Docker Desktop + runsc is configured: Use gVisor (fully supported)
+4. If not available: Use regular subprocess (automatic fallback)
 
 You can verify this works:
 
@@ -144,8 +150,8 @@ print(result.stdout)  # Works fine with fallback
 ## Summary
 
 - **Native gVisor on Mac**: ❌ Not possible (Linux-only)
-- **gVisor via Docker Desktop**: ⚠️ Possible but complex setup
-- **Current fallback**: ✅ Recommended for Mac development
+- **gVisor via Docker Desktop**: ✅ Fully supported - use `bash scripts/setup_gvisor_docker.sh` to configure
+- **Fallback (no Docker Desktop/runsc)**: ✅ Works seamlessly - no setup required
 - **K8s deployment**: ✅ gVisor works automatically (Linux containers)
 
-The current implementation handles Mac gracefully - you don't need to do anything special!
+**gVisor is fully supported on Mac via Docker Desktop**. The setup script makes configuration straightforward. If you prefer not to configure Docker Desktop with runsc, the system automatically falls back to regular subprocess execution.

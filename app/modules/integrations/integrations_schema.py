@@ -12,6 +12,7 @@ class IntegrationType(str, Enum):
     SLACK = "slack"
     JIRA = "jira"
     LINEAR = "linear"
+    CONFLUENCE = "confluence"
 
 
 class IntegrationStatus(str, Enum):
@@ -311,6 +312,46 @@ class JiraSaveRequest(BaseModel):
 
 class JiraSaveResponse(BaseModel):
     """Response after successfully saving Jira integration"""
+
+    success: bool = Field(..., description="Whether the operation was successful")
+    data: Optional[Dict[str, Any]] = Field(
+        None, description="Integration data if successful"
+    )
+    error: Optional[str] = Field(None, description="Error message if operation failed")
+
+
+# Confluence-specific schemas
+class ConfluenceIntegrationStatus(BaseModel):
+    """Confluence integration status for a user"""
+
+    user_id: str
+    is_connected: bool
+    connected_at: Optional[datetime] = None
+    scope: Optional[str] = None
+    expires_at: Optional[datetime] = None
+
+
+class ConfluenceSaveRequest(BaseModel):
+    """Request to save Confluence integration with authorization code"""
+
+    code: str = Field(..., description="OAuth authorization code from Confluence")
+    redirect_uri: str = Field(
+        ..., description="OAuth redirect URI used during authorization"
+    )
+    instance_name: str = Field(
+        ..., description="User-defined name for this integration instance"
+    )
+    user_id: str = Field(..., description="Potpie user initiating the integration")
+    integration_type: str = Field(
+        default="confluence", description="Type of integration"
+    )
+    timestamp: str = Field(
+        ..., description="ISO timestamp when the integration was created"
+    )
+
+
+class ConfluenceSaveResponse(BaseModel):
+    """Response after successfully saving Confluence integration"""
 
     success: bool = Field(..., description="Whether the operation was successful")
     data: Optional[Dict[str, Any]] = Field(

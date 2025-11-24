@@ -73,8 +73,7 @@ class LinkJiraIssuesTool:
             client = await get_jira_client_for_user(self.user_id, self.db)
 
             # Create the link
-            result = await asyncio.to_thread(
-                client.link_issues,
+            result = await client.link_issues(
                 issue_key=issue_key,
                 linked_issue_key=linked_issue_key,
                 link_type=link_type,

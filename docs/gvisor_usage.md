@@ -34,12 +34,22 @@ sudo systemctl reload docker
 
 ### 3. Local Mac/Windows Development
 
-**Setup**: Not needed - automatically uses fallback.
+**Setup**: Install Docker Desktop (with Rosetta/WSL2 where required) and enable the runsc runtime using our helper scripts or the manual guide.
 
 **How it works**:
-- Detects non-Linux platform
-- Automatically uses regular subprocess (gVisor not supported on Mac/Windows)
-- No configuration needed
+- When Docker Desktop is configured with the runsc runtime, commands run inside Docker with gVisor isolation (fully supported on macOS/Windows).
+- If Docker Desktop is installed but runsc is unavailable or misconfigured, the system falls back to the regular subprocess runner.
+
+**Setup steps**:
+```bash
+# Install/enable gVisor inside Docker Desktop
+bash scripts/setup_gvisor_docker.sh
+
+# For detailed manual instructions (including GUI steps)
+# see docs/docker_desktop_gvisor_config.md
+```
+
+**Note**: Docker Desktop ships a Linux VM, so gVisor works the same as on native Linux once runsc is enabled. No additional configuration is required beyond the Docker Desktop runtime change.
 
 ## Usage in Code
 
@@ -74,14 +84,15 @@ The system automatically detects:
 Based on these, it chooses the best method:
 - ✅ K8s + runsc: Use runsc directly
 - ✅ Linux + Docker + runsc: Use Docker with runsc runtime
-- ✅ Mac/Windows: Use regular subprocess
+- ✅ Mac/Windows + Docker Desktop + runsc: Use Docker with runsc runtime
+- ✅ Mac/Windows (no Docker Desktop/runsc): Use regular subprocess
 - ✅ Fallback: Use regular subprocess if gVisor fails
 
 ## Benefits
 
 - **K8s**: Additional isolation layer for commands within containers
 - **Local Linux**: Full gVisor isolation when configured
-- **Local Mac/Windows**: Works seamlessly without gVisor
+- **Local Mac/Windows**: Can use gVisor via Docker Desktop, or falls back seamlessly
 - **Automatic**: No code changes needed - works everywhere
 
 ## Troubleshooting
@@ -111,7 +122,7 @@ print(f"gVisor available: {is_gvisor_available()}")
 ```
 
 **Q: Commands work but gVisor isn't being used?**
-- On Mac/Windows: This is expected - gVisor isn't supported
+- On Mac/Windows: Check Docker Desktop + runsc runtime configuration (see docs/docker_desktop_gvisor_config.md)
 - On Linux: Check Docker + runsc runtime configuration
 - The fallback to regular subprocess is automatic and safe
 

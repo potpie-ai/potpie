@@ -299,8 +299,8 @@ class LocalProvider(ICodeProvider):
             return []
 
         for entry in sorted(entries):
-            # Skip hidden files
-            if entry.startswith("."):
+            # Skip .git directory only
+            if entry == ".git":
                 continue
 
             entry_path = os.path.join(dir_path, entry)

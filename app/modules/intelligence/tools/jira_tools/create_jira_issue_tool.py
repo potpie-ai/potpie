@@ -110,8 +110,7 @@ class CreateJiraIssueTool:
                 kwargs["labels"] = labels
 
             # Create the issue
-            issue = await asyncio.to_thread(
-                client.create_issue,
+            issue = await client.create_issue(
                 project_key=project_key,
                 summary=summary,
                 description=description,
