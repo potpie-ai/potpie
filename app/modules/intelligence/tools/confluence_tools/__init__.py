@@ -5,7 +5,7 @@ These tools enable AI agents to search, read, create, update, and comment on Con
 """
 
 from sqlalchemy.orm import Session
-from langchain.tools import StructuredTool
+from langchain_core.tools import StructuredTool
 
 from .get_confluence_spaces_tool import get_confluence_spaces_tool
 from .get_confluence_page_tool import get_confluence_page_tool
