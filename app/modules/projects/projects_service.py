@@ -264,7 +264,7 @@ class ProjectService:
         )
         return project
 
-    async def get_project_from_db_by_id(self, project_id: int):
+    async def get_project_from_db_by_id(self, project_id: str | int):
         project = ProjectService.get_project_by_id(self.db, project_id)
         if project:
             return {
@@ -279,8 +279,10 @@ class ProjectService:
         else:
             return None
 
-    def get_project_from_db_by_id_sync(self, project_id: int):
-        project = self.db.query(Project).filter(Project.id == project_id).first()
+    def get_project_from_db_by_id_sync(self, project_id: str | int):
+        project = (
+            self.db.query(Project).filter(Project.id == str(project_id)).first()
+        )
         if project:
             return {
                 "project_name": project.repo_name,
@@ -294,10 +296,12 @@ class ProjectService:
         else:
             return None
 
-    async def get_project_repo_details_from_db(self, project_id: int, user_id: str):
+    async def get_project_repo_details_from_db(
+        self, project_id: str | int, user_id: str
+    ):
         project = (
             self.db.query(Project)
-            .filter(Project.id == project_id, Project.user_id == user_id)
+            .filter(Project.id == str(project_id), Project.user_id == user_id)
             .first()
         )
         if project:
@@ -325,11 +329,11 @@ class ProjectService:
             return None
 
     async def get_project_from_db_by_id_and_user_id(
-        self, project_id: int, user_id: str
+        self, project_id: str | int, user_id: str
     ):
         project = (
             self.db.query(Project)
-            .filter(Project.id == project_id, Project.user_id == user_id)
+            .filter(Project.id == str(project_id), Project.user_id == user_id)
             .first()
         )
         if project:
@@ -341,8 +345,8 @@ class ProjectService:
         else:
             return None
 
-    def get_project_by_id(db: Session, project_id: int):
-        return db.query(Project).filter(Project.id == project_id).first()
+    def get_project_by_id(db: Session, project_id: str | int):
+        return db.query(Project).filter(Project.id == str(project_id)).first()
 
     def get_projects_by_user_id(db: Session, user_id: str):
         return db.query(Project).filter(Project.user_id == user_id).all()
@@ -364,13 +368,15 @@ class ProjectService:
             logger.exception(f"Error creating project {project.id}")
             raise
 
-    def update_project(db: Session, project_id: int, **kwargs):
-        project = db.query(Project).filter(Project.id == project_id).first()
+    def update_project(db: Session, project_id: str | int, **kwargs):
+        project = db.query(Project).filter(Project.id == str(project_id)).first()
 
         if project is None:
             return None  # Project doesn't exist
 
-        result = db.query(Project).filter(Project.id == project_id).update(kwargs)
+        result = (
+            db.query(Project).filter(Project.id == str(project_id)).update(kwargs)
+        )
 
         if result > 0:
             db.commit()

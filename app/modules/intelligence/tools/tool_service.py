@@ -44,6 +44,9 @@ from app.modules.intelligence.tools.code_query_tools.get_file_content_by_path im
 from app.modules.intelligence.tools.code_query_tools.bash_command_tool import (
     bash_command_tool,
 )
+from app.modules.intelligence.tools.code_query_tools.lsp_query_tool import (
+    lsp_query_tool,
+)
 from app.modules.intelligence.tools.tool_schema import ToolInfo, ToolInfoWithParameters
 from app.modules.intelligence.tools.web_tools.code_provider_tool import (
     code_provider_tool,
@@ -129,6 +132,13 @@ class ToolService:
         for tool_name in tool_names:
             if self.tools.get(tool_name) is not None:
                 tools.append(self.tools[tool_name])
+        # Ensure LSP base tool is always available when configured.
+        lsp_tool = self.tools.get("lsp_query")
+        if lsp_tool is not None and all(
+            getattr(existing, "name", None) != getattr(lsp_tool, "name", None)
+            for existing in tools
+        ):
+            tools.append(lsp_tool)  # type: ignore[arg-type]
         return tools
 
     def _initialize_tools(self) -> Dict[str, StructuredTool]:
@@ -168,11 +178,21 @@ class ToolService:
             "link_jira_issues": link_jira_issues_tool(self.db, self.user_id),
             "get_confluence_spaces": get_confluence_spaces_tool(self.db, self.user_id),
             "get_confluence_page": get_confluence_page_tool(self.db, self.user_id),
-            "search_confluence_pages": search_confluence_pages_tool(self.db, self.user_id),
-            "get_confluence_space_pages": get_confluence_space_pages_tool(self.db, self.user_id),
-            "create_confluence_page": create_confluence_page_tool(self.db, self.user_id),
-            "update_confluence_page": update_confluence_page_tool(self.db, self.user_id),
-            "add_confluence_comment": add_confluence_comment_tool(self.db, self.user_id),
+            "search_confluence_pages": search_confluence_pages_tool(
+                self.db, self.user_id
+            ),
+            "get_confluence_space_pages": get_confluence_space_pages_tool(
+                self.db, self.user_id
+            ),
+            "create_confluence_page": create_confluence_page_tool(
+                self.db, self.user_id
+            ),
+            "update_confluence_page": update_confluence_page_tool(
+                self.db, self.user_id
+            ),
+            "add_confluence_comment": add_confluence_comment_tool(
+                self.db, self.user_id
+            ),
             "intelligent_code_graph": get_intelligent_code_graph_tool(
                 self.db, self.provider_service, self.user_id
             ),
@@ -187,43 +207,62 @@ class ToolService:
         bash_tool = bash_command_tool(self.db, self.user_id)
         if bash_tool:
             tools["bash_command"] = bash_tool
+
+        lsp_tool = lsp_query_tool(self.db, self.user_id)
+        if lsp_tool:
+            tools["lsp_query"] = lsp_tool
+
         # Add todo management tools
         todo_tools = create_todo_management_tools()
         for tool in todo_tools:
-            tools[tool.name] = tool
+            tools[tool.name] = tool  # type: ignore[assignment]
 
         # Add code changes management tools
         code_changes_tools = create_code_changes_management_tools()
         for tool in code_changes_tools:
-            tools[tool.name] = tool
+            tools[tool.name] = tool  # type: ignore[assignment]
 
         if self.webpage_extractor_tool:
-            tools["webpage_extractor"] = self.webpage_extractor_tool
+            tools["webpage_extractor"] = self.webpage_extractor_tool  # type: ignore[assignment]
 
         if self.code_provider_tool:
-            tools["code_provider_tool"] = self.code_provider_tool
-            tools["github_tool"] = self.code_provider_tool
+            tools["code_provider_tool"] = self.code_provider_tool  # type: ignore[assignment]
+            tools["github_tool"] = self.code_provider_tool  # type: ignore[assignment]
 
         if self.code_provider_create_branch_tool:
-            tools["code_provider_create_branch"] = self.code_provider_create_branch_tool
-            tools["github_create_branch"] = self.code_provider_create_branch_tool
+            tools["code_provider_create_branch"] = (
+                self.code_provider_create_branch_tool  # type: ignore[assignment]
+            )
+            tools["github_create_branch"] = (
+                self.code_provider_create_branch_tool  # type: ignore[assignment]
+            )
 
         if self.code_provider_create_pr_tool:
-            tools["code_provider_create_pr"] = self.code_provider_create_pr_tool
-            tools["github_create_pull_request"] = self.code_provider_create_pr_tool
+            tools["code_provider_create_pr"] = (
+                self.code_provider_create_pr_tool  # type: ignore[assignment]
+            )
+            tools["github_create_pull_request"] = (
+                self.code_provider_create_pr_tool  # type: ignore[assignment]
+            )
 
         if self.code_provider_add_pr_comments_tool:
             tools["code_provider_add_pr_comments"] = (
-                self.code_provider_add_pr_comments_tool
+                self.code_provider_add_pr_comments_tool  # type: ignore[assignment]
             )
-            tools["github_add_pr_comments"] = self.code_provider_add_pr_comments_tool
+            tools["github_add_pr_comments"] = (
+                self.code_provider_add_pr_comments_tool  # type: ignore[assignment]
+            )
 
         if self.code_provider_update_file_tool:
-            tools["code_provider_update_file"] = self.code_provider_update_file_tool
-            tools["github_update_branch"] = self.code_provider_update_file_tool
+            tools["code_provider_update_file"] = (
+                self.code_provider_update_file_tool  # type: ignore[assignment]
+            )
+            tools["github_update_branch"] = (
+                self.code_provider_update_file_tool  # type: ignore[assignment]
+            )
 
         if self.web_search_tool:
-            tools["web_search_tool"] = self.web_search_tool
+            tools["web_search_tool"] = self.web_search_tool  # type: ignore[assignment]
 
         return tools
 

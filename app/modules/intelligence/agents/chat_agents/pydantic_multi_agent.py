@@ -2,7 +2,7 @@ import functools
 import re
 import traceback
 import json
-from typing import List, AsyncGenerator, Sequence, Dict, Any, Optional
+from typing import List, AsyncGenerator, Sequence, Dict, Any, Optional, cast
 from dataclasses import dataclass
 from enum import Enum
 
@@ -41,6 +41,7 @@ from app.modules.intelligence.provider.provider_service import (
 )
 from .agent_config import AgentConfig, TaskConfig
 from app.modules.utils.logger import setup_logger
+from app.modules.intelligence.tools.code_query_tools.lsp_types import LspMethod
 
 from ..chat_agent import (
     ChatAgent,
@@ -51,6 +52,44 @@ from ..chat_agent import (
 )
 
 logger = setup_logger(__name__)
+
+LSP_METHOD_TOOL_SPECS = [
+    {
+        "name": "lsp_definition_lookup",
+        "description": "Use the language server to locate the definition of a symbol at a specific position.",
+        "method": LspMethod.DEFINITION,
+        "needs_position": True,
+        "query_mode": "unused",
+    },
+    {
+        "name": "lsp_find_references",
+        "description": "Use the language server to collect references to a symbol at a specific position.",
+        "method": LspMethod.REFERENCES,
+        "needs_position": True,
+        "query_mode": "unused",
+    },
+    {
+        "name": "lsp_hover_details",
+        "description": "Use the language server hover information to inspect a symbol at a given position.",
+        "method": LspMethod.HOVER,
+        "needs_position": True,
+        "query_mode": "unused",
+    },
+    {
+        "name": "lsp_document_symbols",
+        "description": "List document symbols discovered by the language server for the given file.",
+        "method": LspMethod.DOCUMENT_SYMBOL,
+        "needs_position": False,
+        "query_mode": "optional",
+    },
+    {
+        "name": "lsp_workspace_symbol_search",
+        "description": "Search workspace symbols using the language server.",
+        "method": LspMethod.WORKSPACE_SYMBOL,
+        "needs_position": False,
+        "query_mode": "required",
+    },
+]
 
 
 class AgentType(Enum):
@@ -297,8 +336,12 @@ class PydanticMultiAgent(ChatAgent):
         self.mcp_servers = mcp_servers or []
 
         # Clean tool names (no spaces for pydantic agents)
+        self._structured_tool_map: Dict[str, StructuredTool] = {}
         for i, tool in enumerate(tools):
-            tools[i].name = re.sub(r" ", "", tool.name)
+            cleaned_name = re.sub(r" ", "", tool.name)
+            tools[i].name = cleaned_name
+            self._structured_tool_map[cleaned_name.lower()] = tool
+        self._lsp_method_tools: List[Tool] = self._create_lsp_method_tools()
 
         # Initialize delegate agents
         self.delegate_agents = delegate_agents or self._create_default_delegate_agents()
@@ -626,6 +669,90 @@ Start your response with "## Task Result" and then provide the focused answer.
                 continue
         return mcp_toolsets
 
+    def _create_lsp_method_tools(self) -> List[Tool]:
+        """Create focused LSP tools derived from the generic lsp_query structured tool."""
+        lsp_structured_tool = self._structured_tool_map.get("lsp_query")
+        if lsp_structured_tool is None:
+            logger.warning(
+                "LSP query structured tool not found. Available tools: %s",
+                list(self._structured_tool_map.keys()),
+            )
+            return []
+        resolved_lsp_tool = cast(StructuredTool, lsp_structured_tool)
+
+        lsp_tools: List[Tool] = []
+
+        for spec in LSP_METHOD_TOOL_SPECS:
+            method: LspMethod = spec["method"]
+            needs_position: bool = spec["needs_position"]
+            query_mode: str = spec["query_mode"]
+            name: str = spec["name"]
+            description: str = spec["description"]
+
+            def make_invoker(
+                selected_method: LspMethod = method,
+                require_position: bool = needs_position,
+                query_behavior: str = query_mode,
+            ):
+                def invoke(
+                    project_id: str,
+                    language: str,
+                    path: Optional[str] = None,
+                    uri: Optional[str] = None,
+                    line: Optional[int] = None,
+                    character: Optional[int] = None,
+                    query: Optional[str] = None,
+                ) -> Dict[str, Any]:
+                    payload: Dict[str, Any] = {
+                        "project_id": project_id,
+                        "language": language,
+                        "method": selected_method,
+                        "path": path,
+                        "uri": uri,
+                    }
+
+                    if require_position:
+                        if line is None or character is None:
+                            raise ValueError(
+                                "`line` and `character` must be provided for this LSP request."
+                            )
+                        payload["line"] = line
+                        payload["character"] = character
+                    else:
+                        if line is not None:
+                            payload["line"] = line
+                        if character is not None:
+                            payload["character"] = character
+
+                    if query_behavior == "required":
+                        if not query:
+                            raise ValueError(
+                                "`query` is required for this LSP request."
+                            )
+                        payload["query"] = query
+                    elif query_behavior == "optional" and query is not None:
+                        payload["query"] = query
+
+                    clean_payload = {k: v for k, v in payload.items() if v is not None}
+                    structured_callable = resolved_lsp_tool.func
+                    if structured_callable is None:
+                        raise RuntimeError(
+                            "lsp_query tool missing synchronous handler."
+                        )
+                    return structured_callable(**clean_payload)
+
+                return invoke
+
+            lsp_tools.append(
+                Tool(
+                    name=name,
+                    description=description,
+                    function=handle_exception(make_invoker()),
+                )
+            )
+
+        return lsp_tools
+
     def _wrap_structured_tools(self, tools: Sequence[Any]) -> List[Tool]:
         """Convert tool instances (StructuredTool or similar) to PydanticAI Tool instances"""
         return [
@@ -639,7 +766,7 @@ Start your response with "## Task Result" and then provide the focused answer.
 
     def _build_delegate_agent_tools(self) -> List[Tool]:
         """Build the tool list for delegate agents"""
-        return self._wrap_structured_tools(self.tools)
+        return self._wrap_structured_tools(self.tools) + self._lsp_method_tools
 
     def _build_supervisor_agent_tools(self) -> List[Tool]:
         """Build the tool list for supervisor agent including delegation, todo, and code changes tools"""
@@ -672,6 +799,7 @@ Start your response with "## Task Result" and then provide the focused answer.
 
         return (
             self._wrap_structured_tools(self.tools)
+            + self._lsp_method_tools
             + delegation_tools
             + self._wrap_structured_tools(todo_tools)
             + self._wrap_structured_tools(code_changes_tools)

@@ -159,12 +159,16 @@ class CodeProviderController:
                 and config_provider.get_github_key()
             ):
                 github_service = GithubService(self.db)
-                return await github_service.get_combined_user_repos(user["user_id"])
+                return await github_service.get_combined_user_repos(
+                    user["user_id"], user_email=user.get("email")
+                )
 
             provider = CodeProviderFactory.create_provider()
             repositories = provider.list_user_repositories()
             return {"repositories": repositories}
 
+        except HTTPException as http_exc:
+            raise http_exc
         except Exception as e:
             raise HTTPException(
                 status_code=500, detail=f"Error fetching user repositories: {str(e)}"

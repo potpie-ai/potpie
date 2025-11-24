@@ -1,5 +1,13 @@
 from typing import Any, Dict, List
 
+LSP_TOOL_LABELS: Dict[str, str] = {
+    "lsp_definition_lookup": "definition lookup",
+    "lsp_find_references": "reference search",
+    "lsp_hover_details": "hover details",
+    "lsp_document_symbols": "document symbols",
+    "lsp_workspace_symbol_search": "workspace symbol search",
+}
+
 # Import todo management for streaming todo list state
 _todo_import_failed = False
 try:
@@ -114,6 +122,8 @@ def get_tool_run_message(tool_name: str):
             return "Fetching Jira project details"
         case "GetJiraProjectUsers":
             return "Fetching Jira project users"
+        case name if name in LSP_TOOL_LABELS:
+            return f"Starting {LSP_TOOL_LABELS[name]}"
         case "GetConfluenceSpaces":
             return "Fetching Confluence spaces"
         case "GetConfluencePage":
@@ -228,6 +238,8 @@ def get_tool_response_message(tool_name: str):
             return "Jira project details retrieved"
         case "GetJiraProjectUsers":
             return "Jira project users retrieved"
+        case name if name in LSP_TOOL_LABELS:
+            return f"Language server {LSP_TOOL_LABELS[name]} finished"
         case "GetConfluenceSpaces":
             return "Confluence spaces retrieved"
         case "GetConfluencePage":
@@ -444,6 +456,20 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             elif project_key:
                 return f"-> fetching users in {project_key}"
             return ""
+        case name if name in LSP_TOOL_LABELS:
+            project_id = args.get("project_id")
+            language = args.get("language")
+            target = args.get("uri") or args.get("path")
+            position_parts = []
+            if args.get("line") is not None and args.get("character") is not None:
+                position_parts.append(f"line {args['line']}, char {args['character']}")
+            position_str = f" @ ({', '.join(position_parts)})" if position_parts else ""
+            target_str = f" -> {target}" if target else ""
+            project_str = f" in project {project_id}" if project_id else ""
+            return (
+                f"-> {LSP_TOOL_LABELS[name]}{project_str} "
+                f"for {language or 'unknown language'}{target_str}{position_str}"
+            )
         case "GetConfluenceSpaces":
             space_type = args.get("space_type")
             limit = args.get("limit")
@@ -600,6 +626,43 @@ description:
                 res = content.get("content")
                 if isinstance(res, str):
                     return res[: min(len(res), 600)] + " ..."
+            return ""
+        case name if name in LSP_TOOL_LABELS:
+            if isinstance(content, Dict):
+                lines: List[str] = []
+                status_messages = content.get("status_messages") or []
+                if status_messages:
+                    lines.append(
+                        "Status:\n" + "\n".join(f"- {msg}" for msg in status_messages)
+                    )
+
+                if content.get("success"):
+                    method = content.get("method", "")
+                    if method in ("textDocument/definition", "textDocument/references"):
+                        locations = content.get("locations") or []
+                        lines.append(f"Found {len(locations)} location(s).")
+                    elif method == "textDocument/hover":
+                        hover = content.get("hover") or {}
+                        hover_contents = hover.get("contents") or []
+                        if hover_contents:
+                            first = hover_contents[0]
+                            if isinstance(first, dict):
+                                value = first.get("value") or ""
+                            else:
+                                value = str(first)
+                            preview = value[:300] + ("..." if len(value) > 300 else "")
+                            lines.append(f"Hover preview:\n{preview}")
+                    elif method in (
+                        "textDocument/documentSymbol",
+                        "workspace/symbol",
+                    ):
+                        symbols = content.get("symbols") or []
+                        lines.append(f"Found {len(symbols)} symbol(s).")
+                else:
+                    error_message = content.get("error") or "Unknown error"
+                    lines.append(f"Error: {error_message}")
+
+                return "\n".join(lines)
             return ""
         case "bash_command":
             if isinstance(content, Dict):

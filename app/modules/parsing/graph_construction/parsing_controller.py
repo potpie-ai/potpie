@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 from asyncio import create_task
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 from fastapi import HTTPException
@@ -219,6 +219,46 @@ class ParsingController:
                         "status": ProjectStatusEnum.SUBMITTED.value,
                     }
 
+                # Check if repo exists in .repos and is LSP indexed
+                repo_exists_and_indexed = await ParsingController._check_repo_indexed(
+                    project_id,
+                    repo_details.repo_name,
+                    repo_details.branch_name,
+                    repo_details.commit_id,
+                    db,
+                )
+
+                if not repo_exists_and_indexed:
+                    logger.info(
+                        f"Project {project_id} exists but repo is not indexed. "
+                        "Re-parsing to create LSP index."
+                    )
+                    cleanup_graph = False  # Don't cleanup graph, just re-index
+                    process_parsing.delay(
+                        repo_details.model_dump(),
+                        user_id,
+                        user_email,
+                        project_id,
+                        cleanup_graph,
+                    )
+
+                    await project_manager.update_project_status(
+                        project_id, ProjectStatusEnum.SUBMITTED
+                    )
+                    PostHogClient().send_event(
+                        user_id,
+                        "parsed_repo_event",
+                        {
+                            "repo_name": repo_details.repo_name,
+                            "branch": repo_details.branch_name,
+                            "project_id": project_id,
+                        },
+                    )
+                    return {
+                        "project_id": project_id,
+                        "status": ProjectStatusEnum.SUBMITTED.value,
+                    }
+
                 return {"project_id": project_id, "status": project.status}
             else:
                 # Handle new non-demo projects
@@ -235,6 +275,80 @@ class ParsingController:
         except Exception as e:
             logger.error(f"Error in parse_directory: {e}")
             raise HTTPException(status_code=500, detail="Internal server error")
+
+    @staticmethod
+    async def _check_repo_indexed(
+        project_id: str,
+        repo_name: str,
+        branch: Optional[str],
+        commit_id: Optional[str],
+        db: AsyncSession,
+    ) -> bool:
+        """
+        Check if a repository exists in .repos and is LSP indexed.
+        
+        Returns:
+            True if repo exists and is indexed, False otherwise
+        """
+        try:
+            # Check if repo manager is enabled
+            repo_manager_enabled = (
+                os.getenv("REPO_MANAGER_ENABLED", "false").lower() == "true"
+            )
+            if not repo_manager_enabled:
+                # If repo manager is disabled, we can't check, so assume not indexed
+                return False
+
+            from app.modules.repo_manager import RepoManager
+            from app.modules.intelligence.tools.code_query_tools.lsp_server_manager import (
+                get_lsp_server_manager,
+            )
+            from app.modules.projects.projects_service import ProjectService
+
+            repo_manager = RepoManager()
+            worktree_path = repo_manager.get_repo_path(
+                repo_name, branch=branch, commit_id=commit_id
+            )
+
+            if not worktree_path or not os.path.exists(worktree_path):
+                logger.debug(
+                    f"Repo {repo_name}@{commit_id} not found in .repos for project {project_id}"
+                )
+                return False
+
+            # Get project details to detect languages
+            project_service = ProjectService(db)
+            project_details = await project_service.get_project_from_db_by_id(project_id)
+            if not project_details:
+                logger.debug(f"Project {project_id} not found in database")
+                return False
+
+            # Detect languages from the worktree
+            parse_helper = ParseHelper(db)
+            detected_language = parse_helper.detect_repo_language(worktree_path)
+            detected_languages = [detected_language] if detected_language else []
+
+            # Check if workspace is indexed
+            server_manager = get_lsp_server_manager()
+            is_indexed = server_manager.is_workspace_indexed(
+                project_id, worktree_path, detected_languages
+            )
+
+            if not is_indexed:
+                logger.debug(
+                    f"Repo {repo_name}@{commit_id} exists but is not LSP indexed "
+                    f"for project {project_id}"
+                )
+
+            return is_indexed
+
+        except Exception as exc:
+            logger.warning(
+                f"Error checking if repo is indexed for project {project_id}: {exc}",
+                exc_info=True,
+            )
+            # On error, assume not indexed to be safe
+            return False
 
     @staticmethod
     async def handle_new_project(

@@ -11,6 +11,7 @@ Docker Desktop on Mac runs a Linux VM, so you can configure gVisor to work insid
 ### Setup Steps
 
 1. **Install Docker Desktop** (if not already installed)
+
    ```bash
    # Download from: https://www.docker.com/products/docker-desktop
    # Or install via Homebrew:
@@ -102,12 +103,12 @@ If Docker Desktop is not configured with the runsc runtime, the system **automat
 
 ### When to Use Each Option
 
-| Option | Best For | Complexity |
-|--------|----------|------------|
-| **Docker Desktop + gVisor** | Full gVisor support on Mac (recommended for production-like testing) | Medium (with setup script) |
-| **Linux VM** | Full Linux development environment | Medium |
-| **Remote Linux** | Production-like testing | Low (if you have access) |
-| **Fallback (no Docker Desktop/runsc)** | Local Mac development without gVisor | None |
+| Option                                 | Best For                                                             | Complexity                 |
+| -------------------------------------- | -------------------------------------------------------------------- | -------------------------- |
+| **Docker Desktop + gVisor**            | Full gVisor support on Mac (recommended for production-like testing) | Medium (with setup script) |
+| **Linux VM**                           | Full Linux development environment                                   | Medium                     |
+| **Remote Linux**                       | Production-like testing                                              | Low (if you have access)   |
+| **Fallback (no Docker Desktop/runsc)** | Local Mac development without gVisor                                 | None                       |
 
 ## Recommendation
 
@@ -118,6 +119,7 @@ For **local Mac development**:
 - **In K8s (Linux)**: gVisor will be used automatically
 
 If you need to **test gVisor behavior specifically**, use:
+
 - Docker Desktop + runsc (Option 1) - fully supported on Mac
 - A Linux VM, or
 - A remote Linux machine, or
@@ -126,6 +128,7 @@ If you need to **test gVisor behavior specifically**, use:
 ## Testing on Mac
 
 The current implementation will:
+
 1. Detect Mac platform
 2. Check for Docker Desktop with runsc runtime
 3. If Docker Desktop + runsc is configured: Use gVisor (fully supported)
