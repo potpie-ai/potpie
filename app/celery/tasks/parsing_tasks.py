@@ -662,21 +662,41 @@ def process_parsing_distributed(
         from app.modules.parsing.parsing_session_model import ParsingSession
         from datetime import datetime
 
-        # Check if session already exists (from bootstrap/resume)
-        session = self.db.query(ParsingSession).filter(
+        # Check if session already exists (from bootstrap/resume) with NULL-safe commit_id comparison
+        session_query = self.db.query(ParsingSession).filter(
             ParsingSession.project_id == project_id,
-            ParsingSession.commit_id == commit_id,
             ParsingSession.completed_at.is_(None)
-        ).first()
+        )
+        
+        if commit_id is not None:
+            session_query = session_query.filter(
+                ParsingSession.commit_id == commit_id
+            )
+        else:
+            session_query = session_query.filter(
+                ParsingSession.commit_id.is_(None)
+            )
+        
+        session = session_query.first()
 
         if not session:
-            # Create new session
-            session_number = self.db.query(
+            # Create new session - get max session number with NULL-safe commit_id comparison
+            session_number_query = self.db.query(
                 func.max(ParsingSession.session_number)
             ).filter(
-                ParsingSession.project_id == project_id,
-                ParsingSession.commit_id == commit_id
-            ).scalar() or 0
+                ParsingSession.project_id == project_id
+            )
+            
+            if commit_id is not None:
+                session_number_query = session_number_query.filter(
+                    ParsingSession.commit_id == commit_id
+                )
+            else:
+                session_number_query = session_number_query.filter(
+                    ParsingSession.commit_id.is_(None)
+                )
+            
+            session_number = session_number_query.scalar() or 0
 
             session = ParsingSession(
                 project_id=project_id,
