@@ -14,7 +14,7 @@ import shlex
 from time import perf_counter
 import asyncio
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import unquote, urlparse
 
 from app.modules.intelligence.tools.code_query_tools.lsp_session import (
@@ -453,7 +453,7 @@ class LspServerManager:
             elif pyright_cache_in_workspace.is_dir():
                 # If it's a real directory, we can't replace it with a symlink
                 logger.warning(
-                    f"[LSP] .pyright exists as directory, not symlink. Pyright may use it instead of cache."
+                    "[LSP] .pyright exists as directory, not symlink. Pyright may use it instead of cache."
                 )
         else:
             # Create symlink to our cache directory
@@ -560,11 +560,11 @@ class LspServerManager:
 
             # Log output for debugging (first 50 lines and last 50 lines)
             if output_lines:
-                logger.info(f"[LSP] Pyright CLI output (first 20 lines):")
+                logger.info("[LSP] Pyright CLI output (first 20 lines):")
                 for line in output_lines[:20]:
                     logger.info(f"[LSP]   {line}")
                 if len(output_lines) > 40:
-                    logger.info(f"[LSP] Pyright CLI output (last 20 lines):")
+                    logger.info("[LSP] Pyright CLI output (last 20 lines):")
                     for line in output_lines[-20:]:
                         logger.info(f"[LSP]   {line}")
             else:
@@ -754,7 +754,7 @@ class LspServerManager:
             # (where compile_commands.json is located)
             # For headers without compile_commands.json, it uses XDG_CACHE_HOME/clangd/index
             # We'll create a symlink from workspace/.cache to our cache directory
-            
+
             workspace_path = Path(workspace_root)
             clangd_cache_in_workspace = workspace_path / ".cache" / "clangd" / "index"
             clangd_cache_target = cache_dir / "clangd_native" / "clangd" / "index"
@@ -764,7 +764,10 @@ class LspServerManager:
             if clangd_cache_in_workspace.exists():
                 if clangd_cache_in_workspace.is_symlink():
                     try:
-                        if clangd_cache_in_workspace.resolve() != clangd_cache_target.resolve():
+                        if (
+                            clangd_cache_in_workspace.resolve()
+                            != clangd_cache_target.resolve()
+                        ):
                             clangd_cache_in_workspace.unlink()
                             clangd_cache_in_workspace.symlink_to(clangd_cache_target)
                     except Exception:
@@ -773,13 +776,15 @@ class LspServerManager:
                             clangd_cache_in_workspace.unlink()
                         except Exception:
                             pass
-                        clangd_cache_in_workspace.parent.mkdir(parents=True, exist_ok=True)
+                        clangd_cache_in_workspace.parent.mkdir(
+                            parents=True, exist_ok=True
+                        )
                         clangd_cache_in_workspace.symlink_to(clangd_cache_target)
                 elif clangd_cache_in_workspace.is_dir():
                     # If it's a real directory, we can't replace it with a symlink
                     # But we can still set XDG_CACHE_HOME as fallback
                     logger.debug(
-                        f"Workspace .cache/clangd/index exists as directory, using it directly"
+                        "Workspace .cache/clangd/index exists as directory, using it directly"
                     )
             else:
                 # Create symlink to our cache directory
@@ -791,32 +796,33 @@ class LspServerManager:
                     )
                 except Exception as exc:
                     logger.warning(f"Failed to create clangd cache symlink: {exc}")
-            
+
             # Also set XDG_CACHE_HOME as fallback for headers without compile_commands.json
             clangd_cache_base = cache_dir / "clangd_native"
             env["XDG_CACHE_HOME"] = str(clangd_cache_base)
-            
+
             # Also set DARWIN_USER_CACHE_DIR for macOS compatibility
             env["DARWIN_USER_CACHE_DIR"] = str(clangd_cache_base)
-            
+
             # Check for compile_commands.json and generate if missing
             from app.modules.intelligence.tools.code_query_tools.clangd_helpers import (
                 ensure_compile_commands,
-                find_compile_commands,
             )
-            
+
             compile_commands_path = workspace_path / "compile_commands.json"
             compile_commands_build = workspace_path / "build" / "compile_commands.json"
             has_compile_commands = compile_commands_path.exists()
-            
+
             # Check for compile_commands.json in build directory (common with CMake)
             if not has_compile_commands and compile_commands_build.exists():
                 logger.info(
-                    f"[LSP] Found compile_commands.json in build directory. "
-                    f"Creating symlink to workspace root..."
+                    "[LSP] Found compile_commands.json in build directory. "
+                    "Creating symlink to workspace root..."
                 )
                 try:
-                    compile_commands_path.symlink_to(compile_commands_build.relative_to(workspace_path))
+                    compile_commands_path.symlink_to(
+                        compile_commands_build.relative_to(workspace_path)
+                    )
                     has_compile_commands = True
                     status_messages.append(
                         "Created symlink: compile_commands.json -> build/compile_commands.json"
@@ -826,67 +832,75 @@ class LspServerManager:
                     status_messages.append(
                         "Note: compile_commands.json found in build/ directory (symlink failed)"
                     )
-            
+
             # If still no compile_commands.json, try to generate it
             if not has_compile_commands:
                 logger.info(
                     "[LSP] No compile_commands.json found, attempting to generate..."
                 )
                 status_messages.append("Generating compile_commands.json...")
-                
+
                 generated_path, gen_messages = ensure_compile_commands(
                     workspace_root, language=language, force_regenerate=False
                 )
                 status_messages.extend(gen_messages)
-                
+
                 if generated_path:
-                    has_compile_commands = generated_path.name == "compile_commands.json"
+                    has_compile_commands = (
+                        generated_path.name == "compile_commands.json"
+                    )
                     if has_compile_commands:
-                        logger.info(f"[LSP] Successfully generated compile_commands.json")
+                        logger.info(
+                            "[LSP] Successfully generated compile_commands.json"
+                        )
                     else:
-                        logger.info(f"[LSP] Created compile_flags.txt as fallback")
+                        logger.info("[LSP] Created compile_flags.txt as fallback")
                 else:
                     logger.warning(
                         "[LSP] Could not generate compile_commands.json. "
                         "Clangd will use fallback flags but indexing may be limited."
                     )
-            
+
             # Configure clangd initialization options
             # clangdFileStatus provides real-time activity updates (critical for user feedback)
             # fallbackFlags used when compile_commands.json is missing
             if "clangd" not in config.initialization_options:
                 config.initialization_options = dict(config.initialization_options)
                 config.initialization_options["clangd"] = {}
-            
+
             if not isinstance(config.initialization_options.get("clangd"), dict):
                 config.initialization_options["clangd"] = {}
-            
+
             # Enable file status notifications for real-time indexing feedback
             config.initialization_options["clangd"]["clangdFileStatus"] = True
-            
+
             # Set fallback flags for files without compile_commands.json
             # These are used when clangd can't find compilation info
             if "fallbackFlags" not in config.initialization_options["clangd"]:
                 fallback_flags = ["-std=c++17", "-Wall"]
                 if language == "c":
                     fallback_flags = ["-std=c11", "-Wall"]
-                config.initialization_options["clangd"]["fallbackFlags"] = fallback_flags
-            
+                config.initialization_options["clangd"][
+                    "fallbackFlags"
+                ] = fallback_flags
+
             # If compile_commands.json is in a non-standard location, specify it
             if compile_commands_build.exists() and not has_compile_commands:
-                config.initialization_options["clangd"]["compilationDatabasePath"] = str(
-                    compile_commands_build.parent
+                config.initialization_options["clangd"]["compilationDatabasePath"] = (
+                    str(compile_commands_build.parent)
                 )
-            
+
             # Check for compile_flags.txt (fallback option)
             compile_flags_path = workspace_path / "compile_flags.txt"
             has_compile_flags = compile_flags_path.exists()
-            
+
             if has_compile_flags and not has_compile_commands:
                 logger.info(
                     "[LSP] Using compile_flags.txt (simpler alternative to compile_commands.json)"
                 )
-                status_messages.append("Using compile_flags.txt for clangd configuration")
+                status_messages.append(
+                    "Using compile_flags.txt for clangd configuration"
+                )
 
             status_messages.append(
                 f"Configured clangd: cache={clangd_cache_target}, "
@@ -917,7 +931,7 @@ class LspServerManager:
 
             # Use Jedi for Python, ClangdSession for C/C++, PyglsClientSession for other languages
             if request.language == "python":
-                status_messages.append(f"Initializing Jedi-based Python code analysis")
+                status_messages.append("Initializing Jedi-based Python code analysis")
                 session = JediSession(
                     session_key=SessionKey(request.project_id, request.language),
                     workspace_root=workspace_root,
@@ -1394,9 +1408,7 @@ class LspServerManager:
                 logger.info(
                     f"[LSP] Triggering clangd indexing by querying {len(opened_file_data)} files..."
                 )
-                status_messages.append(
-                    f"Querying files to trigger clangd indexing..."
-                )
+                status_messages.append("Querying files to trigger clangd indexing...")
 
                 # Query a subset of files to trigger clangd to analyze them
                 # We don't need to query all files - querying some will trigger clangd to index them
@@ -1455,10 +1467,10 @@ class LspServerManager:
                 compile_flags_path = workspace_path / "compile_flags.txt"
                 has_compile_commands = compile_commands_path.exists()
                 has_compile_flags = compile_flags_path.exists()
-                
+
                 # Initialize index_file_count for use after the if/else block
                 index_file_count = 0
-                
+
                 # Clangd won't build a comprehensive background index without compile_commands.json
                 # Without it, clangd only indexes opened files, not the entire project
                 if not has_compile_commands and not has_compile_flags:
@@ -1486,26 +1498,37 @@ class LspServerManager:
                     # Check clangd's native index location
                     # Clangd stores index in .cache/clangd/index in workspace root
                     # We have a symlink pointing to our cache directory
-                    clangd_index_in_workspace = workspace_path / ".cache" / "clangd" / "index"
-                    clangd_cache_target = cache_dir / "clangd_native" / "clangd" / "index"
-                    
+                    clangd_index_in_workspace = (
+                        workspace_path / ".cache" / "clangd" / "index"
+                    )
+                    clangd_cache_target = (
+                        cache_dir / "clangd_native" / "clangd" / "index"
+                    )
+
                     # Check both locations (symlink target and direct path)
                     clangd_index_dir = clangd_cache_target
-                    if clangd_index_in_workspace.exists() and clangd_index_in_workspace.is_symlink():
+                    if (
+                        clangd_index_in_workspace.exists()
+                        and clangd_index_in_workspace.is_symlink()
+                    ):
                         try:
                             resolved = clangd_index_in_workspace.resolve()
                             if resolved.exists():
                                 clangd_index_dir = resolved
                         except Exception:
                             pass
-                    
+
                     # Poll for clangd index files
                     # With compile_commands.json, clangd should build a comprehensive background index
-                    max_wait_attempts = 60  # Wait up to 60 attempts (3 minutes with 3s interval)
+                    max_wait_attempts = (
+                        60  # Wait up to 60 attempts (3 minutes with 3s interval)
+                    )
                     wait_interval = 3.0  # 3 seconds between checks
                     index_file_count = 0
                     last_index_file_count = 0
-                    stable_count = 0  # Count how many times the file count stayed the same
+                    stable_count = (
+                        0  # Count how many times the file count stayed the same
+                    )
 
                     for wait_attempt in range(max_wait_attempts):
                         # Check if clangd has created index files
@@ -1520,16 +1543,16 @@ class LspServerManager:
                                     stable_count += 1
                                 else:
                                     stable_count = 0
-                                
+
                                 last_index_file_count = index_file_count
-                                
+
                                 # Log progress periodically
                                 if wait_attempt % 10 == 0 or index_file_count > 0:
                                     logger.info(
                                         f"[LSP] Clangd index building: {index_file_count} index files "
                                         f"(attempt {wait_attempt + 1}/{max_wait_attempts}, stable for {stable_count} checks)"
                                     )
-                                
+
                                 # If index count is stable for 3 checks (9 seconds), indexing is likely complete
                                 if stable_count >= 3 and wait_attempt >= 10:
                                     verification_passed = True
@@ -1547,14 +1570,16 @@ class LspServerManager:
                                 logger.debug(
                                     f"[LSP] Clangd index directory not found yet (attempt {wait_attempt + 1})"
                                 )
-                            elif wait_attempt % 20 == 0:  # Every 60 seconds after initial wait
+                            elif (
+                                wait_attempt % 20 == 0
+                            ):  # Every 60 seconds after initial wait
                                 logger.info(
                                     f"[LSP] Clangd index directory still not created after {wait_attempt * wait_interval:.0f}s. "
                                     "Indexing may take time for large projects."
                                 )
 
                         await asyncio.sleep(wait_interval)
-                    
+
                     # If we didn't find index files but files were analyzed, that's okay
                     # Clangd might still be building the index in the background
                     if index_file_count == 0 and analyzed_count > 0:
@@ -1605,7 +1630,7 @@ class LspServerManager:
                     f"[LSP] Triggering OmniSharp indexing by querying {len(opened_file_data)} files..."
                 )
                 status_messages.append(
-                    f"Querying files to trigger OmniSharp indexing..."
+                    "Querying files to trigger OmniSharp indexing..."
                 )
 
                 # Query a subset of files to trigger OmniSharp to analyze them
@@ -1664,9 +1689,7 @@ class LspServerManager:
                     status_messages.append(
                         "Waiting for OmniSharp to complete indexing..."
                     )
-                    logger.info(
-                        "[LSP] Waiting for OmniSharp to complete indexing..."
-                    )
+                    logger.info("[LSP] Waiting for OmniSharp to complete indexing...")
                     # Wait a bit for OmniSharp to process the files
                     await asyncio.sleep(5.0)
                     verification_passed = True
@@ -1714,7 +1737,9 @@ class LspServerManager:
                 # For clangd, keep files open a bit longer to ensure cache is fully persisted
                 if verification_passed:
                     status_messages.append("Waiting for clangd cache to persist...")
-                    logger.info("[LSP] Waiting 10 seconds for clangd cache to persist...")
+                    logger.info(
+                        "[LSP] Waiting 10 seconds for clangd cache to persist..."
+                    )
                     await asyncio.sleep(10.0)  # Give clangd time to write cache files
                 else:
                     # Even if verification failed, wait a bit - clangd might still be processing
@@ -1729,7 +1754,9 @@ class LspServerManager:
                 # For OmniSharp, keep files open a bit longer to ensure cache is fully persisted
                 if verification_passed:
                     status_messages.append("Waiting for OmniSharp cache to persist...")
-                    logger.info("[LSP] Waiting 5 seconds for OmniSharp cache to persist...")
+                    logger.info(
+                        "[LSP] Waiting 5 seconds for OmniSharp cache to persist..."
+                    )
                     await asyncio.sleep(5.0)  # Give OmniSharp time to write cache files
                 else:
                     # Even if verification failed, wait a bit - OmniSharp might still be processing
@@ -1796,33 +1823,40 @@ class LspServerManager:
                             )
                 elif language in ("c", "cpp"):
                     # Check clangd native index (clangd's built-in cache)
-                    clangd_cache_target = cache_dir / "clangd_native" / "clangd" / "index"
-                    
+                    clangd_cache_target = (
+                        cache_dir / "clangd_native" / "clangd" / "index"
+                    )
+
                     # Also check workspace .cache location (where clangd actually stores it)
                     workspace_path = Path(workspace_root)
-                    clangd_index_in_workspace = workspace_path / ".cache" / "clangd" / "index"
-                    
+                    clangd_index_in_workspace = (
+                        workspace_path / ".cache" / "clangd" / "index"
+                    )
+
                     native_index_count = 0
-                    
+
                     # Count native index files (check both symlink target and workspace location)
                     index_dirs_to_check = [clangd_cache_target]
                     if clangd_index_in_workspace.exists():
                         if clangd_index_in_workspace.is_symlink():
                             try:
                                 resolved = clangd_index_in_workspace.resolve()
-                                if resolved.exists() and resolved not in index_dirs_to_check:
+                                if (
+                                    resolved.exists()
+                                    and resolved not in index_dirs_to_check
+                                ):
                                     index_dirs_to_check.append(resolved)
                             except Exception:
                                 pass
                         elif clangd_index_in_workspace.is_dir():
                             index_dirs_to_check.append(clangd_index_in_workspace)
-                    
+
                     for index_dir in index_dirs_to_check:
                         if index_dir.exists():
                             index_files = list(index_dir.rglob("*"))
                             index_files = [f for f in index_files if f.is_file()]
                             native_index_count += len(index_files)
-                    
+
                     if native_index_count > 0:
                         status_messages.append(
                             f"Clangd native index: {native_index_count} index files"

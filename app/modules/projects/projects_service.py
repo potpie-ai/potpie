@@ -280,9 +280,7 @@ class ProjectService:
             return None
 
     def get_project_from_db_by_id_sync(self, project_id: str | int):
-        project = (
-            self.db.query(Project).filter(Project.id == str(project_id)).first()
-        )
+        project = self.db.query(Project).filter(Project.id == str(project_id)).first()
         if project:
             return {
                 "project_name": project.repo_name,
@@ -374,9 +372,7 @@ class ProjectService:
         if project is None:
             return None  # Project doesn't exist
 
-        result = (
-            db.query(Project).filter(Project.id == str(project_id)).update(kwargs)
-        )
+        result = db.query(Project).filter(Project.id == str(project_id)).update(kwargs)
 
         if result > 0:
             db.commit()

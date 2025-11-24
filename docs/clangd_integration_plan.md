@@ -222,4 +222,3 @@ app/modules/intelligence/tools/code_query_tools/
 - ✅ Query response times are fast (< 1s for cached, < 5s for uncached)
 - ✅ No crashes or hangs
 - ✅ Works with and without compile_commands.json
-

@@ -241,11 +241,7 @@ class GithubService:
         try:
             user = self.db.query(User).filter(User.uid == user_id).first()
             if user is None and user_email:
-                user = (
-                    self.db.query(User)
-                    .filter(User.email == user_email)
-                    .first()
-                )
+                user = self.db.query(User).filter(User.email == user_email).first()
                 if user:
                     logger.info(
                         "Updating user uid to match Firebase token for email %s",
@@ -551,7 +547,9 @@ class GithubService:
             if projects is not None
             else []
         )
-        user_repo_response = await self.get_repos_for_user(user_id, user_email=user_email)
+        user_repo_response = await self.get_repos_for_user(
+            user_id, user_email=user_email
+        )
         user_repos = user_repo_response["repositories"]
         db_project_full_names = {project["full_name"] for project in project_list}
 

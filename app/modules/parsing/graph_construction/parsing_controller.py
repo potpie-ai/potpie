@@ -286,7 +286,7 @@ class ParsingController:
     ) -> bool:
         """
         Check if a repository exists in .repos and is LSP indexed.
-        
+
         Returns:
             True if repo exists and is indexed, False otherwise
         """
@@ -318,7 +318,9 @@ class ParsingController:
 
             # Get project details to detect languages
             project_service = ProjectService(db)
-            project_details = await project_service.get_project_from_db_by_id(project_id)
+            project_details = await project_service.get_project_from_db_by_id(
+                project_id
+            )
             if not project_details:
                 logger.debug(f"Project {project_id} not found in database")
                 return False

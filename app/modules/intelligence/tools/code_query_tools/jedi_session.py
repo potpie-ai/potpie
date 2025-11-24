@@ -21,11 +21,7 @@ from app.modules.intelligence.tools.code_query_tools.lsp_session import (
     SessionKey,
 )
 from app.modules.intelligence.tools.code_query_tools.lsp_types import (
-    HoverResult,
-    Location,
     LspMethod,
-    Position,
-    SymbolInformation,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,7 +36,9 @@ class JediCache:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-    def _get_cache_key(self, filepath: str, line: int, column: int, operation: str) -> str:
+    def _get_cache_key(
+        self, filepath: str, line: int, column: int, operation: str
+    ) -> str:
         """Generate cache key based on file content hash."""
         try:
             with open(filepath, "rb") as f:
@@ -55,9 +53,7 @@ class JediCache:
         parsed = urlparse(uri)
         return unquote(parsed.path)
 
-    def get_definitions(
-        self, uri: str, line: int, column: int
-    ) -> List[Dict[str, Any]]:
+    def get_definitions(self, uri: str, line: int, column: int) -> List[Dict[str, Any]]:
         """Get definitions (goto) with caching."""
         filepath = self._uri_to_path(uri)
         cache_key = self._get_cache_key(filepath, line, column, "def")
@@ -101,12 +97,12 @@ class JediCache:
 
             return result
         except Exception as exc:
-            logger.warning(f"Jedi get_definitions failed for {filepath}:{line}:{column}: {exc}")
+            logger.warning(
+                f"Jedi get_definitions failed for {filepath}:{line}:{column}: {exc}"
+            )
             return []
 
-    def get_references(
-        self, uri: str, line: int, column: int
-    ) -> List[Dict[str, Any]]:
+    def get_references(self, uri: str, line: int, column: int) -> List[Dict[str, Any]]:
         """Get all references to symbol with caching."""
         filepath = self._uri_to_path(uri)
         cache_key = self._get_cache_key(filepath, line, column, "ref")
@@ -128,7 +124,9 @@ class JediCache:
                 result.append(
                     {
                         "name": ref.name,
-                        "module_path": str(ref.module_path) if ref.module_path else None,
+                        "module_path": (
+                            str(ref.module_path) if ref.module_path else None
+                        ),
                         "line": ref.line - 1 if ref.line else 0,  # Convert to 0-based
                         "column": ref.column,
                         "is_definition": ref.is_definition(),
@@ -144,7 +142,9 @@ class JediCache:
 
             return result
         except Exception as exc:
-            logger.warning(f"Jedi get_references failed for {filepath}:{line}:{column}: {exc}")
+            logger.warning(
+                f"Jedi get_references failed for {filepath}:{line}:{column}: {exc}"
+            )
             return []
 
     def get_hover(self, uri: str, line: int, column: int) -> Optional[Dict[str, Any]]:
@@ -176,7 +176,11 @@ class JediCache:
                 "contents": [
                     {
                         "language": "python",
-                        "value": f"```python\n{type_name}\n```\n\n{docstring}" if docstring else f"```python\n{type_name}\n```",
+                        "value": (
+                            f"```python\n{type_name}\n```\n\n{docstring}"
+                            if docstring
+                            else f"```python\n{type_name}\n```"
+                        ),
                     }
                 ],
                 "full_name": inf.full_name,
@@ -192,7 +196,9 @@ class JediCache:
 
             return result
         except Exception as exc:
-            logger.warning(f"Jedi get_hover failed for {filepath}:{line}:{column}: {exc}")
+            logger.warning(
+                f"Jedi get_hover failed for {filepath}:{line}:{column}: {exc}"
+            )
             return None
 
     def get_document_symbols(self, uri: str) -> List[Dict[str, Any]]:
@@ -210,7 +216,9 @@ class JediCache:
 
         try:
             script = jedi.Script(path=filepath, project=self.project)
-            names = script.get_names(all_scopes=True, definitions=True, references=False)
+            names = script.get_names(
+                all_scopes=True, definitions=True, references=False
+            )
 
             result = []
             for n in names:
@@ -273,13 +281,17 @@ class JediCache:
             logger.debug(f"Workspace symbols already cached at {cache_file}")
             return
 
-        logger.info(f"Indexing {len(python_files)} Python files for workspace symbols...")
+        logger.info(
+            f"Indexing {len(python_files)} Python files for workspace symbols..."
+        )
         all_symbols = []
 
         for filepath in python_files:
             try:
                 script = jedi.Script(path=filepath, project=self.project)
-                names = script.get_names(all_scopes=True, definitions=True, references=False)
+                names = script.get_names(
+                    all_scopes=True, definitions=True, references=False
+                )
 
                 for n in names:
                     all_symbols.append(
@@ -357,7 +369,9 @@ class JediSession(BaseLspServerSession):
         else:
             raise ValueError(f"Unsupported method: {method}")
 
-    async def send_notification(self, method: str, payload: Optional[dict] = None) -> None:
+    async def send_notification(
+        self, method: str, payload: Optional[dict] = None
+    ) -> None:
         """Jedi doesn't need notifications."""
         pass
 
@@ -369,6 +383,6 @@ class JediSession(BaseLspServerSession):
         """Index workspace for symbol search."""
         # Run indexing in executor to avoid blocking
         import asyncio
+
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._jedi_cache.index_workspace, python_files)
-

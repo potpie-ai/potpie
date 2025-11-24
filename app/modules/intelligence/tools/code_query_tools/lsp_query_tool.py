@@ -20,9 +20,6 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
-from app.modules.intelligence.tools.code_query_tools.lsp_server_manager import (
-    LspServerManager,
-)
 from app.modules.intelligence.tools.code_query_tools.lsp_types import (
     LspMethod,
     LspQueryRequest,

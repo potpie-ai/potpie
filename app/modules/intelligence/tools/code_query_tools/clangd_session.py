@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 class ClangdSession(BaseLspServerSession):
     """
     Clangd-based LSP session for C/C++ code analysis.
-    
+
     This session uses clangd's native cache feature (background indexing)
     for optimal performance. No custom caching layer is used - we rely on
     clangd's built-in caching and indexing capabilities.
@@ -60,14 +60,16 @@ class ClangdSession(BaseLspServerSession):
     async def send_request(self, method: LspMethod, payload: dict) -> Any:
         """
         Handle LSP requests using clangd.
-        
+
         All requests are passed directly to clangd, which uses its native
         cache and indexing for optimal performance.
         """
         # Pass all requests directly to clangd - it handles caching internally
         return await self._pygls_session.send_request(method, payload)
 
-    async def send_notification(self, method: str, payload: Optional[dict] = None) -> None:
+    async def send_notification(
+        self, method: str, payload: Optional[dict] = None
+    ) -> None:
         """Forward notifications to the underlying clangd session."""
         await self._pygls_session.send_notification(method, payload)
 
@@ -75,4 +77,3 @@ class ClangdSession(BaseLspServerSession):
         """Shutdown the underlying clangd session."""
         await self._pygls_session.shutdown()
         self._initialized = False
-

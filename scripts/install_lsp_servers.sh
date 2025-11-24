@@ -40,7 +40,7 @@ else
     OS=""
     ARCH=""
     EXT=""
-    
+
     case "$(uname -s)" in
         Linux*)
             OS="linux"
@@ -61,7 +61,7 @@ else
             exit 1
             ;;
     esac
-    
+
     case "$(uname -m)" in
         x86_64|amd64)
             ARCH="x64"
@@ -75,14 +75,14 @@ else
             ARCH="x64"
             ;;
     esac
-    
+
     # Use latest release (no version pinning needed)
     OMNISHARP_DIR="$PROJECT_ROOT/.lsp_binaries/omnisharp"
     OMNISHARP_BIN="$OMNISHARP_DIR/OmniSharp"
-    
+
     # Create directory for LSP binaries
     mkdir -p "$OMNISHARP_DIR"
-    
+
     # Determine download URL - use latest release with net6.0 suffix
     if [ "$OS" = "win" ]; then
         DOWNLOAD_URL="https://github.com/OmniSharp/omnisharp-roslyn/releases/latest/download/omnisharp-${OS}-${ARCH}-net6.0.${EXT}"
@@ -91,13 +91,13 @@ else
         DOWNLOAD_URL="https://github.com/OmniSharp/omnisharp-roslyn/releases/latest/download/omnisharp-${OS}-${ARCH}-net6.0.${EXT}"
         OMNISHARP_EXE="OmniSharp"
     fi
-    
+
     echo "   Downloading latest OmniSharp for ${OS}-${ARCH}..."
     echo "   URL: $DOWNLOAD_URL"
-    
+
     # Download and extract
     cd "$OMNISHARP_DIR" || exit 1
-    
+
     # Check if already downloaded
     if [ -f "omnisharp.${EXT}" ]; then
         echo "   Archive already exists, skipping download."
@@ -107,7 +107,7 @@ else
         MAX_RETRIES=3
         RETRY_COUNT=0
         DOWNLOAD_SUCCESS=false
-        
+
         while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
             if [ $RETRY_COUNT -gt 0 ]; then
                 echo "   Retry attempt $RETRY_COUNT of $MAX_RETRIES..."
@@ -115,7 +115,7 @@ else
                 # Clean up any partial download
                 rm -f "omnisharp.${EXT}"
             fi
-            
+
             if command -v curl &> /dev/null; then
                 # Use curl with timeout (30 seconds connect, 5 minutes total), retry on failure
                 # --fail makes curl return error on HTTP errors
@@ -157,11 +157,11 @@ else
                 echo "   ⚠️  Neither curl nor wget found. Please install one to download OmniSharp."
                 exit 1
             fi
-            
+
             RETRY_COUNT=$((RETRY_COUNT + 1))
         done
     fi
-    
+
     # Check if download succeeded or file exists
     if [ ! -f "omnisharp.${EXT}" ]; then
         echo "   ⚠️  Failed to download OmniSharp after $MAX_RETRIES attempts."
@@ -180,7 +180,7 @@ else
         echo "   - Ensure the 'omnisharp' executable is in that directory"
         exit 1
     fi
-    
+
     echo "   Extracting OmniSharp..."
     if [ "$EXT" = "tar.gz" ]; then
         tar -xzf "omnisharp.${EXT}" || {
@@ -198,7 +198,7 @@ else
             exit 1
         fi
     fi
-    
+
     # Find the OmniSharp executable (capital O)
     # The executable is named "OmniSharp" (not "omnisharp")
     if [ -f "$OMNISHARP_DIR/$OMNISHARP_EXE" ]; then
@@ -218,12 +218,12 @@ else
             fi
         fi
     fi
-    
+
     # Make executable (for Unix-like systems)
     if [ "$OS" != "win" ]; then
         chmod +x "$OMNISHARP_BIN"
     fi
-    
+
     # Create symlink in a directory that's likely in PATH (e.g., ~/.local/bin or venv/bin)
     # Use both "OmniSharp" and "omnisharp" for compatibility
     if [ "$OS" != "win" ]; then
@@ -237,10 +237,10 @@ else
         ln -sf "$OMNISHARP_BIN" "$VENV_PATH/bin/OmniSharp" 2>/dev/null || true
         ln -sf "$OMNISHARP_BIN" "$VENV_PATH/bin/omnisharp" 2>/dev/null || true
     fi
-    
+
     # Clean up archive
     rm -f "omnisharp.${EXT}"
-    
+
     echo "✅ OmniSharp installed successfully at: $OMNISHARP_BIN"
     echo "   To use OmniSharp, ensure it's in your PATH:"
     if [ "$OS" != "win" ]; then
@@ -258,4 +258,3 @@ else
         echo "   $OMNISHARP_BIN --version"
     fi
 fi
-

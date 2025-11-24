@@ -7,7 +7,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import BaseModel
 
 from app.modules.intelligence.tools.code_query_tools.lsp_types import LspMethod
 
