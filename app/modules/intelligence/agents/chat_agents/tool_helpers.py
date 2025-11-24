@@ -44,6 +44,8 @@ def get_tool_run_message(tool_name: str):
             return "Searching the web"
         case "analyze_code_structure":
             return "Analyzing code structure"
+        case "bash_command":
+            return "Executing bash command on codebase"
         case "create_todo":
             return "Creating todo item"
         case "update_todo_status":
@@ -112,6 +114,20 @@ def get_tool_run_message(tool_name: str):
             return "Fetching Jira project details"
         case "GetJiraProjectUsers":
             return "Fetching Jira project users"
+        case "GetConfluenceSpaces":
+            return "Fetching Confluence spaces"
+        case "GetConfluencePage":
+            return "Retrieving Confluence page"
+        case "SearchConfluencePages":
+            return "Searching Confluence pages"
+        case "GetConfluenceSpacePages":
+            return "Fetching pages in Confluence space"
+        case "CreateConfluencePage":
+            return "Creating new Confluence page"
+        case "UpdateConfluencePage":
+            return "Updating Confluence page"
+        case "AddConfluenceComment":
+            return "Adding comment to Confluence page"
         case _:
             return "Querying data"
 
@@ -142,6 +158,8 @@ def get_tool_response_message(tool_name: str):
             return "Code structure analyzed successfully"
         case "WebSearchTool":
             return "Web search successful"
+        case "bash_command":
+            return "Bash command executed successfully"
         case "create_todo":
             return "Todo item created successfully"
         case "update_todo_status":
@@ -210,6 +228,20 @@ def get_tool_response_message(tool_name: str):
             return "Jira project details retrieved"
         case "GetJiraProjectUsers":
             return "Jira project users retrieved"
+        case "GetConfluenceSpaces":
+            return "Confluence spaces retrieved"
+        case "GetConfluencePage":
+            return "Confluence page retrieved"
+        case "SearchConfluencePages":
+            return "Confluence pages search completed"
+        case "GetConfluenceSpacePages":
+            return "Confluence space pages retrieved"
+        case "CreateConfluencePage":
+            return "Confluence page created successfully"
+        case "UpdateConfluencePage":
+            return "Confluence page updated successfully"
+        case "AddConfluenceComment":
+            return "Comment added to Confluence page"
         case _:
             return "Data queried successfully"
 
@@ -254,6 +286,13 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             return f"Analyzing file - {args.get('file_path')}\n"
         case "WebSearchTool":
             return f"-> searching the web for {args.get('query')}\n"
+        case "bash_command":
+            command = args.get("command")
+            working_dir = args.get("working_directory")
+            if command:
+                dir_info = f" in directory '{working_dir}'" if working_dir else ""
+                return f"-> executing command: {command}{dir_info}\n"
+            return "-> executing bash command\n"
         case "create_todo":
             title = args.get("title", "")
             priority = args.get("priority", "medium")
@@ -405,6 +444,50 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             elif project_key:
                 return f"-> fetching users in {project_key}"
             return ""
+        case "GetConfluenceSpaces":
+            space_type = args.get("space_type")
+            limit = args.get("limit")
+            if space_type and space_type != "all":
+                return f"-> fetching {space_type} spaces (limit: {limit or 25})"
+            return f"-> fetching all accessible spaces (limit: {limit or 25})"
+        case "GetConfluencePage":
+            page_id = args.get("page_id")
+            if page_id:
+                return f"-> fetching page {page_id}"
+            return ""
+        case "SearchConfluencePages":
+            cql = args.get("cql")
+            if cql:
+                return f"-> CQL: {cql}"
+            return ""
+        case "GetConfluenceSpacePages":
+            space_id = args.get("space_id")
+            status = args.get("status")
+            if space_id:
+                status_text = (
+                    f" ({status} pages)" if status and status != "current" else ""
+                )
+                return f"-> fetching pages in space {space_id}{status_text}"
+            return ""
+        case "CreateConfluencePage":
+            space_id = args.get("space_id")
+            title = args.get("title")
+            if space_id and title:
+                return f"-> creating page in space {space_id}: {title}"
+            return ""
+        case "UpdateConfluencePage":
+            page_id = args.get("page_id")
+            version_number = args.get("version_number")
+            if page_id:
+                return f"-> updating page {page_id} (version {version_number})"
+            return ""
+        case "AddConfluenceComment":
+            page_id = args.get("page_id")
+            parent_comment_id = args.get("parent_comment_id")
+            if page_id:
+                comment_type = "reply" if parent_comment_id else "comment"
+                return f"-> adding {comment_type} to page {page_id}"
+            return ""
         case _:
             return ""
 
@@ -417,7 +500,7 @@ def get_tool_result_info_content(tool_name: str, content: List[Any] | str | Any)
                     res = "\n-> retrieved code snippets: \n" + "\n- content:\n".join(
                         [
                             f"""
-```{str(node.get('code_content'))[:min(len(str(node.get('code_content'))),600)]+" ..."}
+```{str(node.get("code_content"))[: min(len(str(node.get("code_content"))), 600)] + " ..."}
 ```
 """
                             for node in content
@@ -442,7 +525,7 @@ def get_tool_result_info_content(tool_name: str, content: List[Any] | str | Any)
                         path = item.get("relative_file_path")
                         code_content = item.get("code_content")
                         if code_content:
-                            text += f"{path}\n```{code_content[:min(len(code_content),300)]}``` \n"
+                            text += f"{path}\n```{code_content[: min(len(code_content), 300)]}``` \n"
                         elif item.get("error") is not None:
                             text += f"Error: {item.get('error')} \n"
                 return text
@@ -452,7 +535,7 @@ def get_tool_result_info_content(tool_name: str, content: List[Any] | str | Any)
                 return f"""-> fetched successfully
 ```
 ---------------
-{content[:min(len(content),600)]} ...
+{content[: min(len(content), 600)]} ...
 ---------------
 ```
             """
@@ -517,6 +600,46 @@ description:
                 res = content.get("content")
                 if isinstance(res, str):
                     return res[: min(len(res), 600)] + " ..."
+            return ""
+        case "bash_command":
+            if isinstance(content, Dict):
+                success = content.get("success", False)
+                output = content.get("output", "")
+                error = content.get("error", "")
+                exit_code = content.get("exit_code", -1)
+
+                if not success:
+                    error_msg = f"Command failed with exit code {exit_code}"
+                    if error:
+                        error_msg += (
+                            f"\n\nError output:\n```\n{error[:min(len(error), 500)]}"
+                        )
+                        if len(error) > 500:
+                            error_msg += " ..."
+                        error_msg += "\n```"
+                    if output:
+                        error_msg += f"\n\nStandard output:\n```\n{output[:min(len(output), 500)]}"
+                        if len(output) > 500:
+                            error_msg += " ..."
+                        error_msg += "\n```"
+                    return error_msg
+                else:
+                    result_msg = (
+                        f"Command executed successfully (exit code: {exit_code})"
+                    )
+                    if output:
+                        result_msg += (
+                            f"\n\nOutput:\n```\n{output[:min(len(output), 1000)]}"
+                        )
+                        if len(output) > 1000:
+                            result_msg += "\n... (output truncated)"
+                        result_msg += "\n```"
+                    if error:
+                        result_msg += f"\n\nWarning/Error output:\n```\n{error[:min(len(error), 500)]}"
+                        if len(error) > 500:
+                            result_msg += " ..."
+                        result_msg += "\n```"
+                    return result_msg
             return ""
         case (
             "create_todo"

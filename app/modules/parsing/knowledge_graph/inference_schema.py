@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from pydantic import BaseModel
 
@@ -6,6 +6,7 @@ from pydantic import BaseModel
 class DocstringRequest(BaseModel):
     node_id: str
     text: str
+    metadata: Optional[Dict[str, Any]] = None
 
 
 class DocstringNode(BaseModel):

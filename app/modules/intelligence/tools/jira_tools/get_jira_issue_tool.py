@@ -56,7 +56,7 @@ class GetJiraIssueTool:
             client = await get_jira_client_for_user(self.user_id, self.db)
 
             # Fetch the issue
-            issue = await asyncio.to_thread(client.get_issue, issue_key)
+            issue = await client.get_issue(issue_key)
 
             return {
                 "success": True,

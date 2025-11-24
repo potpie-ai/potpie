@@ -675,6 +675,9 @@ class ChangeDetectionTool:
                     identifiers = await self.get_updated_function_list(
                         patches_dict, project_id
                     )
+                    logging.info(
+                        f"[CHANGE_DETECTION] Found {len(identifiers)} changed functions: {identifiers}"
+                    )
                     for identifier in identifiers:
                         node_id_query = " ".join(identifier.split(":"))
                         relevance_search = await self.search_service.search_codebase(
