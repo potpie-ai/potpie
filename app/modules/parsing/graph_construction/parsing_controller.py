@@ -6,7 +6,7 @@ from typing import Any, Dict
 
 from dotenv import load_dotenv
 from fastapi import HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from sqlalchemy import select, or_
 from uuid6 import uuid7
 
@@ -53,7 +53,7 @@ class ParsingController:
     @staticmethod
     @validate_parsing_input
     async def parse_directory(
-        repo_details: ParsingRequest, db: AsyncSession, user: Dict[str, Any]
+        repo_details: ParsingRequest, db: Session, user: Dict[str, Any]
     ):
         if "email" not in user:
             user_email = None
@@ -205,11 +205,76 @@ class ParsingController:
                     project_id, requested_commit_id=repo_details.commit_id
                 )
 
-                if not is_latest or project.status != ProjectStatusEnum.READY.value:
-                    cleanup_graph = True
-                    logger.info(
-                        f"Submitting parsing task for existing project {project_id}"
+                # Check if there's an incomplete parsing session that needs to be resumed
+                # IMPORTANT: Must filter by both project_id AND commit_id to match coordinator logic
+                from app.modules.parsing.parsing_session_model import ParsingSession
+                from datetime import datetime
+
+                # Query for incomplete sessions matching project_id and commit_id
+                # Handle None commit_id properly using IS NULL comparison
+                incomplete_session_query = db.query(ParsingSession).filter(
+                    ParsingSession.project_id == project_id,
+                    ParsingSession.completed_at.is_(None)
+                )
+                
+                if repo_details.commit_id is not None:
+                    # Match specific commit_id
+                    incomplete_session_query = incomplete_session_query.filter(
+                        ParsingSession.commit_id == repo_details.commit_id
                     )
+                else:
+                    # Match sessions with NULL commit_id (when no commit specified)
+                    incomplete_session_query = incomplete_session_query.filter(
+                        ParsingSession.commit_id.is_(None)
+                    )
+                
+                incomplete_session = incomplete_session_query.first()
+
+                # Clean up old incomplete sessions from different commits
+                if not is_latest and repo_details.commit_id:
+                    old_incomplete_sessions = db.query(ParsingSession).filter(
+                        ParsingSession.project_id == project_id,
+                        ParsingSession.commit_id != repo_details.commit_id,
+                        ParsingSession.completed_at.is_(None)
+                    ).all()
+
+                    if old_incomplete_sessions:
+                        logger.info(
+                            f"Cleaning up {len(old_incomplete_sessions)} incomplete sessions "
+                            f"from old commits for project {project_id}"
+                        )
+                        for old_session in old_incomplete_sessions:
+                            old_session.completed_at = datetime.utcnow()
+                            old_session.stage = 'abandoned'
+                        db.commit()
+
+                # Submit task if:
+                # 1. Commit is different (not latest), OR
+                # 2. Project status is not READY (ERROR, SUBMITTED, etc.), OR
+                # 3. There's an incomplete session that needs resuming
+                should_submit = (
+                    not is_latest or
+                    project.status != ProjectStatusEnum.READY.value or
+                    incomplete_session is not None
+                )
+
+                if should_submit:
+                    cleanup_graph = True if not is_latest else False
+
+                    if incomplete_session:
+                        logger.info(
+                            f"Resuming incomplete session for project {project_id} "
+                            f"(session {incomplete_session.id})"
+                        )
+                    elif not is_latest:
+                        logger.info(
+                            f"New commit detected for project {project_id}, re-parsing"
+                        )
+                    else:
+                        logger.info(
+                            f"Re-parsing project {project_id} in {project.status} state"
+                        )
+
                     parsing_task = ParsingController._get_parsing_task()
                     parsing_task.delay(
                         repo_details.model_dump(),
@@ -236,6 +301,12 @@ class ParsingController:
                         "status": ProjectStatusEnum.SUBMITTED.value,
                     }
 
+                # Project is already parsed and ready
+                logger.info(
+                    f"Project {project_id} already parsed and ready "
+                    f"(commit: {repo_details.commit_id or 'latest'}, status: {project.status}). "
+                    f"Returning existing project."
+                )
                 return {"project_id": project_id, "status": project.status}
             else:
                 # Handle new non-demo projects
@@ -260,7 +331,7 @@ class ParsingController:
         user_email: str,
         new_project_id: str,
         project_manager: ProjectService,
-        db: AsyncSession,
+        db: Session,
     ):
         response = {
             "project_id": new_project_id,
@@ -305,7 +376,7 @@ class ParsingController:
 
     @staticmethod
     async def fetch_parsing_status(
-        project_id: str, db: AsyncSession, user: Dict[str, Any]
+        project_id: str, db: Session, user: Dict[str, Any]
     ):
         try:
             project_query = (

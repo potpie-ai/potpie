@@ -377,7 +377,8 @@ def process_parsing_distributed(
     user_email: str,
     project_id: str,
     cleanup_graph: bool = False,
-    resume: bool = True  # Enable resume by default
+    resume: bool = True,  # Enable resume by default
+    force: bool = False  # Force fresh parse, ignore all resume logic
 ) -> Dict[str, Any]:
     """
     Master coordinator task for distributed repository parsing.
@@ -408,25 +409,84 @@ def process_parsing_distributed(
     import time
 
     logger.info(
-        f"Starting distributed parsing for project {project_id}"
+        f"[COORDINATOR START] Distributed parsing for project {project_id}"
+    )
+    logger.info(
+        f"[COORDINATOR PARAMS] cleanup_graph={cleanup_graph}, resume={resume}, force={force}, "
+        f"repo={repo_details.get('repo_name')}, branch={repo_details.get('branch_name')}, "
+        f"commit_id_requested={repo_details.get('commit_id')}"
     )
     start_time = time.time()
 
     try:
         commit_id = repo_details.get('commit_id')
 
+        # If force=True, mark any incomplete sessions as error and skip resume
+        if force:
+            logger.info(f"[FORCE MODE] Skipping all resume logic for project {project_id}")
+            from app.modules.parsing.parsing_session_model import ParsingSession
+            from datetime import datetime
+
+            incomplete_sessions = self.db.query(ParsingSession).filter(
+                ParsingSession.project_id == project_id,
+                ParsingSession.completed_at.is_(None)
+            ).all()
+
+            if incomplete_sessions:
+                logger.info(f"[FORCE MODE] Marking {len(incomplete_sessions)} incomplete sessions as error")
+                for sess in incomplete_sessions:
+                    sess.completed_at = datetime.utcnow()
+                    sess.stage = 'error'
+                self.db.commit()
+
         # NEW: Check for existing incomplete session in database
         from app.modules.parsing.parsing_session_model import ParsingSession
 
-        existing_session = self.db.query(ParsingSession).filter(
-            ParsingSession.project_id == project_id,
-            ParsingSession.commit_id == commit_id,
-            ParsingSession.completed_at.is_(None)
-        ).order_by(ParsingSession.session_number.desc()).first()
+        if force:
+            existing_session = None
+        else:
+            # Query for incomplete sessions matching project_id and commit_id
+            # Handle None commit_id properly using IS NULL comparison
+            session_query = self.db.query(ParsingSession).filter(
+                ParsingSession.project_id == project_id,
+                ParsingSession.completed_at.is_(None)
+            )
+            
+            if commit_id is not None:
+                # Match specific commit_id
+                session_query = session_query.filter(
+                    ParsingSession.commit_id == commit_id
+                )
+            else:
+                # Match sessions with NULL commit_id (when no commit specified)
+                session_query = session_query.filter(
+                    ParsingSession.commit_id.is_(None)
+                )
+            
+            existing_session = session_query.order_by(
+                ParsingSession.session_number.desc()
+            ).first()
 
-        if resume and existing_session:
-            logger.info(f"Resuming existing session {existing_session.id}")
-            return resume_parsing_session(self.db, existing_session, self)
+        if resume and existing_session and not force:
+            logger.info(
+                f"Found incomplete session {existing_session.id} "
+                f"(session #{existing_session.session_number}) for project {project_id}, "
+                f"commit {commit_id}. Attempting to resume..."
+            )
+            try:
+                return resume_parsing_session(self.db, existing_session, self)
+            except Exception as resume_error:
+                logger.exception(
+                    f"Failed to resume session {existing_session.id}: {resume_error}. "
+                    f"Falling through to fresh parse."
+                )
+                # Mark the failed session as completed so we don't try to resume it again
+                from datetime import datetime
+                existing_session.completed_at = datetime.utcnow()
+                existing_session.stage = 'error'
+                self.db.commit()
+                # Continue to fresh parse below
+                logger.info("Proceeding with fresh parse after resume failure")
 
         # NEW: Check for partial parsing in Neo4j (bootstrap case)
         # Only bootstrap if:
@@ -434,7 +494,12 @@ def process_parsing_distributed(
         # 2. No existing session found
         # 3. cleanup_graph is False (if cleanup requested, do fresh parse)
         # 4. Neo4j has nodes (potential incomplete parse)
-        if resume and not existing_session and not cleanup_graph:
+        # 5. force is False (if force=True, skip all resume logic)
+        if resume and not existing_session and not cleanup_graph and not force:
+            logger.info(
+                f"Checking Neo4j for partial state (project {project_id}, resume=True, "
+                f"cleanup_graph=False)..."
+            )
             from app.modules.parsing.graph_construction.neo4j_state_service import Neo4jStateService
 
             neo4j_config = config_provider.get_neo4j_config()
@@ -452,16 +517,23 @@ def process_parsing_distributed(
                         f"Detected partial parsing in Neo4j for project {project_id}. "
                         f"Bootstrapping work unit state..."
                     )
-                    return bootstrap_and_resume(
-                        self,
-                        neo4j_state_service,
-                        repo_details,
-                        user_id,
-                        user_email,
-                        project_id,
-                        commit_id,
-                        cleanup_graph
-                    )
+                    try:
+                        return bootstrap_and_resume(
+                            self,
+                            neo4j_state_service,
+                            repo_details,
+                            user_id,
+                            user_email,
+                            project_id,
+                            commit_id,
+                            cleanup_graph
+                        )
+                    except Exception as bootstrap_error:
+                        logger.exception(
+                            f"Failed to bootstrap and resume for project {project_id}: "
+                            f"{bootstrap_error}. Falling through to fresh parse."
+                        )
+                        # Continue to fresh parse below
                 else:
                     logger.info(
                         f"No partial state found in Neo4j for project {project_id}, "
@@ -473,6 +545,12 @@ def process_parsing_distributed(
             logger.info(
                 f"cleanup_graph=True for project {project_id}, "
                 f"skipping resume/bootstrap and proceeding with fresh parse"
+            )
+        else:
+            logger.info(
+                f"Resume conditions not met for project {project_id}: "
+                f"resume={resume}, existing_session={existing_session is not None}, "
+                f"cleanup_graph={cleanup_graph}"
             )
 
         # Continue with normal fresh parsing...
@@ -911,50 +989,59 @@ def parse_directory_unit(
 
         # Step 10: Check if this is the last worker to complete
         # Note: For fresh parsing, we may not have work_unit_db_id, but we still need
-        # to track completion. The commit_id is required for session lookup.
-        if commit_id:
-            from app.celery.coordination import ParsingCoordinator
-            from app.modules.parsing.parsing_session_model import ParsingSession
+        # to track completion. We need to handle NULL commit_id properly.
+        from app.celery.coordination import ParsingCoordinator
+        from app.modules.parsing.parsing_session_model import ParsingSession
 
-            # Get total work units from session
-            session = self.db.query(ParsingSession).filter(
-                ParsingSession.project_id == project_id,
-                ParsingSession.commit_id == commit_id,
-                ParsingSession.completed_at.is_(None)
-            ).first()
+        # Get total work units from session with NULL-safe commit_id comparison
+        session_query = self.db.query(ParsingSession).filter(
+            ParsingSession.project_id == project_id,
+            ParsingSession.completed_at.is_(None)
+        )
 
-            if session:
-                redis_client = self.app.backend.client
-                completed_count, is_last = ParsingCoordinator.increment_completed(
-                    redis_client,
-                    project_id,
-                    session.total_work_units
-                )
+        if commit_id is not None:
+            session_query = session_query.filter(
+                ParsingSession.commit_id == commit_id
+            )
+        else:
+            session_query = session_query.filter(
+                ParsingSession.commit_id.is_(None)
+            )
 
+        session = session_query.first()
+
+        if session:
+            redis_client = self.app.backend.client
+            completed_count, is_last = ParsingCoordinator.increment_completed(
+                redis_client,
+                project_id,
+                session.total_work_units
+            )
+
+            logger.info(
+                f"[Unit {work_unit_index}] Completion tracking: "
+                f"{completed_count}/{session.total_work_units}"
+            )
+
+            if is_last:
                 logger.info(
-                    f"[Unit {work_unit_index}] Completion tracking: "
-                    f"{completed_count}/{session.total_work_units}"
+                    f"[Unit {work_unit_index}] Last worker completed - triggering finalization"
                 )
-
-                if is_last:
-                    logger.info(
-                        f"[Unit {work_unit_index}] Last worker completed - triggering finalization"
-                    )
-                    # Trigger finalization asynchronously with delay to ensure all DB writes complete
-                    finalize_parsing.apply_async(
-                        kwargs={
-                            'project_id': project_id,
-                            'user_id': user_id,
-                            'repo_path': repo_path,
-                            'commit_id': commit_id
-                        },
-                        countdown=5  # 5 second delay
-                    )
-            else:
-                logger.warning(
-                    f"[Unit {work_unit_index}] No active session found for "
-                    f"project {project_id}, commit {commit_id}. Cannot track completion."
+                # Trigger finalization asynchronously with delay to ensure all DB writes complete
+                finalize_parsing.apply_async(
+                    kwargs={
+                        'project_id': project_id,
+                        'user_id': user_id,
+                        'repo_path': repo_path,
+                        'commit_id': commit_id
+                    },
+                    countdown=5  # 5 second delay
                 )
+        else:
+            logger.warning(
+                f"[Unit {work_unit_index}] No active session found for "
+                f"project {project_id}, commit {commit_id}. Cannot track completion."
+            )
 
         elapsed = time.time() - start_time
         logger.info(
@@ -1158,11 +1245,21 @@ def finalize_parsing(
     start_time = time.time()
 
     try:
-        # Check if already finalized (idempotency)
-        session = self.db.query(ParsingSession).filter(
-            ParsingSession.project_id == project_id,
-            ParsingSession.commit_id == commit_id
-        ).first()
+        # Check if already finalized (idempotency) with NULL-safe commit_id comparison
+        session_query = self.db.query(ParsingSession).filter(
+            ParsingSession.project_id == project_id
+        )
+
+        if commit_id is not None:
+            session_query = session_query.filter(
+                ParsingSession.commit_id == commit_id
+            )
+        else:
+            session_query = session_query.filter(
+                ParsingSession.commit_id.is_(None)
+            )
+
+        session = session_query.first()
 
         if session and session.completed_at:
             logger.info(f"Project {project_id} already finalized at {session.completed_at}, skipping")
@@ -1173,11 +1270,21 @@ def finalize_parsing(
                 'completed_at': session.completed_at.isoformat()
             }
 
-        # Query work units from database for aggregation
-        work_units = self.db.query(ParsingWorkUnit).filter(
-            ParsingWorkUnit.project_id == project_id,
-            ParsingWorkUnit.commit_id == commit_id
-        ).all()
+        # Query work units from database for aggregation with NULL-safe commit_id comparison
+        work_units_query = self.db.query(ParsingWorkUnit).filter(
+            ParsingWorkUnit.project_id == project_id
+        )
+
+        if commit_id is not None:
+            work_units_query = work_units_query.filter(
+                ParsingWorkUnit.commit_id == commit_id
+            )
+        else:
+            work_units_query = work_units_query.filter(
+                ParsingWorkUnit.commit_id.is_(None)
+            )
+
+        work_units = work_units_query.all()
 
         if not work_units:
             logger.warning(f"No work units found for project {project_id}, commit {commit_id}")
