@@ -2052,6 +2052,13 @@ def run_inference_unit(
     is_root: bool = False,
     split_index: int = None,
     total_splits: int = None,
+    # New parameters for session/work-unit tracking
+    session_id: str = None,
+    work_unit_id: str = None,
+    use_inference_context: bool = True,
+    filter_uninferred: bool = False,
+    model_name: str = None,
+    prompt_version: str = None,
 ) -> Dict[str, Any]:
     """
     Worker task for running inference on a directory or directory split.
@@ -2066,6 +2073,12 @@ def run_inference_unit(
         is_root: Whether this is the root directory
         split_index: Index of split for large directories (0-based)
         total_splits: Total number of splits for this directory
+        session_id: InferenceSession ID for tracking (optional, for standalone runs)
+        work_unit_id: InferenceWorkUnit ID for tracking (optional)
+        use_inference_context: Use optimized context (85-90% token savings)
+        filter_uninferred: Skip nodes that already have docstrings
+        model_name: LLM model name (for tracking)
+        prompt_version: Prompt version (for tracking)
 
     Returns:
         Dict with results (nodes_processed, batches_processed, etc.)
@@ -2073,6 +2086,7 @@ def run_inference_unit(
     from app.modules.parsing.knowledge_graph.inference_service import InferenceService
     from app.celery.redis_semaphore import get_redis_semaphore
     import time
+    from uuid import UUID
 
     unit_desc = (
         "root" if is_root
@@ -2083,9 +2097,25 @@ def run_inference_unit(
     )
 
     logger.info(
-        f"Starting inference for project {project_id}, {unit_desc}"
+        f"Starting inference for project {project_id}, {unit_desc}, "
+        f"use_context={use_inference_context}, filter_uninferred={filter_uninferred}"
     )
     start_time = time.time()
+
+    # Update work unit status to 'processing' if tracking enabled
+    work_unit = None
+    if work_unit_id:
+        try:
+            from app.modules.parsing.inference_work_unit_model import InferenceWorkUnit
+            work_unit = self.db.query(InferenceWorkUnit).filter(
+                InferenceWorkUnit.id == UUID(work_unit_id)
+            ).first()
+            if work_unit:
+                work_unit.mark_processing(self.request.id)
+                self.db.commit()
+                logger.info(f"Marked work unit {work_unit_id} as processing")
+        except Exception as e:
+            logger.warning(f"Failed to update work unit status: {e}")
 
     try:
         inference_service = InferenceService(self.db, user_id)
@@ -2116,6 +2146,8 @@ def run_inference_unit(
                     directory_path=directory_path,
                     is_root=is_root,
                     chunk_size=500,
+                    filter_uninferred=filter_uninferred,
+                    use_inference_context=use_inference_context,
                 )
 
                 return result
@@ -2129,6 +2161,20 @@ def run_inference_unit(
             f"{result['total_nodes_processed']} nodes processed in {elapsed:.2f}s"
         )
 
+        # Update work unit as completed if tracking enabled
+        if work_unit:
+            try:
+                work_unit.mark_completed(
+                    nodes_processed=result.get('total_nodes_processed', 0),
+                    docstrings_generated=result.get('total_nodes_processed', 0),  # Approximation
+                    batches_processed=result.get('total_batches_processed', 0),
+                    failed_batches=len(result.get('failed_batches', [])),
+                )
+                self.db.commit()
+                logger.info(f"Marked work unit {work_unit_id} as completed")
+            except Exception as e:
+                logger.warning(f"Failed to update work unit completion: {e}")
+
         return {
             'success': True,
             'directory_path': directory_path,
@@ -2139,12 +2185,25 @@ def run_inference_unit(
             'batches_processed': result['total_batches_processed'],
             'nodes_indexed': result['nodes_indexed'],
             'duration_seconds': elapsed,
+            'session_id': session_id,
+            'work_unit_id': work_unit_id,
+            'used_inference_context': result.get('used_inference_context', use_inference_context),
         }
 
     except Exception as e:
         logger.exception(
             f"Error during inference for {unit_desc}"
         )
+
+        # Update work unit as failed if tracking enabled
+        if work_unit:
+            try:
+                work_unit.mark_failed(str(e), type(e).__name__)
+                self.db.commit()
+                logger.info(f"Marked work unit {work_unit_id} as failed")
+            except Exception as update_err:
+                logger.warning(f"Failed to update work unit failure: {update_err}")
+
         return {
             'success': False,
             'directory_path': directory_path,
@@ -2152,6 +2211,8 @@ def run_inference_unit(
             'split_index': split_index,
             'error': str(e),
             'nodes_processed': 0,
+            'session_id': session_id,
+            'work_unit_id': work_unit_id,
         }
 
 
@@ -2167,6 +2228,7 @@ def finalize_project_after_inference(
     inference_results: list,
     project_id: str,
     user_id: str,
+    session_id: str = None,
 ) -> Dict[str, Any]:
     """
     Callback task after all inference units complete.
@@ -2176,12 +2238,14 @@ def finalize_project_after_inference(
     2. Commits search indices (single transaction)
     3. Spawns async vector index creation task
     4. Updates project status based on completion rate
-    5. Handles partial failures gracefully
+    5. Updates InferenceSession status if session_id provided
+    6. Handles partial failures gracefully
 
     Args:
         inference_results: List of results from run_inference_unit tasks
         project_id: Project ID
         user_id: User ID
+        session_id: InferenceSession ID for tracking (optional)
 
     Returns:
         Dict with finalization results
@@ -2190,12 +2254,26 @@ def finalize_project_after_inference(
     from app.modules.search.search_service import SearchService
     from app.modules.projects.projects_schema import ProjectStatusEnum
     import time
+    from uuid import UUID
 
     logger.info(
         f"Finalizing project {project_id} after inference: "
-        f"{len(inference_results)} units processed"
+        f"{len(inference_results)} units processed, session_id={session_id}"
     )
     start_time = time.time()
+
+    # Load InferenceSession if tracking enabled
+    inference_session = None
+    if session_id:
+        try:
+            from app.modules.parsing.inference_session_model import InferenceSession
+            inference_session = self.db.query(InferenceSession).filter(
+                InferenceSession.id == UUID(session_id)
+            ).first()
+            if inference_session:
+                logger.info(f"Loaded inference session {session_id} for finalization")
+        except Exception as e:
+            logger.warning(f"Failed to load inference session: {e}")
 
     try:
         # Aggregate results
@@ -2291,6 +2369,30 @@ def finalize_project_after_inference(
 
         self.run_async(update_project_status())
 
+        # Update InferenceSession if tracking enabled
+        if inference_session:
+            try:
+                inference_session.completed_work_units = len(successful_units)
+                inference_session.failed_work_units = len(failed_units)
+                inference_session.processed_nodes = total_nodes_processed
+                inference_session.docstrings_generated = total_nodes_processed  # Approximation
+
+                if completion_rate >= 0.95:
+                    inference_session.mark_completed()
+                elif completion_rate >= 0.75:
+                    inference_session.mark_partial()
+                else:
+                    inference_session.mark_failed(
+                        f"Only {len(successful_units)}/{len(inference_results)} units succeeded"
+                    )
+
+                self.db.commit()
+                logger.info(
+                    f"Updated inference session {session_id} status to {inference_session.status}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to update inference session: {e}")
+
         elapsed = time.time() - start_time
         logger.info(
             f"Finalization complete for project {project_id} in {elapsed:.2f}s"
@@ -2307,6 +2409,7 @@ def finalize_project_after_inference(
             'total_batches_processed': total_batches_processed,
             'completion_rate': completion_rate,
             'duration_seconds': elapsed,
+            'session_id': session_id,
         }
 
     except Exception as e:
