@@ -205,6 +205,9 @@ async def list_projects(
 
 @router.get("/list-available-agents")
 async def list_agents(
+    include_workflow_agents: bool = Query(
+        False, description="Include system workflow agents"
+    ),
     db: Session = Depends(get_db),
     user=Depends(get_api_key_user),
 ):
@@ -213,7 +216,7 @@ async def list_agents(
     tools_provider = ToolService(db, user_id)
     prompt_provider = PromptService(db)
     controller = AgentsController(db, llm_provider, prompt_provider, tools_provider)
-    return await controller.list_available_agents(user, True)
+    return await controller.list_available_agents(user, True, include_workflow_agents)
 
 
 @router.post("/search", response_model=SearchResponse)

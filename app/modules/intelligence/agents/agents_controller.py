@@ -21,11 +21,14 @@ class AgentsController:
         self.service = AgentsService(db, llm_provider, prompt_provider, tools_provider)
 
     async def list_available_agents(
-        self, current_user: dict, list_system_agents: bool
+        self,
+        current_user: dict,
+        list_system_agents: bool,
+        include_workflow_agents: bool = False,
     ) -> List[AgentInfo]:
         try:
             agents = await self.service.list_available_agents(
-                current_user, list_system_agents
+                current_user, list_system_agents, include_workflow_agents
             )
             return agents
         except Exception as e:
