@@ -275,7 +275,9 @@ class ProviderWrapper:
                 # Not a 401 error, or not GitHub - propagate the error
                 raise
 
-    async def get_project_structure_async(self, project_id, path: Optional[str] = None):
+    async def get_project_structure_async(
+        self, project_id, path: Optional[str] = None, max_depth: int = 4
+    ):
         """Get project structure using the provider."""
         try:
             # Get the project details from the database using project_id
@@ -319,7 +321,7 @@ class ProviderWrapper:
                 provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
                 # Use the provider to get repository structure
                 structure = provider.get_repository_structure(
-                    repo_name=repo_name, path=path or "", max_depth=4
+                    repo_name=repo_name, path=path or "", max_depth=max_depth
                 )
                 return structure
 
@@ -333,7 +335,7 @@ class ProviderWrapper:
                 github_service = GithubService(self.sql_db)
                 # Let HTTPException propagate (GithubService raises it for errors)
                 return await github_service.get_project_structure_async(
-                    project_id, path
+                    project_id, path, max_depth=max_depth
                 )
 
             # For other providers (local, GitBucket, etc.), use the provider-based approach
@@ -341,7 +343,7 @@ class ProviderWrapper:
 
             # Use the provider to get repository structure
             structure = provider.get_repository_structure(
-                repo_name=repo_name, path=path or "", max_depth=4
+                repo_name=repo_name, path=path or "", max_depth=max_depth
             )
 
             return structure
@@ -367,9 +369,6 @@ class CodeProviderService:
     def get_repo(self, repo_name):
         return self.service_instance.get_repo(repo_name)
 
-    async def get_project_structure_async(self, project_id, path: Optional[str] = None):
-        return await self.service_instance.get_project_structure_async(project_id, path)
-
     def get_file_content(
         self,
         repo_name,
@@ -388,4 +387,12 @@ class CodeProviderService:
             branch_name,
             project_id,
             commit_id,
+        )
+
+    async def get_project_structure_async(
+        self, project_id: str, path: Optional[str] = None, max_depth: int = 4
+    ):
+        """Get project structure using the provider."""
+        return await self.service_instance.get_project_structure_async(
+            project_id, path, max_depth
         )

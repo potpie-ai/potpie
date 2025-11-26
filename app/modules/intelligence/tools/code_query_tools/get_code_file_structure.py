@@ -11,12 +11,14 @@ from app.modules.code_provider.code_provider_service import CodeProviderService
 class RepoStructureRequest(BaseModel):
     project_id: str
     path: Optional[str] = None
+    max_depth: Optional[int] = None
 
 
 class GetCodeFileStructureTool:
     name = "get_code_file_structure"
     description = """Retrieve the hierarchical file structure of a specified repository.
         :param project_id: string, the repository ID (UUID) to get the file structure for.
+        :param max_depth: optional integer to control directory traversal depth (defaults to provider setting, typically 4).
 
             example:
             {
@@ -30,19 +32,21 @@ class GetCodeFileStructureTool:
         self.cp_service = CodeProviderService(db)
 
     async def fetch_repo_structure(
-        self, project_id: str, path: Optional[str] = None
+        self, project_id: str, path: Optional[str] = None, max_depth: Optional[int] = None
     ) -> str:
-        return await self.cp_service.get_project_structure_async(project_id, path)
+        return await self.cp_service.get_project_structure_async(project_id, path, max_depth)
 
-    async def arun(self, project_id: str, path: Optional[str] = None) -> str:
+    async def arun(
+        self, project_id: str, path: Optional[str] = None, max_depth: Optional[int] = None
+    ) -> str:
         try:
-            return await self.fetch_repo_structure(project_id, path)
+            return await self.fetch_repo_structure(project_id, path, max_depth)
         except:
             return "error fetching data"
 
-    def run(self, project_id: str, path: Optional[str] = None) -> str:
+    def run(self, project_id: str, path: Optional[str] = None, max_depth: Optional[int] = None) -> str:
         try:
-            return asyncio.run(self.fetch_repo_structure(project_id, path))
+            return asyncio.run(self.fetch_repo_structure(project_id, path, max_depth))
         except:
             return "error fetching data"
 
@@ -58,7 +62,7 @@ def get_code_file_structure_tool(db: Session) -> StructuredTool:
                     ...
                 filename.extension
         ```
-        the path for the subdir_name should be dir_name/subdir_name""",
+        the path for the subdir_name should be dir_name/subdir_name. Optionally pass max_depth to limit traversal (default provider depth is 4).""",
         coroutine=GetCodeFileStructureTool(db).arun,
         func=GetCodeFileStructureTool(db).run,
         args_schema=RepoStructureRequest,

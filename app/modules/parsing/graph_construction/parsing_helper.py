@@ -117,7 +117,8 @@ class ParseHelper:
             "css",  # CSS
             "md",    # Markdown
             "txt",   # Text
-            "yaml"   # YAML
+            "yaml",
+            "csproj"   # YAML
         ]
 
         ext = file_path.split(".")[-1].lower()

@@ -678,15 +678,17 @@ class GithubService:
             )
 
     async def get_project_structure_async(
-        self, project_id: str, path: Optional[str] = None
+        self, project_id: str, path: Optional[str] = None, max_depth: Optional[int] = None
     ) -> str:
         logger.info(
             f"Fetching project structure for project ID: {project_id}, path: {path}"
         )
 
+        effective_depth = max_depth if max_depth is not None else self.max_depth
+
         # Modify cache key to reflect that we're only caching the specific path
         cache_key = (
-            f"project_structure:{project_id}:exact_path_{path}:depth_{self.max_depth}"
+            f"project_structure:{project_id}:exact_path_{path}:depth_{effective_depth}"
         )
         cached_structure = self.redis.get(cache_key)
 
@@ -725,6 +727,7 @@ class GithubService:
                 path or "",
                 current_depth=0,
                 base_path=path or "",
+                max_depth=effective_depth,
                 ref=(
                     project.get("branch_name")
                     if project.get("branch_name")
@@ -753,6 +756,7 @@ class GithubService:
         path: str = "",
         current_depth: int = 0,
         base_path: Optional[str] = None,
+        max_depth: int = 4,
         ref: Optional[str] = None,
     ) -> Dict[str, Any]:
         exclude_extensions = [
@@ -784,7 +788,7 @@ class GithubService:
             current_depth = len(path.split("/")) if path else 0
 
         # If we've reached max depth, return truncated indicator
-        if current_depth >= self.max_depth:
+        if current_depth >= max_depth:
             return {
                 "type": "directory",
                 "name": path.split("/")[-1] or repo.name,
@@ -825,6 +829,7 @@ class GithubService:
                         item.path,
                         current_depth=current_depth,
                         base_path=base_path,
+                        max_depth=max_depth,
                         ref=ref,
                     )
                     tasks.append(task)

@@ -97,7 +97,7 @@ class LocalRepoService:
             )
 
     async def get_project_structure_async(
-        self, project_id: str, path: Optional[str] = None
+        self, project_id: str, path: Optional[str] = None, max_depth: Optional[int] = None
     ) -> str:
         project = await self.project_manager.get_project_from_db_by_id(project_id)
         if not project:
@@ -113,12 +113,14 @@ class LocalRepoService:
             repo = self.get_repo(repo_path)
             # Compute gitignore_spec once before starting recursion
             gitignore_spec = self._get_gitignore_spec(repo_path) if repo_path else None
+            effective_depth = max_depth if max_depth is not None else self.max_depth
             structure = await self._fetch_repo_structure_async(
                 repo,
                 repo_path or "",
                 current_depth=0,
                 base_path=repo_path,
                 gitignore_spec=gitignore_spec,
+                max_depth=effective_depth,
             )
             formatted_structure = self._format_tree_structure(structure)
             return formatted_structure
@@ -164,6 +166,7 @@ class LocalRepoService:
         current_depth: int = 0,
         base_path: Optional[str] = None,
         gitignore_spec: Optional[pathspec.PathSpec] = None,
+        max_depth: int = 4,
     ) -> Dict[str, Any]:
         exclude_extensions = [
             "png",
@@ -194,7 +197,7 @@ class LocalRepoService:
             current_depth = len(path.split("/")) if path else 0
 
         # If we've reached max depth, return truncated indicator
-        if current_depth >= self.max_depth:
+        if current_depth >= max_depth:
             return {
                 "type": "directory",
                 "name": path.split("/")[-1] or repo.name,
@@ -263,6 +266,7 @@ class LocalRepoService:
                         current_depth=current_depth,
                         base_path=base_path,
                         gitignore_spec=gitignore_spec,
+                        max_depth=max_depth,
                     )
                     tasks.append(task)
                 else:

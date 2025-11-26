@@ -35,6 +35,7 @@ class QnAAgent(ChatAgent):
             goal="Answer queries of the repo in a detailed fashion",
             backstory="""
                     You are a highly efficient and intelligent RAG agent capable of querying complex knowledge graphs and refining the results to generate precise and comprehensive responses.
+                    Navigate codebases incrementally: seed only minimal structure (repo root and top-level domains, with at most one sublevel for major surfaces) and expand specific branches on demand. Chain tools deliberately—load the guide, map the relevant subtree with get_code_file_structure(path=...), then pull file contents once scope is narrow.
                     Your tasks include:
                     1. Analyzing the user's query and formulating an effective strategy to extract relevant information from the code knowledge graph.
                     2. Executing the query with minimal iterations, ensuring accuracy and relevance.
@@ -60,7 +61,6 @@ class QnAAgent(ChatAgent):
                 "webpage_extractor",
                 "web_search_tool",
                 "github_tool",
-                "get_linear_issue",
                 "fetch_file",
                 "analyze_code_structure",
             ]
@@ -106,6 +106,8 @@ class QnAAgent(ChatAgent):
             return PydanticRagAgent(self.llm_provider, agent_config, tools)
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
+        ctx = await self._seed_top_level_structure(ctx)
+
         if ctx.node_ids and len(ctx.node_ids) > 0:
             code_results = await self.tools_provider.get_code_from_multiple_node_ids_tool.run_multiple(
                 ctx.project_id, ctx.node_ids
@@ -113,13 +115,6 @@ class QnAAgent(ChatAgent):
             ctx.additional_context += (
                 f"Code context of the node_ids in query:\n {code_results}"
             )
-
-        file_structure = (
-            await self.tools_provider.file_structure_tool.fetch_repo_structure(
-                ctx.project_id
-            )
-        )
-        ctx.additional_context += f"File Structure of the project:\n {file_structure}"
 
         return ctx
 
@@ -133,21 +128,98 @@ class QnAAgent(ChatAgent):
         async for chunk in self._build_agent().run_stream(ctx):
             yield chunk
 
+    async def _seed_top_level_structure(self, ctx: ChatContext) -> ChatContext:
+        """Seed a minimal code map once so the agent can expand branches on demand."""
+        if "Top-level code map" in ctx.additional_context:
+            return ctx
+
+        try:
+            file_structure = await self.tools_provider.file_structure_tool.fetch_repo_structure(
+                project_id=ctx.project_id, path=None, max_depth=2
+            )
+            formatted_structure = self._format_top_level_structure(
+                file_structure, max_depth=2
+            )
+
+            if formatted_structure:
+                prefix = "" if ctx.additional_context in ("", None) else "\n"
+                ctx.additional_context += (
+                    f"{prefix}Top-level code map (seeded once; expand with get_code_file_structure(path=...)):\n"
+                    f"{formatted_structure}"
+                )
+        except Exception as exc:
+            logger.warning(f"Failed to seed top-level structure: {exc}")
+
+        return ctx
+
+    def _format_top_level_structure(self, structure, max_depth: int = 1) -> str:
+        """Keep only root entries and one sublevel to keep initial context small."""
+        try:
+            if isinstance(structure, str):
+                lines = []
+                for line in structure.splitlines():
+                    stripped = line.lstrip(" ")
+                    indent = len(line) - len(stripped)
+                    depth = indent // 2
+                    if depth <= max_depth:
+                        lines.append(line)
+                return "\n".join(lines).strip()
+
+            if isinstance(structure, dict):
+                nodes = structure.get("children", [])
+                return "\n".join(
+                    self._format_structure_nodes(nodes, depth=0, max_depth=max_depth)
+                ).strip()
+
+            if isinstance(structure, list):
+                return "\n".join(
+                    self._format_structure_nodes(structure, depth=0, max_depth=max_depth)
+                ).strip()
+        except Exception as exc:
+            logger.warning(f"Failed to format top-level structure: {exc}")
+
+        return ""
+
+    def _format_structure_nodes(self, nodes, depth: int, max_depth: int):
+        lines = []
+        for node in sorted(nodes, key=lambda n: n.get("name", "")):
+            name = node.get("name", "")
+            if not name:
+                continue
+            lines.append(f"{'  ' * depth}{name}")
+            children = node.get("children", [])
+            if children and depth < max_depth:
+                lines.extend(
+                    self._format_structure_nodes(
+                        children, depth=depth + 1, max_depth=max_depth
+                    )
+                )
+        return lines
+
 
 qna_task_prompt = """
     IMPORTANT: Use the following guide to accomplish tasks within the current context of execution
     HOW TO GUIDE:
 
-    IMPORATANT: steps on HOW TO traverse the codebase:
-    1. You can use websearch, docstrings, readme to understand current feature/code you are working with better. Understand how to use current feature in context of codebase
-    2. Use AskKnowledgeGraphQueries tool to understand where perticular feature or functionality resides or to fetch specific code related to some keywords. Fetch file structure to understand the codebase better, Use FetchFile tool to fetch code from a file
-    3. Use GetcodefromProbableNodeIDs tool to fetch code for perticular class or function in a file, Use analyze_code_structure to get all the class/function/nodes in a file
-    4. Use GetcodeFromMultipleNodeIDs to fetch code for nodeIDs fetched from tools before
-    5. Use GetNodeNeighboursFromNodeIDs to fetch all the code referencing current code or code referenced in the current node (code snippet)
-    6. Above tools and steps can help you figure out full context about the current code in question
-    7. Figure out how all the code ties together to implement current functionality
-    8. Fetch Dir structure of the repo and use fetch file tool to fetch entire files, if file is too big the tool will throw error, then use code analysis tool to target proper line numbers (feel free to use set startline and endline such that few extra context lines are also fetched, tool won't throw out of bounds exception and return lines if they exist)
-    9. Use above mentioned tools to fetch imported code, referenced code, helper functions, classes etc to understand the control flow
+    IMPORTANT: Traverse the codebase incrementally
+    - Seed only the topmost structure once: repo root and key domains, with at most one subdirectory per major surface (e.g., app/api, app/modules/intelligence, potpie-ui). Keep the initial map tiny.
+    - When you need more detail, lazily expand a specific branch by calling get_code_file_structure(path=...) for that subtree. Explore depth-first as needed.
+    - Do not request the entire tree upfront. Always decide the next branch to expand based on the user's question.
+
+    TOOL CHAINING FLOW:
+    1. Load this guide and identify the relevant surface area.
+    2. Call get_code_file_structure(path=...) on the target subtree to map it; repeat depth-first for nested folders as you narrow focus.
+    3. After the structure is clear, fetch content with analyze_code_structure or GetCodeFrom* tools, then FetchFile for broader context if needed.
+
+    Additional navigation steps:
+    1. Use websearch, docstrings, or README to understand the feature.
+    2. Use AskKnowledgeGraphQueries to locate functionality or keywords; use FetchFile to pull code once scope is defined.
+    3. Use GetcodefromProbableNodeIDs to fetch code for specific classes/functions; use analyze_code_structure to list class/function nodes in a file.
+    4. Use GetcodeFromMultipleNodeIDs to fetch code for nodeIDs fetched from tools before.
+    5. Use GetNodeNeighboursFromNodeIDs to fetch code referencing or referenced by the current node (code snippet).
+    6. Use the above tools to assemble the full context about the code in question and how it ties together.
+    7. When files are large, prefer targeted line ranges; FetchFile may fail on very large files—fall back to code analysis tools with start/end lines and a small buffer.
+    8. Use imported/reference lookups to understand control flow and dependencies.
 
     Analyze and enrich results:
     - Evaluate relevance, identify gaps
