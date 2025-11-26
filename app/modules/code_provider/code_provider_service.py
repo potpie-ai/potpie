@@ -4,6 +4,10 @@ from typing import Optional
 
 from app.modules.code_provider.provider_factory import CodeProviderFactory
 
+DEFAULT_STRUCTURE_DEPTH = 4
+MAX_STRUCTURE_DEPTH = 6
+MIN_STRUCTURE_DEPTH = 1
+
 try:
     from github.GithubException import BadCredentialsException
 except ImportError:
@@ -276,9 +280,10 @@ class ProviderWrapper:
                 raise
 
     async def get_project_structure_async(
-        self, project_id, path: Optional[str] = None, max_depth: int = 4
+        self, project_id, path: Optional[str] = None, max_depth: int = DEFAULT_STRUCTURE_DEPTH
     ):
         """Get project structure using the provider."""
+        effective_depth = self._sanitize_depth(max_depth)
         try:
             # Get the project details from the database using project_id
             from app.modules.projects.projects_service import ProjectService
@@ -321,7 +326,7 @@ class ProviderWrapper:
                 provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
                 # Use the provider to get repository structure
                 structure = provider.get_repository_structure(
-                    repo_name=repo_name, path=path or "", max_depth=max_depth
+                    repo_name=repo_name, path=path or "", max_depth=effective_depth
                 )
                 return structure
 
@@ -335,7 +340,7 @@ class ProviderWrapper:
                 github_service = GithubService(self.sql_db)
                 # Let HTTPException propagate (GithubService raises it for errors)
                 return await github_service.get_project_structure_async(
-                    project_id, path, max_depth=max_depth
+                    project_id, path, max_depth=effective_depth
                 )
 
             # For other providers (local, GitBucket, etc.), use the provider-based approach
@@ -343,7 +348,7 @@ class ProviderWrapper:
 
             # Use the provider to get repository structure
             structure = provider.get_repository_structure(
-                repo_name=repo_name, path=path or "", max_depth=max_depth
+                repo_name=repo_name, path=path or "", max_depth=effective_depth
             )
 
             return structure
@@ -353,6 +358,15 @@ class ProviderWrapper:
         except Exception as e:
             logger.error(f"Failed to get project structure for {project_id}: {e}")
             return []
+
+    @staticmethod
+    def _sanitize_depth(max_depth: Optional[int]) -> int:
+        depth = max_depth if max_depth is not None else DEFAULT_STRUCTURE_DEPTH
+        try:
+            depth = int(depth)
+        except Exception:
+            depth = DEFAULT_STRUCTURE_DEPTH
+        return max(MIN_STRUCTURE_DEPTH, min(depth, MAX_STRUCTURE_DEPTH))
 
 
 class CodeProviderService:
@@ -393,6 +407,7 @@ class CodeProviderService:
         self, project_id: str, path: Optional[str] = None, max_depth: int = 4
     ):
         """Get project structure using the provider."""
+        effective_depth = ProviderWrapper._sanitize_depth(max_depth)
         return await self.service_instance.get_project_structure_async(
-            project_id, path, max_depth
+            project_id, path, effective_depth
         )

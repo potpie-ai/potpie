@@ -2,16 +2,25 @@ import asyncio
 from typing import Optional
 
 from langchain_core.tools import StructuredTool
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
+
+DEFAULT_STRUCTURE_DEPTH = 4
+MAX_STRUCTURE_DEPTH = 6
+MIN_STRUCTURE_DEPTH = 1
 
 
 class RepoStructureRequest(BaseModel):
     project_id: str
     path: Optional[str] = None
-    max_depth: Optional[int] = None
+    max_depth: Optional[int] = Field(
+        default=None,
+        ge=MIN_STRUCTURE_DEPTH,
+        le=MAX_STRUCTURE_DEPTH,
+        description=f"Optional traversal depth; defaults to {DEFAULT_STRUCTURE_DEPTH} and is capped at {MAX_STRUCTURE_DEPTH}.",
+    )
 
 
 class GetCodeFileStructureTool:
@@ -34,7 +43,10 @@ class GetCodeFileStructureTool:
     async def fetch_repo_structure(
         self, project_id: str, path: Optional[str] = None, max_depth: Optional[int] = None
     ) -> str:
-        return await self.cp_service.get_project_structure_async(project_id, path, max_depth)
+        effective_depth = self._sanitize_depth(max_depth)
+        return await self.cp_service.get_project_structure_async(
+            project_id, path, effective_depth
+        )
 
     async def arun(
         self, project_id: str, path: Optional[str] = None, max_depth: Optional[int] = None
@@ -50,6 +62,14 @@ class GetCodeFileStructureTool:
         except:
             return "error fetching data"
 
+    def _sanitize_depth(self, max_depth: Optional[int]) -> int:
+        depth = max_depth if max_depth is not None else DEFAULT_STRUCTURE_DEPTH
+        try:
+            depth = int(depth)
+        except Exception:
+            depth = DEFAULT_STRUCTURE_DEPTH
+        return max(MIN_STRUCTURE_DEPTH, min(depth, MAX_STRUCTURE_DEPTH))
+
 
 def get_code_file_structure_tool(db: Session) -> StructuredTool:
     return StructuredTool(
@@ -62,7 +82,7 @@ def get_code_file_structure_tool(db: Session) -> StructuredTool:
                     ...
                 filename.extension
         ```
-        the path for the subdir_name should be dir_name/subdir_name. Optionally pass max_depth to limit traversal (default provider depth is 4).""",
+        the path for the subdir_name should be dir_name/subdir_name. Optionally pass max_depth to limit traversal (default is 4, capped at 6).""",
         coroutine=GetCodeFileStructureTool(db).arun,
         func=GetCodeFileStructureTool(db).run,
         args_schema=RepoStructureRequest,
