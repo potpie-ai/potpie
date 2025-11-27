@@ -2509,8 +2509,15 @@ class IntegrationsService:
 
         return existing is not None
 
-    async def _get_confluence_context(self, integration_id: str) -> Dict[str, Any]:
-        """Helper to get Confluence integration context with decrypted tokens"""
+    async def _get_confluence_context(
+        self, integration_id: str, auto_refresh: bool = True
+    ) -> Dict[str, Any]:
+        """Helper to get Confluence integration context with decrypted tokens
+
+        Args:
+            integration_id: The integration ID to fetch context for
+            auto_refresh: If True, automatically refresh expired tokens
+        """
         from .token_encryption import decrypt_token
 
         db_integration = (
@@ -2529,10 +2536,65 @@ class IntegrationsService:
         scope_data = getattr(db_integration, "scope_data", {}) or {}
 
         encrypted_access_token = auth_data.get("access_token")
+        encrypted_refresh_token = auth_data.get("refresh_token")
+
         if not encrypted_access_token:
             raise Exception("No access token found for Confluence integration")
 
         access_token = decrypt_token(encrypted_access_token)
+
+        # Check if token is expired and refresh if needed
+        if auto_refresh:
+            expires_at = auth_data.get("expires_at")
+            token_expired = False
+
+            if expires_at:
+                if isinstance(expires_at, str):
+                    try:
+                        expires_at = datetime.fromisoformat(
+                            expires_at.replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        expires_at = None
+
+                if expires_at and datetime.now(timezone.utc) >= expires_at:
+                    token_expired = True
+
+            if token_expired and encrypted_refresh_token:
+                logging.info(
+                    f"Access token expired for Confluence integration {integration_id}, refreshing..."
+                )
+                try:
+                    refresh_token = decrypt_token(encrypted_refresh_token)
+                    new_tokens = await self.confluence_oauth.refresh_access_token(
+                        refresh_token
+                    )
+
+                    # Update tokens in database
+                    from .token_encryption import encrypt_token
+
+                    auth_data["access_token"] = encrypt_token(
+                        new_tokens["access_token"]
+                    )
+                    if new_tokens.get("refresh_token"):
+                        auth_data["refresh_token"] = encrypt_token(
+                            new_tokens["refresh_token"]
+                        )
+                    auth_data["expires_at"] = datetime.fromtimestamp(
+                        new_tokens["expires_at"], tz=timezone.utc
+                    ).isoformat()
+
+                    setattr(db_integration, "auth_data", auth_data)
+                    setattr(db_integration, "updated_at", datetime.utcnow())
+                    self.db.commit()
+
+                    access_token = new_tokens["access_token"]
+                    logging.info(
+                        f"Successfully refreshed token for Confluence integration {integration_id}"
+                    )
+                except Exception as e:
+                    logging.error(f"Failed to refresh Confluence token: {str(e)}")
+                    raise Exception(f"Failed to refresh expired token: {str(e)}")
 
         site_id = metadata.get("site_id") or scope_data.get("org_slug")
         if not site_id:

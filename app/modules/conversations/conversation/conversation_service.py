@@ -211,9 +211,14 @@ class ConversationService:
                     f"Invalid agent_id: {conversation.agent_ids[0]}"
                 )
 
-            project_name = await self.project_service.get_project_name(
-                conversation.project_ids
-            )
+            # Handle "system" as a special project ID for project-independent agents
+            # (e.g., workflow agents that work with integrations instead of code repos)
+            if conversation.project_ids and conversation.project_ids[0] == "system":
+                project_name = "System"
+            else:
+                project_name = await self.project_service.get_project_name(
+                    conversation.project_ids
+                )
 
             title = (
                 conversation.title.strip().replace("Untitled", project_name)
@@ -225,11 +230,13 @@ class ConversationService:
                 conversation, title, user_id, hidden
             )
 
-            asyncio.create_task(
-                CodeProviderService(self.db).get_project_structure_async(
-                    conversation.project_ids[0]
+            # Only fetch project structure for real projects, not for "system" pseudo-project
+            if conversation.project_ids and conversation.project_ids[0] != "system":
+                asyncio.create_task(
+                    CodeProviderService(self.db).get_project_structure_async(
+                        conversation.project_ids[0]
+                    )
                 )
-            )
 
             await self._add_system_message(conversation_id, project_name, user_id)
 
@@ -658,9 +665,13 @@ class ConversationService:
             if type is None:
                 raise ConversationServiceError(f"Invalid agent_id {agent_id}")
 
-            project_name = await self.project_service.get_project_name(
-                project_ids=[project_id]
-            )
+            # Handle "system" as a special project ID for project-independent agents
+            if project_id == "system":
+                project_name = "System"
+            else:
+                project_name = await self.project_service.get_project_name(
+                    project_ids=[project_id]
+                )
 
             # Prepare multimodal context - use current message attachments if available
             image_attachments = None
