@@ -4,7 +4,7 @@ from typing import Any, Dict
 
 from sqlalchemy import func
 from app.celery.celery_app import celery_app
-from app.celery.tasks.base_task import BaseTask
+from app.celery.tasks.base_task import BaseTask, ParseDirectoryTask, InferenceTask
 from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
 
@@ -97,11 +97,20 @@ def resume_parsing_stage(db_session, session, task_instance) -> Dict[str, Any]:
     # Step 1: Query incomplete work units (pending and failed only)
     # Note: We don't check for 'processing' status because work units are never
     # explicitly set to 'processing' - they go directly from 'pending' to 'completed' or 'failed'
-    incomplete_units = db_session.query(ParsingWorkUnit).filter(
+    # IMPORTANT: Use NULL-safe comparison for commit_id
+    work_units_query = db_session.query(ParsingWorkUnit).filter(
         ParsingWorkUnit.project_id == session.project_id,
-        ParsingWorkUnit.commit_id == session.commit_id,
         ParsingWorkUnit.status.in_(['pending', 'failed'])
-    ).all()
+    )
+    if session.commit_id is not None:
+        work_units_query = work_units_query.filter(
+            ParsingWorkUnit.commit_id == session.commit_id
+        )
+    else:
+        work_units_query = work_units_query.filter(
+            ParsingWorkUnit.commit_id.is_(None)
+        )
+    incomplete_units = work_units_query.all()
 
     if not incomplete_units:
         logger.info("No incomplete work units, all work completed")
@@ -218,10 +227,19 @@ def resume_parsing_stage(db_session, session, task_instance) -> Dict[str, Any]:
         f"Dispatched {len(incomplete_units)} work units for resume (group_id={group_task.id})"
     )
 
-    # Update session
+    # Update session - CRITICAL: Update total_work_units to match incomplete units
+    # This ensures completion tracking (which compares counter vs total_work_units)
+    # will correctly trigger finalize_parsing when all resumed units complete
+    original_total = session.total_work_units
+    session.total_work_units = len(incomplete_units)
     session.coordinator_task_id = str(group_task.id)
     session.updated_at = datetime.utcnow()
     db_session.commit()
+
+    logger.info(
+        f"Updated session total_work_units: {original_total} -> {len(incomplete_units)} "
+        f"(for completion tracking to work correctly on resume)"
+    )
 
     return {
         'success': True,
@@ -312,13 +330,22 @@ def bootstrap_and_resume(
     )
 
     if not incomplete_units:
-        logger.info("All work units already completed, moving to aggregation")
-        # TODO: Trigger aggregation stage
+        logger.info("All work units already completed, triggering finalization")
+        # Trigger finalize_parsing to move to inference (or mark project ready)
+        finalize_parsing.apply_async(
+            kwargs={
+                'project_id': project_id,
+                'user_id': user_id,
+                'repo_path': project_path,
+                'commit_id': commit_id
+            },
+            countdown=2
+        )
         return {
             'success': True,
             'session_id': str(session.id),
-            'status': 'aggregating',
-            'message': 'All work units completed, starting aggregation'
+            'status': 'finalizing',
+            'message': 'All work units completed, finalization triggered'
         }
 
     # Reset Redis counter for bootstrap (important for coordination)
@@ -359,9 +386,18 @@ def bootstrap_and_resume(
         f"Dispatched {len(incomplete_units)} work units for bootstrap (group_id={group_task.id})"
     )
 
-    # Update session with group ID
+    # Update session - CRITICAL: Update total_work_units to match incomplete units
+    # This ensures completion tracking (which compares counter vs total_work_units)
+    # will correctly trigger finalize_parsing when all bootstrapped units complete
+    original_total = session.total_work_units
+    session.total_work_units = len(incomplete_units)
     session.coordinator_task_id = str(group_task.id)
     task_instance.db.commit()
+
+    logger.info(
+        f"Updated session total_work_units: {original_total} -> {len(incomplete_units)} "
+        f"(for completion tracking to work correctly on bootstrap)"
+    )
 
     return {
         'success': True,
@@ -377,7 +413,7 @@ def bootstrap_and_resume(
     bind=True,
     base=BaseTask,
     name="app.celery.tasks.parsing_tasks.process_parsing_distributed",
-    time_limit=7200,  # 2 hours
+    # No explicit time_limit - inherits global task_time_limit=54000 (15 hours) from celery_app.py
     ignore_result=False,  # Store results for monitoring and chord coordination
 )
 def process_parsing_distributed(
@@ -497,6 +533,39 @@ def process_parsing_distributed(
                 self.db.commit()
                 # Continue to fresh parse below
                 logger.info("Proceeding with fresh parse after resume failure")
+
+        # NEW: Check for COMPLETED session before bootstrap
+        # This prevents unnecessary repo cloning when parsing already finished
+        if resume and not existing_session and not force:
+            completed_session_query = self.db.query(ParsingSession).filter(
+                ParsingSession.project_id == project_id,
+                ParsingSession.stage == 'completed'
+            )
+            if commit_id is not None:
+                completed_session_query = completed_session_query.filter(
+                    ParsingSession.commit_id == commit_id
+                )
+            else:
+                completed_session_query = completed_session_query.filter(
+                    ParsingSession.commit_id.is_(None)
+                )
+
+            completed_session = completed_session_query.order_by(
+                ParsingSession.session_number.desc()
+            ).first()
+
+            if completed_session:
+                logger.info(
+                    f"Found completed session {completed_session.id} for project {project_id}. "
+                    f"Skipping re-parse. Parsing already complete."
+                )
+                return {
+                    'success': True,
+                    'project_id': project_id,
+                    'status': 'already_completed',
+                    'session_id': str(completed_session.id),
+                    'message': 'Parsing already completed for this project/commit'
+                }
 
         # NEW: Check for partial parsing in Neo4j (bootstrap case)
         # Only bootstrap if:
@@ -792,9 +861,10 @@ def process_parsing_distributed(
 
 @celery_app.task(
     bind=True,
-    base=BaseTask,
+    base=ParseDirectoryTask,  # Custom task class that handles TimeLimitExceeded
     name="app.celery.tasks.parsing_tasks.parse_directory_unit",
-    time_limit=1800,  # 30 minutes
+    # No explicit time_limit - inherits global task_time_limit=54000 (15 hours) from celery_app.py
+    # This ensures large work units don't timeout prematurely
     ignore_result=False,  # Results must be stored for chord callback aggregation
 )
 def parse_directory_unit(
@@ -840,6 +910,13 @@ def parse_directory_unit(
     from app.modules.parsing.parsing_work_unit_model import ParsingWorkUnit
     from datetime import datetime
     import time
+
+    # CRITICAL: Log immediately on task pickup to debug worker issues
+    logger.info(
+        f"[Unit {work_unit_index}] TASK PICKED UP by worker - "
+        f"project={project_id}, directory={directory_path}, "
+        f"work_unit_db_id={work_unit_db_id}, commit_id={commit_id}"
+    )
 
     # Step 0: Fetch files from database if not provided (for large repos)
     # This avoids passing 2,000+ file paths in Celery task messages
@@ -1212,12 +1289,21 @@ def parse_directory_unit(
         # Update file states to failed if we're tracking them
         if work_unit_db_id and commit_id and files:
             try:
-                self.db.query(ParsingFileState).filter(
+                # Build query with NULL-safe commit_id comparison
+                file_state_query = self.db.query(ParsingFileState).filter(
                     ParsingFileState.project_id == project_id,
-                    ParsingFileState.commit_id == commit_id,
                     ParsingFileState.work_unit_id == work_unit_db_id,
                     ParsingFileState.status == 'pending'
-                ).update({
+                )
+                if commit_id is not None:
+                    file_state_query = file_state_query.filter(
+                        ParsingFileState.commit_id == commit_id
+                    )
+                else:
+                    file_state_query = file_state_query.filter(
+                        ParsingFileState.commit_id.is_(None)
+                    )
+                file_state_query.update({
                     'status': 'failed',
                     'error_message': f"Work unit failed: {error_msg[:500]}",
                     'processed_at': datetime.utcnow()
@@ -1423,7 +1509,7 @@ def _resolve_references_immediately(
     bind=True,
     base=BaseTask,
     name="app.celery.tasks.parsing_tasks.finalize_parsing",
-    time_limit=1800,  # 30 minutes
+    # No explicit time_limit - inherits global task_time_limit=54000 (15 hours) from celery_app.py
     ignore_result=False,
 )
 def finalize_parsing(
@@ -1529,10 +1615,10 @@ def finalize_parsing(
 
         if enable_inference:
             try:
-                inference_result = spawn_inference_chord(self, project_id, user_id)
+                inference_result = spawn_inference_group(self, project_id, user_id, commit_id)
                 logger.info(
-                    f"Spawned inference chord for project {project_id}: "
-                    f"{inference_result['work_units']} inference units"
+                    f"Spawned inference group for project {project_id}: "
+                    f"{inference_result['work_units']} inference units, session={inference_result.get('session_id')}"
                 )
             except Exception as inference_error:
                 error_msg = str(inference_error)
@@ -1659,7 +1745,7 @@ def finalize_parsing(
     bind=True,
     base=BaseTask,
     name="app.celery.tasks.parsing_tasks.aggregate_and_resolve_references",
-    time_limit=1800,  # 30 minutes
+    # No explicit time_limit - inherits global task_time_limit=54000 (15 hours) from celery_app.py
     ignore_result=False,  # Store results for monitoring and inference coordination
 )
 def aggregate_and_resolve_references(
@@ -1699,29 +1785,55 @@ def aggregate_and_resolve_references(
     )
 
 
-def spawn_inference_chord(task_instance, project_id: str, user_id: str) -> Dict[str, Any]:
+def spawn_inference_group(task_instance, project_id: str, user_id: str, commit_id: str = None) -> Dict[str, Any]:
     """
-    Helper function to spawn inference chord with work units.
+    Spawn inference work units as a Celery group with Redis coordination.
 
-    This function:
+    This function (replaces spawn_inference_chord):
     1. Queries Neo4j to get directory structure and node counts
-    2. Builds work units with dynamic splitting for large directories
-    3. Creates a Celery chord with run_inference_unit workers
-    4. Sets finalize_project_after_inference as callback
+    2. Creates InferenceSession and InferenceWorkUnit records in DB
+    3. Resets Redis counter for coordination
+    4. Spawns tasks as a Celery group (NOT chord)
+    5. Last worker to complete triggers finalize_project_after_inference
+
+    This pattern avoids:
+    - OOM from loading all results in memory (chord callback issue)
+    - Stuck processing if one task fails (chord dependency issue)
 
     Args:
         task_instance: Celery task instance (for db access)
         project_id: Project ID
         user_id: User ID
+        commit_id: Commit ID (for session tracking)
 
     Returns:
-        Dict with chord info (work_units count, etc.)
+        Dict with group info (work_units count, session_id, etc.)
     """
-    from celery import chord
+    from celery import group
     from app.core.config_provider import config_provider
     from neo4j import GraphDatabase
+    from app.modules.parsing.inference_session_model import InferenceSession
+    from app.modules.parsing.inference_work_unit_model import InferenceWorkUnit
+    from app.celery.coordination import InferenceCoordinator
+    from sqlalchemy import func
 
-    logger.info(f"Building inference work units for project {project_id}")
+    logger.info(f"Building inference work units for project {project_id} (group + Redis coordination)")
+
+    # Defensive cleanup: inference doesn't need cloned repo
+    # If repo still exists (e.g., from crash), clean it up
+    import shutil
+    project_path = os.getenv("PROJECT_PATH", "projects")
+    if project_path and os.path.exists(project_path):
+        # Look for directories matching this project
+        for entry in os.listdir(project_path):
+            dir_path = os.path.join(project_path, entry)
+            # Project directories typically contain the project_id in their name
+            if os.path.isdir(dir_path) and project_id in entry:
+                try:
+                    logger.info(f"Cleaning up lingering repo directory: {dir_path} (inference doesn't need it)")
+                    shutil.rmtree(dir_path)
+                except Exception as cleanup_err:
+                    logger.warning(f"Failed to cleanup lingering repo {dir_path}: {cleanup_err}")
 
     # Initialize driver to None for proper cleanup
     driver = None
@@ -1734,9 +1846,10 @@ def spawn_inference_chord(task_instance, project_id: str, user_id: str) -> Dict[
             auth=(neo4j_config["username"], neo4j_config["password"]),
         )
 
-        with driver.session() as session:
+        # Query Neo4j for directory counts
+        with driver.session() as neo4j_session:
             # Query to get node counts per directory
-            result = session.run("""
+            result = neo4j_session.run("""
                 MATCH (n:NODE {repoId: $repo_id})
                 WHERE n.file_path IS NOT NULL AND n.file_path <> ''
                 WITH n.file_path AS file_path
@@ -1760,77 +1873,217 @@ def spawn_inference_chord(task_instance, project_id: str, user_id: str) -> Dict[
                 for record in result
             }
 
+            # Get total node count
+            total_nodes_result = neo4j_session.run("""
+                MATCH (n:NODE {repoId: $repo_id})
+                RETURN count(n) AS total
+            """, repo_id=project_id)
+            total_nodes = total_nodes_result.single()["total"]
+
         logger.info(
-            f"Found {len(directory_counts)} directories for project {project_id}"
+            f"Found {len(directory_counts)} directories, {total_nodes} total nodes for project {project_id}"
         )
 
-        # Build work units with dynamic splitting (no driver needed here, query complete)
-        work_units = []
+        # Build work unit specs with dynamic splitting
+        work_unit_specs = []
         max_nodes_per_unit = int(os.getenv('MAX_INFERENCE_NODES_PER_UNIT', '2000'))
 
         for directory, node_count in directory_counts.items():
             is_root = (directory == '<ROOT>')
+            dir_path = None if is_root else directory.lstrip('/')
 
             if node_count > max_nodes_per_unit:
                 # Split large directories into multiple units
                 num_splits = (node_count // max_nodes_per_unit) + 1
                 logger.info(
-                    f"Splitting directory '{directory}' ({node_count} nodes) "
-                    f"into {num_splits} units"
+                    f"Splitting directory '{directory}' ({node_count} nodes) into {num_splits} units"
                 )
 
                 for split_index in range(num_splits):
-                    work_units.append({
-                        'project_id': project_id,
-                        'user_id': user_id,
-                        'directory_path': None if is_root else directory.lstrip('/'),
+                    work_unit_specs.append({
+                        'directory_path': dir_path or '<ROOT>',
                         'is_root': is_root,
+                        'node_count': node_count // num_splits,  # Approximate
                         'split_index': split_index,
                         'total_splits': num_splits,
                     })
             else:
-                # Single unit for this directory
-                work_units.append({
-                    'project_id': project_id,
-                    'user_id': user_id,
-                    'directory_path': None if is_root else directory.lstrip('/'),
+                work_unit_specs.append({
+                    'directory_path': dir_path or '<ROOT>',
                     'is_root': is_root,
+                    'node_count': node_count,
                     'split_index': None,
                     'total_splits': None,
                 })
 
+        logger.info(f"Created {len(work_unit_specs)} inference work unit specs for project {project_id}")
+
+        # Step 1: Get or create InferenceSession
+        # Check for existing incomplete session (must match commit_id!)
+        # Use NULL-safe comparison for commit_id
+        session_query = task_instance.db.query(InferenceSession).filter(
+            InferenceSession.project_id == project_id,
+            InferenceSession.status.in_(['pending', 'running', 'paused'])
+        )
+        if commit_id is not None:
+            session_query = session_query.filter(InferenceSession.commit_id == commit_id)
+        else:
+            # Match sessions with NULL or 'unknown' commit_id
+            session_query = session_query.filter(
+                InferenceSession.commit_id.in_([None, 'unknown'])
+            )
+        existing_session = session_query.first()
+
+        if existing_session:
+            logger.info(
+                f"Found existing inference session {existing_session.id} for commit {commit_id}, reusing"
+            )
+            inference_session = existing_session
+        else:
+            # Get next session number
+            max_session = task_instance.db.query(
+                func.max(InferenceSession.session_number)
+            ).filter(
+                InferenceSession.project_id == project_id
+            ).scalar()
+            next_session_number = (max_session or 0) + 1
+
+            # Create new session
+            inference_session = InferenceSession(
+                project_id=project_id,
+                commit_id=commit_id or 'unknown',
+                session_number=next_session_number,
+                total_work_units=len(work_unit_specs),
+                total_nodes=total_nodes,
+                status='running',
+            )
+            task_instance.db.add(inference_session)
+            task_instance.db.flush()
+            logger.info(f"Created inference session {inference_session.id} (session #{next_session_number})")
+
+        session_id = str(inference_session.id)
+
+        # Step 2: Create InferenceWorkUnit records in DB
+        # Track both incomplete units (to dispatch) and already-completed units (to pre-seed counter)
+        db_work_units = []  # Units to dispatch
+        already_completed_count = 0  # Pre-seed counter with this value
+
+        for i, spec in enumerate(work_unit_specs):
+            # Check if work unit already exists (for resume)
+            existing_unit = task_instance.db.query(InferenceWorkUnit).filter(
+                InferenceWorkUnit.session_id == inference_session.id,
+                InferenceWorkUnit.work_unit_index == i
+            ).first()
+
+            if existing_unit and existing_unit.status == 'completed':
+                logger.info(f"Skipping already completed work unit {i}")
+                already_completed_count += 1
+                continue
+            elif existing_unit:
+                # Reset for retry
+                existing_unit.status = 'pending'
+                existing_unit.attempt_count = 0
+                db_work_units.append(existing_unit)
+            else:
+                # Create new work unit
+                db_unit = InferenceWorkUnit(
+                    project_id=project_id,
+                    session_id=inference_session.id,
+                    commit_id=commit_id or 'unknown',
+                    work_unit_index=i,
+                    directory_path=spec['directory_path'],
+                    is_root=spec['is_root'],
+                    node_count=spec['node_count'],
+                    split_index=spec['split_index'],
+                    total_splits=spec['total_splits'],
+                    status='pending',
+                    attempt_count=0,
+                )
+                task_instance.db.add(db_unit)
+                db_work_units.append(db_unit)
+
+        task_instance.db.flush()
+        task_instance.db.commit()
+
         logger.info(
-            f"Created {len(work_units)} inference work units for project {project_id}"
+            f"Created/updated {len(db_work_units)} work unit records in DB "
+            f"(already completed: {already_completed_count})"
         )
 
-        # Create chord: workers + callback
-        inference_chord = chord(
-            [
-                run_inference_unit.signature(
-                    kwargs=unit,
-                    queue=os.getenv('CELERY_QUEUE_NAME', 'staging') + '_process_repository'
-                )
-                for unit in work_units
-            ]
-        )(
-            finalize_project_after_inference.signature(
+        if not db_work_units:
+            logger.info("All work units already completed, triggering finalization directly")
+            finalize_project_after_inference.apply_async(
                 kwargs={
                     'project_id': project_id,
                     'user_id': user_id,
+                    'session_id': session_id,
                 },
-                queue=os.getenv('CELERY_QUEUE_NAME', 'staging') + '_process_repository'
+                countdown=2
             )
-        )
+            return {
+                'success': True,
+                'work_units': 0,
+                'session_id': session_id,
+                'status': 'already_complete',
+            }
+
+        # Step 3: Reset Redis counter and pre-seed with already-completed count
+        # This is CRITICAL for resume: total_work_units stays the same, but we only dispatch
+        # incomplete units. Pre-seeding ensures counter can reach total when remaining units complete.
+        redis_client = task_instance.app.backend.client
+        InferenceCoordinator.reset_counter(redis_client, project_id, session_id)
+
+        if already_completed_count > 0:
+            # Pre-seed the counter with already-completed units
+            # Use INCRBY to atomically add the completed count
+            namespace = f"inference:{project_id}:{session_id}"
+            redis_client.incrby(f"{namespace}:completed", already_completed_count)
+            redis_client.expire(f"{namespace}:completed", 86400)  # 24 hour TTL
+            logger.info(
+                f"Pre-seeded Redis counter with {already_completed_count} already-completed units "
+                f"(project={project_id}, session={session_id})"
+            )
+        else:
+            logger.info(f"Reset Redis counter for inference (project={project_id}, session={session_id})")
+
+        # Step 4: Create task signatures and dispatch as group (NOT chord!)
+        inference_tasks = []
+        queue_name = os.getenv('CELERY_QUEUE_NAME', 'staging') + '_process_repository'
+
+        for db_unit in db_work_units:
+            task = run_inference_unit.signature(
+                kwargs={
+                    'project_id': project_id,
+                    'user_id': user_id,
+                    'directory_path': db_unit.directory_path if db_unit.directory_path != '<ROOT>' else None,
+                    'is_root': db_unit.is_root,
+                    'split_index': db_unit.split_index,
+                    'total_splits': db_unit.total_splits,
+                    'session_id': session_id,
+                    'work_unit_id': str(db_unit.id),
+                },
+                queue=queue_name
+            )
+            inference_tasks.append(task)
+
+        # Dispatch as group (no callback - last worker triggers finalization via Redis)
+        group_task = group(inference_tasks).apply_async()
+
+        # Update session with coordinator task ID
+        inference_session.coordinator_task_id = str(group_task.id)
+        inference_session.mark_running()
+        task_instance.db.commit()
 
         logger.info(
-            f"Spawned inference chord for project {project_id}: "
-            f"{len(work_units)} workers, chord_id={inference_chord.id}"
+            f"Spawned inference group for project {project_id}: "
+            f"{len(inference_tasks)} workers, group_id={group_task.id}, session_id={session_id}"
         )
 
         return {
             'success': True,
-            'work_units': len(work_units),
-            'chord_id': inference_chord.id,
+            'work_units': len(inference_tasks),
+            'group_id': str(group_task.id),
+            'session_id': session_id,
         }
 
     except Exception as e:
@@ -1847,11 +2100,17 @@ def spawn_inference_chord(task_instance, project_id: str, user_id: str) -> Dict[
                 logger.error(f"Error closing Neo4j driver: {close_error}")
 
 
+# Keep old name as alias for backwards compatibility during transition
+def spawn_inference_chord(task_instance, project_id: str, user_id: str, commit_id: str = None) -> Dict[str, Any]:
+    """Alias for spawn_inference_group (backwards compatibility)."""
+    return spawn_inference_group(task_instance, project_id, user_id, commit_id)
+
+
 @celery_app.task(
     bind=True,
     base=BaseTask,
     name="app.celery.tasks.parsing_tasks.resolve_cross_directory_references",
-    time_limit=600,  # 10 minutes
+    # No explicit time_limit - inherits global task_time_limit=54000 (15 hours) from celery_app.py
     ignore_result=False,  # Store results for monitoring
 )
 def resolve_cross_directory_references(
@@ -2039,10 +2298,10 @@ def resolve_cross_directory_references(
 
 @celery_app.task(
     bind=True,
-    base=BaseTask,
+    base=InferenceTask,  # Custom task class that handles TimeLimitExceeded (same pattern as ParseDirectoryTask)
     name="app.celery.tasks.parsing_tasks.run_inference_unit",
-    time_limit=3600,  # 1 hour
-    ignore_result=False,  # Results must be stored for inference chord callback
+    # No explicit time_limit - inherits global task_time_limit=54000 (15 hours) from celery_app.py
+    ignore_result=False,  # Store results for monitoring
 )
 def run_inference_unit(
     self,
@@ -2175,6 +2434,48 @@ def run_inference_unit(
             except Exception as e:
                 logger.warning(f"Failed to update work unit completion: {e}")
 
+        # Increment Redis counter and check if last worker (for group coordination)
+        if session_id:
+            try:
+                from app.celery.coordination import InferenceCoordinator
+                from app.modules.parsing.inference_session_model import InferenceSession
+
+                # Get session to find total work units
+                inference_session = self.db.query(InferenceSession).filter(
+                    InferenceSession.id == UUID(session_id)
+                ).first()
+
+                if inference_session:
+                    redis_client = self.app.backend.client
+                    completed_count, is_last = InferenceCoordinator.increment_completed(
+                        redis_client,
+                        project_id,
+                        session_id,
+                        inference_session.total_work_units,
+                        work_unit_id=work_unit_id
+                    )
+
+                    logger.info(
+                        f"[Inference {unit_desc}] Completion counted: "
+                        f"{completed_count}/{inference_session.total_work_units}"
+                    )
+
+                    # If this was the last unit, trigger finalization
+                    if is_last:
+                        logger.info(
+                            f"[Inference {unit_desc}] Last worker completed - triggering finalization"
+                        )
+                        finalize_project_after_inference.apply_async(
+                            kwargs={
+                                'project_id': project_id,
+                                'user_id': user_id,
+                                'session_id': session_id,
+                            },
+                            countdown=5  # 5 second delay to ensure all DB writes complete
+                        )
+            except Exception as coord_error:
+                logger.error(f"Failed to coordinate inference completion: {coord_error}")
+
         return {
             'success': True,
             'directory_path': directory_path,
@@ -2204,6 +2505,47 @@ def run_inference_unit(
             except Exception as update_err:
                 logger.warning(f"Failed to update work unit failure: {update_err}")
 
+        # IMPORTANT: Still increment counter on failure (same pattern as parsing)
+        # This ensures finalization is triggered even with failures
+        if session_id:
+            try:
+                from app.celery.coordination import InferenceCoordinator
+                from app.modules.parsing.inference_session_model import InferenceSession
+
+                inference_session = self.db.query(InferenceSession).filter(
+                    InferenceSession.id == UUID(session_id)
+                ).first()
+
+                if inference_session:
+                    redis_client = self.app.backend.client
+                    completed_count, is_last = InferenceCoordinator.increment_completed(
+                        redis_client,
+                        project_id,
+                        session_id,
+                        inference_session.total_work_units,
+                        work_unit_id=work_unit_id
+                    )
+
+                    logger.warning(
+                        f"[Inference {unit_desc}] Failure counted: "
+                        f"{completed_count}/{inference_session.total_work_units}"
+                    )
+
+                    if is_last:
+                        logger.warning(
+                            f"[Inference {unit_desc}] Last worker (with failure) - triggering finalization"
+                        )
+                        finalize_project_after_inference.apply_async(
+                            kwargs={
+                                'project_id': project_id,
+                                'user_id': user_id,
+                                'session_id': session_id,
+                            },
+                            countdown=5
+                        )
+            except Exception as coord_error:
+                logger.error(f"Failed to coordinate inference failure: {coord_error}")
+
         return {
             'success': False,
             'directory_path': directory_path,
@@ -2220,32 +2562,36 @@ def run_inference_unit(
     bind=True,
     base=BaseTask,
     name="app.celery.tasks.parsing_tasks.finalize_project_after_inference",
-    time_limit=600,  # 10 minutes
+    # No explicit time_limit - inherits global task_time_limit=54000 (15 hours) from celery_app.py
     ignore_result=False,  # Store results for monitoring and status tracking
 )
 def finalize_project_after_inference(
     self,
-    inference_results: list,
     project_id: str,
     user_id: str,
     session_id: str = None,
+    # Legacy parameter for backwards compatibility with chord calls (ignored)
+    inference_results: list = None,
 ) -> Dict[str, Any]:
     """
-    Callback task after all inference units complete.
+    Finalize project after all inference units complete.
+
+    Triggered by last worker to complete (via Redis coordination, no chord).
+    Queries InferenceWorkUnit records from DB to aggregate results.
 
     This task:
-    1. Aggregates results from all workers
+    1. Queries work unit results from database (NOT from chord callback)
     2. Commits search indices (single transaction)
     3. Spawns async vector index creation task
     4. Updates project status based on completion rate
-    5. Updates InferenceSession status if session_id provided
+    5. Updates InferenceSession status
     6. Handles partial failures gracefully
 
     Args:
-        inference_results: List of results from run_inference_unit tasks
         project_id: Project ID
         user_id: User ID
-        session_id: InferenceSession ID for tracking (optional)
+        session_id: InferenceSession ID for tracking (required for new flow)
+        inference_results: DEPRECATED - ignored, kept for backwards compatibility
 
     Returns:
         Dict with finalization results
@@ -2253,62 +2599,85 @@ def finalize_project_after_inference(
     from app.modules.projects.projects_service import ProjectService
     from app.modules.search.search_service import SearchService
     from app.modules.projects.projects_schema import ProjectStatusEnum
+    from app.modules.parsing.inference_session_model import InferenceSession
+    from app.modules.parsing.inference_work_unit_model import InferenceWorkUnit
     import time
     from uuid import UUID
 
     logger.info(
-        f"Finalizing project {project_id} after inference: "
-        f"{len(inference_results)} units processed, session_id={session_id}"
+        f"Finalizing project {project_id} after inference, session_id={session_id}"
     )
     start_time = time.time()
 
-    # Load InferenceSession if tracking enabled
+    # Load InferenceSession (required for new flow)
     inference_session = None
     if session_id:
         try:
-            from app.modules.parsing.inference_session_model import InferenceSession
             inference_session = self.db.query(InferenceSession).filter(
                 InferenceSession.id == UUID(session_id)
             ).first()
             if inference_session:
                 logger.info(f"Loaded inference session {session_id} for finalization")
+
+                # Check if already finalized (idempotency)
+                if inference_session.completed_at:
+                    logger.info(
+                        f"Inference session {session_id} already finalized at {inference_session.completed_at}, "
+                        f"skipping duplicate finalization"
+                    )
+                    return {
+                        'success': True,
+                        'project_id': project_id,
+                        'session_id': session_id,
+                        'status': 'already_finalized',
+                    }
         except Exception as e:
             logger.warning(f"Failed to load inference session: {e}")
 
     try:
-        # Aggregate results
-        successful_units = [r for r in inference_results if r.get('success')]
-        failed_units = [r for r in inference_results if not r.get('success')]
+        # Query work units from database to aggregate results
+        if session_id:
+            work_units = self.db.query(InferenceWorkUnit).filter(
+                InferenceWorkUnit.session_id == UUID(session_id)
+            ).all()
+        else:
+            # Fallback: query by project_id if no session_id
+            work_units = self.db.query(InferenceWorkUnit).filter(
+                InferenceWorkUnit.project_id == project_id
+            ).order_by(InferenceWorkUnit.created_at.desc()).limit(100).all()
 
-        total_nodes_processed = sum(
-            r.get('nodes_processed', 0) for r in successful_units
-        )
-        total_batches_processed = sum(
-            r.get('batches_processed', 0) for r in successful_units
-        )
+        logger.info(f"Found {len(work_units)} work units to aggregate")
+
+        # Aggregate results from DB
+        successful_units = [u for u in work_units if u.status == 'completed']
+        failed_units = [u for u in work_units if u.status == 'failed']
+        total_units = len(work_units)
+
+        total_nodes_processed = sum(u.nodes_processed or 0 for u in successful_units)
+        total_batches_processed = sum(u.batches_processed or 0 for u in successful_units)
 
         logger.info(
-            f"Inference aggregation: {len(successful_units)}/{len(inference_results)} "
+            f"Inference aggregation: {len(successful_units)}/{total_units} "
             f"units succeeded, {total_nodes_processed} total nodes processed"
         )
 
-        # Calculate completion rate with explicit edge case handling
-        if not inference_results or len(inference_results) == 0:
+        # Calculate completion rate
+        if total_units == 0:
             completion_rate = 0.0
             logger.warning(
-                f"No inference results to calculate completion rate for project {project_id}"
+                f"No inference work units found for project {project_id}"
             )
         elif len(successful_units) == 0:
             completion_rate = 0.0
             logger.error(
                 f"All inference units failed for project {project_id}: "
-                f"0/{len(inference_results)} succeeded"
+                f"0/{total_units} succeeded"
             )
         else:
-            completion_rate = len(successful_units) / len(inference_results)
+            completion_rate = len(successful_units) / total_units
             logger.info(
                 f"Completion rate for project {project_id}: "
-                f"{completion_rate:.1%} ({len(successful_units)}/{len(inference_results)})"
+                f"{completion_rate:.1%} ({len(successful_units)}/{total_units})"
             )
 
         # Commit search indices (single transaction to avoid contention)
@@ -2342,14 +2711,14 @@ def finalize_project_after_inference(
             # 75-95% success - mark as PARTIALLY_READY
             final_status = ProjectStatusEnum.PARTIALLY_READY
             status_message = (
-                f"Inference partially completed: {len(successful_units)}/{len(inference_results)} "
+                f"Inference partially completed: {len(successful_units)}/{total_units} "
                 f"units succeeded. Some functionality may be limited."
             )
         else:
             # <75% success - mark as ERROR
             final_status = ProjectStatusEnum.ERROR
             status_message = (
-                f"Inference failed: only {len(successful_units)}/{len(inference_results)} "
+                f"Inference failed: only {len(successful_units)}/{total_units} "
                 f"units succeeded"
             )
 
@@ -2383,7 +2752,7 @@ def finalize_project_after_inference(
                     inference_session.mark_partial()
                 else:
                     inference_session.mark_failed(
-                        f"Only {len(successful_units)}/{len(inference_results)} units succeeded"
+                        f"Only {len(successful_units)}/{total_units} units succeeded"
                     )
 
                 self.db.commit()
@@ -2402,7 +2771,7 @@ def finalize_project_after_inference(
             'success': True,
             'project_id': project_id,
             'final_status': final_status.value,
-            'total_units': len(inference_results),
+            'total_units': total_units,
             'successful_units': len(successful_units),
             'failed_units': len(failed_units),
             'total_nodes_processed': total_nodes_processed,

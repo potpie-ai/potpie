@@ -12,6 +12,11 @@ from app.modules.intelligence.agents.custom_agents.custom_agent_model import (  
     CustomAgent,
     CustomAgentShare,
 )
+from app.modules.parsing.parsing_session_model import ParsingSession  # noqa
+from app.modules.parsing.parsing_file_state_model import ParsingFileState  # noqa
+from app.modules.parsing.parsing_work_unit_model import ParsingWorkUnit  # noqa
+from app.modules.parsing.inference_session_model import InferenceSession  # noqa
+from app.modules.parsing.inference_work_unit_model import InferenceWorkUnit  # noqa
 from app.modules.projects.projects_model import Project  # noqa
 from app.modules.search.search_models import SearchIndex  # noqa
 from app.modules.tasks.task_model import Task  # noqa

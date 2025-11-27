@@ -65,11 +65,18 @@ class WorkUnitBootstrapService:
         logger.info(f"Bootstrapping work units from Neo4j for project {project_id}")
 
         # Step 1: Check for existing incomplete session first
-        existing_incomplete_session = self.db.query(ParsingSession).filter(
+        # IMPORTANT: Use NULL-safe comparison for commit_id
+        session_query = self.db.query(ParsingSession).filter(
             ParsingSession.project_id == project_id,
-            ParsingSession.commit_id == commit_id,
             ParsingSession.completed_at.is_(None)
-        ).order_by(ParsingSession.session_number.desc()).first()
+        )
+        if commit_id is not None:
+            session_query = session_query.filter(ParsingSession.commit_id == commit_id)
+        else:
+            session_query = session_query.filter(ParsingSession.commit_id.is_(None))
+        existing_incomplete_session = session_query.order_by(
+            ParsingSession.session_number.desc()
+        ).first()
 
         if existing_incomplete_session:
             logger.info(
@@ -79,12 +86,16 @@ class WorkUnitBootstrapService:
             # Reuse existing session and query existing work units
             session = existing_incomplete_session
 
-            # Query existing incomplete work units
-            db_work_units = self.db.query(ParsingWorkUnit).filter(
+            # Query existing incomplete work units (NULL-safe comparison for commit_id)
+            work_units_query = self.db.query(ParsingWorkUnit).filter(
                 ParsingWorkUnit.project_id == project_id,
-                ParsingWorkUnit.commit_id == commit_id,
                 ParsingWorkUnit.status.in_(['pending', 'failed'])
-            ).all()
+            )
+            if commit_id is not None:
+                work_units_query = work_units_query.filter(ParsingWorkUnit.commit_id == commit_id)
+            else:
+                work_units_query = work_units_query.filter(ParsingWorkUnit.commit_id.is_(None))
+            db_work_units = work_units_query.all()
 
             # Convert to DirectoryWorkUnit objects
             incomplete_units = []
@@ -104,12 +115,17 @@ class WorkUnitBootstrapService:
             return session, incomplete_units
 
         # Step 2: No incomplete session found, check for completed sessions to get next session_number
-        max_session_number = self.db.query(
+        # IMPORTANT: Use NULL-safe comparison for commit_id
+        max_session_query = self.db.query(
             func.max(ParsingSession.session_number)
         ).filter(
-            ParsingSession.project_id == project_id,
-            ParsingSession.commit_id == commit_id
-        ).scalar()
+            ParsingSession.project_id == project_id
+        )
+        if commit_id is not None:
+            max_session_query = max_session_query.filter(ParsingSession.commit_id == commit_id)
+        else:
+            max_session_query = max_session_query.filter(ParsingSession.commit_id.is_(None))
+        max_session_number = max_session_query.scalar()
 
         next_session_number = (max_session_number or 0) + 1
 
@@ -152,12 +168,18 @@ class WorkUnitBootstrapService:
             )
             self.db.rollback()
 
-            # Re-query for the session that the other transaction created
-            existing_session = self.db.query(ParsingSession).filter(
+            # Re-query for the session that the other transaction created (NULL-safe)
+            race_session_query = self.db.query(ParsingSession).filter(
                 ParsingSession.project_id == project_id,
-                ParsingSession.commit_id == commit_id,
                 ParsingSession.completed_at.is_(None)
-            ).order_by(ParsingSession.session_number.desc()).first()
+            )
+            if commit_id is not None:
+                race_session_query = race_session_query.filter(ParsingSession.commit_id == commit_id)
+            else:
+                race_session_query = race_session_query.filter(ParsingSession.commit_id.is_(None))
+            existing_session = race_session_query.order_by(
+                ParsingSession.session_number.desc()
+            ).first()
 
             if existing_session:
                 logger.info(
@@ -166,12 +188,20 @@ class WorkUnitBootstrapService:
                 )
                 session = existing_session
 
-                # Query existing incomplete work units
-                db_work_units = self.db.query(ParsingWorkUnit).filter(
+                # Query existing incomplete work units (NULL-safe comparison for commit_id)
+                race_work_units_query = self.db.query(ParsingWorkUnit).filter(
                     ParsingWorkUnit.project_id == project_id,
-                    ParsingWorkUnit.commit_id == commit_id,
                     ParsingWorkUnit.status.in_(['pending', 'failed'])
-                ).all()
+                )
+                if commit_id is not None:
+                    race_work_units_query = race_work_units_query.filter(
+                        ParsingWorkUnit.commit_id == commit_id
+                    )
+                else:
+                    race_work_units_query = race_work_units_query.filter(
+                        ParsingWorkUnit.commit_id.is_(None)
+                    )
+                db_work_units = race_work_units_query.all()
 
                 # Convert to DirectoryWorkUnit objects
                 incomplete_units = []
