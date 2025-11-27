@@ -368,6 +368,34 @@ class ProviderWrapper:
             depth = DEFAULT_STRUCTURE_DEPTH
         return max(MIN_STRUCTURE_DEPTH, min(depth, MAX_STRUCTURE_DEPTH))
 
+    async def warm_file_structure_cache(self, project_id: str) -> None:
+        """
+        Pre-fetch and cache the full file structure at max depth.
+        Applicable for GitHub and GitBucket repos (local repos don't need caching).
+        """
+        provider_type = os.getenv("CODE_PROVIDER", "github").lower()
+        if provider_type in ("github", "gitbucket"):
+            from app.modules.code_provider.github.github_service import GithubService
+            github_service = GithubService(self.sql_db)
+            await github_service.warm_file_structure_cache(project_id)
+        else:
+            logger.debug(f"Cache warming skipped for provider type: {provider_type}")
+
+    async def invalidate_file_structure_cache(
+        self, project_id: str, branch_name: Optional[str] = None
+    ) -> None:
+        """
+        Invalidate the cached file structure for a project/branch.
+        Applicable for GitHub and GitBucket repos (local repos don't use caching).
+        """
+        provider_type = os.getenv("CODE_PROVIDER", "github").lower()
+        if provider_type in ("github", "gitbucket"):
+            from app.modules.code_provider.github.github_service import GithubService
+            github_service = GithubService(self.sql_db)
+            await github_service.invalidate_file_structure_cache(project_id, branch_name)
+        else:
+            logger.debug(f"Cache invalidation skipped for provider type: {provider_type}")
+
 
 class CodeProviderService:
     def __init__(self, sql_db):
@@ -410,4 +438,22 @@ class CodeProviderService:
         effective_depth = ProviderWrapper._sanitize_depth(max_depth)
         return await self.service_instance.get_project_structure_async(
             project_id, path, effective_depth
+        )
+
+    async def warm_file_structure_cache(self, project_id: str) -> None:
+        """
+        Pre-fetch and cache the full file structure at max depth.
+        Should be called during parsing to populate the cache.
+        """
+        return await self.service_instance.warm_file_structure_cache(project_id)
+
+    async def invalidate_file_structure_cache(
+        self, project_id: str, branch_name: Optional[str] = None
+    ) -> None:
+        """
+        Invalidate the cached file structure for a project/branch.
+        Should be called before re-parsing a branch.
+        """
+        return await self.service_instance.invalidate_file_structure_cache(
+            project_id, branch_name
         )

@@ -164,8 +164,9 @@ class ParsingController:
                         repo_name
                     )
 
+                    # Warm file structure cache in background (non-blocking)
                     asyncio.create_task(
-                        CodeProviderService(db).get_project_structure_async(
+                        CodeProviderService(db).warm_file_structure_cache(
                             new_project_id
                         )
                     )
@@ -275,6 +276,13 @@ class ParsingController:
                             f"Re-parsing project {project_id} in {project.status} state"
                         )
 
+                    # Invalidate cached file structure before re-parsing
+                    # This ensures fresh data is fetched for the new commit
+                    if cleanup_graph or not is_latest:
+                        await CodeProviderService(db).invalidate_file_structure_cache(
+                            project_id, repo_details.branch_name
+                        )
+
                     parsing_task = ParsingController._get_parsing_task()
                     parsing_task.delay(
                         repo_details.model_dump(),
@@ -348,8 +356,9 @@ class ParsingController:
             repo_details.commit_id,
             repo_details.repo_path,
         )
+        # Warm file structure cache in background (non-blocking)
         asyncio.create_task(
-            CodeProviderService(db).get_project_structure_async(new_project_id)
+            CodeProviderService(db).warm_file_structure_cache(new_project_id)
         )
         if not user_email:
             user_email = None

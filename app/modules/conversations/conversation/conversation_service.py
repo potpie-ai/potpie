@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -7,7 +6,6 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
 
-from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.conversations.conversation.conversation_model import (
     Conversation,
     ConversationStatus,
@@ -212,11 +210,9 @@ class ConversationService:
                 conversation, title, user_id, hidden
             )
 
-            asyncio.create_task(
-                CodeProviderService(self.db).get_project_structure_async(
-                    conversation.project_ids[0]
-                )
-            )
+            # Note: File structure cache is populated during parsing.
+            # No need to warm cache here - it should already be cached from parsing.
+            # Removing redundant call to avoid multiple fetches.
 
             await self._add_system_message(conversation_id, project_name, user_id)
 

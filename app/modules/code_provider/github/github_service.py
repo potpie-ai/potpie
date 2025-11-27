@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import random
@@ -677,27 +678,47 @@ class GithubService:
                 detail=f"Repository {repo_name} not found or inaccessible on GitHub",
             )
 
+    # Maximum depth for full structure cache (used for warm_file_structure_cache)
+    MAX_STRUCTURE_DEPTH = 6
+
+    def _calculate_path_depth(self, path: Optional[str]) -> int:
+        """Calculate the depth of a path (number of directory levels)."""
+        if not path:
+            return 0
+        return len(path.strip("/").split("/"))
+
+    def _needs_deep_fetch(self, path: Optional[str], requested_depth: int) -> bool:
+        """
+        Check if the request needs more depth than the cached root structure can provide.
+
+        The root structure is cached at MAX_STRUCTURE_DEPTH from root.
+        If path is at depth P and user wants D more levels, we need P + D total depth.
+        If P + D > MAX_STRUCTURE_DEPTH, cached structure won't have enough data.
+        """
+        path_depth = self._calculate_path_depth(path)
+        total_depth_needed = path_depth + requested_depth
+        return total_depth_needed > self.MAX_STRUCTURE_DEPTH
+
     async def get_project_structure_async(
         self, project_id: str, path: Optional[str] = None, max_depth: Optional[int] = None
     ) -> str:
+        """
+        Get project structure with two-tier caching strategy.
+
+        The full structure (at MAX_STRUCTURE_DEPTH) is cached once per project/branch.
+        Subsequent requests with different path/depth parameters are derived from
+        the cached full structure, avoiding redundant GitHub API calls.
+
+        For deep path requests that exceed cached depth, fetches fresh data for
+        that specific path and caches it separately.
+        """
         logger.info(
-            f"Fetching project structure for project ID: {project_id}, path: {path}"
+            f"Fetching project structure for project ID: {project_id}, path: {path}, max_depth: {max_depth}"
         )
 
         effective_depth = max_depth if max_depth is not None else self.max_depth
 
-        # Modify cache key to reflect that we're only caching the specific path
-        cache_key = (
-            f"project_structure:{project_id}:exact_path_{path}:depth_{effective_depth}"
-        )
-        cached_structure = self.redis.get(cache_key)
-
-        if cached_structure:
-            logger.info(
-                f"Project structure found in cache for project ID: {project_id}, path: {path}"
-            )
-            return cached_structure.decode("utf-8")
-
+        # Get project info for branch-aware cache key
         project = await self.project_manager.get_project_from_db_by_id(project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
@@ -708,37 +729,67 @@ class GithubService:
                 status_code=400, detail="Project has no associated GitHub repository"
             )
 
+        branch_name = project.get("branch_name") or project.get("commit_id") or "main"
+
+        # Check if this request needs deeper data than root cache can provide
+        needs_deep_fetch = self._needs_deep_fetch(path, effective_depth)
+
+        if needs_deep_fetch and path:
+            # For deep path requests, use path-specific cache
+            return await self._get_deep_path_structure(
+                project_id, repo_name, branch_name, path, effective_depth
+            )
+
+        # Use root structure cache for normal requests
+        full_cache_key = f"project_structure:{project_id}:branch_{branch_name}"
+
+        # Try to get full cached structure first
+        cached_full_structure = self.redis.get(full_cache_key)
+
+        if cached_full_structure:
+            logger.info(
+                f"Full structure cache hit for project {project_id}, branch {branch_name}. Filtering for path={path}, depth={effective_depth}"
+            )
+            try:
+                full_structure = json.loads(cached_full_structure.decode("utf-8"))
+                return self._filter_structure(full_structure, path, effective_depth)
+            except json.JSONDecodeError as e:
+                logger.warning(f"Cache JSON decode error, will re-fetch: {e}")
+                # Fall through to fetch fresh data
+
+        # Cache miss - fetch full structure at max depth
+        logger.info(
+            f"Cache miss for project {project_id}. Fetching full structure at depth {self.MAX_STRUCTURE_DEPTH}"
+        )
+
         try:
             github, repo = self.get_repo(repo_name)
 
-            # If path is provided, verify it exists
-            if path:
-                try:
-                    # Check if the path exists in the repository
-                    repo.get_contents(path)
-                except Exception:
-                    raise HTTPException(
-                        status_code=404, detail=f"Path {path} not found in repository"
-                    )
+            # Determine concurrency based on provider type
+            # GitHub can handle higher concurrency than self-hosted GitBucket
+            provider_type = os.getenv("CODE_PROVIDER", "github").lower()
+            max_concurrent = 50 if provider_type == "github" else 20
 
-            # Start structure fetch from the specified path with depth 0
-            structure = await self._fetch_repo_structure_async(
+            # Use parallel fetching for better performance on large repos
+            logger.info(f"Using parallel fetch for project {project_id} at depth {self.MAX_STRUCTURE_DEPTH}, concurrency={max_concurrent}")
+            full_structure = await self._fetch_repo_structure_parallel(
                 repo,
-                path or "",
-                current_depth=0,
-                base_path=path or "",
-                max_depth=effective_depth,
-                ref=(
-                    project.get("branch_name")
-                    if project.get("branch_name")
-                    else project.get("commit_id")
-                ),
+                base_path="",
+                max_depth=self.MAX_STRUCTURE_DEPTH,
+                ref=branch_name,
+                max_concurrent=max_concurrent,
             )
-            formatted_structure = self._format_tree_structure(structure)
 
-            self.redis.setex(cache_key, 3600, formatted_structure)  # Cache for 1 hour
+            # Cache the full structure as JSON (no TTL - invalidate on re-parse only)
+            try:
+                self.redis.set(full_cache_key, json.dumps(full_structure))
+                logger.info(f"Cached full structure for project {project_id}, branch {branch_name}")
+            except Exception as cache_error:
+                logger.warning(f"Failed to cache structure: {cache_error}")
 
-            return formatted_structure
+            # Return filtered result based on requested path and depth
+            return self._filter_structure(full_structure, path, effective_depth)
+
         except HTTPException as he:
             raise he
         except Exception as e:
@@ -748,6 +799,85 @@ class GithubService:
             )
             raise HTTPException(
                 status_code=500, detail=f"Failed to fetch project structure: {str(e)}"
+            )
+
+    async def _get_deep_path_structure(
+        self,
+        project_id: str,
+        repo_name: str,
+        branch_name: str,
+        path: str,
+        max_depth: int,
+    ) -> str:
+        """
+        Fetch and cache structure for a deep path that exceeds root cache depth.
+
+        Uses a path-specific cache key to store deep structure for specific paths.
+        """
+        # Normalize path for cache key
+        normalized_path = path.strip("/").replace("/", "_")
+        deep_cache_key = f"project_structure:{project_id}:branch_{branch_name}:deep_path_{normalized_path}:depth_{max_depth}"
+
+        # Check path-specific cache first
+        cached_deep_structure = self.redis.get(deep_cache_key)
+        if cached_deep_structure:
+            logger.info(
+                f"Deep path cache hit for project {project_id}, path={path}, depth={max_depth}"
+            )
+            try:
+                return cached_deep_structure.decode("utf-8")
+            except Exception as e:
+                logger.warning(f"Deep cache decode error, will re-fetch: {e}")
+
+        # Fetch fresh data for this specific path
+        logger.info(
+            f"Fetching deep structure for project {project_id}, path={path}, depth={max_depth}"
+        )
+
+        try:
+            github, repo = self.get_repo(repo_name)
+
+            # Verify path exists
+            try:
+                repo.get_contents(path, ref=branch_name)
+            except Exception:
+                return f"Path '{path}' not found in repository"
+
+            # Determine concurrency based on provider type
+            provider_type = os.getenv("CODE_PROVIDER", "github").lower()
+            max_concurrent = 50 if provider_type == "github" else 20
+
+            # Fetch structure starting from the specified path using parallel method
+            structure = await self._fetch_repo_structure_parallel(
+                repo,
+                base_path=path,
+                max_depth=max_depth,
+                ref=branch_name,
+                max_concurrent=max_concurrent,
+            )
+
+            formatted_structure = self._format_tree_structure(structure)
+
+            # Cache the deep path structure (no TTL - invalidate on re-parse)
+            try:
+                self.redis.set(deep_cache_key, formatted_structure)
+                logger.info(
+                    f"Cached deep path structure for project {project_id}, path={path}, depth={max_depth}"
+                )
+            except Exception as cache_error:
+                logger.warning(f"Failed to cache deep structure: {cache_error}")
+
+            return formatted_structure
+
+        except HTTPException as he:
+            raise he
+        except Exception as e:
+            logger.error(
+                f"Error fetching deep structure for {repo_name}/{path}: {str(e)}",
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=500, detail=f"Failed to fetch deep structure: {str(e)}"
             )
 
     async def _fetch_repo_structure_async(
@@ -851,6 +981,229 @@ class GithubService:
 
         return structure
 
+    async def _fetch_repo_structure_parallel(
+        self,
+        repo: Any,
+        base_path: str = "",
+        max_depth: int = 6,
+        ref: Optional[str] = None,
+        max_concurrent: int = 20,
+    ) -> Dict[str, Any]:
+        """
+        Fetch repository structure using parallel work queue pattern.
+
+        This is significantly faster than the recursive approach for large repos
+        because workers don't wait for directory levels to complete.
+
+        Args:
+            repo: PyGithub repository object
+            base_path: Starting path (empty string for root)
+            max_depth: Maximum depth to traverse
+            ref: Branch name or commit SHA
+            max_concurrent: Maximum concurrent API requests
+
+        Returns:
+            Dictionary representing the file structure tree
+        """
+        exclude_extensions = {
+            "png", "jpg", "jpeg", "gif", "bmp", "tiff", "webp", "ico", "svg",
+            "mp4", "avi", "mov", "wmv", "flv", "ipynb", "zlib",
+        }
+
+        # Flat list to collect all items
+        all_items: List[Dict[str, Any]] = []
+        items_lock = asyncio.Lock()
+
+        # Work queue: (path, depth)
+        queue: asyncio.Queue = asyncio.Queue()
+
+        # Semaphore to limit concurrent requests
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        # Track active workers
+        active_workers = 0
+        active_lock = asyncio.Lock()
+        done_event = asyncio.Event()
+
+        # Calculate base depth for relative depth tracking
+        base_depth = len(base_path.strip("/").split("/")) if base_path else 0
+
+        async def fetch_directory(path: str, depth: int) -> List[tuple]:
+            """Fetch contents of a single directory and return subdirectories to process."""
+            subdirs = []
+
+            async with semaphore:
+                try:
+                    contents = await asyncio.get_event_loop().run_in_executor(
+                        self.executor, lambda: repo.get_contents(path, ref=ref)
+                    )
+
+                    if not isinstance(contents, list):
+                        contents = [contents]
+
+                    items_to_add = []
+
+                    for item in contents:
+                        # Skip excluded extensions
+                        if item.type != "dir":
+                            ext = item.name.split(".")[-1].lower() if "." in item.name else ""
+                            if ext in exclude_extensions:
+                                continue
+
+                        item_data = {
+                            "type": "directory" if item.type == "dir" else "file",
+                            "name": item.name,
+                            "path": item.path,
+                            "parent_path": path,
+                        }
+                        items_to_add.append(item_data)
+
+                        # Queue subdirectories if within depth limit
+                        if item.type == "dir" and depth + 1 < max_depth:
+                            subdirs.append((item.path, depth + 1))
+
+                    # Add items to global list
+                    async with items_lock:
+                        all_items.extend(items_to_add)
+
+                except Exception as e:
+                    logger.warning(f"Error fetching directory {path}: {e}")
+
+            return subdirs
+
+        async def worker():
+            """Worker that processes directories from the queue."""
+            nonlocal active_workers
+
+            while True:
+                try:
+                    # Get work from queue with timeout
+                    try:
+                        path, depth = await asyncio.wait_for(queue.get(), timeout=0.5)
+                    except asyncio.TimeoutError:
+                        # Check if we should exit
+                        async with active_lock:
+                            if queue.empty() and active_workers == 0:
+                                return
+                        continue
+
+                    async with active_lock:
+                        active_workers += 1
+
+                    try:
+                        # Fetch directory and get subdirectories
+                        subdirs = await fetch_directory(path, depth)
+
+                        # Add subdirectories to queue
+                        for subdir in subdirs:
+                            await queue.put(subdir)
+                    finally:
+                        async with active_lock:
+                            active_workers -= 1
+                        queue.task_done()
+
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.error(f"Worker error: {e}")
+
+        # Start with root directory
+        initial_depth = 0 if not base_path else 0
+        await queue.put((base_path, initial_depth))
+
+        # Create workers
+        num_workers = min(max_concurrent, 50)  # Cap workers
+        workers = [asyncio.create_task(worker()) for _ in range(num_workers)]
+
+        # Wait for queue to be fully processed
+        await queue.join()
+
+        # Cancel workers
+        for w in workers:
+            w.cancel()
+
+        # Wait for workers to finish
+        await asyncio.gather(*workers, return_exceptions=True)
+
+        # Build tree structure from flat list
+        return self._build_tree_from_flat_list(all_items, base_path, repo.name, max_depth)
+
+    def _build_tree_from_flat_list(
+        self,
+        items: List[Dict[str, Any]],
+        base_path: str,
+        repo_name: str,
+        max_depth: int,
+    ) -> Dict[str, Any]:
+        """
+        Build hierarchical tree structure from flat list of items.
+
+        Args:
+            items: Flat list of items with path and parent_path
+            base_path: Base path for the tree root
+            repo_name: Repository name for root node
+            max_depth: Max depth for truncation indicators
+
+        Returns:
+            Hierarchical tree structure
+        """
+        # Create root
+        root_name = base_path.split("/")[-1] if base_path else repo_name
+        root = {
+            "type": "directory",
+            "name": root_name,
+            "children": [],
+        }
+
+        # Index for quick lookup: path -> node
+        path_to_node: Dict[str, Dict] = {base_path: root}
+
+        # Sort items by path depth (parents before children)
+        items_sorted = sorted(items, key=lambda x: x["path"].count("/"))
+
+        for item in items_sorted:
+            parent_path = item["parent_path"]
+
+            # Get or create parent node
+            if parent_path not in path_to_node:
+                # This shouldn't happen often, but handle gracefully
+                continue
+
+            parent_node = path_to_node[parent_path]
+
+            # Create node for this item
+            node = {
+                "type": item["type"],
+                "name": item["name"],
+            }
+
+            if item["type"] == "file":
+                node["path"] = item["path"]
+            else:
+                node["children"] = []
+                path_to_node[item["path"]] = node
+
+            parent_node["children"].append(node)
+
+        # Add truncation indicators for directories at max depth
+        base_depth = base_path.count("/") if base_path else -1
+
+        def add_truncation_indicators(node: Dict, current_depth: int):
+            if node.get("type") == "directory" and "children" in node:
+                # Check if this directory has any subdirectories that weren't fetched
+                if current_depth >= max_depth - 1:
+                    # Check if any children are directories - they might be truncated
+                    for child in node.get("children", []):
+                        if child.get("type") == "directory" and not child.get("children"):
+                            child["children"] = [{"type": "file", "name": "...", "path": "truncated"}]
+                else:
+                    for child in node.get("children", []):
+                        add_truncation_indicators(child, current_depth + 1)
+
+        add_truncation_indicators(root, 0)
+
+        return root
+
     def _format_tree_structure(
         self, structure: Dict[str, Any], root_path: str = ""
     ) -> str:
@@ -885,3 +1238,181 @@ class GithubService:
             return True
         except Exception:
             return False
+
+    def _find_path_in_structure(
+        self, structure: Dict[str, Any], target_path: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Navigate to a specific path in the structure tree.
+
+        Args:
+            structure: The full structure dictionary
+            target_path: Path to find (e.g., "src/components")
+
+        Returns:
+            The subtree at the target path, or None if not found
+        """
+        if not target_path:
+            return structure
+
+        path_parts = target_path.strip("/").split("/")
+        current = structure
+
+        for part in path_parts:
+            if "children" not in current:
+                return None
+            found = False
+            for child in current["children"]:
+                if child.get("name") == part and child.get("type") == "directory":
+                    current = child
+                    found = True
+                    break
+            if not found:
+                return None
+
+        return current
+
+    def _truncate_depth(
+        self, structure: Dict[str, Any], max_depth: int, current_depth: int = 0
+    ) -> Dict[str, Any]:
+        """
+        Truncate the structure tree to a maximum depth.
+
+        Args:
+            structure: The structure dictionary to truncate
+            max_depth: Maximum depth to include
+            current_depth: Current depth in recursion
+
+        Returns:
+            Truncated structure dictionary
+        """
+        result = {
+            "type": structure.get("type", "directory"),
+            "name": structure.get("name", ""),
+        }
+
+        if "path" in structure:
+            result["path"] = structure["path"]
+
+        if "children" not in structure:
+            return result
+
+        if current_depth >= max_depth:
+            # At max depth, show truncation indicator for directories with children
+            if structure.get("children"):
+                result["children"] = [{"type": "file", "name": "...", "path": "truncated"}]
+            else:
+                result["children"] = []
+            return result
+
+        result["children"] = []
+        for child in structure.get("children", []):
+            if child.get("type") == "directory":
+                truncated_child = self._truncate_depth(child, max_depth, current_depth + 1)
+                result["children"].append(truncated_child)
+            else:
+                result["children"].append(child.copy())
+
+        return result
+
+    def _filter_structure(
+        self, full_structure: Dict[str, Any], path: Optional[str], max_depth: int
+    ) -> str:
+        """
+        Filter the full structure to return only the requested path at specified depth.
+
+        Args:
+            full_structure: The complete cached structure
+            path: Optional path to navigate to
+            max_depth: Maximum depth to return
+
+        Returns:
+            Formatted string of the filtered structure
+        """
+        # Navigate to the requested path if provided
+        if path:
+            structure = self._find_path_in_structure(full_structure, path)
+            if not structure:
+                return f"Path '{path}' not found in repository structure"
+        else:
+            structure = full_structure
+
+        # Truncate to requested depth
+        truncated = self._truncate_depth(structure, max_depth)
+
+        return self._format_tree_structure(truncated)
+
+    async def warm_file_structure_cache(self, project_id: str) -> None:
+        """
+        Pre-fetch and cache the full file structure at max depth.
+
+        This method should be called during parsing to populate the cache.
+        The cached structure is then reused for all subsequent requests
+        (agent chat, tools, etc.) with different path/depth parameters.
+
+        Args:
+            project_id: The project ID to cache structure for
+        """
+        logger.info(f"Warming file structure cache for project {project_id}")
+        try:
+            # This will fetch at MAX_STRUCTURE_DEPTH and cache the result
+            await self.get_project_structure_async(
+                project_id,
+                path=None,
+                max_depth=self.MAX_STRUCTURE_DEPTH,
+            )
+            logger.info(f"Successfully warmed file structure cache for project {project_id}")
+        except Exception as e:
+            logger.error(f"Failed to warm file structure cache for {project_id}: {e}")
+            # Don't re-raise - cache warming failure shouldn't block parsing
+
+    async def invalidate_file_structure_cache(
+        self, project_id: str, branch_name: Optional[str] = None
+    ) -> None:
+        """
+        Invalidate the cached file structure for a project/branch.
+
+        This method clears both the root structure cache and any deep path caches.
+        Should be called before re-parsing a branch to ensure fresh data is fetched.
+
+        Args:
+            project_id: The project ID
+            branch_name: Optional branch name. If not provided, will look up from project.
+        """
+        try:
+            if not branch_name:
+                project = await self.project_manager.get_project_from_db_by_id(project_id)
+                if project:
+                    branch_name = project.get("branch_name") or project.get("commit_id") or "main"
+                else:
+                    logger.warning(f"Project {project_id} not found for cache invalidation")
+                    return
+
+            # Delete root structure cache
+            root_cache_key = f"project_structure:{project_id}:branch_{branch_name}"
+            root_deleted = self.redis.delete(root_cache_key)
+
+            # Delete all deep path caches for this project/branch using SCAN
+            deep_path_pattern = f"project_structure:{project_id}:branch_{branch_name}:deep_path_*"
+            deep_deleted_count = 0
+
+            # Use SCAN to find and delete matching keys (safer than KEYS for large datasets)
+            cursor = 0
+            while True:
+                cursor, keys = self.redis.scan(cursor=cursor, match=deep_path_pattern, count=100)
+                if keys:
+                    self.redis.delete(*keys)
+                    deep_deleted_count += len(keys)
+                if cursor == 0:
+                    break
+
+            total_deleted = (1 if root_deleted else 0) + deep_deleted_count
+            if total_deleted > 0:
+                logger.info(
+                    f"Invalidated file structure cache for project {project_id}, branch {branch_name}: "
+                    f"root={'yes' if root_deleted else 'no'}, deep_paths={deep_deleted_count}"
+                )
+            else:
+                logger.debug(f"No cache entries found to invalidate for project {project_id}, branch {branch_name}")
+        except Exception as e:
+            logger.error(f"Failed to invalidate file structure cache for {project_id}: {e}")
