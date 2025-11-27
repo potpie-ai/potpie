@@ -19,6 +19,9 @@ from .confluence_client import (
 class GetConfluencePageInput(BaseModel):
     """Input schema for get_confluence_page tool."""
 
+    integration_id: str = Field(
+        description="The Confluence integration UUID (NOT site_name). Get the 'integration_id' UUID field from 'List Confluence Integrations' tool - do NOT use 'site_name' field. Example: 'da376af7-bff5-4c2f-a5da-0398de3601a8'"
+    )
     page_id: str = Field(
         description="The ID of the Confluence page to retrieve (e.g., '123456'). Use 'Search Confluence Pages' or 'Get Confluence Space Pages' to find page IDs."
     )
@@ -70,6 +73,7 @@ class GetConfluencePageTool:
 
     async def arun(
         self,
+        integration_id: str,
         page_id: str,
         body_format: str = "storage",
         get_draft: bool = False,
@@ -78,6 +82,7 @@ class GetConfluencePageTool:
         Get a Confluence page by ID.
 
         Args:
+            integration_id: The Confluence integration ID to use
             page_id: The page ID
             body_format: Format for page body
             get_draft: Whether to get draft version
@@ -97,7 +102,16 @@ class GetConfluencePageTool:
                 }
 
             # Get Confluence client
-            client = await get_confluence_client_for_user(self.user_id, self.db)
+            try:
+                client = await get_confluence_client_for_user(
+                    self.user_id, self.db, integration_id=integration_id
+                )
+            except ValueError as ve:
+                # Handle multi-integration error
+                error_data = ve.args[0] if ve.args else {}
+                if isinstance(error_data, dict):
+                    return {"success": False, **error_data}
+                return {"success": False, "error": str(ve)}
             if not client:
                 return {
                     "success": False,
@@ -170,12 +184,13 @@ class GetConfluencePageTool:
 
     def run(
         self,
+        integration_id: str,
         page_id: str,
         body_format: str = "storage",
         get_draft: bool = False,
     ) -> Dict[str, Any]:
         """Synchronous version that runs the async version."""
-        return asyncio.run(self.arun(page_id, body_format, get_draft))
+        return asyncio.run(self.arun(integration_id, page_id, body_format, get_draft))
 
 
 def get_confluence_page_tool(db: Session, user_id: str) -> StructuredTool:
@@ -197,6 +212,11 @@ def get_confluence_page_tool(db: Session, user_id: str) -> StructuredTool:
         name="Get Confluence Page",
         description="""Get content and metadata of a specific Confluence page by ID.
 
+        **IMPORTANT: If user has multiple Confluence workspaces:**
+        1. First call 'List Confluence Integrations' to get available workspaces
+        2. Match user's mentioned workspace name to get integration_id
+        3. Pass that integration_id to this tool
+
         Use this when you need to:
         - Read the full content of a documentation page
         - Get page metadata (title, author, version, labels, dates)
@@ -204,6 +224,7 @@ def get_confluence_page_tool(db: Session, user_id: str) -> StructuredTool:
         - Check page status (published/draft/archived)
 
         Inputs:
+        - integration_id (str): REQUIRED - Confluence workspace ID from 'List Confluence Integrations'
         - page_id (str): The page ID (get from 'Search Confluence Pages' or 'Get Confluence Space Pages')
         - body_format (str): Content format - 'storage' (HTML, default), 'atlas_doc_format' (ADF), or 'view' (rendered)
         - get_draft (bool): Get draft version instead of published (default: False)

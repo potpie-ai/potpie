@@ -8,7 +8,7 @@ API Reference: https://developer.atlassian.com/cloud/confluence/rest/v2/intro/
 """
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session
 import httpx
 
@@ -16,6 +16,51 @@ from app.modules.integrations.integration_model import Integration
 from app.modules.integrations.integrations_schema import IntegrationType
 from app.modules.integrations.token_encryption import decrypt_token
 from datetime import datetime, timezone, timedelta
+
+
+async def get_available_confluence_integrations(
+    user_id: str, db: Session
+) -> List[Dict[str, Any]]:
+    """
+    Get all available Confluence integrations for a user.
+
+    Args:
+        user_id: The user ID
+        db: Database session
+
+    Returns:
+        List of integration details with id, site_name, site_url, and created_at
+    """
+    try:
+        integrations = (
+            db.query(Integration)
+            .filter(Integration.integration_type == IntegrationType.CONFLUENCE.value)
+            .filter(Integration.created_by == user_id)
+            .filter(Integration.active == True)  # noqa: E712
+            .order_by(Integration.created_at.desc())
+            .all()
+        )
+
+        result = []
+        for integration in integrations:
+            metadata = getattr(integration, "integration_metadata", {}) or {}
+            result.append(
+                {
+                    "integration_id": str(integration.integration_id),
+                    "site_name": metadata.get("site_name", "Unknown"),
+                    "site_url": metadata.get("site_url", ""),
+                    "created_at": integration.created_at.isoformat()
+                    if integration.created_at
+                    else None,
+                }
+            )
+
+        return result
+    except Exception as e:
+        logging.error(
+            f"Error getting Confluence integrations for user {user_id}: {str(e)}"
+        )
+        return []
 
 
 async def check_confluence_integration_exists(user_id: str, db: Session) -> bool:
@@ -30,15 +75,8 @@ async def check_confluence_integration_exists(user_id: str, db: Session) -> bool
         True if an active Confluence integration exists, False otherwise
     """
     try:
-        integration = (
-            db.query(Integration)
-            .filter(Integration.integration_type == IntegrationType.CONFLUENCE.value)
-            .filter(Integration.created_by == user_id)
-            .filter(Integration.active == True)  # noqa: E712
-            .order_by(Integration.created_at.desc())
-            .first()
-        )
-        return integration is not None
+        integrations = await get_available_confluence_integrations(user_id, db)
+        return len(integrations) > 0
     except Exception as e:
         logging.error(
             f"Error checking Confluence integration for user {user_id}: {str(e)}"
@@ -123,9 +161,16 @@ class ConfluenceClient:
         logging.info(
             f"Access token length: {len(self.access_token) if self.access_token else 0}"
         )
-        response = await self.client.get("/wiki/api/v2/spaces", params=params)
-        response.raise_for_status()
-        return response.json()
+
+        try:
+            response = await self.client.get("/wiki/api/v2/spaces", params=params)
+            logging.debug(f"Response status: {response.status_code}")
+            response.raise_for_status()
+            result = response.json()
+            return result
+        except Exception as e:
+            logging.error(f"Error calling API: {str(e)}")
+            raise
 
     async def get_space(self, space_id: str) -> Dict[str, Any]:
         """
@@ -348,7 +393,7 @@ class ConfluenceClient:
 
 
 async def get_confluence_client_for_user(
-    user_id: str, db: Session
+    user_id: str, db: Session, integration_id: Optional[str] = None
 ) -> Optional[ConfluenceClient]:
     """
     Get an authenticated Confluence client for a user.
@@ -356,29 +401,94 @@ async def get_confluence_client_for_user(
     Args:
         user_id: The user ID
         db: Database session
+        integration_id: Optional specific integration ID to use
 
     Returns:
         ConfluenceClient instance or None if no integration found
+
+    Raises:
+        ValueError: If multiple integrations exist but none specified, or if specified integration not found
     """
     try:
-        # Get user's Confluence integration
+        # Get all available integrations
+        available_integrations = await get_available_confluence_integrations(
+            user_id, db
+        )
+
+        logging.debug(f"Found {len(available_integrations)} available integrations")
+        for integ in available_integrations:
+            logging.debug(f"  - {integ['site_name']}: {integ['integration_id']}")
+        if not available_integrations:
+            logging.warning(f"No Confluence integration found for user {user_id}")
+            return None
+
+        # If multiple integrations exist and no specific one is requested, raise error
+        if len(available_integrations) > 1 and not integration_id:
+            error_msg = (
+                f"Multiple Confluence integrations found ({len(available_integrations)}). "
+                "Please specify which integration to use by providing integration_id. "
+                "Use 'List Confluence Integrations' tool to see available options."
+            )
+            logging.error(f"{error_msg}")
+            raise ValueError(
+                {
+                    "error": error_msg,
+                    "available_integrations": available_integrations,
+                    "action_required": "Call 'List Confluence Integrations' tool and specify integration_id parameter",
+                }
+            )
+
+        # Determine which integration to use
+        target_integration_id = None
+        if integration_id:
+            logging.debug(f"Using specified integration_id: {integration_id}")
+            # Verify the specified integration exists
+            if not any(
+                integ["integration_id"] == integration_id
+                for integ in available_integrations
+            ):
+                error_msg = f"Confluence integration with id '{integration_id}' not found."
+                logging.error(f"{error_msg}")
+                raise ValueError(
+                    {
+                        "error": error_msg,
+                        "available_integrations": available_integrations,
+                        "action_required": "Use one of the available integration IDs from 'List Confluence Integrations' tool",
+                    }
+                )
+            target_integration_id = integration_id
+        else:
+            # Only one integration, use it automatically
+            target_integration_id = available_integrations[0]["integration_id"]
+            logging.debug(
+                f"Using single available Confluence integration: {target_integration_id}"
+            )
+
+        logging.debug(f"Fetching integration {target_integration_id} from database")
+
+        # Get the specific integration from database
         integration = (
             db.query(Integration)
+            .filter(Integration.integration_id == target_integration_id)
             .filter(Integration.integration_type == IntegrationType.CONFLUENCE.value)
             .filter(Integration.created_by == user_id)
             .filter(Integration.active == True)  # noqa: E712
-            .order_by(Integration.created_at.desc())
             .first()
         )
 
         if not integration:
-            logging.warning(f"No Confluence integration found for user {user_id}")
+            logging.warning(
+                f"Confluence integration {target_integration_id} not found for user {user_id}"
+            )
             return None
 
         # Extract metadata
         metadata = getattr(integration, "integration_metadata", {}) or {}
         site_url = metadata.get("site_url", "")
         cloud_id = metadata.get("site_id", "")
+        site_name = metadata.get("site_name", "")
+
+        logging.debug(f"Metadata - site_name: {site_name}, site_url: {site_url}, cloud_id: {cloud_id}")
 
         if not site_url or not cloud_id:
             logging.error("Confluence integration missing site_url or site_id")
@@ -391,27 +501,78 @@ async def get_confluence_client_for_user(
 
         if not encrypted_token:
             logging.error("Confluence integration missing access token")
-            logging.error(f"Available auth_data keys: {list(auth_data.keys())}")
+            logging.error(f"Available auth_data keys for user {user_id}: {list(auth_data.keys())}")
             return None
 
         logging.info(f"Decrypting access token for user {user_id}")
         access_token = decrypt_token(encrypted_token)
         logging.info(f"Successfully decrypted access token for user {user_id}")
 
-        # Check if token needs refresh
+        # Check if token needs refresh and refresh if necessary
         expires_at = auth_data.get("expires_at")
+        encrypted_refresh_token = auth_data.get("refresh_token")
+        token_expired = False
+
         if expires_at:
             if isinstance(expires_at, str):
-                expires_at = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                try:
+                    expires_at = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+                except ValueError:
+                    expires_at = None
+
             if isinstance(expires_at, datetime):
-                # Add 5-minute buffer
-                if expires_at < datetime.now(timezone.utc) + timedelta(minutes=5):
-                    logging.info("Confluence access token expired, need to refresh")
-                    # Token refresh would be handled by integration service
-                    # For now, try with current token
-                    pass
+                now = datetime.now(timezone.utc)
+                logging.info(f"Token expires at: {expires_at}, current time: {now}")
+
+                # Check if token is expired or expiring soon (5-minute buffer)
+                if expires_at < now + timedelta(minutes=5):
+                    logging.debug(f"Access token expired or expiring soon! expires_at={expires_at}, now={now}")
+                    token_expired = True
+                else:
+                    logging.info(f"Token is valid for {(expires_at - now).total_seconds() / 60:.1f} more minutes")
+        else:
+            logging.debug("No expires_at found in auth_data")
+
+        # Refresh token if expired
+        if token_expired and encrypted_refresh_token:
+            logging.info(f"Refreshing expired access token for integration {target_integration_id}")
+            try:
+                # Import here to avoid circular dependency
+                from app.modules.integrations.confluence_oauth import ConfluenceOAuth
+                from app.modules.integrations.token_encryption import encrypt_token
+                from starlette.config import Config
+
+                # Initialize OAuth client with starlette Config
+                config = Config()
+                confluence_oauth = ConfluenceOAuth(config)
+
+                # Decrypt and refresh token
+                refresh_token = decrypt_token(encrypted_refresh_token)
+                new_tokens = await confluence_oauth.refresh_access_token(refresh_token)
+
+                # Update tokens in database
+                auth_data["access_token"] = encrypt_token(new_tokens["access_token"])
+                if new_tokens.get("refresh_token"):
+                    auth_data["refresh_token"] = encrypt_token(new_tokens["refresh_token"])
+                auth_data["expires_at"] = datetime.fromtimestamp(
+                    new_tokens["expires_at"], tz=timezone.utc
+                ).isoformat()
+
+                setattr(integration, "auth_data", auth_data)
+                setattr(integration, "updated_at", datetime.utcnow())
+                db.commit()
+
+                # Use new access token
+                access_token = new_tokens["access_token"]
+                logging.info(f"Successfully refreshed token for integration {target_integration_id}")
+
+            except Exception as e:
+                logging.error(f"Failed to refresh Confluence token: {str(e)}")
+                logging.exception(e)  # Full stack trace
+                raise Exception(f"Failed to refresh expired token: {str(e)}")
 
         # Create and return client
+        logging.info(f"Creating ConfluenceClient for site: {site_url} (cloud_id: {cloud_id})")
         return ConfluenceClient(
             server=site_url, access_token=access_token, cloud_id=cloud_id
         )

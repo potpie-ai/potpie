@@ -7,6 +7,7 @@ These tools enable AI agents to search, read, create, update, and comment on Con
 from sqlalchemy.orm import Session
 from langchain_core.tools import StructuredTool
 
+from .list_confluence_integrations_tool import list_confluence_integrations_tool
 from .get_confluence_spaces_tool import get_confluence_spaces_tool
 from .get_confluence_page_tool import get_confluence_page_tool
 from .search_confluence_pages_tool import search_confluence_pages_tool
@@ -30,6 +31,7 @@ def get_all_confluence_tools(db: Session, user_id: str) -> list[StructuredTool]:
         List of all Confluence tools
     """
     return [
+        list_confluence_integrations_tool(db, user_id),
         get_confluence_spaces_tool(db, user_id),
         get_confluence_page_tool(db, user_id),
         search_confluence_pages_tool(db, user_id),
@@ -41,6 +43,7 @@ def get_all_confluence_tools(db: Session, user_id: str) -> list[StructuredTool]:
 
 
 __all__ = [
+    "list_confluence_integrations_tool",
     "get_confluence_spaces_tool",
     "get_confluence_page_tool",
     "search_confluence_pages_tool",

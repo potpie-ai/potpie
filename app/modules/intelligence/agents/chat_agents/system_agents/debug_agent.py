@@ -72,6 +72,7 @@ class DebugAgent(ChatAgent):
                 "get_jira_project_details",
                 "link_jira_issues",
                 "get_jira_project_users",
+                "list_confluence_integrations",
                 "get_confluence_spaces",
                 "get_confluence_page",
                 "search_confluence_pages",

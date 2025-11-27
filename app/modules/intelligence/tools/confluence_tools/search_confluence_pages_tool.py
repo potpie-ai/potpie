@@ -19,6 +19,9 @@ from .confluence_client import (
 class SearchConfluencePagesInput(BaseModel):
     """Input schema for search_confluence_pages tool."""
 
+    integration_id: str = Field(
+        description="The Confluence integration UUID (NOT site_name). Get the 'integration_id' UUID field from 'List Confluence Integrations' tool - do NOT use 'site_name' field. Example: 'da376af7-bff5-4c2f-a5da-0398de3601a8'"
+    )
     cql: str = Field(
         description=(
             "CQL (Confluence Query Language) query string.\n\n"
@@ -88,6 +91,7 @@ class SearchConfluencePagesTool:
 
     async def arun(
         self,
+        integration_id: str,
         cql: str,
         limit: int = 25,
         include_archived: bool = False,
@@ -96,6 +100,7 @@ class SearchConfluencePagesTool:
         Search Confluence pages using CQL.
 
         Args:
+            integration_id: The Confluence integration ID to use
             cql: CQL query string
             limit: Maximum number of results
             include_archived: Include archived pages
@@ -114,8 +119,18 @@ class SearchConfluencePagesTool:
                     "error": "No Confluence integration found. Please connect your Confluence account first.",
                 }
 
-            # Get Confluence client
-            client = await get_confluence_client_for_user(self.user_id, self.db)
+            # Get Confluence client with specific integration
+            try:
+                client = await get_confluence_client_for_user(
+                    self.user_id, self.db, integration_id=integration_id
+                )
+            except ValueError as ve:
+                # Handle multi-integration error
+                error_data = ve.args[0] if ve.args else {}
+                if isinstance(error_data, dict):
+                    return {"success": False, **error_data}
+                return {"success": False, "error": str(ve)}
+
             if not client:
                 return {
                     "success": False,
@@ -177,12 +192,13 @@ class SearchConfluencePagesTool:
 
     def run(
         self,
+        integration_id: str,
         cql: str,
         limit: int = 25,
         include_archived: bool = False,
     ) -> Dict[str, Any]:
         """Synchronous version that runs the async version."""
-        return asyncio.run(self.arun(cql, limit, include_archived))
+        return asyncio.run(self.arun(integration_id, cql, limit, include_archived))
 
 
 def search_confluence_pages_tool(db: Session, user_id: str) -> StructuredTool:
@@ -204,6 +220,11 @@ def search_confluence_pages_tool(db: Session, user_id: str) -> StructuredTool:
         name="Search Confluence Pages",
         description="""Search Confluence for documentation using CQL (Confluence Query Language).
 
+        **IMPORTANT: If user has multiple Confluence workspaces:**
+        1. First call 'List Confluence Integrations' to get available workspaces
+        2. Match user's mentioned workspace name to get integration_id
+        3. Pass that integration_id to this tool
+
         Primary use: Finding documentation by searching text content.
 
         Common patterns:
@@ -217,6 +238,7 @@ def search_confluence_pages_tool(db: Session, user_id: str) -> StructuredTool:
         The 'text' field searches across page titles, body content, and labels.
 
         Inputs:
+        - integration_id (str): REQUIRED - Confluence workspace ID from 'List Confluence Integrations'
         - cql: CQL query string
         - limit: Max results (default: 25, max: 250)
         - include_archived: Include archived pages (default: False)

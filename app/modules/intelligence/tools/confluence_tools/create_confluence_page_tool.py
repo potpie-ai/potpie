@@ -19,6 +19,9 @@ from .confluence_client import (
 class CreateConfluencePageInput(BaseModel):
     """Input schema for create_confluence_page tool."""
 
+    integration_id: str = Field(
+        description="The Confluence integration UUID (NOT site_name). Get the 'integration_id' UUID field from 'List Confluence Integrations' tool - do NOT use 'site_name' field. Example: 'da376af7-bff5-4c2f-a5da-0398de3601a8'"
+    )
     space_id: str = Field(
         description="The numeric space ID from 'Get Confluence Spaces' tool (the 'id' field, NOT the 'key' field). Example: '1245186'"
     )
@@ -87,6 +90,7 @@ class CreateConfluencePageTool:
 
     async def arun(
         self,
+        integration_id: str,
         space_id: str,
         title: str,
         body: str,
@@ -97,6 +101,7 @@ class CreateConfluencePageTool:
         Create a new Confluence page.
 
         Args:
+            integration_id: The Confluence integration ID to use
             space_id: The space ID
             title: Page title
             body: Page content (HTML or plain text)
@@ -118,7 +123,16 @@ class CreateConfluencePageTool:
                 }
 
             # Get Confluence client
-            client = await get_confluence_client_for_user(self.user_id, self.db)
+            try:
+                client = await get_confluence_client_for_user(
+                    self.user_id, self.db, integration_id=integration_id
+                )
+            except ValueError as ve:
+                # Handle multi-integration error
+                error_data = ve.args[0] if ve.args else {}
+                if isinstance(error_data, dict):
+                    return {"success": False, **error_data}
+                return {"success": False, "error": str(ve)}
             if not client:
                 return {
                     "success": False,
@@ -163,6 +177,7 @@ class CreateConfluencePageTool:
 
     def run(
         self,
+        integration_id: str,
         space_id: str,
         title: str,
         body: str,
@@ -170,7 +185,7 @@ class CreateConfluencePageTool:
         status: str = "current",
     ) -> Dict[str, Any]:
         """Synchronous version that runs the async version."""
-        return asyncio.run(self.arun(space_id, title, body, parent_id, status))
+        return asyncio.run(self.arun(integration_id, space_id, title, body, parent_id, status))
 
 
 def create_confluence_page_tool(db: Session, user_id: str) -> StructuredTool:
@@ -192,6 +207,11 @@ def create_confluence_page_tool(db: Session, user_id: str) -> StructuredTool:
         name="Create Confluence Page",
         description="""Create a new documentation page in a Confluence space.
 
+        **IMPORTANT: If user has multiple Confluence workspaces:**
+        1. First call 'List Confluence Integrations' to get available workspaces
+        2. Match user's mentioned workspace name to get integration_id
+        3. Pass that integration_id to this tool
+
         Use this when you need to:
         - Create new documentation pages
         - Document features, APIs, or processes
@@ -199,6 +219,7 @@ def create_confluence_page_tool(db: Session, user_id: str) -> StructuredTool:
         - Create child pages under existing pages
 
         Inputs:
+        - integration_id (str): REQUIRED - Confluence workspace ID from 'List Confluence Integrations'
         - space_id (str): Numeric space ID (get 'id' field from 'Get Confluence Spaces', NOT 'key'). Example: '1245186'
         - title (str): Page title (required)
         - body (str): Page content in HTML or plain text (required)

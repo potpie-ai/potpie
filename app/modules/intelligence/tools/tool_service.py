@@ -87,6 +87,7 @@ from app.modules.intelligence.tools.confluence_tools import (
     create_confluence_page_tool,
     update_confluence_page_tool,
     add_confluence_comment_tool,
+    list_confluence_integrations_tool,
 )
 from app.modules.intelligence.tools.web_tools.web_search_tool import web_search_tool
 from app.modules.intelligence.provider.provider_service import ProviderService
@@ -166,6 +167,7 @@ class ToolService:
                 self.db, self.user_id
             ),
             "link_jira_issues": link_jira_issues_tool(self.db, self.user_id),
+            "list_confluence_integrations": list_confluence_integrations_tool(self.db, self.user_id),
             "get_confluence_spaces": get_confluence_spaces_tool(self.db, self.user_id),
             "get_confluence_page": get_confluence_page_tool(self.db, self.user_id),
             "search_confluence_pages": search_confluence_pages_tool(self.db, self.user_id),
