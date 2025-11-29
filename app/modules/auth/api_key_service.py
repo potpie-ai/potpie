@@ -102,14 +102,33 @@ class APIKeyService:
 
     @staticmethod
     async def validate_api_key(api_key: str, db: Session) -> Optional[dict]:
-        """Validate an API key and return user info if valid."""
+        """
+        Validate an API key and return user info if valid.
+
+        Args:
+            api_key: The API key to validate
+            db: Database session
+
+        Returns:
+            Dictionary with user_id, email, and auth_type if valid
+
+        Raises:
+            HTTPException: With specific error messages for different validation failures:
+                - 401: Invalid API key format (missing prefix)
+                - 401: API key not found or invalid
+                - 500: Database or internal errors during validation
+        """
         try:
             # Check if API key follows the correct syntax and prefix
             if not api_key.startswith(APIKeyService.SECRET_PREFIX):
                 logger.error(
                     f"Invalid API key format: missing required prefix '{APIKeyService.SECRET_PREFIX}'"
                 )
-                return None
+                raise HTTPException(
+                    status_code=401,
+                    detail=f"Invalid API key format: API key must start with '{APIKeyService.SECRET_PREFIX}'",
+                    headers={"WWW-Authenticate": "ApiKey"},
+                )
 
             hashed_key = APIKeyService.hash_api_key(api_key)
             # Find user with matching hashed key
@@ -124,7 +143,11 @@ class APIKeyService:
             # No match found for Hashed API key
             if not result:
                 logger.error("No user found with the provided API key hash")
-                return None
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid API key: No matching API key found in the system",
+                    headers={"WWW-Authenticate": "ApiKey"},
+                )
 
             user_pref, email = result
             return {
@@ -132,9 +155,15 @@ class APIKeyService:
                 "email": email,
                 "auth_type": "api_key",
             }
+        except HTTPException:
+            # Re-raise HTTPExceptions as-is
+            raise
         except Exception as e:
             logger.error(f"Error validating API key: {str(e)}")
-            return None
+            raise HTTPException(
+                status_code=500,
+                detail=f"Internal error during API key validation: {str(e)}",
+            )
 
     @staticmethod
     async def revoke_api_key(user_id: str, db: Session) -> bool:
