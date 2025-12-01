@@ -130,7 +130,7 @@ jsonschema-specifications==2025.9.1
 keyring==25.6.0
 kombu==5.5.4
 langchain==1.0.3
-langchain-core==1.0.3
+langchain-core==1.1.0
 langgraph==1.0.2
 langgraph-checkpoint==3.0.1
 langgraph-prebuilt==1.0.2
