@@ -27,12 +27,12 @@ class GetCodeFileStructureTool:
         """
 
     def __init__(self, db: Session):
-        self.github_service = CodeProviderService(db)
+        self.cp_service = CodeProviderService(db)
 
     async def fetch_repo_structure(
         self, project_id: str, path: Optional[str] = None
     ) -> str:
-        return await self.github_service.get_project_structure_async(project_id, path)
+        return await self.cp_service.get_project_structure_async(project_id, path)
 
     async def arun(self, project_id: str, path: Optional[str] = None) -> str:
         try:

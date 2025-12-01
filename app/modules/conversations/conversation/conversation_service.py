@@ -40,6 +40,9 @@ from app.modules.utils.posthog_helper import PostHogClient
 from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.media.media_service import MediaService
+from app.modules.conversations.session.session_service import SessionService
+from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+from app.celery.celery_app import celery_app
 from .conversation_store import ConversationStore, StoreError
 from ..message.message_store import MessageStore
 
@@ -82,6 +85,8 @@ class ConversationService:
         agent_service: AgentsService,
         custom_agent_service: CustomAgentService,
         media_service: MediaService,
+        session_service: SessionService = None,
+        redis_manager: RedisStreamManager = None,
     ):
         self.db = db
         self.user_id = user_id
@@ -96,6 +101,10 @@ class ConversationService:
         self.agent_service = agent_service
         self.custom_agent_service = custom_agent_service
         self.media_service = media_service
+        # Dependency injection for stop_generation
+        self.session_service = session_service or SessionService()
+        self.redis_manager = redis_manager or RedisStreamManager()
+        self.celery_app = celery_app
 
     @classmethod
     def create(
@@ -116,6 +125,8 @@ class ConversationService:
         )
         custom_agent_service = CustomAgentService(db, provider_service, tool_service)
         media_service = MediaService(db)
+        session_service = SessionService()
+        redis_manager = RedisStreamManager()
 
         return cls(
             db,
@@ -131,6 +142,8 @@ class ConversationService:
             agent_service,
             custom_agent_service,
             media_service,
+            session_service,
+            redis_manager,
         )
 
     async def check_conversation_access(
@@ -1064,21 +1077,71 @@ class ConversationService:
             f"Attempting to stop generation for conversation {conversation_id}, run_id: {run_id}"
         )
 
+        # If run_id not provided, try to find active session
         if not run_id:
-            return {
-                "status": "error",
-                "message": "run_id required for stopping background generation",
-            }
+            from app.modules.conversations.conversation.conversation_schema import (
+                ActiveSessionErrorResponse,
+            )
+
+            active_session = self.session_service.get_active_session(conversation_id)
+
+            if isinstance(active_session, ActiveSessionErrorResponse):
+                # No active session found - this is okay, just return success
+                # The session might have already completed or been cleared
+                logger.info(
+                    f"No active session found for conversation {conversation_id} - already stopped or never started"
+                )
+                return {
+                    "status": "success",
+                    "message": "No active session to stop",
+                }
+
+            run_id = active_session.sessionId
+            logger.info(
+                f"Found active session {run_id} for conversation {conversation_id}"
+            )
 
         # Set cancellation flag in Redis for background task to check
-        from app.modules.conversations.utils.redis_streaming import RedisStreamManager
+        self.redis_manager.set_cancellation(conversation_id, run_id)
 
-        redis_manager = RedisStreamManager()
-        redis_manager.set_cancellation(conversation_id, run_id)
+        # Retrieve and revoke the Celery task
+        task_id = self.redis_manager.get_task_id(conversation_id, run_id)
+
+        if task_id:
+            try:
+                # Revoke the task - this works for both queued and running tasks:
+                # - For queued tasks: Prevents them from starting execution
+                # - For running tasks: Sends SIGTERM to terminate them
+                # terminate=True ensures both cases are handled
+                self.celery_app.control.revoke(
+                    task_id, terminate=True, signal="SIGTERM"
+                )
+                logger.info(
+                    f"Revoked Celery task {task_id} for {conversation_id}:{run_id} (works for both queued and running tasks)"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to revoke Celery task {task_id}: {str(e)}")
+                # Continue anyway - cancellation flag is set
+        else:
+            logger.info(
+                f"No task ID found for {conversation_id}:{run_id} - task may have already completed or been revoked"
+            )
+
+        # Always clear the session - publish end event and update status
+        # This ensures clients know the session is stopped and prevents stale sessions
+        # This is important even if there's no task_id - it clears any stale session data
+        # This will also handle the case where stop is called with a stale session_id
+        try:
+            self.redis_manager.clear_session(conversation_id, run_id)
+        except Exception as e:
+            logger.warning(
+                f"Failed to clear session for {conversation_id}:{run_id}: {str(e)}"
+            )
+            # Continue anyway - the important part (revocation) is done
 
         return {
             "status": "success",
-            "message": "Cancellation signal sent to background task",
+            "message": "Cancellation signal sent and task revoked",
         }
 
     async def rename_conversation(

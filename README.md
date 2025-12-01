@@ -205,13 +205,53 @@ pnpm start
 
       **`INFERENCE_MODEL`** and **`CHAT_MODEL`** correspond to the models that will be used for generating knowledge graph and for agent reasoning respectively. These model names should be in the format of `provider/model_name` format or as expected by Litellm. For more information, refer to the [Litellm documentation](https://docs.litellm.ai/docs/providers).
       <br>
-   - Install dependencies with uv:
+    - Install dependencies using uv:
 
       ```bash
       uv sync
       ```
 
       This will create a `.venv` directory and install all dependencies from `pyproject.toml`
+
+#### GitHub Authentication Setup
+
+Potpie supports multiple authentication methods for accessing GitHub repositories:
+
+##### For GitHub.com Repositories:
+
+**Option 1: GitHub App (Recommended for Production)**
+  - Create a GitHub App in your organization
+  - Set environment variables:
+    ```bash
+    GITHUB_APP_ID=your-app-id
+    GITHUB_PRIVATE_KEY=your-private-key
+    ```
+
+**Option 2: Personal Access Token (PAT) Pool**
+  - Create one or more GitHub PATs with `repo` scope
+  - Set environment variable (comma-separated for multiple tokens):
+    ```bash
+    GH_TOKEN_LIST=ghp_token1,ghp_token2,ghp_token3
+    ```
+  - Potpie will randomly select from the pool for load balancing
+  - **Rate Limit**: 5,000 requests/hour per token (authenticated)
+
+**Option 3: Unauthenticated Access (Public Repos Only)**
+  - No configuration needed
+  - Automatically used as fallback for public repositories
+  - **Rate Limit**: 60 requests/hour per IP (very limited)
+
+##### For Self-Hosted Git Servers (GitBucket, GitLab, etc.):
+
+      Set the following environment variables:
+      ```bash
+      # Options: github, gitlab, gitbucket
+      CODE_PROVIDER=github
+      CODE_PROVIDER_BASE_URL=http://your-git-server.com/api/v3
+      CODE_PROVIDER_TOKEN=your-token
+      ```
+
+**Important**: `GH_TOKEN_LIST` tokens are always used for GitHub.com, regardless of `CODE_PROVIDER_BASE_URL`.
 
 2. **Start Potpie**
 
@@ -234,6 +274,14 @@ pnpm start
    - Apply database migrations
    - Start the FastAPI application
    - Start the Celery worker
+
+**Optional: Phoenix Tracing Setup (Local Only)**
+
+   To monitor LLM traces and agent operations with Phoenix in local development:
+   ```bash
+   phoenix serve
+   ```
+   Run this in a new terminal to start the Phoenix server. Traces will be available at `http://localhost:6006` (default). Phoenix tracing is automatically initialized when Potpie starts, but you need to run `phoenix serve` separately to view the traces. **Note:** This setup is for local development only.
 
 3. **Stop Potpie**
 
