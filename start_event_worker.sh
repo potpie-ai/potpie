@@ -6,12 +6,6 @@
 echo "🚀 Starting Event Bus Worker..."
 echo "==============================="
 
-# Check if virtual environment exists
-if [ ! -d ".venv" ]; then
-    echo "❌ Virtual environment not found. Please run from the project root."
-    exit 1
-fi
-
 # Check if Redis is running
 if ! redis-cli ping > /dev/null 2>&1; then
     echo "❌ Redis is not running. Please start Redis first."
@@ -23,7 +17,7 @@ echo "✅ Redis is running"
 
 # Start the event bus worker
 echo "👷 Starting event bus worker..."
-nohup .venv/bin/celery -A app.celery.celery_app worker \
+nohup uv run celery -A app.celery.celery_app worker \
     --loglevel=info \
     --queues=external-event \
     --concurrency=2 \

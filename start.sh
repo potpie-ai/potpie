@@ -26,17 +26,17 @@ done
 echo "Postgres is up - applying database migrations"
 
 
-# Verify virtual environment is active
-if [ -z "$VIRTUAL_ENV" ]; then
- echo "Error: No virtual environment is active. Please activate your virtual environment first."
- exit 1
+# Ensure uv is available
+if ! command -v uv >/dev/null 2>&1; then
+    echo "Error: uv command not found. Install uv from https://docs.astral.sh/uv/getting-started/ before running this script."
+    exit 1
 fi
 
-# Install python dependencies
-echo "Installing Python dependencies..."
-if ! pip install -r requirements.txt; then
- echo "Error: Failed to install Python dependencies"
- exit 1
+# Synchronize and create the managed virtual environment if needed
+echo "Syncing Python environment with uv..."
+if ! uv sync; then
+  echo "Error: Failed to synchronize Python dependencies"
+  exit 1
 fi
 
 # Install gVisor (optional, for command isolation)
@@ -73,12 +73,12 @@ if [[ "$OSTYPE" == "darwin"* ]] || [[ "$OSTYPE" == "msys" ]] || [[ "$OSTYPE" == 
   fi
 fi
 
-# Apply database migrations
-alembic upgrade heads
+# Apply database migrations within the uv-managed environment
+uv run alembic upgrade heads
 
 echo "Starting momentum application..."
-gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app &
+uv run gunicorn --worker-class uvicorn.workers.UvicornWorker --workers 1 --timeout 1800 --bind 0.0.0.0:8001 --log-level debug app.main:app &
 
-echo "Starting Celery worker"
-# Start Celery worker with the new setup
-celery -A app.celery.celery_app worker --loglevel=debug -Q "${CELERY_QUEUE_NAME}_process_repository,${CELERY_QUEUE_NAME}_agent_tasks" -E --concurrency=1 --pool=solo &
+echo "Starting Celery worker..."
+# Start Celery worker with the uv-managed environment
+uv run celery -A app.celery.celery_app worker --loglevel=debug -Q "${CELERY_QUEUE_NAME}_process_repository,${CELERY_QUEUE_NAME}_agent_tasks" -E --concurrency=1 --pool=solo &
