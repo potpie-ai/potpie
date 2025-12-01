@@ -51,7 +51,10 @@ class UnitTestAgent(ChatAgent):
             raise UnsupportedProviderError(
                 f"Model '{self.llm_provider.chat_config.model}' does not support Pydantic-based agents."
             )
-        return PydanticRagAgent(self.llm_provider, agent_config, tools)
+        return PydanticRagAgent(
+            self.llm_provider, agent_config, tools,
+            memory_manager=getattr(self, 'memory_manager', None)
+        )
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if ctx.node_ids and len(ctx.node_ids) > 0:

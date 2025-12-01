@@ -11,6 +11,9 @@ from app.modules.event_bus.tasks.event_tasks import (
     process_webhook_event,
     process_custom_event,
 )
+from app.celery.tasks.memory_tasks import (
+    extract_user_preferences,
+)
 
 
 # Register tasks
@@ -27,6 +30,10 @@ def register_tasks():
     # Register event bus tasks
     celery_app.tasks.register(process_webhook_event)
     celery_app.tasks.register(process_custom_event)
+    
+    # Register memory tasks
+    celery_app.tasks.register(extract_user_preferences)
+    
     logger.info("Tasks registered successfully")
 
 

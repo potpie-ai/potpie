@@ -18,6 +18,7 @@ from app.modules.intelligence.provider.provider_service import (
 )
 from .agent_config import AgentConfig, TaskConfig
 from app.modules.utils.logger import setup_logger
+from typing import Optional
 
 from ..chat_agent import (
     ChatAgent,
@@ -66,6 +67,7 @@ class PydanticRagAgent(ChatAgent):
         config: AgentConfig,
         tools: List[StructuredTool],
         mcp_servers: List[dict] | None = None,
+        memory_manager: Optional[object] = None,  # MemoryManager type, avoiding circular import
     ):
         """Initialize the agent with configuration and tools"""
 
@@ -80,6 +82,8 @@ class PydanticRagAgent(ChatAgent):
         self.tools = tools
         self.config = config
         self.mcp_servers = mcp_servers or []
+        self.memory_manager = memory_manager  # Store for use in Phase 3
+        self._preferences_block = ""  # Cache for current context
 
     def _create_agent(self, ctx: ChatContext) -> Agent:
         config = self.config
@@ -129,6 +133,8 @@ class PydanticRagAgent(ChatAgent):
             Goal: {config.goal}
             Backstory:
             {config.backstory}
+
+            {self._preferences_block if self._preferences_block else ""}
 
             {multimodal_instructions}
 
@@ -447,6 +453,21 @@ class PydanticRagAgent(ChatAgent):
             f"Running pydantic-ai agent {'with multimodal support' if ctx.has_images() else ''}"
         )
 
+        # Retrieve preferences if user_id is available and memory_manager is provided
+        if ctx.user_id and self.memory_manager:
+            try:
+                self._preferences_block = await self.memory_manager.get_user_preferences_block(
+                    user_id=ctx.user_id,
+                    query=ctx.query,
+                    project_id=ctx.project_id,
+                    limit=5
+                )
+            except Exception as e:
+                logger.warning(f"Failed to retrieve preferences: {e}")
+                self._preferences_block = ""
+        else:
+            self._preferences_block = ""
+
         # Check if we have images and if the model supports vision
         if ctx.has_images() and self.llm_provider.is_vision_model():
             logger.info(
@@ -539,6 +560,21 @@ class PydanticRagAgent(ChatAgent):
         logger.info(
             f"Running pydantic-ai agent stream {'with multimodal support' if ctx.has_images() else ''}"
         )
+
+        # Retrieve preferences if user_id is available and memory_manager is provided
+        if ctx.user_id and self.memory_manager:
+            try:
+                self._preferences_block = await self.memory_manager.get_user_preferences_block(
+                    user_id=ctx.user_id,
+                    query=ctx.query,
+                    project_id=ctx.project_id,
+                    limit=5
+                )
+            except Exception as e:
+                logger.warning(f"Failed to retrieve preferences: {e}")
+                self._preferences_block = ""
+        else:
+            self._preferences_block = ""
 
         # Check if we have images and if the model supports vision
         if ctx.has_images() and self.llm_provider.is_vision_model():

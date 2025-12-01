@@ -43,6 +43,7 @@ from app.modules.media.media_service import MediaService
 from app.modules.conversations.session.session_service import SessionService
 from app.modules.conversations.utils.redis_streaming import RedisStreamManager
 from app.celery.celery_app import celery_app
+from app.celery.tasks.memory_tasks import extract_user_preferences
 from .conversation_store import ConversationStore, StoreError
 from ..message.message_store import MessageStore
 
@@ -317,6 +318,76 @@ class ConversationService:
                 conversation_id, message_type, user_id
             )
             logger.info(f"Stored message in conversation {conversation_id}")
+
+            # Trigger async preference extraction after storing message
+            logger.debug(
+                f"[memory manager DEBUG] Checking extraction trigger: message_type={message_type}, "
+                f"MessageType.HUMAN={MessageType.HUMAN}, user_id={user_id}, "
+                f"condition_result={message_type == MessageType.HUMAN and user_id is not None}"
+            )
+            
+            if message_type == MessageType.HUMAN and user_id:
+                logger.debug(f"[memory manager DEBUG] Condition passed, entering extraction block for user_id={user_id}, conversation_id={conversation_id}")
+                try:
+                    # Get recent message history for context
+                    recent_history = self.history_manager.get_session_history(
+                        user_id, conversation_id
+                    )
+                    logger.debug(f"[memory manager DEBUG] Retrieved recent_history, length={len(recent_history)}")
+                    
+                    # Prepare messages for extraction (last 10 messages for context)
+                    # BaseMessage objects have type HumanMessage or AIMessage
+                    from langchain_core.messages import HumanMessage
+                    recent_messages = [
+                        {
+                            "role": "user" if isinstance(msg, HumanMessage) else "assistant",
+                            "content": msg.content
+                        }
+                        for msg in recent_history[-10:]  # Last 10 messages for context
+                        if hasattr(msg, 'content')
+                    ]
+                    logger.debug(f"[memory manager DEBUG] Prepared {len(recent_messages)} messages for extraction")
+                    
+                    # Get project_id from conversation if available
+                    conversation = await self._get_conversation_with_message_count(
+                        conversation_id
+                    )
+                    project_id = (
+                        conversation.project_ids[0] if conversation and conversation.project_ids else None
+                    )
+                    agent_id = conversation.agent_ids[0] if conversation and conversation.agent_ids else None
+                    
+                    logger.debug(
+                        f"[memory manager DEBUG] About to call extract_user_preferences.delay with: "
+                        f"user_id={user_id}, conversation_id={conversation_id}, project_id={project_id}, "
+                        f"agent_id={agent_id}, messages_count={len(recent_messages)}, "
+                        f"celery_app={self.celery_app}"
+                    )
+                    
+                    # Trigger async extraction (fire-and-forget with tracking)
+                    task_result = extract_user_preferences.delay(
+                        user_id=user_id,
+                        messages=recent_messages,
+                        conversation_id=conversation_id,
+                        project_id=project_id,
+                        metadata={
+                            "agent_id": agent_id,
+                        }
+                    )
+                    logger.debug(f"[memory manager DEBUG] extract_user_preferences.delay() returned: {task_result}, task_id={task_result.id if task_result else 'None'}")
+                    logger.info(f"[memory manager ] Triggered preference extraction task for user_id={user_id}, conversation_id={conversation_id}, project_id={project_id}, messages_count={len(recent_messages)}, task_id={task_result.id if task_result else 'None'}")
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to trigger preference extraction: {e}",
+                        exc_info=True
+                    )
+                    # Don't fail message storage if extraction fails
+            else:
+                logger.debug(
+                    f"[memory manager DEBUG] Condition NOT met - skipping extraction: "
+                    f"message_type={message_type} (expected {MessageType.HUMAN}), "
+                    f"user_id={user_id} (expected non-empty)"
+                )
 
             # Handle attachments if present
             if message_type == MessageType.HUMAN and message.attachment_ids:
@@ -702,6 +773,7 @@ class ConversationService:
                             history=validated_history[-12:],
                             node_ids=[node.node_id for node in node_ids],
                             query=query,
+                            user_id=user_id,  # NEW: Add user_id
                         ),
                     )
                 )
@@ -733,6 +805,7 @@ class ConversationService:
                     history=validated_history[-8:],
                     node_ids=nodes,
                     query=query,
+                    user_id=user_id,  # NEW: Add user_id
                     image_attachments=image_attachments,
                     context_images=context_images,
                 )

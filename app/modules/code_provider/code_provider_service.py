@@ -39,9 +39,31 @@ class MockRepo:
             self.updated_at = datetime.now()
         self._provider = provider
 
-    def get_languages(self):
-        # Return a mock languages dict
-        return {}
+            def get_languages(self):
+                provider = getattr(self, "_provider", None)
+                if not provider:
+                    return {}
+
+                try:
+                    # Prefer provider-specific helper when available (e.g., GitBucket's name normalization)
+                    if hasattr(provider, "_get_repo"):
+                        repo_obj = provider._get_repo(self.full_name)
+                    elif hasattr(provider, "client") and getattr(provider, "client", None):
+                        repo_obj = provider.client.get_repo(self.full_name)
+                    else:
+                        return {}
+
+                    languages = repo_obj.get_languages() or {}
+                    # Normalise keys to lowercase so downstream code can compare reliably
+                    return {str(lang).lower(): count for lang, count in languages.items()}
+                except Exception as e:
+                    logger.warning(
+                        "ProviderWrapper: Failed to fetch languages for %s via provider %s: %s",
+                        self.full_name,
+                        provider.__class__.__name__,
+                        e,
+                    )
+                    return {}
 
     def get_commits(self):
         # Return a mock commits object

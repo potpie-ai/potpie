@@ -286,6 +286,7 @@ class PydanticMultiAgent(ChatAgent):
         tools: List[StructuredTool],
         mcp_servers: List[dict] | None = None,
         delegate_agents: Optional[Dict[AgentType, AgentConfig]] = None,
+        memory_manager: Optional[object] = None,  # MemoryManager type, avoiding circular import
     ):
         """Initialize the multi-agent system with configuration and tools"""
 
@@ -295,6 +296,8 @@ class PydanticMultiAgent(ChatAgent):
         self.tools = tools
         self.config = config
         self.mcp_servers = mcp_servers or []
+        self.memory_manager = memory_manager  # Store injected manager
+        self._preferences_block = ""  # Cache for current context
 
         # Clean tool names (no spaces for pydantic agents)
         for i, tool in enumerate(tools):
@@ -812,6 +815,8 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
             Role: {self.config.role}
             Goal: {self.config.goal}
 
+            {self._preferences_block if self._preferences_block else ""}
+
             {multimodal_instructions}
 
             CONTEXT: {self._create_supervisor_task_description(ctx)}
@@ -1229,6 +1234,21 @@ Image Analysis Notes:
         # Store context for delegation functions
         self._current_context = ctx
 
+        # Retrieve preferences if user_id is available and memory_manager is provided
+        if ctx.user_id and self.memory_manager:
+            try:
+                self._preferences_block = await self.memory_manager.get_user_preferences_block(
+                    user_id=ctx.user_id,
+                    query=ctx.query,
+                    project_id=ctx.project_id,
+                    limit=5
+                )
+            except Exception as e:
+                logger.warning(f"Failed to retrieve preferences: {e}")
+                self._preferences_block = ""
+        else:
+            self._preferences_block = ""
+
         # Reset todo manager for this agent run to ensure isolation
         from app.modules.intelligence.tools.todo_management_tool import (
             _reset_todo_manager,
@@ -1346,6 +1366,21 @@ Image Analysis Notes:
 
         # Store context for delegation functions
         self._current_context = ctx
+
+        # Retrieve preferences if user_id is available and memory_manager is provided
+        if ctx.user_id and self.memory_manager:
+            try:
+                self._preferences_block = await self.memory_manager.get_user_preferences_block(
+                    user_id=ctx.user_id,
+                    query=ctx.query,
+                    project_id=ctx.project_id,
+                    limit=5
+                )
+            except Exception as e:
+                logger.warning(f"Failed to retrieve preferences: {e}")
+                self._preferences_block = ""
+        else:
+            self._preferences_block = ""
 
         # Check if we have images and if the model supports vision
         if ctx.has_images() and self.llm_provider.is_vision_model():

@@ -113,16 +113,23 @@ class QnAAgent(ChatAgent):
                     ),
                 }
                 return PydanticMultiAgent(
-                    self.llm_provider, agent_config, tools, None, delegate_agents
+                    self.llm_provider, agent_config, tools, None, delegate_agents,
+                    memory_manager=getattr(self, 'memory_manager', None)  # NEW: Pass memory_manager
                 )
             else:
                 logger.info("❌ Multi-agent disabled by config, using PydanticRagAgent")
-                return PydanticRagAgent(self.llm_provider, agent_config, tools)
+                return PydanticRagAgent(
+                    self.llm_provider, agent_config, tools,
+                    memory_manager=getattr(self, 'memory_manager', None)  # NEW: Pass memory_manager
+                )
         else:
             logger.error(
                 f"❌ Model '{self.llm_provider.chat_config.model}' does not support Pydantic - using fallback PydanticRagAgent"
             )
-            return PydanticRagAgent(self.llm_provider, agent_config, tools)
+            return PydanticRagAgent(
+                self.llm_provider, agent_config, tools,
+                memory_manager=getattr(self, 'memory_manager', None)  # NEW: Pass memory_manager
+            )
 
     async def _enriched_context(self, ctx: ChatContext) -> ChatContext:
         if ctx.node_ids and len(ctx.node_ids) > 0:
