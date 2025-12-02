@@ -12,6 +12,12 @@ from typing import Optional, Dict, Any, List, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 
+from app.modules.auth.sso_providers import (
+    GoogleSSOProvider,
+    AzureSSOProvider,
+    BaseSSOProvider,
+)
+
 from app.modules.auth.auth_provider_model import (
     UserAuthProvider,
     PendingProviderLink,
@@ -43,6 +49,36 @@ class UnifiedAuthService:
     def __init__(self, db: Session):
         self.db = db
         self.user_service = UserService(db)
+        
+        # Initialize SSO providers
+        self.sso_providers: Dict[str, BaseSSOProvider] = {
+            "google": GoogleSSOProvider(),
+            "azure": AzureSSOProvider(),
+        }
+    
+    def get_sso_provider(self, provider_name: str) -> Optional[BaseSSOProvider]:
+        """Get SSO provider by name"""
+        return self.sso_providers.get(provider_name.lower())
+    
+    async def verify_sso_token(
+        self, provider_name: str, id_token: str
+    ) -> Optional[Any]:
+        """
+        Verify an SSO ID token using the appropriate provider.
+        
+        Returns SSOUserInfo if valid, None if invalid.
+        """
+        provider = self.get_sso_provider(provider_name)
+        if not provider:
+            logger.error(f"Unknown SSO provider: {provider_name}")
+            return None
+        
+        try:
+            user_info = await provider.verify_token(id_token)
+            return user_info
+        except ValueError as e:
+            logger.error(f"Token verification failed for {provider_name}: {str(e)}")
+            return None
     
     # ===== Provider Management =====
     
