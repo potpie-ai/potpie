@@ -1224,8 +1224,8 @@ async def sentry_webhook(request: Request) -> Dict[str, Any]:
                 form_dict = {k: str(v) for k, v in form_data.items()}
                 logging.info(f"Form data: {form_dict}")
                 webhook_data.update(form_dict)
-        except Exception as e:
-            logging.info(f"No form data present: {str(e)}")
+        except Exception:
+            pass
 
         # Extract event type from headers or payload
         event_type = (
@@ -2315,8 +2315,6 @@ async def debug_oauth_config(
         validation_result = await integrations_service.validate_oauth_configuration()
 
         # Additional debugging information
-        from starlette.config import Config
-
         config = Config()
 
         client_id = config("SENTRY_CLIENT_ID", default="")
@@ -2446,3 +2444,163 @@ async def debug_sentry_app_info() -> Dict[str, Any]:
             },
         },
     }
+
+
+# ============= SLACK INTEGRATION ENDPOINTS =============
+
+@router.get("/slack/{integration_id}/channels")
+async def get_slack_channels(
+    integration_id: str,
+    integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
+) -> Dict[str, Any]:
+    """
+    Get list of Slack channels for a workspace.
+    Used by workflow editor to populate channel dropdown in Slack action nodes.
+    """
+    try:
+        # Verify the user owns this integration
+        integration = await integrations_service.get_integration_by_id(integration_id)
+        if not integration or integration.get("created_by") != user["user_id"]:
+            raise HTTPException(
+                status_code=403, detail="Integration not found or access denied"
+            )
+
+        # Get Slack workspace info from integration
+        auth_data = integration.get("auth_data", {})
+        team_id = auth_data.get("team_id")
+        
+        if not team_id:
+            raise HTTPException(
+                status_code=400, detail="Integration is missing team_id"
+            )
+
+        # Call the Slack bot service to get channels
+        import aiohttp
+        
+        config = Config()
+
+        slack_service_url = config("SLACK_SERVICE_URL", default="http://localhost:8010")
+        
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.get(
+                    f"{slack_service_url}/api/slack/channels",
+                    params={"team_id": team_id},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return {
+                            "status": "success",
+                            "integration_id": integration_id,
+                            "channels": data.get("channels", []),
+                        }
+                    else:
+                        error_msg = await response.text()
+                        logging.error(f"Slack service error: {error_msg}")
+                        raise HTTPException(
+                            status_code=response.status,
+                            detail=f"Failed to fetch channels from Slack service: {error_msg}",
+                        )
+            except aiohttp.ClientError as e:
+                logging.error(f"Error calling Slack service: {str(e)}")
+                raise HTTPException(
+                    status_code=503,
+                    detail="Slack service unavailable",
+                )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error fetching Slack channels: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch Slack channels: {str(e)}",
+        )
+
+
+@router.post("/slack/{integration_id}/send-message")
+async def send_slack_message(
+    integration_id: str,
+    channel_id: str,
+    message: str,
+    integrations_service: IntegrationsService = Depends(get_integrations_service),
+    user: dict = Depends(AuthService.check_auth),
+) -> Dict[str, Any]:
+    """
+    Send a message to a Slack channel.
+    Called by workflow executor or manual testing.
+    """
+    try:
+        # Verify the user owns this integration
+        integration = await integrations_service.get_integration_by_id(integration_id)
+        if not integration or integration.get("created_by") != user["user_id"]:
+            raise HTTPException(
+                status_code=403, detail="Integration not found or access denied"
+            )
+
+        if not channel_id or not message:
+            raise HTTPException(
+                status_code=400, detail="channel_id and message are required"
+            )
+
+        # Get Slack workspace info from integration
+        auth_data = integration.get("auth_data", {})
+        team_id = auth_data.get("team_id")
+        
+        if not team_id:
+            raise HTTPException(
+                status_code=400, detail="Integration is missing team_id"
+            )
+
+        # Call the Slack bot service to send message
+        import aiohttp
+
+        config = Config()
+        
+        slack_service_url = config("SLACK_SERVICE_URL", default="http://localhost:8010")
+        
+        payload = {
+            "team_id": team_id,
+            "channel_id": channel_id,
+            "message": message,
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.post(
+                    f"{slack_service_url}/api/slack/send-message",
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as response:
+                    result = await response.json()
+                    
+                    if response.status == 200:
+                        return {
+                            "status": "success",
+                            "integration_id": integration_id,
+                            "channel_id": channel_id,
+                            "result": result,
+                        }
+                    else:
+                        logging.error(f"Slack service error: {result}")
+                        raise HTTPException(
+                            status_code=response.status,
+                            detail=f"Failed to send message: {result.get('error', 'Unknown error')}",
+                        )
+            except aiohttp.ClientError as e:
+                logging.error(f"Error calling Slack service: {str(e)}")
+                raise HTTPException(
+                    status_code=503,
+                    detail="Slack service unavailable",
+                )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error sending Slack message: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to send Slack message: {str(e)}",
+        )
