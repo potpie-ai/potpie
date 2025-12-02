@@ -414,8 +414,7 @@ class UniversalCodeAnalyzer:
 
 class UniversalAnalyzeCodeTool:
     name: str = "analyze_code_structure_universal"
-    description: str = (
-        """Universal code structure analyzer that works with multiple programming languages using Tree-sitter.
+    description: str = """Universal code structure analyzer that works with multiple programming languages using Tree-sitter.
         Supports Python, JavaScript, TypeScript, Java, C++, C, Rust, Go, PHP, Ruby, and more.
 
         Extracts detailed information about:
@@ -434,7 +433,6 @@ class UniversalAnalyzeCodeTool:
 
         Returns a structured analysis of the code with all extractable elements.
         """
-    )
     args_schema: Type[BaseModel] = UniversalAnalyzeCodeToolInput
 
     def __init__(self, sql_db: Session, user_id: str):

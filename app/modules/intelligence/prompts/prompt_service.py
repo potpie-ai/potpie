@@ -351,7 +351,6 @@ class PromptService:
         agent_ids=None,
         available_agents=None,
     ) -> str:
-
         if agent_ids and available_agents:
             inputs = {
                 "query": prompt,

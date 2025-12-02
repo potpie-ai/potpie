@@ -573,7 +573,6 @@ class ChangeDetectionTool:
 
                 # GitBucket workaround: Use commits API to get diff
                 if provider_type == "gitbucket":
-
                     logging.info(
                         "[CHANGE_DETECTION] Using commits API for GitBucket diff"
                     )

@@ -91,7 +91,8 @@ class PydanticRagAgent(ChatAgent):
             try:
                 # Add timeout and connection handling for MCP servers
                 mcp_server_instance = MCPServerStreamableHTTP(
-                    url=mcp_server["link"], timeout=10.0  # 10 second timeout
+                    url=mcp_server["link"],
+                    timeout=10.0,  # 10 second timeout
                 )
                 mcp_toolsets.append(mcp_server_instance)
                 logger.info(

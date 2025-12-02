@@ -527,9 +527,7 @@ class ClassificationPrompts:
         """,
     }
 
-    REDUNDANT_INHIBITION_TAIL: str = (
-        "\n\nReturn ONLY JSON content, and nothing else. Don't provide reason or any other text in the response."
-    )
+    REDUNDANT_INHIBITION_TAIL: str = "\n\nReturn ONLY JSON content, and nothing else. Don't provide reason or any other text in the response."
 
     @classmethod
     def get_classification_prompt(cls, agent_type: AgentType) -> str:
