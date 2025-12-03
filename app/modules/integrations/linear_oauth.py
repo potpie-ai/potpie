@@ -224,7 +224,9 @@ class LinearOAuth:
 
             # For now, we'll just log the callback
             # In a real implementation, you'd exchange the code for tokens
-            logger.debug(f"Linear OAuth callback received for user {_hash_user_id(user_id)}")
+            logger.debug(
+                f"Linear OAuth callback received for user {_hash_user_id(user_id)}"
+            )
             logger.debug("Code: [REDACTED]")
             logger.debug(f"State: {state}")
 
@@ -252,7 +254,9 @@ class LinearOAuth:
         """Revoke OAuth access for a user"""
         try:
             self.token_store.remove_tokens(user_id)
-            logger.info(f"Linear OAuth access revoked for user: {_hash_user_id(user_id)}")
+            logger.info(
+                f"Linear OAuth access revoked for user: {_hash_user_id(user_id)}"
+            )
             return True
         except Exception:
             logger.exception("Failed to revoke Linear OAuth access")
