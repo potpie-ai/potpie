@@ -4,8 +4,11 @@ Token encryption utilities for secure storage of OAuth tokens
 
 import os
 import base64
+import hashlib
 from cryptography.fernet import Fernet
-import logging
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class TokenEncryption:
@@ -23,12 +26,14 @@ class TokenEncryption:
 
             if not encryption_key:
                 # Generate a new key if none exists (for development)
-                logging.warning(
+                logger.warning(
                     "ENCRYPTION_KEY not found in environment. Generating new key for development."
                 )
                 encryption_key = Fernet.generate_key().decode()
-                logging.warning(f"Generated encryption key: {encryption_key}")
-                logging.warning(
+                # Log a non-reversible fingerprint for debugging (first 8 chars of SHA256)
+                key_fingerprint = hashlib.sha256(encryption_key.encode()).hexdigest()[:8]
+                logger.warning(f"Generated encryption key for development (fingerprint: {key_fingerprint})")
+                logger.warning(
                     "IMPORTANT: Set ENCRYPTION_KEY environment variable in production!"
                 )
 
@@ -47,7 +52,7 @@ class TokenEncryption:
             self._fernet = Fernet(base64.urlsafe_b64encode(encryption_key))
 
         except Exception as e:
-            logging.error(f"Failed to initialize token encryption: {str(e)}")
+            logger.exception("Failed to initialize token encryption")
             raise Exception(f"Token encryption initialization failed: {str(e)}")
 
     def encrypt_token(self, token: str) -> str:
@@ -63,7 +68,7 @@ class TokenEncryption:
             return encrypted_bytes.decode()
 
         except Exception as e:
-            logging.error(f"Failed to encrypt token: {str(e)}")
+            logger.exception("Failed to encrypt token")
             raise Exception(f"Token encryption failed: {str(e)}")
 
     def decrypt_token(self, encrypted_token: str) -> str:
@@ -79,7 +84,7 @@ class TokenEncryption:
             return decrypted_bytes.decode()
 
         except Exception as e:
-            logging.error(f"Failed to decrypt token: {str(e)}")
+            logger.exception("Failed to decrypt token")
             raise Exception(f"Token decryption failed: {str(e)}")
 
 

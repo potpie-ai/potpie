@@ -8,8 +8,10 @@ from starlette.config import Config
 from fastapi import HTTPException
 import httpx
 import urllib.parse
-import logging
 import time
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class SentryOAuthStore:
@@ -90,7 +92,31 @@ class SentryOAuthV2:
         if state:
             auth_url += f"&state={urllib.parse.quote(state, safe=safe_chars)}"
 
-        logging.info(f"Generated Sentry OAuth URL: {auth_url}")
+        # Sanitize URL for logging - redact sensitive query parameters
+        parsed_url = urllib.parse.urlparse(auth_url)
+        query_params = urllib.parse.parse_qs(parsed_url.query)
+        
+        # Redact sensitive parameters
+        sensitive_params = ["client_id", "redirect_uri", "state", "scope"]
+        sanitized_params = {}
+        for key, values in query_params.items():
+            if key in sensitive_params:
+                sanitized_params[key] = ["<redacted>"]
+            else:
+                sanitized_params[key] = values
+        
+        # Reconstruct sanitized URL
+        sanitized_query = urllib.parse.urlencode(sanitized_params, doseq=True)
+        sanitized_url = urllib.parse.urlunparse((
+            parsed_url.scheme,
+            parsed_url.netloc,
+            parsed_url.path,
+            parsed_url.params,
+            sanitized_query,
+            parsed_url.fragment
+        ))
+        
+        logger.info(f"Generated Sentry OAuth URL: {sanitized_url}")
         return auth_url
 
     async def exchange_code_for_tokens(
@@ -113,22 +139,22 @@ class SentryOAuthV2:
                 "redirect_uri": redirect_uri,
             }
 
-            logging.info("=== Sentry OAuth Token Exchange ===")
-            logging.info(f"Token URL: {token_url}")
-            logging.info(f"Client ID: {self.client_id}")
-            logging.info(f"Code: {authorization_code}")
-            logging.info(f"Code length: {len(authorization_code)}")
-            logging.info(f"Code first 10 chars: {authorization_code[:10]}")
-            logging.info(f"Code last 10 chars: {authorization_code[-10:]}")
-            logging.info(f"Redirect URI: {redirect_uri}")
-            logging.info(f"Request data keys: {list(token_data.keys())}")
+            logger.info("=== Sentry OAuth Token Exchange ===")
+            logger.info(f"Token URL: {token_url}")
+            logger.info(f"Client ID: {self.client_id}")
+            logger.info(f"Code: {authorization_code}")
+            logger.info(f"Code length: {len(authorization_code)}")
+            logger.info(f"Code first 10 chars: {authorization_code[:10]}")
+            logger.info(f"Code last 10 chars: {authorization_code[-10:]}")
+            logger.info(f"Redirect URI: {redirect_uri}")
+            logger.info(f"Request data keys: {list(token_data.keys())}")
 
             # Log the exact request payload (without secrets)
             debug_payload = {
                 k: v for k, v in token_data.items() if k != "client_secret"
             }
             debug_payload["client_secret"] = "***REDACTED***"
-            logging.info(f"Request payload: {debug_payload}")
+            logger.info(f"Request payload: {debug_payload}")
 
             # Make the token exchange request using httpx (as shown in Sentry docs)
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -141,13 +167,13 @@ class SentryOAuthV2:
                     },
                 )
 
-                logging.info(f"Response status: {response.status_code}")
-                logging.info(f"Response headers: {dict(response.headers)}")
-                logging.info(f"Response content: {response.text}")
+                logger.info(f"Response status: {response.status_code}")
+                logger.info(f"Response headers: {dict(response.headers)}")
+                logger.info(f"Response content: {response.text}")
 
                 if response.status_code != 200:
-                    logging.error(f"Token exchange failed: {response.status_code}")
-                    logging.error(f"Response: {response.text}")
+                    logger.error(f"Token exchange failed: {response.status_code}")
+                    logger.error(f"Response: {response.text}")
                     raise HTTPException(
                         status_code=response.status_code,
                         detail=f"Token exchange failed: {response.text}",
@@ -155,17 +181,17 @@ class SentryOAuthV2:
 
                 # Parse the token response
                 tokens = response.json()
-                logging.info(f"Received tokens: {list(tokens.keys())}")
+                logger.info(f"Received tokens: {list(tokens.keys())}")
 
                 return tokens
 
         except httpx.HTTPError as e:
-            logging.error(f"HTTP error during token exchange: {str(e)}")
+            logger.exception("HTTP error during token exchange")
             raise HTTPException(
                 status_code=500, detail=f"HTTP error during token exchange: {str(e)}"
             )
         except Exception as e:
-            logging.error(f"Unexpected error during token exchange: {str(e)}")
+            logger.exception("Unexpected error during token exchange")
             raise HTTPException(
                 status_code=500, detail=f"Token exchange failed: {str(e)}"
             )
@@ -187,27 +213,25 @@ class SentryOAuthV2:
                 )
 
                 if response.status_code != 200:
-                    logging.error(
-                        f"Failed to get organizations: {response.status_code}"
-                    )
-                    logging.error(f"Response: {response.text}")
+                    logger.error(f"Failed to get organizations: {response.status_code}")
+                    logger.error(f"Response: {response.text}")
                     raise HTTPException(
                         status_code=response.status_code,
                         detail=f"Failed to get organizations: {response.text}",
                     )
 
                 organizations = response.json()
-                logging.info(f"Retrieved {len(organizations)} organizations")
+                logger.info(f"Retrieved {len(organizations)} organizations")
 
                 return organizations
 
         except httpx.HTTPError as e:
-            logging.error(f"HTTP error getting organizations: {str(e)}")
+            logger.exception("HTTP error getting organizations")
             raise HTTPException(
                 status_code=500, detail=f"Failed to get organizations: {str(e)}"
             )
         except Exception as e:
-            logging.error(f"Unexpected error getting organizations: {str(e)}")
+            logger.exception("Unexpected error getting organizations")
             raise HTTPException(
                 status_code=500, detail=f"Failed to get organizations: {str(e)}"
             )

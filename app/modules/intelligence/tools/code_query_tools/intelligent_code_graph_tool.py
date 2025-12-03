@@ -1,10 +1,11 @@
-import logging
-from typing import Any, Dict, List, Optional, Set
-from pydantic import BaseModel, Field
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict, List, Optional, Set
 
 from langchain_core.tools import StructuredTool
+from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
+
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id_tool import (
     GetCodeGraphFromNodeIdTool,
@@ -12,7 +13,9 @@ from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     GetCodeFromNodeIdTool,
 )
-from sqlalchemy.orm import Session
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class NodeRelevance(BaseModel):
@@ -151,7 +154,7 @@ class IntelligentCodeGraphTool:
                     max_depth=max_depth,
                 )
             except Exception as e:
-                logging.warning(
+                logger.warning(
                     f"Node processing failed: {str(e)}; using simplified filtering"
                 )
                 filtered_graph = self._create_relevant_node(
@@ -192,7 +195,7 @@ class IntelligentCodeGraphTool:
                 }
             }
         except Exception as e:
-            logging.exception(f"Error in intelligent code graph tool: {str(e)}")
+            logger.exception(f"Error in intelligent code graph tool: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
     async def _process_node_recursively_async(
@@ -394,8 +397,8 @@ class IntelligentCodeGraphTool:
 
             return [eval_ for batch_result in batch_results for eval_ in batch_result]
 
-        except Exception as e:
-            logging.exception(f"Error evaluating nodes: {str(e)}")
+        except Exception:
+            logger.exception("Error evaluating nodes")
             return [
                 NodeRelevance(
                     node_id=child["id"],

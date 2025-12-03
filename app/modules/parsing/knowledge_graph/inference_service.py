@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import os
 import re
 from typing import Any, Dict, List, Optional
@@ -25,8 +24,9 @@ from app.modules.parsing.utils.content_hash import (
 )
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 # Global singleton for SentenceTransformer to avoid reloading
 _embedding_model = None
