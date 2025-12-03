@@ -8,9 +8,15 @@ from starlette.config import Config
 import httpx
 import urllib.parse
 import time
+import hashlib
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+
+def _hash_user_id(user_id: str) -> str:
+    """Hash user ID for safe logging (first 8 chars of SHA256)"""
+    return hashlib.sha256(user_id.encode()).hexdigest()[:8]
 
 
 class LinearOAuthStore:
@@ -107,20 +113,16 @@ class LinearOAuth:
                 "redirect_uri": redirect_uri,
             }
 
-            # Log token exchange details for debugging
-            logger.info("Linear token exchange request:")
-            logger.info(f"  URL: {token_url}")
-            logger.info(
+            # Log token exchange details for debugging (debug level only, no sensitive data)
+            logger.debug("Linear token exchange request:")
+            logger.debug(f"  URL: {token_url}")
+            logger.debug(
                 f"  Client ID: {self.client_id[:10]}..."
                 if self.client_id
                 else "  Client ID: None"
             )
-            logger.info(f"  Redirect URI: {redirect_uri}")
-            logger.info(
-                f"  Code: {authorization_code[:20]}..."
-                if authorization_code
-                else "  Code: None"
-            )
+            logger.debug(f"  Redirect URI: {redirect_uri}")
+            logger.debug("  Code: [REDACTED]")
 
             # Make the token exchange request
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -222,9 +224,9 @@ class LinearOAuth:
 
             # For now, we'll just log the callback
             # In a real implementation, you'd exchange the code for tokens
-            logger.info(f"Linear OAuth callback received for user {user_id}")
-            logger.info(f"Code: {code[:20]}...")
-            logger.info(f"State: {state}")
+            logger.debug(f"Linear OAuth callback received for user {_hash_user_id(user_id)}")
+            logger.debug("Code: [REDACTED]")
+            logger.debug(f"State: {state}")
 
             return {
                 "status": "success",
@@ -250,7 +252,7 @@ class LinearOAuth:
         """Revoke OAuth access for a user"""
         try:
             self.token_store.remove_tokens(user_id)
-            logger.info(f"Linear OAuth access revoked for user: {user_id}")
+            logger.info(f"Linear OAuth access revoked for user: {_hash_user_id(user_id)}")
             return True
         except Exception:
             logger.exception("Failed to revoke Linear OAuth access")

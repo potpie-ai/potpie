@@ -144,8 +144,16 @@ class ParsingService:
                 raise HTTPException(status_code=500, detail=message)
 
             except Exception as e:
+                # Log the full traceback server-side for debugging
+                tb_str = "".join(traceback.format_exception(None, e, e.__traceback__))
                 logger.exception(
                     f"Error during parsing for project {project_id}",
+                    project_id=project_id,
+                    user_id=user_id,
+                )
+                # Log the formatted traceback string explicitly for detailed debugging
+                logger.error(
+                    f"Full traceback for project {project_id}:\n{tb_str}",
                     project_id=project_id,
                     user_id=user_id,
                 )
@@ -162,9 +170,10 @@ class ParsingService:
                         user_id=user_id,
                     )
                 await ParseWebhookHelper().send_slack_notification(project_id, str(e))
-                tb_str = "".join(traceback.format_exception(None, e, e.__traceback__))
+                # Raise generic error with correlation ID for client
                 raise HTTPException(
-                    status_code=500, detail=f"{str(e)}\nTraceback: {tb_str}"
+                    status_code=500,
+                    detail=f"Internal server error. Please contact support with project ID: {project_id}",
                 )
 
             finally:

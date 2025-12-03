@@ -174,7 +174,7 @@ class SearchConfluencePagesTool:
                 await client.close()
 
         except Exception as e:
-            logger.error(f"Error searching Confluence pages: {str(e)}")
+            logger.exception(f"Error searching Confluence pages: {str(e)}")
             return {"success": False, "error": str(e)}
 
     def run(

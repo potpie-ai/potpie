@@ -92,7 +92,31 @@ class SentryOAuthV2:
         if state:
             auth_url += f"&state={urllib.parse.quote(state, safe=safe_chars)}"
 
-        logger.info(f"Generated Sentry OAuth URL: {auth_url}")
+        # Sanitize URL for logging - redact sensitive query parameters
+        parsed_url = urllib.parse.urlparse(auth_url)
+        query_params = urllib.parse.parse_qs(parsed_url.query)
+        
+        # Redact sensitive parameters
+        sensitive_params = ["client_id", "redirect_uri", "state", "scope"]
+        sanitized_params = {}
+        for key, values in query_params.items():
+            if key in sensitive_params:
+                sanitized_params[key] = ["<redacted>"]
+            else:
+                sanitized_params[key] = values
+        
+        # Reconstruct sanitized URL
+        sanitized_query = urllib.parse.urlencode(sanitized_params, doseq=True)
+        sanitized_url = urllib.parse.urlunparse((
+            parsed_url.scheme,
+            parsed_url.netloc,
+            parsed_url.path,
+            parsed_url.params,
+            sanitized_query,
+            parsed_url.fragment
+        ))
+        
+        logger.info(f"Generated Sentry OAuth URL: {sanitized_url}")
         return auth_url
 
     async def exchange_code_for_tokens(

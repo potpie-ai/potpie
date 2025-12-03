@@ -127,7 +127,7 @@ class CreateJiraIssueTool:
                 "issue": issue,
             }
         except Exception as e:
-            logger.exception(f"Error creating Jira issue: {e}")
+            logger.exception("Error creating Jira issue")
             return {
                 "success": False,
                 "error": str(e),
