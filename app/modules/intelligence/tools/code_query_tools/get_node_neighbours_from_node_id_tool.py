@@ -1,6 +1,8 @@
 import asyncio
-import logging
 from typing import Any, Dict, List, Optional
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 from langchain_core.tools import StructuredTool
 from neo4j import GraphDatabase
@@ -75,7 +77,7 @@ class GetNodeNeighboursFromNodeIdTool:
 
             return {"neighbors": result_neighbors}
         except Exception as e:
-            logging.exception(f"An unexpected error occurred: {str(e)}")
+            logger.exception(f"An unexpected error occurred: {str(e)}")
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
     def _get_neighbors(

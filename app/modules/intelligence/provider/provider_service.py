@@ -1,4 +1,3 @@
-import logging
 import os
 from typing import List, Dict, Any, Union, AsyncGenerator, Optional
 from pydantic import BaseModel
@@ -10,8 +9,9 @@ from app.core.config_provider import config_provider
 from app.modules.key_management.secret_manager import SecretManager
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.posthog_helper import PostHogClient
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 from .provider_schema import (
     ProviderInfo,
@@ -179,7 +179,7 @@ def custom_litellm_retry_handler(retry_count: int, exception: Exception) -> bool
     delay = calculate_backoff_time(retry_count, settings)
 
     provider = identify_provider_from_error(exception)
-    logging.warning(
+    logger.warning(
         f"{provider.capitalize()} API error: {str(exception)}. "
         f"Retry {retry_count}/{settings.max_retries}, "
         f"waiting {delay:.2f}s before next attempt..."
@@ -216,15 +216,17 @@ def robust_llm_call(settings: Optional[RetrySettings] = None):
                     provider = identify_provider_from_error(e)
 
                     if retries >= settings.max_retries:
-                        logging.error(
-                            f"Max retries ({settings.max_retries}) exceeded for {provider} API call. "
-                            f"Last error: {str(e)}"
+                        logger.exception(
+                            f"Max retries ({settings.max_retries}) exceeded for {provider} API call",
+                            provider=provider,
+                            retries=retries,
+                            max_retries=settings.max_retries
                         )
                         raise
 
                     delay = calculate_backoff_time(retries, settings)
 
-                    logging.warning(
+                    logger.warning(
                         f"{provider.capitalize()} API error: {str(e)}. "
                         f"Retry {retries+1}/{settings.max_retries}, "
                         f"waiting {delay:.2f}s before next attempt..."
@@ -580,7 +582,7 @@ class ProviderService:
                 ),
             )
         except Exception as e:
-            logging.error(f"Error getting global AI provider: {e}")
+            logger.exception("Error getting global AI provider")
             raise e
 
     def supports_pydantic(self, config_type: str = "chat") -> bool:
@@ -677,8 +679,10 @@ class ProviderService:
                     response = await acompletion(messages=messages, **params)
                     return response.choices[0].message.content
         except Exception as e:
-            logging.error(
-                f"Error calling LLM with model {model_identifier}: {e}, provider: {routing_provider}"
+            logger.exception(
+                f"Error calling LLM with model {model_identifier}",
+                model_identifier=model_identifier,
+                provider=routing_provider
             )
             raise e
 
@@ -710,7 +714,10 @@ class ProviderService:
                 response = await acompletion(messages=messages, **params)
                 return response.choices[0].message.content
         except Exception as e:
-            logging.error(f"Error calling LLM: {e}, provider: {routing_provider}")
+            logger.exception(
+                "Error calling LLM",
+                provider=routing_provider
+            )
             raise e
 
     @robust_llm_call()
@@ -774,7 +781,7 @@ class ProviderService:
                 )
             return response
         except Exception as e:
-            logging.error(f"LLM call with structured output failed: {e}")
+            logger.exception("LLM call with structured output failed")
             raise e
 
     @robust_llm_call()
@@ -836,8 +843,9 @@ class ProviderService:
                 response = await acompletion(messages=messages, **params)
                 return response.choices[0].message.content
         except Exception as e:
-            logging.error(
-                f"Error calling multimodal LLM: {e}, provider: {routing_provider}"
+            logger.exception(
+                "Error calling multimodal LLM",
+                provider=routing_provider
             )
             raise e
 
@@ -1002,8 +1010,11 @@ class ProviderService:
                     f"Image {img_id} passed validation ({len(base64_data)} chars, {mime_type})"
                 )
 
-            except Exception as e:
-                logger.error(f"Error validating image {img_id}: {str(e)}")
+            except Exception:
+                logger.exception(
+                    f"Error validating image {img_id}",
+                    img_id=img_id
+                )
                 continue
 
         logger.info(

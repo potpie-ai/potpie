@@ -1,4 +1,3 @@
-import logging
 import hashlib
 from typing import Optional, Dict, Any, List, Union
 from io import BytesIO
@@ -18,8 +17,9 @@ from app.modules.media.media_model import (
     StorageProvider,
 )
 from app.modules.media.media_schema import AttachmentInfo, AttachmentUploadResponse
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class MediaServiceError(Exception):
@@ -59,7 +59,7 @@ class MediaService:
             try:
                 self.storage_provider = StorageProvider(provider)
             except ValueError as exc:  # fall back to safe default
-                logger.error("Unsupported storage provider '%s': %s", provider, exc)
+                logger.error(f"Unsupported storage provider '{provider}': {exc}")
                 raise MediaServiceError(
                     f"Unsupported storage provider configured: {provider}"
                 ) from exc
@@ -83,12 +83,10 @@ class MediaService:
             self.s3_client = boto3.client("s3", **client_kwargs)
             self.s3_client.head_bucket(Bucket=self.bucket_name)
             logger.info(
-                "Initialized boto3 client for provider %s (bucket=%s)",
-                self.storage_provider.value,
-                self.bucket_name,
+                f"Initialized boto3 client for provider {self.storage_provider.value} (bucket={self.bucket_name})"
             )
         except Exception as e:
-            logger.error("Failed to initialize object storage client: %s", e)
+            logger.error(f"Failed to initialize object storage client: {e}")
             raise MediaServiceError(f"Failed to initialize object storage: {e}")
 
     def _check_multimodal_enabled(self):
@@ -312,11 +310,7 @@ class MediaService:
 
         try:
             logger.info(
-                "Uploading object -> provider=%s bucket=%s key=%s content_type=%s",
-                self.storage_provider.value,
-                self.bucket_name,
-                storage_path,
-                mime_type,
+                f"Uploading object -> provider={self.storage_provider.value} bucket={self.bucket_name} key={storage_path} content_type={mime_type}"
             )
             md5_b64 = base64.b64encode(hashlib.md5(file_data).digest()).decode("utf-8")
             self.s3_client.put_object(
@@ -326,9 +320,9 @@ class MediaService:
                 ContentType=mime_type,
                 ContentMD5=md5_b64,
             )
-            logger.info("Uploaded object to %s:%s", self.bucket_name, storage_path)
+            logger.info(f"Uploaded object to {self.bucket_name}:{storage_path}")
         except Exception as e:
-            logger.error("Failed to upload to object storage: %s", e)
+            logger.error(f"Failed to upload to object storage: {e}")
             raise MediaServiceError(f"Failed to upload to object storage: {e}")
 
     async def get_attachment(self, attachment_id: str) -> Optional[MessageAttachment]:

@@ -3,7 +3,9 @@
 Allows agents to search for Confluence pages using CQL (Confluence Query Language).
 """
 
-import logging
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 import asyncio
 from typing import Any, Dict
 from langchain_core.tools import StructuredTool
@@ -172,7 +174,7 @@ class SearchConfluencePagesTool:
                 await client.close()
 
         except Exception as e:
-            logging.error(f"Error searching Confluence pages: {str(e)}")
+            logger.error(f"Error searching Confluence pages: {str(e)}")
             return {"success": False, "error": str(e)}
 
     def run(

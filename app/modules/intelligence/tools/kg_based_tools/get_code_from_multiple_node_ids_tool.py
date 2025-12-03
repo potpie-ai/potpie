@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from typing import Any, Dict, List
 
 from langchain_core.tools import StructuredTool
@@ -10,8 +9,9 @@ from sqlalchemy.orm import Session
 from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_model import Project
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class GetCodeFromMultipleNodeIdsInput(BaseModel):
@@ -79,11 +79,14 @@ class GetCodeFromMultipleNodeIdsTool:
             return {
                 node_id: result for node_id, result in zip(node_ids, completed_tasks)
             }
-        except Exception as e:
-            logger.error(
-                f"Unexpected error in GetCodeFromMultipleNodeIdsTool: {str(e)}"
+        except Exception:
+            logger.exception(
+                "Unexpected error in GetCodeFromMultipleNodeIdsTool",
+                project_id=project_id,
+                node_ids=node_ids,
+                user_id=self.user_id
             )
-            return {"error": f"An unexpected error occurred: {str(e)}"}
+            return {"error": "An unexpected error occurred"}
 
     async def _retrieve_node_data(
         self, project_id: str, node_id: str, project: Project
