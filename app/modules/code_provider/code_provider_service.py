@@ -101,7 +101,7 @@ class ProviderWrapper:
             def get_languages(self):
                 # Get languages from the actual GitHub API via the provider's client
                 try:
-                    if hasattr(self._provider, 'client') and self._provider.client:
+                    if hasattr(self._provider, "client") and self._provider.client:
                         # Get the actual repo object from GitHub API
                         github_repo = self._provider.client.get_repo(self.full_name)
                         # PyGithub's get_languages() returns a dict like {"Python": 12345, "JavaScript": 6789}
@@ -134,9 +134,9 @@ class ProviderWrapper:
 
             def get_archive_link(self, format_type, ref):
                 # Return archive link using provider
-                import logging
 
                 from app.modules.utils.logger import setup_logger
+
                 logger = setup_logger(__name__)
 
                 logger.info(

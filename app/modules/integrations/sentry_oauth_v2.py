@@ -95,7 +95,7 @@ class SentryOAuthV2:
         # Sanitize URL for logging - redact sensitive query parameters
         parsed_url = urllib.parse.urlparse(auth_url)
         query_params = urllib.parse.parse_qs(parsed_url.query)
-        
+
         # Redact sensitive parameters
         sensitive_params = ["client_id", "redirect_uri", "state", "scope"]
         sanitized_params = {}
@@ -104,18 +104,20 @@ class SentryOAuthV2:
                 sanitized_params[key] = ["<redacted>"]
             else:
                 sanitized_params[key] = values
-        
+
         # Reconstruct sanitized URL
         sanitized_query = urllib.parse.urlencode(sanitized_params, doseq=True)
-        sanitized_url = urllib.parse.urlunparse((
-            parsed_url.scheme,
-            parsed_url.netloc,
-            parsed_url.path,
-            parsed_url.params,
-            sanitized_query,
-            parsed_url.fragment
-        ))
-        
+        sanitized_url = urllib.parse.urlunparse(
+            (
+                parsed_url.scheme,
+                parsed_url.netloc,
+                parsed_url.path,
+                parsed_url.params,
+                sanitized_query,
+                parsed_url.fragment,
+            )
+        )
+
         logger.info(f"Generated Sentry OAuth URL: {sanitized_url}")
         return auth_url
 
