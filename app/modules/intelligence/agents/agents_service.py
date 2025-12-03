@@ -160,9 +160,10 @@ class AgentsService:
             custom_agents = await CustomAgentService(
                 self.db, self.llm_provider, self.tools_provider
             ).list_agents(current_user["user_id"])
-        except Exception as e:
-            logger.error(
-                f"Failed to fetch custom agents for user {current_user['user_id']}: {e}"
+        except Exception:
+            logger.exception(
+                "Failed to fetch custom agents",
+                user_id=current_user['user_id']
             )
             custom_agents = []
         agent_info_list = [

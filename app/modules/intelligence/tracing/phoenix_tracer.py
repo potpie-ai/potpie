@@ -108,10 +108,10 @@ def initialize_phoenix_tracing(
 
         logger.info(
             "Initializing Phoenix tracing:\n"
-            "  Project: %s\n"
-            "  Endpoint: %s\n"
-            "  Source: %s\n"
-            "  Auto-instrument: %s",
+            "  Project: {}\n"
+            "  Endpoint: {}\n"
+            "  Source: {}\n"
+            "  Auto-instrument: {}",
             project_name,
             endpoint,
             source,
@@ -154,7 +154,7 @@ def initialize_phoenix_tracing(
         _PHOENIX_INITIALIZED = True
 
         logger.info(
-            "✅ Phoenix tracing initialized successfully!\n" "   View traces at: %s",
+            "✅ Phoenix tracing initialized successfully!\n" "   View traces at: {}",
             endpoint,
         )
 
@@ -162,14 +162,14 @@ def initialize_phoenix_tracing(
 
     except ImportError as e:
         logger.warning(
-            "Phoenix tracing not available (missing dependencies): %s\n"
+            "Phoenix tracing not available (missing dependencies): {}\n"
             "Install with: pip install arize-phoenix arize-phoenix-otel openinference-instrumentation-pydantic-ai openinference-instrumentation-litellm",
             e,
         )
         return False
 
-    except Exception as e:
-        logger.error("Failed to initialize Phoenix tracing: %s", e, exc_info=True)
+    except Exception:
+        logger.exception("Failed to initialize Phoenix tracing")
         return False
 
 
@@ -229,5 +229,5 @@ def shutdown_phoenix_tracing():
 
         _PHOENIX_INITIALIZED = False
 
-    except Exception as e:
-        logger.error("Error shutting down Phoenix tracing: %s", e)
+    except Exception:
+        logger.exception("Error shutting down Phoenix tracing")

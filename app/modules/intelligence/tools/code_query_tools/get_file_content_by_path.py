@@ -1,4 +1,6 @@
-import logging
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 from typing import Optional, Type, Dict, Any
 from pydantic import BaseModel, Field
 from redis import Redis
@@ -192,7 +194,7 @@ class FetchFileTool:
                 "content": content,
             }
         except Exception as e:
-            logging.exception(f"Failed to fetch file content for {file_path}: {str(e)}")
+            logger.exception(f"Failed to fetch file content for {file_path}: {str(e)}")
             return {"success": False, "error": str(e), "content": None}
 
     async def _arun(

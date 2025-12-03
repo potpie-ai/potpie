@@ -9,9 +9,9 @@ from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from pydantic import BaseModel, Field
-import logging
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class AutoRouterAgent(ChatAgent):
@@ -65,8 +65,11 @@ class AutoRouterAgent(ChatAgent):
                 else ctx.curr_agent_id
             )
             logger.info(f"Classification successful: using {selected_agent_id} agent")
-        except (ValueError, TypeError, KeyError, Exception) as e:
-            logger.error("Classification error, falling back to current agent: %s", e)
+        except (ValueError, TypeError, KeyError, Exception):
+            logger.exception(
+                "Classification error, falling back to current agent",
+                agent_id=ctx.curr_agent_id
+            )
             selected_agent_id = ctx.curr_agent_id
 
         return self.agents[selected_agent_id].agent

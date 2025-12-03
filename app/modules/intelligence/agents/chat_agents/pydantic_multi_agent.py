@@ -76,8 +76,8 @@ def handle_exception(tool_func):
     def wrapper(*args, **kwargs):
         try:
             return tool_func(*args, **kwargs)
-        except Exception as e:
-            logger.error(f"Exception in tool function: {e}")
+        except Exception:
+            logger.exception("Exception in tool function", tool_name=tool_func.__name__)
             return "An internal error occurred. Please try again later."
 
     return wrapper
@@ -386,9 +386,9 @@ class PydanticMultiAgent(ChatAgent):
             else:
                 raise  # Re-raise if it's a different ValueError
         else:
-            error_detail = f"{type(error).__name__}: {str(error)}"
-            logger.error(
-                f"Unexpected error in {context}: {error_detail}", exc_info=True
+            logger.exception(
+                f"Unexpected error in {context}",
+                context=context
             )
             if "json" in str(error).lower() or "parse" in str(error).lower():
                 return PydanticMultiAgent._create_error_response(
@@ -601,8 +601,8 @@ Start your response with "## Task Result" and then provide the focused answer.
             )
         except anyio.WouldBlock:
             logger.warning("Tool call stream would block - continuing...")
-        except Exception as e:
-            logger.error(f"Unexpected error in tool call stream: {e}")
+        except Exception:
+            logger.exception("Unexpected error in tool call stream")
             yield self._create_error_response(
                 "*An unexpected error occurred during tool execution. Continuing...*"
             )
@@ -914,7 +914,11 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
                     )
 
             except Exception as e:
-                logger.error(f"Error in delegation to {agent_type.value}: {e}")
+                logger.exception(
+                    f"Error in delegation to {agent_type.value}",
+                    agent_type=agent_type.value,
+                    task_description=task_description
+                )
                 return self._format_delegation_error(
                     agent_type, task_description, type(e).__name__, str(e), ""
                 )
@@ -1098,9 +1102,10 @@ Image Analysis Notes:
                     import base64
 
                     base64.b64decode(base64_data)
-                except Exception as e:
-                    logger.error(
-                        f"Invalid base64 format for image {attachment_id}: {str(e)}"
+                except Exception:
+                    logger.exception(
+                        f"Invalid base64 format for image {attachment_id}",
+                        attachment_id=attachment_id
                     )
                     continue
 
@@ -1131,10 +1136,10 @@ Image Analysis Notes:
                     f"Successfully added image {attachment_id} to multimodal content"
                 )
 
-            except Exception as e:
-                logger.error(
-                    f"Failed to add image {attachment_id} to content: {str(e)}",
-                    exc_info=True,
+            except Exception:
+                logger.exception(
+                    f"Failed to add image {attachment_id} to content",
+                    attachment_id=attachment_id
                 )
                 continue
 
@@ -1164,9 +1169,10 @@ Image Analysis Notes:
                         import base64
 
                         base64.b64decode(base64_data)
-                    except Exception as e:
-                        logger.error(
-                            f"Invalid base64 format for context image {attachment_id}: {str(e)}"
+                    except Exception:
+                        logger.exception(
+                            f"Invalid base64 format for context image {attachment_id}",
+                            attachment_id=attachment_id
                         )
                         continue
 
@@ -1190,10 +1196,10 @@ Image Analysis Notes:
                     logger.info(
                         f"Successfully added context image {attachment_id} to multimodal content"
                     )
-                except Exception as e:
-                    logger.error(
-                        f"Failed to add context image {attachment_id} to content: {str(e)}",
-                        exc_info=True,
+                except Exception:
+                    logger.exception(
+                        f"Failed to add context image {attachment_id} to content",
+                        attachment_id=attachment_id
                     )
                     continue
 
@@ -1295,9 +1301,7 @@ Image Analysis Notes:
             )
 
         except Exception as e:
-            logger.error(
-                f"Error in standard multi-agent run method: {str(e)}", exc_info=True
-            )
+            logger.exception("Error in standard multi-agent run method")
             return ChatAgentResponse(
                 response=f"An error occurred while processing your request: {str(e)}",
                 tool_calls=[],
@@ -1327,10 +1331,8 @@ Image Analysis Notes:
                 citations=[],
             )
 
-        except Exception as e:
-            logger.error(
-                f"Error in multimodal multi-agent run method: {str(e)}", exc_info=True
-            )
+        except Exception:
+            logger.exception("Error in multimodal multi-agent run method")
             # Fallback to standard execution
             logger.info("Falling back to standard text-only execution")
             return await self._run_standard(ctx)
@@ -1389,10 +1391,8 @@ Image Analysis Notes:
                 ):
                     yield response
 
-        except Exception as e:
-            logger.error(
-                f"Error in multimodal multi-agent stream: {str(e)}", exc_info=True
-            )
+        except Exception:
+            logger.exception("Error in multimodal multi-agent stream")
             # Fallback to standard streaming
             async for chunk in self._run_standard_stream(ctx):
                 yield chunk
@@ -1454,10 +1454,8 @@ Image Analysis Notes:
                     ):
                         yield response
 
-        except Exception as e:
-            logger.error(
-                f"Error in standard multi-agent stream: {str(e)}", exc_info=True
-            )
+        except Exception:
+            logger.exception("Error in standard multi-agent stream")
             yield ChatAgentResponse(
                 response="\n\n*An error occurred during multi-agent streaming*\n\n",
                 tool_calls=[],
