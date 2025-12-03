@@ -1,15 +1,15 @@
 import os
-import logging
 from typing import Optional
 
 from app.modules.code_provider.provider_factory import CodeProviderFactory
+from app.modules.utils.logger import setup_logger
 
 try:
     from github.GithubException import BadCredentialsException
 except ImportError:
     BadCredentialsException = None
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class ProviderWrapper:
@@ -99,8 +99,20 @@ class ProviderWrapper:
                 self._provider = provider
 
             def get_languages(self):
-                # Return a mock languages dict
-                return {}
+                # Get languages from the actual GitHub API via the provider's client
+                try:
+                    if hasattr(self._provider, "client") and self._provider.client:
+                        # Get the actual repo object from GitHub API
+                        github_repo = self._provider.client.get_repo(self.full_name)
+                        # PyGithub's get_languages() returns a dict like {"Python": 12345, "JavaScript": 6789}
+                        return github_repo.get_languages()
+                    else:
+                        # Fallback: return empty dict if client not available
+                        return {}
+                except Exception as e:
+                    logger.warning(f"Failed to get languages from GitHub API: {e}")
+                    # Fallback to empty dict on error
+                    return {}
 
             def get_commits(self):
                 # Return a mock commits object
@@ -122,9 +134,10 @@ class ProviderWrapper:
 
             def get_archive_link(self, format_type, ref):
                 # Return archive link using provider
-                import logging
 
-                logger = logging.getLogger(__name__)
+                from app.modules.utils.logger import setup_logger
+
+                logger = setup_logger(__name__)
 
                 logger.info(
                     f"ProviderWrapper: Getting archive link for repo '{self.full_name}', format: '{format_type}', ref: '{ref}'"

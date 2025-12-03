@@ -1,4 +1,3 @@
-import logging
 from typing import List, Dict, Any, Optional
 import chardet
 from github import Github
@@ -9,8 +8,9 @@ from app.modules.code_provider.base.code_provider_interface import (
     ICodeProvider,
     AuthMethod,
 )
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class GitHubProvider(ICodeProvider):

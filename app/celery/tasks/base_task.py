@@ -1,10 +1,10 @@
-import logging
 import asyncio
 from celery import Task
 from contextlib import asynccontextmanager
 from app.core.database import SessionLocal
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class BaseTask(Task):
@@ -45,10 +45,8 @@ class BaseTask(Task):
             logger.debug(
                 f"[Task {task_id}] Async DB session operation completed successfully"
             )
-        except Exception as e:
-            logger.error(
-                f"[Task {task_id}] Error during async DB operation: {e}", exc_info=True
-            )
+        except Exception:
+            logger.exception("Error during async DB operation", task_id=task_id)
             raise
         finally:
             try:
@@ -58,11 +56,8 @@ class BaseTask(Task):
                 logger.debug(
                     f"[Task {task_id}] Async DB connection closed and engine disposed"
                 )
-            except Exception as cleanup_error:
-                logger.error(
-                    f"[Task {task_id}] Error during connection cleanup: {cleanup_error}",
-                    exc_info=True,
-                )
+            except Exception:
+                logger.exception("Error during connection cleanup", task_id=task_id)
 
     def _get_event_loop(self):
         """
@@ -92,7 +87,12 @@ class BaseTask(Task):
 
     def on_failure(self, exc, task_id, args, kwargs, einfo):
         """Called on task failure."""
-        logger.error(f"Task {task_id} failed: {exc}")
+        # exc is already an exception object from on_failure
+        logger.error(
+            f"Task {task_id} failed: {exc}",
+            task_id=task_id,
+            exc_info=einfo.exc_info if einfo else None,
+        )
         if self._db:
             self._db.close()
             self._db = None

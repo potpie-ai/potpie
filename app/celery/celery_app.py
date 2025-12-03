@@ -1,13 +1,18 @@
-import logging
 import os
 
 from celery import Celery
 from dotenv import load_dotenv
 
 from app.core.models import *  # noqa #This will import and initialize all models
+from app.modules.utils.logger import configure_logging, setup_logger
 
 # Load environment variables from a .env file if present
 load_dotenv()
+
+# Configure logging
+configure_logging()
+logger = setup_logger(__name__)
+
 # Redis configuration
 redishost = os.getenv("REDISHOST", "localhost")
 redisport = int(os.getenv("REDISPORT", 6379))
@@ -24,17 +29,13 @@ else:
 # Initialize the Celery app
 celery_app = Celery("KnowledgeGraph", broker=redis_url, backend=redis_url)
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 # Add logging for Redis connection
 logger.info(f"Connecting to Redis at: {redis_url}")
 try:
     celery_app.backend.client.ping()
     logger.info("Successfully connected to Redis")
-except Exception as e:
-    logger.error(f"Failed to connect to Redis: {str(e)}")
+except Exception:
+    logger.exception("Failed to connect to Redis", redis_url=redis_url)
 
 
 def configure_celery(queue_prefix: str):
@@ -44,6 +45,8 @@ def configure_celery(queue_prefix: str):
         result_serializer="json",
         timezone="UTC",
         enable_utc=True,
+        # Disable Celery's default logging hijacking so our intercept handler works
+        worker_hijack_root_logger=False,
         task_routes={
             "app.celery.tasks.parsing_tasks.process_parsing": {
                 "queue": f"{queue_prefix}_process_repository"
