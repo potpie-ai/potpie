@@ -3,9 +3,9 @@ Repository name normalization utilities for different code providers.
 """
 
 import os
-import logging
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 def normalize_repo_name(repo_name: str, provider_type: str = None) -> str:

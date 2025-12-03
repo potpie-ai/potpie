@@ -7,8 +7,10 @@ from typing import Dict, Optional, Any
 from starlette.config import Config
 import httpx
 import urllib.parse
-import logging
 import time
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class LinearOAuthStore:
@@ -56,7 +58,7 @@ class LinearOAuth:
         self.client_secret = config("LINEAR_CLIENT_SECRET", default="")
 
         if not self.client_id or not self.client_secret:
-            logging.warning("Linear OAuth credentials not configured")
+            logger.warning("Linear OAuth credentials not configured")
 
     def get_authorization_url(
         self, redirect_uri: str, state: Optional[str] = None, scope: str = "read"
@@ -106,15 +108,15 @@ class LinearOAuth:
             }
 
             # Log token exchange details for debugging
-            logging.info("Linear token exchange request:")
-            logging.info(f"  URL: {token_url}")
-            logging.info(
+            logger.info("Linear token exchange request:")
+            logger.info(f"  URL: {token_url}")
+            logger.info(
                 f"  Client ID: {self.client_id[:10]}..."
                 if self.client_id
                 else "  Client ID: None"
             )
-            logging.info(f"  Redirect URI: {redirect_uri}")
-            logging.info(
+            logger.info(f"  Redirect URI: {redirect_uri}")
+            logger.info(
                 f"  Code: {authorization_code[:20]}..."
                 if authorization_code
                 else "  Code: None"
@@ -129,10 +131,10 @@ class LinearOAuth:
                 )
 
                 if response.status_code != 200:
-                    logging.error("Linear token exchange failed:")
-                    logging.error(f"  Status: {response.status_code}")
-                    logging.error(f"  Response: {response.text}")
-                    logging.error(f"  Headers: {dict(response.headers)}")
+                    logger.error("Linear token exchange failed:")
+                    logger.error(f"  Status: {response.status_code}")
+                    logger.error(f"  Response: {response.text}")
+                    logger.error(f"  Headers: {dict(response.headers)}")
                     raise Exception(f"Token exchange failed: {response.status_code}")
 
                 token_response = response.json()
@@ -152,7 +154,7 @@ class LinearOAuth:
                 return tokens
 
         except Exception as e:
-            logging.error(f"Failed to exchange Linear OAuth code for tokens: {str(e)}")
+            logger.exception("Failed to exchange Linear OAuth code for tokens")
             raise Exception(f"OAuth token exchange failed: {str(e)}")
 
     async def get_user_info_from_api(
@@ -189,7 +191,7 @@ class LinearOAuth:
                 )
 
                 if response.status_code != 200:
-                    logging.error(
+                    logger.error(
                         f"Failed to get Linear user info: {response.status_code}"
                     )
                     return None
@@ -200,8 +202,8 @@ class LinearOAuth:
 
                 return None
 
-        except Exception as e:
-            logging.error(f"Error getting Linear user info: {str(e)}")
+        except Exception:
+            logger.exception("Error getting Linear user info")
             return None
 
     def handle_callback(self, request, user_id: str) -> Dict[str, Any]:
@@ -220,9 +222,9 @@ class LinearOAuth:
 
             # For now, we'll just log the callback
             # In a real implementation, you'd exchange the code for tokens
-            logging.info(f"Linear OAuth callback received for user {user_id}")
-            logging.info(f"Code: {code[:20]}...")
-            logging.info(f"State: {state}")
+            logger.info(f"Linear OAuth callback received for user {user_id}")
+            logger.info(f"Code: {code[:20]}...")
+            logger.info(f"State: {state}")
 
             return {
                 "status": "success",
@@ -233,7 +235,7 @@ class LinearOAuth:
             }
 
         except Exception as e:
-            logging.error(f"Linear OAuth callback failed: {str(e)}")
+            logger.exception("Linear OAuth callback failed")
             return {
                 "status": "error",
                 "message": f"OAuth callback failed: {str(e)}",
@@ -248,8 +250,8 @@ class LinearOAuth:
         """Revoke OAuth access for a user"""
         try:
             self.token_store.remove_tokens(user_id)
-            logging.info(f"Linear OAuth access revoked for user: {user_id}")
+            logger.info(f"Linear OAuth access revoked for user: {user_id}")
             return True
-        except Exception as e:
-            logging.error(f"Failed to revoke Linear OAuth access: {str(e)}")
+        except Exception:
+            logger.exception("Failed to revoke Linear OAuth access")
             return False

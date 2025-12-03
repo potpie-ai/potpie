@@ -5,7 +5,9 @@ import asyncio
 from pydantic import BaseModel, Field
 from langchain_core.tools import StructuredTool
 from sqlalchemy.orm import Session
-import logging
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 from app.modules.intelligence.tools.jira_tools.jira_client import (
     get_jira_client_for_user,
@@ -125,7 +127,7 @@ class CreateJiraIssueTool:
                 "issue": issue,
             }
         except Exception as e:
-            logging.exception("Error creating Jira issue: %s", str(e))
+            logger.exception(f"Error creating Jira issue: {e}")
             return {
                 "success": False,
                 "error": str(e),

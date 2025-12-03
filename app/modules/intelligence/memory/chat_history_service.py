@@ -1,4 +1,3 @@
-import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
@@ -12,8 +11,9 @@ from app.modules.conversations.message.message_model import (
     MessageStatus,
     MessageType,
 )
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class ChatHistoryServiceError(Exception):
@@ -47,17 +47,19 @@ class ChatHistoryService:
             )
             return history
         except SQLAlchemyError as e:
-            logger.error(
-                f"Database error in get_session_history for conversation {conversation_id}: {e}",
-                exc_info=True,
+            logger.exception(
+                "Database error in get_session_history",
+                conversation_id=conversation_id,
+                user_id=user_id
             )
             raise ChatHistoryServiceError(
                 f"Failed to retrieve session history for conversation {conversation_id}"
             ) from e
         except Exception as e:
-            logger.error(
-                f"Unexpected error in get_session_history for conversation {conversation_id}: {e}",
-                exc_info=True,
+            logger.exception(
+                "Unexpected error in get_session_history",
+                conversation_id=conversation_id,
+                user_id=user_id
             )
             raise ChatHistoryServiceError(
                 f"An unexpected error occurred while retrieving session history for conversation {conversation_id}"
@@ -114,18 +116,18 @@ class ChatHistoryService:
                 return new_message.id
             return None
         except SQLAlchemyError as e:
-            logger.error(
-                f"Database error in flush_message_buffer for conversation {conversation_id}: {e}",
-                exc_info=True,
+            logger.exception(
+                "Database error in flush_message_buffer",
+                conversation_id=conversation_id
             )
             self.db.rollback()
             raise ChatHistoryServiceError(
                 f"Failed to flush message buffer for conversation {conversation_id}"
             ) from e
         except Exception as e:
-            logger.error(
-                f"Unexpected error in flush_message_buffer for conversation {conversation_id}: {e}",
-                exc_info=True,
+            logger.exception(
+                "Unexpected error in flush_message_buffer",
+                conversation_id=conversation_id
             )
             self.db.rollback()
             raise ChatHistoryServiceError(
@@ -138,18 +140,18 @@ class ChatHistoryService:
             self.db.commit()
             logger.info(f"Cleared session history for conversation: {conversation_id}")
         except SQLAlchemyError as e:
-            logger.error(
-                f"Database error in clear_session_history for conversation {conversation_id}: {e}",
-                exc_info=True,
+            logger.exception(
+                "Database error in clear_session_history",
+                conversation_id=conversation_id
             )
             self.db.rollback()
             raise ChatHistoryServiceError(
                 f"Failed to clear session history for conversation {conversation_id}"
             ) from e
         except Exception as e:
-            logger.error(
-                f"Unexpected error in clear_session_history for conversation {conversation_id}: {e}",
-                exc_info=True,
+            logger.exception(
+                "Unexpected error in clear_session_history",
+                conversation_id=conversation_id
             )
             self.db.rollback()
             raise ChatHistoryServiceError(

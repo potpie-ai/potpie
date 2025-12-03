@@ -1,9 +1,9 @@
-import logging
 import os
 
 from posthog import Posthog
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class PostHogClient:
@@ -36,6 +36,10 @@ class PostHogClient:
                     event=event_name,  # The event name
                     properties=properties,  # Additional event metadata
                 )
-            except Exception as e:
-                # Basic error handling; could be expanded based on use case
-                logger.warning(f"Failed to send event: {e}")
+            except Exception:
+                # Log as error with context - event send failures should be investigated
+                logger.exception(
+                    f"Failed to send PostHog event: {event_name}",
+                    user_id=user_id,
+                    event_name=event_name
+                )
