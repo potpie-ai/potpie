@@ -47,6 +47,6 @@ class FirebaseSetup:
             # Initialize the Firebase app with the credentials.
             firebase_admin.initialize_app(cred)
 
-        except Exception as e:
+        except Exception:
             logger.exception("Error loading Firebase service account credentials")
             raise
