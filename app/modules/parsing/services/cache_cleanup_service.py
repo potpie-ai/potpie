@@ -17,14 +17,13 @@ class CacheCleanupService:
             self.cache_ttl_days = int(raw_ttl) if raw_ttl is not None else 30
         except (TypeError, ValueError):
             logger.warning(
-                "Invalid INFERENCE_CACHE_TTL_DAYS=%r; falling back to default of 30 days",
-                raw_ttl,
+                f"Invalid INFERENCE_CACHE_TTL_DAYS={raw_ttl!r}; falling back to default of 30 days"
             )
             self.cache_ttl_days = 30
         if self.cache_ttl_days <= 0:
             logger.warning(
-                "INFERENCE_CACHE_TTL_DAYS=%s <= 0; defaulting to 30 days to avoid purging the entire cache",
-                self.cache_ttl_days,
+                f"INFERENCE_CACHE_TTL_DAYS={self.cache_ttl_days} <= 0; defaulting to 30 days "
+                "to avoid purging the entire cache"
             )
             self.cache_ttl_days = 30
 

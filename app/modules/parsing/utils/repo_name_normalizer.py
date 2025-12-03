@@ -40,14 +40,13 @@ def normalize_repo_name(repo_name: str, provider_type: str = None) -> str:
             actual_username = os.getenv("GITBUCKET_USERNAME")
             if not actual_username:
                 logger.debug(
-                    "GitBucket: Skipping normalization for '%s' because GITBUCKET_USERNAME is not set",
-                    repo_name,
+                    f"GitBucket: Skipping normalization for '{repo_name}' because GITBUCKET_USERNAME is not set"
                 )
                 return repo_name
 
             normalized_name = repo_name.replace("root/", f"{actual_username}/", 1)
             logger.info(
-                "GitBucket: Normalized '%s' to '%s'", repo_name, normalized_name
+                f"GitBucket: Normalized '{repo_name}' to '{normalized_name}'"
             )
             return normalized_name
 

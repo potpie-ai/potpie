@@ -420,16 +420,12 @@ class MediaService:
                         Key=attachment.storage_path,
                     )
                     logger.info(
-                        "Deleted object from %s:%s",
-                        self.bucket_name,
-                        attachment.storage_path,
+                        f"Deleted object from {self.bucket_name}:{attachment.storage_path}"
                     )
                 except ClientError as e:
                     if e.response.get("Error", {}).get("Code") == "NoSuchKey":
                         logger.warning(
-                            "File not found in bucket=%s key=%s; continuing with DB delete",
-                            self.bucket_name,
-                            attachment.storage_path,
+                            f"File not found in bucket={self.bucket_name} key={attachment.storage_path}; continuing with DB delete"
                         )
                     else:
                         raise
