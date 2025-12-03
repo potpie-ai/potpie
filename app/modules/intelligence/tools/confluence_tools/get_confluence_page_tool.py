@@ -167,7 +167,7 @@ class GetConfluencePageTool:
                 await client.close()
 
         except Exception as e:
-            logger.error(f"Error getting Confluence page: {str(e)}")
+            logger.exception(f"Error getting Confluence page: {str(e)}")
             return {"success": False, "error": str(e)}
 
     def run(

@@ -77,7 +77,7 @@ class GetNodeNeighboursFromNodeIdTool:
 
             return {"neighbors": result_neighbors}
         except Exception as e:
-            logger.exception(f"An unexpected error occurred: {str(e)}")
+            logger.exception("An unexpected error occurred")
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
     def _get_neighbors(

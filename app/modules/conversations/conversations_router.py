@@ -259,7 +259,7 @@ class ConversationAPI:
             attachment_ids = []
             if images:
                 media_service = MediaService(db)
-                for i, image in enumerate(images):
+                for _i, image in enumerate(images):
                     # Check if image has content by checking filename and content_type
                     if image.filename and image.content_type:
                         try:
@@ -273,19 +273,26 @@ class ConversationAPI:
                             )
                             attachment_ids.append(upload_result.id)
                         except Exception as e:
-                            logger.error(
-                                f"Failed to upload image {image.filename}: {str(e)}"
+                            logger.exception(
+                                f"Failed to upload image {image.filename}",
+                                conversation_id=conversation_id,
+                                user_id=user_id,
                             )
                             # Clean up any successfully uploaded attachments
                             for uploaded_id in attachment_ids:
                                 try:
                                     await media_service.delete_attachment(uploaded_id)
-                                except:
-                                    pass
+                                except Exception as cleanup_exc:
+                                    logger.warning(
+                                        f"Failed to cleanup attachment {uploaded_id} after image upload error: {str(cleanup_exc)}",
+                                        conversation_id=conversation_id,
+                                        user_id=user_id,
+                                        attachment_id=uploaded_id,
+                                    )
                             raise HTTPException(
                                 status_code=400,
                                 detail=f"Failed to upload image {image.filename}: {str(e)}",
-                            )
+                            ) from e
 
             # Parse node_ids if provided
             parsed_node_ids = None
@@ -340,9 +347,6 @@ class ConversationAPI:
             # Start background agent execution (non-blocking)
             from app.celery.tasks.agent_tasks import execute_agent_background
 
-            # Extract agent_id from conversation (will be handled in background task)
-            agent_id = message.agent_id if hasattr(message, "agent_id") else None
-
             # Use parsed node_ids
             node_ids_list = parsed_node_ids or []
 
@@ -367,7 +371,7 @@ class ConversationAPI:
                 run_id=run_id,
                 user_id=user_id,
                 query=content,
-                agent_id=agent_id,
+                agent_id=None,
                 node_ids=node_ids_list,
                 attachment_ids=attachment_ids or [],
             )

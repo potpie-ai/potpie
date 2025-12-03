@@ -1963,7 +1963,6 @@ def show_updated_file_tool(input_data: ShowUpdatedFileInput) -> str:
     except Exception:
         logger.exception(
             "Tool show_updated_file_tool: Error showing updated files",
-            project_id=project_id,
         )
         return "❌ Error showing updated files"
 
@@ -2051,6 +2050,7 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
 
         return result
     except Exception:
+        project_id = getattr(input_data, "project_id", None)
         logger.exception(
             "Tool show_diff_tool: Error displaying diff", project_id=project_id
         )
@@ -2121,13 +2121,20 @@ def get_file_diff_tool(input_data: GetFileDiffInput) -> str:
     except Exception:
         logger.exception(
             "Tool get_file_diff_tool: Error getting file diff",
-            project_id=project_id,
-            file_path=file_path,
+            project_id=input_data.project_id,
+            file_path=input_data.file_path,
         )
         return "❌ Error getting file diff"
 
 
-def get_comprehensive_metadata_tool() -> str:
+class GetComprehensiveMetadataInput(BaseModel):
+    project_id: Optional[str] = Field(
+        default=None,
+        description="Optional project ID for logging purposes. Use project_id from conversation context.",
+    )
+
+
+def get_comprehensive_metadata_tool(input_data: GetComprehensiveMetadataInput) -> str:
     """
     Get comprehensive metadata about all code changes in the current session.
     This shows the complete state of all files being managed, including timestamps,
@@ -2190,7 +2197,7 @@ def get_comprehensive_metadata_tool() -> str:
     except Exception:
         logger.exception(
             "Tool get_comprehensive_metadata_tool: Error getting metadata",
-            project_id=project_id,
+            project_id=input_data.project_id,
         )
         return "❌ Error getting metadata"
 
@@ -2230,8 +2237,7 @@ def export_changes_tool(input_data: ExportChangesInput) -> str:
     except Exception:
         logger.exception(
             "Tool export_changes_tool: Error exporting changes",
-            project_id=project_id,
-            format=format,
+            format=input_data.format,
         )
         return "❌ Error exporting changes"
 
@@ -2357,7 +2363,7 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
             name="get_session_metadata",
             description="Get comprehensive metadata about all code changes in the current session. Shows complete state of all files being managed, including timestamps, descriptions, change types, and line counts. Use this to review your session progress and understand what files have been modified. This is your session state - all your work is tracked here.",
             func=get_comprehensive_metadata_tool,
-            args_schema=None,
+            args_schema=GetComprehensiveMetadataInput,
         ),
     ]
 
