@@ -220,7 +220,7 @@ def robust_llm_call(settings: Optional[RetrySettings] = None):
                             f"Max retries ({settings.max_retries}) exceeded for {provider} API call",
                             provider=provider,
                             retries=retries,
-                            max_retries=settings.max_retries
+                            max_retries=settings.max_retries,
                         )
                         raise
 
@@ -682,7 +682,7 @@ class ProviderService:
             logger.exception(
                 f"Error calling LLM with model {model_identifier}",
                 model_identifier=model_identifier,
-                provider=routing_provider
+                provider=routing_provider,
             )
             raise e
 
@@ -714,10 +714,7 @@ class ProviderService:
                 response = await acompletion(messages=messages, **params)
                 return response.choices[0].message.content
         except Exception as e:
-            logger.exception(
-                "Error calling LLM",
-                provider=routing_provider
-            )
+            logger.exception("Error calling LLM", provider=routing_provider)
             raise e
 
     @robust_llm_call()
@@ -843,10 +840,7 @@ class ProviderService:
                 response = await acompletion(messages=messages, **params)
                 return response.choices[0].message.content
         except Exception as e:
-            logger.exception(
-                "Error calling multimodal LLM",
-                provider=routing_provider
-            )
+            logger.exception("Error calling multimodal LLM", provider=routing_provider)
             raise e
 
     def _format_multimodal_messages(
@@ -1011,10 +1005,7 @@ class ProviderService:
                 )
 
             except Exception:
-                logger.exception(
-                    f"Error validating image {img_id}",
-                    img_id=img_id
-                )
+                logger.exception(f"Error validating image {img_id}", img_id=img_id)
                 continue
 
         logger.info(

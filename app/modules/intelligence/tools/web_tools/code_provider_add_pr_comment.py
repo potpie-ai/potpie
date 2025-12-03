@@ -208,9 +208,7 @@ class CodeProviderAddPRCommentsTool:
 
             # If no comments and no general comment, return error
             if not comments and not general_comment:
-                logger.error(
-                    "[ADD_PR_COMMENT] No comments or general comment provided"
-                )
+                logger.error("[ADD_PR_COMMENT] No comments or general comment provided")
                 return {
                     "success": False,
                     "error": "Must provide at least one comment or a general comment",
@@ -241,9 +239,7 @@ class CodeProviderAddPRCommentsTool:
 
                         # Parse JSON string if needed
                         if isinstance(data, str):
-                            logger.info(
-                                "[ADD_PR_COMMENT] Parsing JSON string response"
-                            )
+                            logger.info("[ADD_PR_COMMENT] Parsing JSON string response")
                             data = json.loads(data)
 
                         comment_id = data.get("id")
@@ -396,9 +392,7 @@ class CodeProviderAddPRCommentsTool:
                                 f"{repo.url}/issues/{pr_number}/comments",
                                 input=post_params,
                             )
-                            logger.info(
-                                "[ADD_PR_COMMENT] Added general review comment"
-                            )
+                            logger.info("[ADD_PR_COMMENT] Added general review comment")
                         except Exception as e:
                             logger.error(
                                 f"[ADD_PR_COMMENT] Failed to add general comment: {str(e)}"
@@ -442,9 +436,7 @@ class CodeProviderAddPRCommentsTool:
                 event=review_action,
                 comments=review_comments,
             )
-            logger.info(
-                f"[ADD_PR_COMMENT] Successfully created review: id={review.id}"
-            )
+            logger.info(f"[ADD_PR_COMMENT] Successfully created review: id={review.id}")
 
             result = {
                 "success": True,

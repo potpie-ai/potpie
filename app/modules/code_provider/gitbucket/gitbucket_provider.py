@@ -163,7 +163,7 @@ class GitBucketProvider(ICodeProvider):
             logger.exception(
                 f"GitBucket: Failed to get repository '{repo_name}'",
                 repo_name=repo_name,
-                status=getattr(e, 'status', 'Unknown')
+                status=getattr(e, "status", "Unknown"),
             )
 
             # Handle specific GitBucket API differences
@@ -242,7 +242,9 @@ class GitBucketProvider(ICodeProvider):
             logger.exception("GitBucket: Failed to get repository", repo_name=repo_name)
             raise
         except Exception:
-            logger.exception("GitBucket: Unexpected error getting repository", repo_name=repo_name)
+            logger.exception(
+                "GitBucket: Unexpected error getting repository", repo_name=repo_name
+            )
             raise
 
         # GitBucket doesn't handle ref=None well, so resolve it to the default branch
@@ -347,7 +349,7 @@ class GitBucketProvider(ICodeProvider):
                             logger.exception(
                                 "GitBucket: Raw API fallback also failed",
                                 current_path=current_path,
-                                repo_name=repo_name
+                                repo_name=repo_name,
                             )
                             raise
                     else:
@@ -422,14 +424,14 @@ class GitBucketProvider(ICodeProvider):
                             logger.exception(
                                 "GitBucket: GithubException recursing into directory",
                                 item_path=item_path,
-                                repo_name=repo_name
+                                repo_name=repo_name,
                             )
                             entry["children"] = []
                         except Exception:
                             logger.exception(
                                 "GitBucket: Unexpected exception recursing into directory",
                                 item_path=item_path,
-                                repo_name=repo_name
+                                repo_name=repo_name,
                             )
                             entry["children"] = []
 
@@ -437,14 +439,14 @@ class GitBucketProvider(ICodeProvider):
                 logger.exception(
                     "GitBucket: GithubException getting contents",
                     current_path=current_path,
-                    repo_name=repo_name
+                    repo_name=repo_name,
                 )
                 # Return empty result instead of failing completely
             except Exception:
                 logger.exception(
                     "GitBucket: Unexpected error getting contents",
                     current_path=current_path,
-                    repo_name=repo_name
+                    repo_name=repo_name,
                 )
 
             return result
@@ -500,7 +502,7 @@ class GitBucketProvider(ICodeProvider):
                 "GitBucket: Failed to get branch",
                 branch_name=branch_name,
                 repo_name=repo_name,
-                status=getattr(e, 'status', 'Unknown')
+                status=getattr(e, "status", "Unknown"),
             )
 
             # Handle specific GitBucket API differences
@@ -647,7 +649,7 @@ class GitBucketProvider(ICodeProvider):
                 "[GITBUCKET] Error comparing branches",
                 base_branch=base_branch,
                 head_branch=head_branch,
-                repo_name=repo_name
+                repo_name=repo_name,
             )
             raise
 
@@ -1112,7 +1114,7 @@ class GitBucketProvider(ICodeProvider):
             logger.exception(
                 "GitBucket: Failed to get archive link",
                 repo_name=repo_name,
-                status=getattr(e, 'status', 'Unknown')
+                status=getattr(e, "status", "Unknown"),
             )
 
             # Handle specific GitBucket API differences
@@ -1128,8 +1130,7 @@ class GitBucketProvider(ICodeProvider):
             raise
         except Exception:
             logger.exception(
-                "GitBucket: Unexpected error getting archive link",
-                repo_name=repo_name
+                "GitBucket: Unexpected error getting archive link", repo_name=repo_name
             )
             raise
 

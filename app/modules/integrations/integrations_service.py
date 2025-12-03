@@ -263,7 +263,9 @@ class IntegrationsService:
                 }
 
         except Exception as e:
-            logger.exception(f"Failed to refresh Sentry token", integration_id=integration_id)
+            logger.exception(
+                "Failed to refresh Sentry token", integration_id=integration_id
+            )
             raise Exception(f"Token refresh failed: {str(e)}")
 
     async def get_valid_sentry_token(self, integration_id: str) -> str:
@@ -311,7 +313,9 @@ class IntegrationsService:
             return decrypt_token(auth_data["access_token"])
 
         except Exception as e:
-            logger.exception(f"Failed to get valid Sentry token", integration_id=integration_id)
+            logger.exception(
+                "Failed to get valid Sentry token", integration_id=integration_id
+            )
             raise Exception(f"Failed to get valid token: {str(e)}")
 
     async def _exchange_code_for_tokens(
@@ -951,7 +955,9 @@ class IntegrationsService:
                 logger.warning(f"Integration not found for deletion: {integration_id}")
                 return False
         except Exception:
-            logger.exception("Error deleting integration", integration_id=integration_id)
+            logger.exception(
+                "Error deleting integration", integration_id=integration_id
+            )
             self.db.rollback()
             return False
 
@@ -1135,7 +1141,9 @@ class IntegrationsService:
             )
 
         except Exception as e:
-            logger.exception("Error updating integration", integration_id=integration_id)
+            logger.exception(
+                "Error updating integration", integration_id=integration_id
+            )
             self.db.rollback()
             return IntegrationResponse(success=False, data=None, error=str(e))
 

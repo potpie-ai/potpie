@@ -63,7 +63,11 @@ class CustomAgentService:
                 logger.info(f"Agent {agent_id} not found for user {user_id}")
             return agent
         except SQLAlchemyError:
-            logger.exception("Database error while fetching agent", agent_id=agent_id, user_id=user_id)
+            logger.exception(
+                "Database error while fetching agent",
+                agent_id=agent_id,
+                user_id=user_id,
+            )
             raise
 
     async def get_agent_model(self, agent_id: str) -> Optional[CustomAgentModel]:
@@ -82,7 +86,9 @@ class CustomAgentService:
                 logger.info(f"Agent model {agent_id} not found")
             return agent
         except SQLAlchemyError:
-            logger.exception("Database error while fetching agent model", agent_id=agent_id)
+            logger.exception(
+                "Database error while fetching agent model", agent_id=agent_id
+            )
             raise
 
     async def create_share(
@@ -134,7 +140,7 @@ class CustomAgentService:
             logger.exception(
                 "Database error while creating share",
                 agent_id=agent_id,
-                shared_with_user_id=shared_with_user_id
+                shared_with_user_id=shared_with_user_id,
             )
             raise
 
@@ -190,7 +196,7 @@ class CustomAgentService:
             logger.exception(
                 "Database error while revoking share",
                 agent_id=agent_id,
-                shared_with_user_id=shared_with_user_id
+                shared_with_user_id=shared_with_user_id,
             )
             raise
 
@@ -221,7 +227,9 @@ class CustomAgentService:
 
             return emails
         except SQLAlchemyError:
-            logger.exception("Database error while listing agent shares", agent_id=agent_id)
+            logger.exception(
+                "Database error while listing agent shares", agent_id=agent_id
+            )
             raise
 
     async def make_agent_private(self, agent_id: str, user_id: str) -> Optional[Agent]:
@@ -248,7 +256,11 @@ class CustomAgentService:
             return self._convert_to_agent_schema(agent)
         except SQLAlchemyError:
             self.db.rollback()
-            logger.exception("Database error while making agent private", agent_id=agent_id, user_id=user_id)
+            logger.exception(
+                "Database error while making agent private",
+                agent_id=agent_id,
+                user_id=user_id,
+            )
             raise
 
     async def list_agents(
@@ -457,11 +469,19 @@ class CustomAgentService:
             return result
         except SQLAlchemyError:
             self.db.rollback()
-            logger.exception("Database error while updating agent", agent_id=agent_id, user_id=user_id)
+            logger.exception(
+                "Database error while updating agent",
+                agent_id=agent_id,
+                user_id=user_id,
+            )
             raise
         except Exception:
             self.db.rollback()
-            logger.exception("Unexpected error while updating agent", agent_id=agent_id, user_id=user_id)
+            logger.exception(
+                "Unexpected error while updating agent",
+                agent_id=agent_id,
+                user_id=user_id,
+            )
             raise HTTPException(status_code=500, detail="Failed to update agent")
 
     async def delete_agent(self, agent_id: str, user_id: str) -> Dict[str, Any]:
@@ -479,7 +499,11 @@ class CustomAgentService:
             }
         except SQLAlchemyError:
             self.db.rollback()
-            logger.exception("Database error while deleting agent", agent_id=agent_id, user_id=user_id)
+            logger.exception(
+                "Database error while deleting agent",
+                agent_id=agent_id,
+                user_id=user_id,
+            )
             raise
 
     async def get_agent(self, agent_id: str, user_id: str = None) -> Optional[Agent]:
@@ -644,7 +668,9 @@ class CustomAgentService:
             return runtime_agent.run_stream(ctx)
 
         except Exception:
-            logger.exception("Error executing agent", agent_id=ctx.curr_agent_id, user_id=user_id)
+            logger.exception(
+                "Error executing agent", agent_id=ctx.curr_agent_id, user_id=user_id
+            )
             raise HTTPException(status_code=500, detail="Failed to execute agent")
 
     async def create_agent_plan(
@@ -844,7 +870,9 @@ class CustomAgentService:
                 )
                 return None  # Private agent and user is not the owner
         except SQLAlchemyError:
-            logger.exception("Error validating agent", agent_id=agent_id, user_id=user_id)
+            logger.exception(
+                "Error validating agent", agent_id=agent_id, user_id=user_id
+            )
             raise
 
     CREATE_AGENT_FROM_PROMPT = """

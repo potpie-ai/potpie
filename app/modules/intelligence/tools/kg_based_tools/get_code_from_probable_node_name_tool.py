@@ -79,7 +79,7 @@ class GetCodeFromProbableNodeNameTool:
                 "Unexpected error in GetCodeFromProbableNodeNameTool",
                 project_id=project_id,
                 probable_node_name=probable_node_name,
-                user_id=self.user_id
+                user_id=self.user_id,
             )
             return {"error": "An unexpected error occurred"}
 
@@ -149,7 +149,7 @@ class GetCodeFromProbableNodeNameTool:
                 "Unexpected error in GetCodeFromProbableNodeNameTool",
                 project_id=project_id,
                 node_id=node_id,
-                user_id=self.user_id
+                user_id=self.user_id,
             )
             return {"error": "An unexpected error occurred"}
 

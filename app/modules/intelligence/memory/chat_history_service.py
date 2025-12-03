@@ -50,7 +50,7 @@ class ChatHistoryService:
             logger.exception(
                 "Database error in get_session_history",
                 conversation_id=conversation_id,
-                user_id=user_id
+                user_id=user_id,
             )
             raise ChatHistoryServiceError(
                 f"Failed to retrieve session history for conversation {conversation_id}"
@@ -59,7 +59,7 @@ class ChatHistoryService:
             logger.exception(
                 "Unexpected error in get_session_history",
                 conversation_id=conversation_id,
-                user_id=user_id
+                user_id=user_id,
             )
             raise ChatHistoryServiceError(
                 f"An unexpected error occurred while retrieving session history for conversation {conversation_id}"
@@ -118,7 +118,7 @@ class ChatHistoryService:
         except SQLAlchemyError as e:
             logger.exception(
                 "Database error in flush_message_buffer",
-                conversation_id=conversation_id
+                conversation_id=conversation_id,
             )
             self.db.rollback()
             raise ChatHistoryServiceError(
@@ -127,7 +127,7 @@ class ChatHistoryService:
         except Exception as e:
             logger.exception(
                 "Unexpected error in flush_message_buffer",
-                conversation_id=conversation_id
+                conversation_id=conversation_id,
             )
             self.db.rollback()
             raise ChatHistoryServiceError(
@@ -142,7 +142,7 @@ class ChatHistoryService:
         except SQLAlchemyError as e:
             logger.exception(
                 "Database error in clear_session_history",
-                conversation_id=conversation_id
+                conversation_id=conversation_id,
             )
             self.db.rollback()
             raise ChatHistoryServiceError(
@@ -151,7 +151,7 @@ class ChatHistoryService:
         except Exception as e:
             logger.exception(
                 "Unexpected error in clear_session_history",
-                conversation_id=conversation_id
+                conversation_id=conversation_id,
             )
             self.db.rollback()
             raise ChatHistoryServiceError(

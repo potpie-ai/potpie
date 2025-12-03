@@ -458,7 +458,7 @@ class ParseHelper:
                                 except (shutil.Error, OSError):
                                     logger.exception(
                                         "ParsingHelper: Error copying file",
-                                        file_path=file_path
+                                        file_path=file_path,
                                     )
 
                     logger.info(
@@ -1321,6 +1321,6 @@ class ParseHelper:
                 "check_commit_status: Error fetching latest commit",
                 repo_name=repo_name,
                 branch_name=branch_name,
-                project_id=project_id
+                project_id=project_id,
             )
             return False

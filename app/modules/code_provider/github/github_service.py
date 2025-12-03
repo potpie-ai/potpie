@@ -488,9 +488,7 @@ class GithubService:
 
         except Exception:
             logger.exception("Failed to fetch repositories", user_id=user_id)
-            raise HTTPException(
-                status_code=500, detail="Failed to fetch repositories"
-            )
+            raise HTTPException(status_code=500, detail="Failed to fetch repositories")
         finally:
             total_duration = time.time() - start_time  # Calculate total duration
             logger.info(

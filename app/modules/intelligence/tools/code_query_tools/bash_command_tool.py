@@ -438,7 +438,7 @@ class BashCommandTool:
                     "[BASH_COMMAND] Error executing command with gVisor",
                     project_id=project_id,
                     command=command,
-                    working_directory=working_directory
+                    working_directory=working_directory,
                 )
                 return {
                     "success": False,
@@ -459,7 +459,7 @@ class BashCommandTool:
                 "[BASH_COMMAND] Unexpected error",
                 project_id=project_id,
                 command=command,
-                working_directory=working_directory
+                working_directory=working_directory,
             )
             return {
                 "success": False,

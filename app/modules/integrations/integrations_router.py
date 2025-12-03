@@ -1272,9 +1272,7 @@ async def sentry_webhook(request: Request) -> Dict[str, Any]:
                     "integration_id": integration_id,
                 }
             except Exception as e:
-                logger.exception(
-                    "Failed to publish Sentry webhook to event bus"
-                )
+                logger.exception("Failed to publish Sentry webhook to event bus")
                 # Continue with normal response even if event bus fails
                 return {
                     "status": "success",
@@ -1438,9 +1436,7 @@ def verify_jira_webhook_jwt(
     # Extract token from "Bearer <token>" format
     parts = authorization_header.split()
     if len(parts) != 2 or parts[0].lower() != "bearer":
-        logger.warning(
-            "Invalid Authorization header format: expected 'Bearer <token>'"
-        )
+        logger.warning("Invalid Authorization header format: expected 'Bearer <token>'")
         return False, None
 
     token = parts[1]
@@ -1464,10 +1460,10 @@ def verify_jira_webhook_jwt(
     except jwt.ExpiredSignatureError:
         logger.error("Jira webhook JWT has expired")
         return False, None
-    except jwt.InvalidTokenError as e:
+    except jwt.InvalidTokenError:
         logger.exception("Invalid Jira webhook JWT")
         return False, None
-    except Exception as e:
+    except Exception:
         logger.exception("Error verifying Jira webhook JWT")
         return False, None
 

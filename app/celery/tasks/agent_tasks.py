@@ -41,7 +41,9 @@ def execute_agent_background(
                 )
                 from app.modules.users.user_service import UserService
                 from app.modules.conversations.message.message_model import MessageType
-                from app.modules.conversations.message.message_schema import MessageRequest
+                from app.modules.conversations.message.message_schema import (
+                    MessageRequest,
+                )
                 from app.modules.conversations.conversation.conversation_store import (
                     ConversationStore,
                 )
@@ -104,8 +106,10 @@ def execute_agent_background(
 
                             # Flush any buffered AI response chunks before cancelling
                             try:
-                                message_id = service.history_manager.flush_message_buffer(
-                                    conversation_id, MessageType.AI_GENERATED
+                                message_id = (
+                                    service.history_manager.flush_message_buffer(
+                                        conversation_id, MessageType.AI_GENERATED
+                                    )
                                 )
                                 if message_id:
                                     logger.debug(
@@ -186,7 +190,7 @@ def execute_agent_background(
                 f"Background agent execution failed: {conversation_id}:{run_id}",
                 conversation_id=conversation_id,
                 run_id=run_id,
-                user_id=user_id
+                user_id=user_id,
             )
 
             # Set task status to error
@@ -196,19 +200,22 @@ def execute_agent_background(
                 logger.exception(
                     f"Failed to set task status to error for {conversation_id}:{run_id}",
                     conversation_id=conversation_id,
-                    run_id=run_id
+                    run_id=run_id,
                 )
 
             # Ensure end event is always published
             try:
                 redis_manager.publish_event(
-                    conversation_id, run_id, "end", {"status": "error", "message": str(e)}
+                    conversation_id,
+                    run_id,
+                    "end",
+                    {"status": "error", "message": str(e)},
                 )
             except Exception:
                 logger.exception(
                     f"Failed to publish error event to Redis for {conversation_id}:{run_id}",
                     conversation_id=conversation_id,
-                    run_id=run_id
+                    run_id=run_id,
                 )
             raise
 
@@ -387,7 +394,7 @@ def execute_regenerate_background(
             f"Background regenerate execution failed: {conversation_id}:{run_id}",
             conversation_id=conversation_id,
             run_id=run_id,
-            user_id=user_id
+            user_id=user_id,
         )
 
         # Set task status to error
@@ -397,7 +404,7 @@ def execute_regenerate_background(
             logger.exception(
                 "Failed to set task status to error",
                 conversation_id=conversation_id,
-                run_id=run_id
+                run_id=run_id,
             )
 
         try:
@@ -408,6 +415,6 @@ def execute_regenerate_background(
             logger.exception(
                 f"Failed to publish error event to Redis for {conversation_id}:{run_id}",
                 conversation_id=conversation_id,
-                run_id=run_id
+                run_id=run_id,
             )
         raise

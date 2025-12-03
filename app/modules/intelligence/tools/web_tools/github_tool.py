@@ -85,14 +85,20 @@ class GithubTool:
                 }
             return content
         except RepositoryAccessError as e:
-            logger.exception("Repository access error", repo_name=repo_name, user_id=self.user_id)
+            logger.exception(
+                "Repository access error", repo_name=repo_name, user_id=self.user_id
+            )
             return {
                 "success": False,
                 "error": str(e),
                 "content": None,
             }
         except Exception:
-            logger.exception("An unexpected error occurred", repo_name=repo_name, user_id=self.user_id)
+            logger.exception(
+                "An unexpected error occurred",
+                repo_name=repo_name,
+                user_id=self.user_id,
+            )
             return {
                 "success": False,
                 "error": "An unexpected error occurred",
@@ -245,7 +251,12 @@ class GithubTool:
         except RepositoryAccessError:
             raise
         except Exception:
-            logger.exception("Error fetching GitHub content", repo_name=repo_name, issue_number=issue_number, is_pull_request=is_pull_request)
+            logger.exception(
+                "Error fetching GitHub content",
+                repo_name=repo_name,
+                issue_number=issue_number,
+                is_pull_request=is_pull_request,
+            )
             return None
 
     @staticmethod

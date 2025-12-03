@@ -287,7 +287,7 @@ class ConversationService:
             logger.exception(
                 f"Failed to add system message to conversation {conversation_id}",
                 conversation_id=conversation_id,
-                user_id=user_id
+                user_id=user_id,
             )
             raise ConversationServiceError(
                 "Failed to add system message to the conversation."
@@ -331,7 +331,7 @@ class ConversationService:
                     logger.exception(
                         f"Failed to link attachments to message {message_id}",
                         message_id=message_id,
-                        conversation_id=conversation_id
+                        conversation_id=conversation_id,
                     )
                     # Continue processing even if attachment linking fails
 
@@ -391,7 +391,7 @@ class ConversationService:
             logger.exception(
                 f"Error in store_message for conversation {conversation_id}",
                 conversation_id=conversation_id,
-                user_id=user_id
+                user_id=user_id,
             )
             raise ConversationServiceError(
                 "Failed to store message or generate AI response."
@@ -524,7 +524,7 @@ class ConversationService:
             logger.exception(
                 f"Error in regenerate_last_message for conversation {conversation_id}",
                 conversation_id=conversation_id,
-                user_id=user_id
+                user_id=user_id,
             )
             raise ConversationServiceError("Failed to regenerate last message.") from e
 
@@ -581,14 +581,14 @@ class ConversationService:
             logger.exception(
                 f"Background regeneration error for {conversation_id}",
                 conversation_id=conversation_id,
-                user_id=self.user_id
+                user_id=self.user_id,
             )
             raise
         except Exception as e:
             logger.exception(
                 f"Background regeneration failed for {conversation_id}",
                 conversation_id=conversation_id,
-                user_id=self.user_id
+                user_id=self.user_id,
             )
             raise ConversationServiceError(f"Failed to regenerate message: {str(e)}")
 
@@ -612,7 +612,7 @@ class ConversationService:
             logger.exception(
                 f"Failed to archive messages in conversation {conversation_id}",
                 conversation_id=conversation_id,
-                user_id=self.user_id
+                user_id=self.user_id,
             )
             raise ConversationServiceError(
                 "Failed to archive subsequent messages."
@@ -765,7 +765,7 @@ class ConversationService:
             logger.exception(
                 f"Failed to generate and stream AI response for conversation {conversation.id}",
                 conversation_id=conversation.id,
-                user_id=user_id
+                user_id=user_id,
             )
             raise ConversationServiceError(
                 "Failed to generate and stream AI response."
@@ -826,7 +826,7 @@ class ConversationService:
                 except Exception:
                     logger.exception(
                         f"Failed to prepare attachment {attachment_id} as image",
-                        attachment_id=attachment_id
+                        attachment_id=attachment_id,
                     )
                     continue
 
@@ -863,7 +863,7 @@ class ConversationService:
         except Exception:
             logger.exception(
                 f"Error preparing current message images for conversation {conversation_id}",
-                conversation_id=conversation_id
+                conversation_id=conversation_id,
             )
             return None
 
@@ -881,7 +881,7 @@ class ConversationService:
         except Exception:
             logger.exception(
                 f"Error preparing conversation context images for conversation {conversation_id}",
-                conversation_id=conversation_id
+                conversation_id=conversation_id,
             )
             return None
 
@@ -930,7 +930,7 @@ class ConversationService:
             logger.exception(
                 f"Database error in delete_conversation for {conversation_id}",
                 conversation_id=conversation_id,
-                user_id=user_id
+                user_id=user_id,
             )
             raise ConversationServiceError(
                 f"Failed to delete conversation {conversation_id} due to a database error"
@@ -939,7 +939,7 @@ class ConversationService:
             logger.exception(
                 f"Unexpected error in delete_conversation for {conversation_id}",
                 conversation_id=conversation_id,
-                user_id=user_id
+                user_id=user_id,
             )
             raise ConversationServiceError(
                 f"Failed to delete conversation {conversation_id} due to an unexpected error"
@@ -1013,14 +1013,14 @@ class ConversationService:
             logger.exception(
                 f"AccessTypeNotFoundError in get_conversation_info for {conversation_id}",
                 conversation_id=conversation_id,
-                user_id=user_id
+                user_id=user_id,
             )
             raise
         except Exception as e:
             logger.exception(
                 f"Error in get_conversation_info for {conversation_id}",
                 conversation_id=conversation_id,
-                user_id=user_id
+                user_id=user_id,
             )
             raise ConversationServiceError(
                 f"Failed to get conversation info for {conversation_id}"
@@ -1064,7 +1064,7 @@ class ConversationService:
                         logger.exception(
                             f"Failed to get attachments for message {message.id}",
                             message_id=message.id,
-                            conversation_id=conversation_id
+                            conversation_id=conversation_id,
                         )
                         attachments = []
 
@@ -1092,14 +1092,14 @@ class ConversationService:
             logger.exception(
                 f"AccessTypeNotFoundError in get_conversation_messages for {conversation_id}",
                 conversation_id=conversation_id,
-                user_id=user_id
+                user_id=user_id,
             )
             raise
         except Exception as e:
             logger.exception(
                 f"Error in get_conversation_messages for {conversation_id}",
                 conversation_id=conversation_id,
-                user_id=user_id
+                user_id=user_id,
             )
             raise ConversationServiceError(
                 f"Failed to get messages for conversation {conversation_id}"
@@ -1210,7 +1210,7 @@ class ConversationService:
             logger.exception(
                 f"Database error in rename_conversation for {conversation_id}",
                 conversation_id=conversation_id,
-                user_id=user_id
+                user_id=user_id,
             )
             raise ConversationServiceError(
                 "Failed to rename conversation due to a database error"
@@ -1221,7 +1221,7 @@ class ConversationService:
             logger.exception(
                 f"Unexpected error in rename_conversation for {conversation_id}",
                 conversation_id=conversation_id,
-                user_id=user_id
+                user_id=user_id,
             )
             raise ConversationServiceError(
                 "Failed to rename conversation due to an unexpected error"
@@ -1253,7 +1253,7 @@ class ConversationService:
             # service-level exception, which is a good practice.
             logger.exception(
                 f"Store layer failed to get conversations for user {user_id}",
-                user_id=user_id
+                user_id=user_id,
             )
             raise ConversationServiceError(
                 f"Failed to retrieve conversations for user {user_id}"
@@ -1261,7 +1261,7 @@ class ConversationService:
         except Exception as e:
             logger.exception(
                 f"Unexpected error while getting conversations for user {user_id}",
-                user_id=user_id
+                user_id=user_id,
             )
             raise ConversationServiceError(
                 f"An unexpected error occurred while retrieving conversations for user {user_id}"

@@ -325,7 +325,7 @@ class PydanticRagAgent(ChatAgent):
                 except Exception:
                     logger.exception(
                         f"Invalid base64 format for image {attachment_id}",
-                        attachment_id=attachment_id
+                        attachment_id=attachment_id,
                     )
                     continue
 
@@ -359,7 +359,7 @@ class PydanticRagAgent(ChatAgent):
             except Exception:
                 logger.exception(
                     f"Failed to add image {attachment_id} to content",
-                    attachment_id=attachment_id
+                    attachment_id=attachment_id,
                 )
                 continue
 
@@ -392,7 +392,7 @@ class PydanticRagAgent(ChatAgent):
                     except Exception:
                         logger.exception(
                             f"Invalid base64 format for context image {attachment_id}",
-                            attachment_id=attachment_id
+                            attachment_id=attachment_id,
                         )
                         continue
 
@@ -419,7 +419,7 @@ class PydanticRagAgent(ChatAgent):
                 except Exception:
                     logger.exception(
                         f"Failed to add context image {attachment_id} to content",
-                        attachment_id=attachment_id
+                        attachment_id=attachment_id,
                     )
                     continue
 
@@ -720,7 +720,9 @@ class PydanticRagAgent(ChatAgent):
                                     )
                                     continue
                                 except Exception:
-                                    logger.exception("Unexpected error in model request stream")
+                                    logger.exception(
+                                        "Unexpected error in model request stream"
+                                    )
                                     yield ChatAgentResponse(
                                         response="\n\n*An unexpected error occurred. Continuing...*\n\n",
                                         tool_calls=[],
@@ -801,7 +803,9 @@ class PydanticRagAgent(ChatAgent):
                                     )
                                     continue
                                 except Exception:
-                                    logger.exception("Unexpected error in tool call stream")
+                                    logger.exception(
+                                        "Unexpected error in tool call stream"
+                                    )
                                     yield ChatAgentResponse(
                                         response="\n\n*An unexpected error occurred during tool execution. Continuing...*\n\n",
                                         tool_calls=[],
@@ -868,7 +872,9 @@ class PydanticRagAgent(ChatAgent):
                                     )
                                     continue
                                 except Exception:
-                                    logger.exception("Unexpected error in fallback model request stream")
+                                    logger.exception(
+                                        "Unexpected error in fallback model request stream"
+                                    )
                                     yield ChatAgentResponse(
                                         response="\n\n*An unexpected error occurred. Continuing...*\n\n",
                                         tool_calls=[],
@@ -949,7 +955,9 @@ class PydanticRagAgent(ChatAgent):
                                     )
                                     continue
                                 except Exception:
-                                    logger.exception("Unexpected error in fallback tool call stream")
+                                    logger.exception(
+                                        "Unexpected error in fallback tool call stream"
+                                    )
                                     yield ChatAgentResponse(
                                         response="\n\n*An unexpected error occurred during tool execution. Continuing...*\n\n",
                                         tool_calls=[],

@@ -84,7 +84,7 @@ class GetCodeFromMultipleNodeIdsTool:
                 "Unexpected error in GetCodeFromMultipleNodeIdsTool",
                 project_id=project_id,
                 node_ids=node_ids,
-                user_id=self.user_id
+                user_id=self.user_id,
             )
             return {"error": "An unexpected error occurred"}
 

@@ -68,7 +68,7 @@ class AutoRouterAgent(ChatAgent):
         except (ValueError, TypeError, KeyError, Exception):
             logger.exception(
                 "Classification error, falling back to current agent",
-                agent_id=ctx.curr_agent_id
+                agent_id=ctx.curr_agent_id,
             )
             selected_agent_id = ctx.curr_agent_id
 

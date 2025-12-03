@@ -77,9 +77,11 @@ class ParsingService:
                         logger.exception(
                             f"Error in cleanup_graph for project {project_id}",
                             project_id=project_id,
-                            user_id=user_id
+                            user_id=user_id,
                         )
-                        raise HTTPException(status_code=500, detail="Internal server error")
+                        raise HTTPException(
+                            status_code=500, detail="Internal server error"
+                        )
 
                 repo, owner, auth = await self.parse_helper.clone_or_copy_repository(
                     repo_details, user_id
@@ -138,7 +140,7 @@ class ParsingService:
                 logger.exception(
                     f"Error during parsing for project {project_id}",
                     project_id=project_id,
-                    user_id=user_id
+                    user_id=user_id,
                 )
                 # Rollback the database session to clear any pending transactions
                 self.db.rollback()
@@ -150,7 +152,7 @@ class ParsingService:
                     logger.exception(
                         f"Failed to update project status after error for project {project_id}",
                         project_id=project_id,
-                        user_id=user_id
+                        user_id=user_id,
                     )
                 await ParseWebhookHelper().send_slack_notification(project_id, str(e))
                 tb_str = "".join(traceback.format_exception(None, e, e.__traceback__))
@@ -362,5 +364,5 @@ class ParsingService:
             logger.exception(
                 f"Error duplicating graph from {old_repo_id} to {new_repo_id}",
                 old_repo_id=old_repo_id,
-                new_repo_id=new_repo_id
+                new_repo_id=new_repo_id,
             )

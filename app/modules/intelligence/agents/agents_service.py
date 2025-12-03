@@ -162,8 +162,7 @@ class AgentsService:
             ).list_agents(current_user["user_id"])
         except Exception:
             logger.exception(
-                "Failed to fetch custom agents",
-                user_id=current_user['user_id']
+                "Failed to fetch custom agents", user_id=current_user["user_id"]
             )
             custom_agents = []
         agent_info_list = [

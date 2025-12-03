@@ -54,7 +54,7 @@ def process_parsing(
             logger.exception(
                 f"Error during parsing for project {project_id}",
                 project_id=project_id,
-                user_id=user_id
+                user_id=user_id,
             )
             raise
 
