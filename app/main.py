@@ -78,7 +78,9 @@ class MainApp:
                     ],
                 )
             except Exception:
-                logger.exception("Sentry initialization failed (non-fatal but should be investigated)")
+                logger.exception(
+                    "Sentry initialization failed (non-fatal but should be investigated)"
+                )
 
     def setup_phoenix_tracing(self):
         try:
@@ -88,7 +90,9 @@ class MainApp:
 
             initialize_phoenix_tracing()
         except Exception:
-            logger.exception("Phoenix tracing initialization failed (non-fatal but should be investigated)")
+            logger.exception(
+                "Phoenix tracing initialization failed (non-fatal but should be investigated)"
+            )
 
     def setup_cors(self):
         origins = ["*"]
@@ -99,16 +103,16 @@ class MainApp:
             allow_methods=["*"],
             allow_headers=["*"],
         )
-    
+
     def setup_logging_middleware(self):
         """
         Add logging context middleware to automatically inject request-level context.
-        
+
         This ensures all logs within a request automatically include:
         - request_id: Unique identifier for tracing
         - path: API endpoint path
         - user_id: Authenticated user (if available)
-        
+
         Domain-specific IDs (conversation_id, project_id) should be added
         manually using log_context() in routes where available.
         """
@@ -185,7 +189,7 @@ class MainApp:
             system_prompt_setup = SystemPromptSetup(db)
             await system_prompt_setup.initialize_system_prompts()
             logger.info("System prompts initialized successfully")
-        except Exception: 
+        except Exception:
             logger.exception("Failed to initialize system prompts")
             raise
         finally:

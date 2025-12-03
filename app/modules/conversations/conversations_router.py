@@ -245,7 +245,7 @@ class ConversationAPI:
 
         user_id = user["user_id"]
         user_email = user["email"]
-        
+
         # Set up logging context with domain IDs
         with log_context(conversation_id=conversation_id, user_id=user_id):
             checked = await UsageService.check_usage_limit(user_id)
@@ -293,7 +293,9 @@ class ConversationAPI:
                 try:
                     parsed_node_ids = json.loads(node_ids)
                 except json.JSONDecodeError:
-                    raise HTTPException(status_code=400, detail="Invalid node_ids format")
+                    raise HTTPException(
+                        status_code=400, detail="Invalid node_ids format"
+                    )
 
             # Create message request
             message = MessageRequest(
@@ -306,7 +308,9 @@ class ConversationAPI:
 
             if not stream:
                 # Non-streaming behavior unchanged
-                message_stream = controller.post_message(conversation_id, message, stream)
+                message_stream = controller.post_message(
+                    conversation_id, message, stream
+                )
                 async for chunk in message_stream:
                     return chunk
 

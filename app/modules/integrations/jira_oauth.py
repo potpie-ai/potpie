@@ -81,9 +81,7 @@ class JiraOAuth(AtlassianOAuthBase):
 
         # Log the payload we are about to send for diagnostics
         try:
-            logger.info(
-                f"Creating Jira webhook for site {cloud_id} -> {webhook_url}"
-            )
+            logger.info(f"Creating Jira webhook for site {cloud_id} -> {webhook_url}")
             logger.info(f"Jira create_webhook payload: {payload}")
         except Exception:
             # best-effort logging; don't fail the request because logging failed

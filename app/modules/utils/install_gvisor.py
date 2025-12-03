@@ -296,6 +296,7 @@ def get_runsc_path() -> Optional[Path]:
 def main():
     """Main entry point for command-line usage."""
     from app.modules.utils.logger import configure_logging
+
     configure_logging(level="INFO")
 
     force = "--force" in sys.argv

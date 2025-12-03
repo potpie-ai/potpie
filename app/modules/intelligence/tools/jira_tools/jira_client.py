@@ -772,9 +772,7 @@ class JiraClient:
                 f"Failed to fetch project details: {e.response.status_code} {e.response.text}"
             )
         except Exception as e:
-            logger.error(
-                f"Failed to fetch project details for {project_key}: {str(e)}"
-            )
+            logger.error(f"Failed to fetch project details for {project_key}: {str(e)}")
             raise Exception(f"Failed to fetch project details: {str(e)}")
 
     async def get_project_users(

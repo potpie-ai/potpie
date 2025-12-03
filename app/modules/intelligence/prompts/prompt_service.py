@@ -125,13 +125,19 @@ class PromptService:
             raise
         except SQLAlchemyError as e:
             self.db.rollback()
-            logger.exception("Database error in update_prompt", prompt_id=prompt_id, user_id=user_id)
+            logger.exception(
+                "Database error in update_prompt", prompt_id=prompt_id, user_id=user_id
+            )
             raise PromptUpdateError(
                 f"Failed to update prompt {prompt_id} due to a database error"
             ) from e
         except Exception as e:
             self.db.rollback()
-            logger.exception("Unexpected error in update_prompt", prompt_id=prompt_id, user_id=user_id)
+            logger.exception(
+                "Unexpected error in update_prompt",
+                prompt_id=prompt_id,
+                user_id=user_id,
+            )
             raise PromptUpdateError(
                 f"Failed to update prompt {prompt_id} due to an unexpected error"
             ) from e
@@ -152,13 +158,19 @@ class PromptService:
             raise
         except SQLAlchemyError as e:
             self.db.rollback()
-            logger.exception("Database error in delete_prompt", prompt_id=prompt_id, user_id=user_id)
+            logger.exception(
+                "Database error in delete_prompt", prompt_id=prompt_id, user_id=user_id
+            )
             raise PromptDeletionError(
                 f"Failed to delete prompt {prompt_id} due to a database error"
             ) from e
         except Exception as e:
             self.db.rollback()
-            logger.exception("Unexpected error in delete_prompt", prompt_id=prompt_id, user_id=user_id)
+            logger.exception(
+                "Unexpected error in delete_prompt",
+                prompt_id=prompt_id,
+                user_id=user_id,
+            )
             raise PromptDeletionError(
                 f"Failed to delete prompt {prompt_id} due to an unexpected error"
             ) from e
@@ -173,12 +185,16 @@ class PromptService:
             logger.warning(str(e))
             raise
         except SQLAlchemyError as e:
-            logger.exception("Database error in fetch_prompt", prompt_id=prompt_id, user_id=user_id)
+            logger.exception(
+                "Database error in fetch_prompt", prompt_id=prompt_id, user_id=user_id
+            )
             raise PromptFetchError(
                 f"Failed to fetch prompt {prompt_id} due to a database error"
             ) from e
         except Exception as e:
-            logger.exception("Unexpected error in fetch_prompt", prompt_id=prompt_id, user_id=user_id)
+            logger.exception(
+                "Unexpected error in fetch_prompt", prompt_id=prompt_id, user_id=user_id
+            )
             raise PromptFetchError(
                 f"Failed to fetch prompt {prompt_id} due to an unexpected error"
             ) from e
@@ -249,7 +265,7 @@ class PromptService:
             logger.exception(
                 "Database error in map_agent_to_prompt",
                 agent_id=mapping.agent_id,
-                prompt_id=mapping.prompt_id
+                prompt_id=mapping.prompt_id,
             )
             raise PromptServiceError("Failed to map agent to prompt", e) from e
         except Exception as e:
@@ -257,7 +273,7 @@ class PromptService:
             logger.exception(
                 "Unexpected error in map_agent_to_prompt",
                 agent_id=mapping.agent_id,
-                prompt_id=mapping.prompt_id
+                prompt_id=mapping.prompt_id,
             )
             raise PromptServiceError(
                 "Failed to map agent to prompt due to an unexpected error"
@@ -329,7 +345,7 @@ class PromptService:
             logger.exception(
                 "Database error in create_or_update_system_prompt",
                 agent_id=agent_id,
-                stage=stage
+                stage=stage,
             )
             raise PromptServiceError("Failed to create or update system prompt") from e
 
@@ -361,7 +377,6 @@ class PromptService:
         agent_ids=None,
         available_agents=None,
     ) -> str:
-
         if agent_ids and available_agents:
             inputs = {
                 "query": prompt,
@@ -404,7 +419,9 @@ class PromptService:
             )
             return result.enhancedprompt
         except Exception:
-            logger.exception("Enhancing failed", user_id=user.get("user_id") if user else None)
+            logger.exception(
+                "Enhancing failed", user_id=user.get("user_id") if user else None
+            )
             raise
 
 

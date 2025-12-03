@@ -37,7 +37,7 @@ logger = setup_logger(__name__)
 @router.post("/conversations/{conversation_id}/message/")
 async def post_message(conversation_id: str, user=Depends(AuthService.check_auth)):
     user_id = user["user_id"]
-    
+
     # Add domain-specific context
     with log_context(conversation_id=conversation_id, user_id=user_id):
         logger.info("Processing message")  # Includes conversation_id + user_id
@@ -134,7 +134,7 @@ Example:
 # Middleware adds: request_id, path, user_id
 with log_context(conversation_id=conv_id):  # Adds conversation_id
     logger.info("Message", project_id=proj_id)  # Adds project_id
-    
+
 # Final log includes: request_id, path, user_id, conversation_id, project_id
 ```
 
@@ -282,11 +282,11 @@ async def post_message(
     user=Depends(AuthService.check_auth)
 ):
     user_id = user["user_id"]
-    
+
     # Add domain-specific context
     with log_context(conversation_id=conversation_id, user_id=user_id):
         logger.info("Received message")
-        
+
         try:
             result = await process_message(conversation_id, user_id)
             logger.info("Message processed successfully")
@@ -336,7 +336,7 @@ def process_background_task(conversation_id: str, user_id: str):
     # Add context for background task
     with log_context(conversation_id=conversation_id, user_id=user_id):
         logger.info("Starting background task")
-        
+
         try:
             result = do_work()
             logger.info("Background task completed")
@@ -352,7 +352,7 @@ def process_background_task(conversation_id: str, user_id: str):
 
 **Problem**: Logs don't include `user_id` or `request_id`
 
-**Solution**: 
+**Solution**:
 - Ensure middleware is added: `app.add_middleware(LoggingContextMiddleware)`
 - Check that `request.state.user` is set by `AuthService.check_auth`
 
@@ -374,4 +374,3 @@ def process_background_task(conversation_id: str, user_id: str):
 - Implementation: `app/modules/utils/logger.py`
 - Middleware: `app/modules/utils/logging_middleware.py`
 - Plan: `thoughts/shared/plans/2025-12-01-logging-consistency-improvements.md`
-

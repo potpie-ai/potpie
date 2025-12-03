@@ -78,7 +78,7 @@ class GetCodeFromNodeIdTool:
                 "Unexpected error in GetCodeFromNodeIdTool",
                 project_id=project_id,
                 node_id=node_id,
-                user_id=self.user_id
+                user_id=self.user_id,
             )
             return {"error": "An unexpected error occurred"}
 

@@ -88,10 +88,7 @@ class BaseTask(Task):
     def on_failure(self, exc, task_id, args, kwargs, einfo):
         """Called on task failure."""
         # exc is already an exception object from on_failure
-        logger.exception(
-            f"Task {task_id} failed",
-            task_id=task_id
-        )
+        logger.exception(f"Task {task_id} failed", task_id=task_id)
         if self._db:
             self._db.close()
             self._db = None

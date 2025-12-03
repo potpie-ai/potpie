@@ -41,5 +41,5 @@ class PostHogClient:
                 logger.exception(
                     f"Failed to send PostHog event: {event_name}",
                     user_id=user_id,
-                    event_name=event_name
+                    event_name=event_name,
                 )
