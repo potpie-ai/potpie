@@ -187,7 +187,7 @@ def execute_agent_background(
 
         except Exception as e:
             logger.exception(
-                f"Background agent execution failed: {conversation_id}:{run_id}",
+                "Background agent execution failed",
                 conversation_id=conversation_id,
                 run_id=run_id,
                 user_id=user_id,
@@ -198,7 +198,7 @@ def execute_agent_background(
                 redis_manager.set_task_status(conversation_id, run_id, "error")
             except Exception:
                 logger.exception(
-                    f"Failed to set task status to error for {conversation_id}:{run_id}",
+                    "Failed to set task status to error",
                     conversation_id=conversation_id,
                     run_id=run_id,
                 )
@@ -213,7 +213,7 @@ def execute_agent_background(
                 )
             except Exception:
                 logger.exception(
-                    f"Failed to publish error event to Redis for {conversation_id}:{run_id}",
+                    "Failed to publish error event to Redis",
                     conversation_id=conversation_id,
                     run_id=run_id,
                 )
@@ -391,7 +391,7 @@ def execute_regenerate_background(
 
     except Exception as e:
         logger.exception(
-            f"Background regenerate execution failed: {conversation_id}:{run_id}",
+            "Background regenerate execution failed",
             conversation_id=conversation_id,
             run_id=run_id,
             user_id=user_id,
@@ -413,7 +413,7 @@ def execute_regenerate_background(
             )
         except Exception:
             logger.exception(
-                f"Failed to publish error event to Redis for {conversation_id}:{run_id}",
+                "Failed to publish error event to Redis",
                 conversation_id=conversation_id,
                 run_id=run_id,
             )

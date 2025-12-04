@@ -11,8 +11,6 @@ from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.posthog_helper import PostHogClient
 from app.modules.utils.logger import setup_logger
 
-logger = setup_logger(__name__)
-
 from .provider_schema import (
     ProviderInfo,
     GetProviderResponse,
@@ -32,12 +30,13 @@ from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.anthropic import AnthropicProvider
-import litellm
 
 import random
 import time
 import asyncio
 from functools import wraps
+
+logger = setup_logger(__name__)
 
 litellm.num_retries = 5  # Number of retries for rate limited requests
 
@@ -217,7 +216,7 @@ def robust_llm_call(settings: Optional[RetrySettings] = None):
 
                     if retries >= settings.max_retries:
                         logger.exception(
-                            f"Max retries ({settings.max_retries}) exceeded for {provider} API call",
+                            "Max retries exceeded for API call",
                             provider=provider,
                             retries=retries,
                             max_retries=settings.max_retries,
@@ -680,7 +679,7 @@ class ProviderService:
                     return response.choices[0].message.content
         except Exception as e:
             logger.exception(
-                f"Error calling LLM with model {model_identifier}",
+                "Error calling LLM",
                 model_identifier=model_identifier,
                 provider=routing_provider,
             )
@@ -1005,7 +1004,7 @@ class ProviderService:
                 )
 
             except Exception:
-                logger.exception(f"Error validating image {img_id}", img_id=img_id)
+                logger.exception("Error validating image", img_id=img_id)
                 continue
 
         logger.info(

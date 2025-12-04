@@ -386,7 +386,7 @@ class PydanticMultiAgent(ChatAgent):
             else:
                 raise  # Re-raise if it's a different ValueError
         else:
-            logger.exception(f"Unexpected error in {context}", context=context)
+            logger.exception("Unexpected error", context=context)
             if "json" in str(error).lower() or "parse" in str(error).lower():
                 return PydanticMultiAgent._create_error_response(
                     "*Encountered a parsing error. Skipping this step and continuing...*"
@@ -914,7 +914,7 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
 
             except Exception as e:
                 logger.exception(
-                    f"Error in delegation to {agent_type.value}",
+                    "Error in delegation",
                     agent_type=agent_type.value,
                     task_description=task_description,
                 )
@@ -1103,7 +1103,7 @@ Image Analysis Notes:
                     base64.b64decode(base64_data)
                 except Exception:
                     logger.exception(
-                        f"Invalid base64 format for image {attachment_id}",
+                        "Invalid base64 format for image",
                         attachment_id=attachment_id,
                     )
                     continue
@@ -1137,7 +1137,7 @@ Image Analysis Notes:
 
             except Exception:
                 logger.exception(
-                    f"Failed to add image {attachment_id} to content",
+                    "Failed to add image to content",
                     attachment_id=attachment_id,
                 )
                 continue
@@ -1170,7 +1170,7 @@ Image Analysis Notes:
                         base64.b64decode(base64_data)
                     except Exception:
                         logger.exception(
-                            f"Invalid base64 format for context image {attachment_id}",
+                            "Invalid base64 format for context image",
                             attachment_id=attachment_id,
                         )
                         continue
@@ -1197,7 +1197,7 @@ Image Analysis Notes:
                     )
                 except Exception:
                     logger.exception(
-                        f"Failed to add context image {attachment_id} to content",
+                        "Failed to add context image to content",
                         attachment_id=attachment_id,
                     )
                     continue

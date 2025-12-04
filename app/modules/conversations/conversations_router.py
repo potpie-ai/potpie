@@ -274,7 +274,8 @@ class ConversationAPI:
                             attachment_ids.append(upload_result.id)
                         except Exception as e:
                             logger.exception(
-                                f"Failed to upload image {image.filename}",
+                                "Failed to upload image",
+                                filename=image.filename,
                                 conversation_id=conversation_id,
                                 user_id=user_id,
                             )

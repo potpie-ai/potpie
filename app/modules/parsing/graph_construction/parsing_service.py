@@ -75,7 +75,7 @@ class ParsingService:
                         code_graph_service.cleanup_graph(project_id)
                     except Exception:
                         logger.exception(
-                            f"Error in cleanup_graph for project {project_id}",
+                            "Error in cleanup_graph",
                             project_id=project_id,
                             user_id=user_id,
                         )
@@ -140,13 +140,13 @@ class ParsingService:
                 # Log the full traceback server-side for debugging
                 tb_str = "".join(traceback.format_exception(None, e, e.__traceback__))
                 logger.exception(
-                    f"Error during parsing for project {project_id}",
+                    "Error during parsing",
                     project_id=project_id,
                     user_id=user_id,
                 )
                 # Log the formatted traceback string explicitly for detailed debugging
                 logger.error(
-                    f"Full traceback for project {project_id}:\n{tb_str}",
+                    f"Full traceback:\n{tb_str}",
                     project_id=project_id,
                     user_id=user_id,
                 )
@@ -158,7 +158,7 @@ class ParsingService:
                     )
                 except Exception:
                     logger.exception(
-                        f"Failed to update project status after error for project {project_id}",
+                        "Failed to update project status after error",
                         project_id=project_id,
                         user_id=user_id,
                     )
@@ -371,7 +371,7 @@ class ParsingService:
 
         except Exception:
             logger.exception(
-                f"Error duplicating graph from {old_repo_id} to {new_repo_id}",
+                "Error duplicating graph",
                 old_repo_id=old_repo_id,
                 new_repo_id=new_repo_id,
             )
