@@ -12,7 +12,7 @@ _logger = _loguru_logger
 
 def production_log_sink(message):
     """Custom sink for production that outputs flat JSON format for better machine readability.
-    
+
     When serialize=True, loguru outputs JSON string. We parse it and reformat as flat JSON
     for easier parsing by log aggregation tools (ELK, Datadog, Splunk, CloudWatch, etc.).
     """
@@ -25,17 +25,19 @@ def production_log_sink(message):
         sys.stdout.write(message)
         sys.stdout.flush()
         return
-    
+
     # Extract exception info if present
     exception = None
     exc = record.get("exception")
     if exc:
         exception = {
-            "type": exc.get("type", {}).get("name", "Exception") if isinstance(exc.get("type"), dict) else str(exc.get("type", "Exception")),
+            "type": exc.get("type", {}).get("name", "Exception")
+            if isinstance(exc.get("type"), dict)
+            else str(exc.get("type", "Exception")),
             "value": exc.get("value", ""),
             "traceback": exc.get("traceback", ""),
         }
-    
+
     # Build flat JSON structure - easier for log parsers
     log_data = {
         "timestamp": record.get("time", {}).get("repr", ""),
@@ -45,17 +47,17 @@ def production_log_sink(message):
         "line": record.get("line", 0),
         "message": record.get("message", ""),
     }
-    
+
     # Add all extra fields (conversation_id, user_id, etc.) at top level
     extras = record.get("extra", {})
     for key, value in extras.items():
         if key != "name":  # Already included as "logger"
             log_data[key] = value
-    
+
     # Add exception if present
     if exception:
         log_data["exception"] = exception
-    
+
     # Write flat JSON to stdout (one JSON object per line - JSONL format)
     sys.stdout.write(json.dumps(log_data, default=str) + "\n")
     sys.stdout.flush()
