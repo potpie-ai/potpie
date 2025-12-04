@@ -11,7 +11,6 @@ This class is maintained for backward compatibility only.
 """
 
 import asyncio
-import logging
 import os
 import re
 import warnings
@@ -24,8 +23,9 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.modules.projects.projects_service import ProjectService
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class LocalRepoService:
