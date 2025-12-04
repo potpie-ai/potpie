@@ -7,7 +7,6 @@ This document outlines the logging patterns and best practices for the applicati
 We use **Loguru** for structured logging with automatic interception of standard library `logging` calls. This means:
 - ✅ All `logging.info()`, `logging.error()`, etc. calls are automatically routed through Loguru
 - ✅ Consistent format across all logs (text in dev, JSON in production)
-- ✅ No need to migrate 300+ files - interception handles it automatically
 
 ## Architecture
 
@@ -102,24 +101,6 @@ logging.error("Errors are also intercepted")
 - No migration needed - interception handles it
 - All standard library logs get Loguru formatting
 - Context from middleware is automatically included
-
-### ❌ Pattern 4: Deprecated Helper Function
-
-```python
-# ❌ OLD WAY (deprecated but still works)
-from app.modules.utils.logger import log_error_with_context
-
-try:
-    result = operation()
-except Exception as e:
-    log_error_with_context(logger, "Operation failed", e, user_id=user_id)
-
-# ✅ NEW WAY (recommended)
-try:
-    result = operation()
-except Exception:
-    logger.exception("Operation failed", user_id=user_id)
-```
 
 ## Context Hierarchy
 
@@ -242,109 +223,6 @@ except Exception as e:
 
 Set via `ENV=production` environment variable.
 
-## Migration Strategy
-
-### ✅ What You DON'T Need to Do
-
-- ❌ Migrate all `logging.getLogger()` calls
-- ❌ Change all `logging.info()` to `logger.info()`
-- ❌ Update 300+ files
-
-### ✅ What You SHOULD Do
-
-1. **Use middleware** (already done) - automatic context for all requests
-2. **Use log_context()** for domain IDs in routes that have them
-3. **Use logger.exception()** for new error logging
-4. **Migrate incrementally** - only when you're already modifying a file
-
-### Gradual Migration
-
-When you're already modifying a file:
-- Replace `logging.getLogger(__name__)` with `setup_logger(__name__)`
-- Replace `logger.error(..., exc_info=True)` with `logger.exception(...)`
-- Add context kwargs where relevant
-
-## Examples
-
-### Example 1: Route Handler
-
-```python
-from app.modules.utils.logger import setup_logger, log_context
-from fastapi import APIRouter, Depends
-from app.modules.auth.auth_service import AuthService
-
-router = APIRouter()
-logger = setup_logger(__name__)
-
-@router.post("/conversations/{conversation_id}/message/")
-async def post_message(
-    conversation_id: str,
-    user=Depends(AuthService.check_auth)
-):
-    user_id = user["user_id"]
-
-    # Add domain-specific context
-    with log_context(conversation_id=conversation_id, user_id=user_id):
-        logger.info("Received message")
-
-        try:
-            result = await process_message(conversation_id, user_id)
-            logger.info("Message processed successfully")
-            return result
-        except Exception:
-            logger.exception("Failed to process message")
-            raise
-```
-
-### Example 2: Service Method
-
-```python
-from app.modules.utils.logger import setup_logger
-
-logger = setup_logger(__name__)
-
-class ConversationService:
-    async def create_conversation(self, user_id: str, title: str):
-        try:
-            conversation = await self._create_conversation_record(user_id, title)
-            logger.info(
-                "Conversation created",
-                user_id=user_id,
-                conversation_id=conversation.id,
-                title=title
-            )
-            return conversation
-        except Exception:
-            logger.exception(
-                "Failed to create conversation",
-                user_id=user_id,
-                title=title
-            )
-            raise
-```
-
-### Example 3: Celery Task
-
-```python
-from app.modules.utils.logger import setup_logger, log_context
-from app.celery.celery_app import celery_app
-
-logger = setup_logger(__name__)
-
-@celery_app.task
-def process_background_task(conversation_id: str, user_id: str):
-    # Add context for background task
-    with log_context(conversation_id=conversation_id, user_id=user_id):
-        logger.info("Starting background task")
-
-        try:
-            result = do_work()
-            logger.info("Background task completed")
-            return result
-        except Exception:
-            logger.exception("Background task failed")
-            raise
-```
 
 ## Troubleshooting
 
@@ -373,4 +251,3 @@ def process_background_task(conversation_id: str, user_id: str):
 - Loguru Documentation: https://loguru.readthedocs.io/
 - Implementation: `app/modules/utils/logger.py`
 - Middleware: `app/modules/utils/logging_middleware.py`
-- Plan: `thoughts/shared/plans/2025-12-01-logging-consistency-improvements.md`

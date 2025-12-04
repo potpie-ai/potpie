@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import sys
@@ -7,6 +8,57 @@ from typing import Optional
 
 _LOGGING_CONFIGURED = False
 _logger = _loguru_logger
+
+
+def production_log_sink(message):
+    """Custom sink for production that outputs flat JSON format for better machine readability.
+    
+    When serialize=True, loguru outputs JSON string. We parse it and reformat as flat JSON
+    for easier parsing by log aggregation tools (ELK, Datadog, Splunk, CloudWatch, etc.).
+    """
+    try:
+        # Parse the serialized JSON from loguru
+        full_record = json.loads(message)
+        record = full_record.get("record", full_record)
+    except (json.JSONDecodeError, AttributeError):
+        # Fallback: if message is not JSON, output as-is (shouldn't happen with serialize=True)
+        sys.stdout.write(message)
+        sys.stdout.flush()
+        return
+    
+    # Extract exception info if present
+    exception = None
+    exc = record.get("exception")
+    if exc:
+        exception = {
+            "type": exc.get("type", {}).get("name", "Exception") if isinstance(exc.get("type"), dict) else str(exc.get("type", "Exception")),
+            "value": exc.get("value", ""),
+            "traceback": exc.get("traceback", ""),
+        }
+    
+    # Build flat JSON structure - easier for log parsers
+    log_data = {
+        "timestamp": record.get("time", {}).get("repr", ""),
+        "level": record.get("level", {}).get("name", "INFO"),
+        "logger": record.get("extra", {}).get("name", record.get("name", "unknown")),
+        "function": record.get("function", ""),
+        "line": record.get("line", 0),
+        "message": record.get("message", ""),
+    }
+    
+    # Add all extra fields (conversation_id, user_id, etc.) at top level
+    extras = record.get("extra", {})
+    for key, value in extras.items():
+        if key != "name":  # Already included as "logger"
+            log_data[key] = value
+    
+    # Add exception if present
+    if exception:
+        log_data["exception"] = exception
+    
+    # Write flat JSON to stdout (one JSON object per line - JSONL format)
+    sys.stdout.write(json.dumps(log_data, default=str) + "\n")
+    sys.stdout.flush()
 
 
 class InterceptHandler(logging.Handler):
@@ -58,17 +110,19 @@ def configure_logging(level: Optional[str] = None):
     _logger = _logger.patch(patcher)
 
     if env == "production":
-        # Production: JSON format, machine-readable
+        # Production: Flat JSON format for better machine readability
+        # This format is easier for log aggregation tools (ELK, Datadog, Splunk, etc.)
+        # Use serialize=True to get structured data, then format as flat JSON
         _logger.add(
-            sys.stdout,
-            format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {extra[name]}:{function}:{line} | {message}",
-            serialize=True,
+            production_log_sink,
+            format="{message}",
             level=level,
+            serialize=True,  # Get structured record, then format in sink
         )
     else:
         _logger.add(
             sys.stdout,
-            format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{extra[name]}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | <level>{message}</level>",
+            format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{extra[name]}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | <level>{message}</level> - {extra}",
             level=level,
             colorize=True,
         )

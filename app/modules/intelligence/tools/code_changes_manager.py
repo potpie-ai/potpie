@@ -411,7 +411,7 @@ class CodeChangesManager:
             }
         except Exception as e:
             logger.exception(
-                f"CodeChangesManager.update_file_lines: Error updating lines in '{file_path}'",
+                "CodeChangesManager.update_file_lines: Error updating lines",
                 file_path=file_path,
             )
             return {"success": False, "error": str(e)}
@@ -504,7 +504,7 @@ class CodeChangesManager:
             }
         except Exception as e:
             logger.exception(
-                f"CodeChangesManager.replace_in_file: Error replacing pattern in '{file_path}'",
+                "CodeChangesManager.replace_in_file: Error replacing pattern",
                 file_path=file_path,
             )
             return {"success": False, "error": str(e)}
@@ -639,7 +639,7 @@ class CodeChangesManager:
             }
         except Exception as e:
             logger.exception(
-                f"CodeChangesManager.insert_lines: Error inserting lines in '{file_path}'",
+                "CodeChangesManager.insert_lines: Error inserting lines",
                 file_path=file_path,
             )
             return {"success": False, "error": str(e)}
@@ -721,7 +721,7 @@ class CodeChangesManager:
             }
         except Exception as e:
             logger.exception(
-                f"CodeChangesManager.delete_lines: Error deleting lines from '{file_path}'",
+                "CodeChangesManager.delete_lines: Error deleting lines",
                 file_path=file_path,
             )
             return {"success": False, "error": str(e)}

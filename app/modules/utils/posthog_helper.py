@@ -39,7 +39,7 @@ class PostHogClient:
             except Exception:
                 # Log as error with context - event send failures should be investigated
                 logger.exception(
-                    f"Failed to send PostHog event: {event_name}",
+                    "Failed to send PostHog event",
                     user_id=user_id,
                     event_name=event_name,
                 )

@@ -10,7 +10,6 @@ import json
 import time
 from app.modules.utils.logger import setup_logger
 
-logger = setup_logger(__name__)
 import urllib.parse
 import jwt
 
@@ -48,6 +47,8 @@ from .integrations_schema import (
     IntegrationSaveResponse,
 )
 
+
+logger = setup_logger(__name__)
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
 
