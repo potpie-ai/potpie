@@ -6,7 +6,7 @@ from typing import Any, Dict
 
 from dotenv import load_dotenv
 from fastapi import HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from sqlalchemy import select, or_
 from uuid6 import uuid7
 
@@ -37,7 +37,7 @@ class ParsingController:
     @staticmethod
     @validate_parsing_input
     async def parse_directory(
-        repo_details: ParsingRequest, db: AsyncSession, user: Dict[str, Any]
+        repo_details: ParsingRequest, db: Session, user: Dict[str, Any]
     ):
         if "email" not in user:
             user_email = None
@@ -189,8 +189,65 @@ class ParsingController:
                     project_id, requested_commit_id=repo_details.commit_id
                 )
 
-                if not is_latest or project.status != ProjectStatusEnum.READY.value:
+                # Check if filters have changed
+                current_filters = project.parse_filters or {}
+                new_filters = (
+                    repo_details.filters.model_dump() if repo_details.filters else {}
+                )
+
+                def normalize_filters(f):
+                    return {
+                        "excluded_directories": sorted(
+                            f.get("excluded_directories", [])
+                        ),
+                        "excluded_files": sorted(f.get("excluded_files", [])),
+                        "excluded_extensions": sorted(f.get("excluded_extensions", [])),
+                        "include_mode": f.get("include_mode", False),
+                    }
+
+                normalized_current = normalize_filters(current_filters)
+                normalized_new = normalize_filters(new_filters)
+                filters_changed = normalized_current != normalized_new
+
+                logger.info(f"[DEBUG] Project {project_id} filter comparison:")
+                logger.info(f"[DEBUG]   Current filters (raw): {current_filters}")
+                logger.info(f"[DEBUG]   New filters (raw): {new_filters}")
+                logger.info(
+                    f"[DEBUG]   Current filters (normalized): {normalized_current}"
+                )
+                logger.info(f"[DEBUG]   New filters (normalized): {normalized_new}")
+                logger.info(f"[DEBUG]   Filters changed: {filters_changed}")
+                logger.info(
+                    f"[DEBUG]   Project status: {project.status}, is_latest: {is_latest}"
+                )
+
+                if (
+                    not is_latest
+                    or project.status != ProjectStatusEnum.READY.value
+                    or filters_changed
+                ):
                     cleanup_graph = True
+                    if filters_changed:
+                        logger.info(
+                            f"Filters changed for project {project_id}. Re-parsing."
+                        )
+                        # Update project filters and increment parse count
+                        logger.info(
+                            f"[DEBUG] Updating filters for project {project_id}"
+                        )
+                        logger.info(
+                            f"[DEBUG]   Old parse_filters: {project.parse_filters}"
+                        )
+                        logger.info(f"[DEBUG]   New parse_filters: {new_filters}")
+                        project.parse_filters = new_filters
+                        project.parse_count = (project.parse_count or 1) + 1
+                        db.add(project)
+                        db.commit()
+                        db.refresh(project)
+                        logger.info(
+                            f"[DEBUG] Filters updated successfully, parse_count now: {project.parse_count}"
+                        )
+
                     logger.info(
                         f"Submitting parsing task for existing project {project_id}"
                     )
@@ -212,6 +269,7 @@ class ParsingController:
                             "repo_name": repo_details.repo_name,
                             "branch": repo_details.branch_name,
                             "project_id": project_id,
+                            "filters_changed": filters_changed,
                         },
                     )
                     return {
@@ -243,7 +301,7 @@ class ParsingController:
         user_email: str,
         new_project_id: str,
         project_manager: ProjectService,
-        db: AsyncSession,
+        db: Session,
     ):
         response = {
             "project_id": new_project_id,
@@ -252,6 +310,11 @@ class ParsingController:
 
         logger.info(f"Submitting parsing task for new project {new_project_id}")
         repo_name = repo_details.repo_name or repo_details.repo_path.split("/")[-1]
+
+        filters_dict = (
+            repo_details.filters.model_dump() if repo_details.filters else None
+        )
+
         await project_manager.register_project(
             repo_name,
             repo_details.branch_name,
@@ -259,6 +322,7 @@ class ParsingController:
             new_project_id,
             repo_details.commit_id,
             repo_details.repo_path,
+            filters=filters_dict,
         )
         asyncio.create_task(
             CodeProviderService(db).get_project_structure_async(new_project_id)
@@ -286,9 +350,7 @@ class ParsingController:
         return response
 
     @staticmethod
-    async def fetch_parsing_status(
-        project_id: str, db: AsyncSession, user: Dict[str, Any]
-    ):
+    async def fetch_parsing_status(project_id: str, db: Session, user: Dict[str, Any]):
         try:
             project_query = (
                 select(Project.status)
@@ -323,3 +385,49 @@ class ParsingController:
         except Exception as e:
             logger.error(f"Error in fetch_parsing_status: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
+
+    @staticmethod
+    async def check_parsing_status(
+        repo_details: ParsingRequest, db: Session, user: Dict[str, Any]
+    ):
+        user_id = user["user_id"]
+        project_manager = ProjectService(db)
+
+        # Normalize repository name
+        repo_name = repo_details.repo_name or (
+            repo_details.repo_path.split("/")[-1] if repo_details.repo_path else None
+        )
+        normalized_repo_name = normalize_repo_name(repo_name)
+
+        project = await project_manager.get_project_from_db(
+            normalized_repo_name,
+            repo_details.branch_name,
+            user_id,
+            repo_path=repo_details.repo_path,
+            commit_id=repo_details.commit_id,
+        )
+
+        if not project:
+            return {"status": "NOT_FOUND", "last_parsed_at": None}
+
+        current_filters = project.parse_filters or {}
+        new_filters = repo_details.filters.model_dump() if repo_details.filters else {}
+
+        def normalize_filters(f):
+            return {
+                "excluded_directories": sorted(f.get("excluded_directories", [])),
+                "excluded_files": sorted(f.get("excluded_files", [])),
+                "excluded_extensions": sorted(f.get("excluded_extensions", [])),
+                "include_mode": f.get("include_mode", False),
+            }
+
+        filters_match = normalize_filters(current_filters) == normalize_filters(
+            new_filters
+        )
+
+        return {
+            "status": "MATCH" if filters_match else "MISMATCH",
+            "last_parsed_at": project.updated_at,  # Using updated_at as proxy for last_parsed_at if not set
+            "project_status": project.status,
+            "current_filters": current_filters,  # Return existing filters so UI can populate file selector
+        }

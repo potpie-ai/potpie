@@ -28,6 +28,7 @@ from app.modules.users.user_model import User
 from app.modules.code_provider.github.github_provider import GitHubProvider
 from app.modules.code_provider.provider_factory import CodeProviderFactory
 from app.modules.code_provider.base.code_provider_interface import AuthMethod
+from app.modules.parsing.utils.file_utils import FileUtils
 
 logger = logging.getLogger(__name__)
 
@@ -755,25 +756,6 @@ class GithubService:
         base_path: Optional[str] = None,
         ref: Optional[str] = None,
     ) -> Dict[str, Any]:
-        exclude_extensions = [
-            "png",
-            "jpg",
-            "jpeg",
-            "gif",
-            "bmp",
-            "tiff",
-            "webp",
-            "ico",
-            "svg",
-            "mp4",
-            "avi",
-            "mov",
-            "wmv",
-            "flv",
-            "ipynb",
-            "zlib",
-        ]
-
         # Calculate current depth relative to base_path
         if base_path:
             # If we have a base_path, calculate depth relative to it
@@ -805,12 +787,15 @@ class GithubService:
             if not isinstance(contents, list):
                 contents = [contents]
 
-            # Filter out files with excluded extensions
+            # Filter out files using FileUtils
             contents = [
                 item
                 for item in contents
                 if item.type == "dir"
-                or not any(item.name.endswith(ext) for ext in exclude_extensions)
+                or (
+                    not FileUtils.is_excluded_file_name(item.name)
+                    and FileUtils.is_valid_file_name(item.name)
+                )
             ]
 
             tasks = []
@@ -872,6 +857,32 @@ class GithubService:
             return output
 
         return "\n".join(_format_node(structure))
+
+    async def get_repo_structure_json(
+        self, repo_name: str, branch_name: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Get repository structure as JSON for a specific branch.
+        """
+        try:
+            github, repo = self.get_repo(repo_name)
+
+            # Fetch structure starting from root
+            structure = await self._fetch_repo_structure_async(
+                repo,
+                path="",
+                current_depth=0,
+                base_path="",
+                ref=branch_name,
+            )
+
+            # _fetch_repo_structure_async returns a single root directory dict
+            # We want to return the children of that root directory
+            return structure.get("children", [])
+
+        except Exception as e:
+            logger.error(f"Error fetching repo structure for {repo_name}: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
 
     async def check_public_repo(self, repo_name: str) -> bool:
         try:

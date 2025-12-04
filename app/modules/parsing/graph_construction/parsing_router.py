@@ -24,3 +24,12 @@ async def get_parsing_status(
     project_id: str, db: Session = Depends(get_db), user=Depends(AuthService.check_auth)
 ):
     return await ParsingController.fetch_parsing_status(project_id, db, user)
+
+
+@router.post("/check-status")
+async def check_parsing_status(
+    repo_details: ParsingRequest,
+    db: Session = Depends(get_db),
+    user=Depends(AuthService.check_auth),
+):
+    return await ParsingController.check_parsing_status(repo_details, db, user)

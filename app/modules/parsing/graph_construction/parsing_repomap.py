@@ -2,8 +2,10 @@ import logging
 import math
 import os
 import warnings
+import fnmatch
 from collections import Counter, defaultdict, namedtuple
 from pathlib import Path
+from typing import Optional
 
 import networkx as nx
 from grep_ast import TreeContext, filename_to_lang
@@ -17,6 +19,7 @@ from app.core.database import get_db
 from app.modules.parsing.graph_construction.parsing_helper import (  # noqa: E402
     ParseHelper,
 )
+from app.modules.parsing.graph_construction.parsing_schema import ParseFilters
 
 # tree_sitter is throwing a FutureWarning
 warnings.simplefilter("ignore", category=FutureWarning)
@@ -37,6 +40,7 @@ class RepoMap:
         verbose=False,
         max_context_window=None,
         map_mul_no_files=8,
+        parse_filters: Optional[ParseFilters] = None,
     ):
         self.io = io
         self.verbose = verbose
@@ -51,6 +55,63 @@ class RepoMap:
 
         self.repo_content_prefix = repo_content_prefix
         self.parse_helper = ParseHelper(next(get_db()))
+        self.parse_filters = parse_filters or ParseFilters()
+
+    def should_skip_file(self, file_path: str, rel_path: str) -> bool:
+        """
+        Determine if file should be skipped based on filters.
+        Returns True if file should be EXCLUDED.
+        """
+        # If no filters are set (empty lists and include_mode=False), don't skip anything
+        if (
+            not self.parse_filters.excluded_directories
+            and not self.parse_filters.excluded_files
+            and not self.parse_filters.excluded_extensions
+            and not self.parse_filters.include_mode
+        ):
+            return False
+
+        matches_filter = False
+
+        # Check directory exclusions
+        path_parts = rel_path.split(os.sep)
+        # Remove filename from path parts to only check directories
+        dir_parts = path_parts[:-1]
+
+        for excluded_dir in self.parse_filters.excluded_directories:
+            if excluded_dir in dir_parts:
+                matches_filter = True
+                break
+
+        if not matches_filter:
+            # Check extension exclusions
+            # Ensure extension starts with .
+            for ext in self.parse_filters.excluded_extensions:
+                if not ext.startswith("."):
+                    ext = "." + ext
+                if file_path.endswith(ext):
+                    matches_filter = True
+                    break
+
+        if not matches_filter:
+            # Check file pattern exclusions (glob matching)
+            for excluded_pattern in self.parse_filters.excluded_files:
+                if fnmatch.fnmatch(rel_path, excluded_pattern) or fnmatch.fnmatch(
+                    os.path.basename(rel_path), excluded_pattern
+                ):
+                    matches_filter = True
+                    break
+
+        # If include_mode is True:
+        # matches_filter=True means it matched one of the "included" criteria -> Keep it (Skip=False)
+        # matches_filter=False means it didn't match any "included" criteria -> Skip it (Skip=True)
+        if self.parse_filters.include_mode:
+            return not matches_filter
+
+        # If include_mode is False (default):
+        # matches_filter=True means it matched one of the "excluded" criteria -> Skip it (Skip=True)
+        # matches_filter=False means it didn't match any "excluded" criteria -> Keep it (Skip=False)
+        return matches_filter
 
     def get_repo_map(
         self, chat_files, other_files, mentioned_fnames=None, mentioned_idents=None
@@ -594,6 +655,10 @@ class RepoMap:
                 rel_path = os.path.relpath(file_path, repo_dir)
 
                 if not self.parse_helper.is_text_file(file_path):
+                    continue
+
+                if self.should_skip_file(file_path, rel_path):
+                    logging.info(f"Skipping file based on filters: {rel_path}")
                     continue
 
                 logging.info(f"\nProcessing file: {rel_path}")

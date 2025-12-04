@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
 from app.modules.parsing.utils.repo_name_normalizer import normalize_repo_name
+from app.modules.parsing.utils.file_utils import FileUtils
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 
@@ -134,71 +135,15 @@ class ParseHelper:
             # If all encodings fail, likely a binary file
             return False
 
-        ext = file_path.split(".")[-1]
-        exclude_extensions = [
-            "png",
-            "jpg",
-            "jpeg",
-            "gif",
-            "bmp",
-            "tiff",
-            "webp",
-            "ico",
-            "svg",
-            "mp4",
-            "avi",
-            "mov",
-            "wmv",
-            "flv",
-            "ipynb",
-        ]
-        include_extensions = [
-            "py",
-            "js",
-            "ts",
-            "c",
-            "cs",
-            "cpp",
-            "h",
-            "hpp",
-            "el",
-            "ex",
-            "exs",
-            "elm",
-            "go",
-            "java",
-            "ml",
-            "mli",
-            "php",
-            "ql",
-            "rb",
-            "rs",
-            "md",
-            "txt",
-            "json",
-            "yaml",
-            "yml",
-            "toml",
-            "ini",
-            "cfg",
-            "conf",
-            "xml",
-            "html",
-            "css",
-            "sh",
-            "ps1",
-            "psm1",
-            "md",
-            "mdx",
-            "xsq",
-            "proto",
-        ]
-        if ext in exclude_extensions:
+        file_name = os.path.basename(file_path)
+
+        if FileUtils.is_excluded_file_name(file_name):
             return False
-        elif ext in include_extensions or open_text_file(file_path):
+
+        if FileUtils.is_valid_file_name(file_name):
             return True
-        else:
-            return False
+
+        return open_text_file(file_path)
 
     async def download_and_extract_tarball(
         self, repo, branch, target_dir, auth, repo_details, user_id

@@ -1,6 +1,13 @@
-from typing import Optional
+from typing import Optional, List
 
 from pydantic import BaseModel, Field
+
+
+class ParseFilters(BaseModel):
+    excluded_directories: List[str] = Field(default_factory=list)
+    excluded_files: List[str] = Field(default_factory=list)
+    excluded_extensions: List[str] = Field(default_factory=list)
+    include_mode: bool = False
 
 
 class ParsingRequest(BaseModel):
@@ -8,6 +15,7 @@ class ParsingRequest(BaseModel):
     repo_path: Optional[str] = Field(default=None)
     branch_name: Optional[str] = Field(default=None)
     commit_id: Optional[str] = Field(default=None)
+    filters: Optional[ParseFilters] = Field(default=None)
 
     def __init__(self, **data):
         super().__init__(**data)
