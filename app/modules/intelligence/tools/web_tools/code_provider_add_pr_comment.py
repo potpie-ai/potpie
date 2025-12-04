@@ -13,6 +13,7 @@ from app.modules.code_provider.provider_factory import CodeProviderFactory
 
 logger = setup_logger(__name__)
 
+
 class CodeProviderPRComment(BaseModel):
     """Model for a single GitHub PR comment."""
 
