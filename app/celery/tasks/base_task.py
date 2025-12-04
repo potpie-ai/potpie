@@ -82,11 +82,13 @@ class BaseTask(Task):
         return loop.run_until_complete(coro)
 
     def on_success(self, retval, task_id, args, kwargs):
-        """Called on successful task execution."""
-        logger.info(f"Task {task_id} completed successfully")
-        if self._db:
-            self._db.close()
-            self._db = None
+        try:
+            status = "cancelled" if retval is False else "completed successfully"
+            logger.info(f"Task {task_id} {status}")
+        finally:
+            if self._db:
+                self._db.close()  # Returns to pool
+                self._db = None
 
     def on_failure(self, exc, task_id, args, kwargs, einfo):
         """Called on task failure."""

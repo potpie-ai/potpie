@@ -7,7 +7,6 @@ from app.modules.code_provider.provider_factory import CodeProviderFactory
 DEFAULT_STRUCTURE_DEPTH = 4
 MAX_STRUCTURE_DEPTH = 6
 MIN_STRUCTURE_DEPTH = 1
-
 try:
     from github.GithubException import BadCredentialsException
 except ImportError:
@@ -280,7 +279,10 @@ class ProviderWrapper:
                 raise
 
     async def get_project_structure_async(
-        self, project_id, path: Optional[str] = None, max_depth: int = DEFAULT_STRUCTURE_DEPTH
+        self,
+        project_id,
+        path: Optional[str] = None,
+        max_depth: int = DEFAULT_STRUCTURE_DEPTH,
     ):
         """Get project structure using the provider."""
         effective_depth = self._sanitize_depth(max_depth)
@@ -376,6 +378,7 @@ class ProviderWrapper:
         provider_type = os.getenv("CODE_PROVIDER", "github").lower()
         if provider_type in ("github", "gitbucket"):
             from app.modules.code_provider.github.github_service import GithubService
+
             github_service = GithubService(self.sql_db)
             await github_service.warm_file_structure_cache(project_id)
         else:
@@ -391,11 +394,13 @@ class ProviderWrapper:
         provider_type = os.getenv("CODE_PROVIDER", "github").lower()
         if provider_type in ("github", "gitbucket"):
             from app.modules.code_provider.github.github_service import GithubService
+
             github_service = GithubService(self.sql_db)
-            await github_service.invalidate_file_structure_cache(project_id, branch_name)
+            await github_service.invalidate_file_structure_cache(
+                project_id, branch_name
+            )
         else:
             logger.debug(f"Cache invalidation skipped for provider type: {provider_type}")
-
 
 class CodeProviderService:
     def __init__(self, sql_db):
@@ -410,7 +415,6 @@ class CodeProviderService:
 
     def get_repo(self, repo_name):
         return self.service_instance.get_repo(repo_name)
-
     def get_file_content(
         self,
         repo_name,

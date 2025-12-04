@@ -5,6 +5,11 @@ import traceback
 from asyncio import create_task
 from contextlib import contextmanager
 
+# Apply encoding patch BEFORE importing blar_graph
+from app.modules.parsing.utils.encoding_patch import apply_encoding_patch
+
+apply_encoding_patch()
+
 from blar_graph.db_managers import Neo4jManager
 from blar_graph.graph_construction.core.graph_builder import GraphConstructor
 from fastapi import HTTPException
@@ -203,7 +208,7 @@ class ParsingService:
                     f"ParsingService: Failed to update project status after error: {update_error}"
                 )
                 logger.exception("ParsingService: Status update exception details:")
-            
+
             await ParseWebhookHelper().send_slack_notification(project_id, str(e))
             tb_str = "".join(traceback.format_exception(None, e, e.__traceback__))
             logger.error(f"ParsingService: Full traceback: {tb_str}")

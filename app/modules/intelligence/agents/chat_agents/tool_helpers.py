@@ -44,6 +44,8 @@ def get_tool_run_message(tool_name: str):
             return "Searching the web"
         case "analyze_code_structure":
             return "Analyzing code structure"
+        case "bash_command":
+            return "Executing bash command on codebase"
         case "create_todo":
             return "Creating todo item"
         case "update_todo_status":
@@ -92,6 +94,40 @@ def get_tool_run_message(tool_name: str):
             # Handle delegation tools - extract agent type and return appropriate message
             agent_type = tool_name[12:]  # Remove "delegate_to_" prefix
             return get_delegation_call_message(agent_type)
+        case "GetJiraIssue":
+            return "Fetching Jira issue details"
+        case "SearchJiraIssues":
+            return "Searching Jira issues"
+        case "CreateJiraIssue":
+            return "Creating new Jira issue"
+        case "UpdateJiraIssue":
+            return "Updating Jira issue"
+        case "AddJiraComment":
+            return "Adding comment to Jira issue"
+        case "TransitionJiraIssue":
+            return "Changing Jira issue status"
+        case "LinkJiraIssues":
+            return "Linking Jira issues"
+        case "GetJiraProjects":
+            return "Fetching Jira projects"
+        case "GetJiraProjectDetails":
+            return "Fetching Jira project details"
+        case "GetJiraProjectUsers":
+            return "Fetching Jira project users"
+        case "GetConfluenceSpaces":
+            return "Fetching Confluence spaces"
+        case "GetConfluencePage":
+            return "Retrieving Confluence page"
+        case "SearchConfluencePages":
+            return "Searching Confluence pages"
+        case "GetConfluenceSpacePages":
+            return "Fetching pages in Confluence space"
+        case "CreateConfluencePage":
+            return "Creating new Confluence page"
+        case "UpdateConfluencePage":
+            return "Updating Confluence page"
+        case "AddConfluenceComment":
+            return "Adding comment to Confluence page"
         case _:
             return "Querying data"
 
@@ -122,6 +158,8 @@ def get_tool_response_message(tool_name: str):
             return "Code structure analyzed successfully"
         case "WebSearchTool":
             return "Web search successful"
+        case "bash_command":
+            return "Bash command executed successfully"
         case "create_todo":
             return "Todo item created successfully"
         case "update_todo_status":
@@ -170,6 +208,40 @@ def get_tool_response_message(tool_name: str):
             # Handle delegation tools - extract agent type and return appropriate message
             agent_type = tool_name[12:]  # Remove "delegate_to_" prefix
             return get_delegation_response_message(agent_type)
+        case "GetJiraIssue":
+            return "Jira issue details retrieved"
+        case "SearchJiraIssues":
+            return "Jira issues search completed"
+        case "CreateJiraIssue":
+            return "Jira issue created successfully"
+        case "UpdateJiraIssue":
+            return "Jira issue updated successfully"
+        case "AddJiraComment":
+            return "Comment added to Jira issue"
+        case "TransitionJiraIssue":
+            return "Jira issue status changed"
+        case "LinkJiraIssues":
+            return "Jira issues linked successfully"
+        case "GetJiraProjects":
+            return "Jira projects retrieved"
+        case "GetJiraProjectDetails":
+            return "Jira project details retrieved"
+        case "GetJiraProjectUsers":
+            return "Jira project users retrieved"
+        case "GetConfluenceSpaces":
+            return "Confluence spaces retrieved"
+        case "GetConfluencePage":
+            return "Confluence page retrieved"
+        case "SearchConfluencePages":
+            return "Confluence pages search completed"
+        case "GetConfluenceSpacePages":
+            return "Confluence space pages retrieved"
+        case "CreateConfluencePage":
+            return "Confluence page created successfully"
+        case "UpdateConfluencePage":
+            return "Confluence page updated successfully"
+        case "AddConfluenceComment":
+            return "Comment added to Confluence page"
         case _:
             return "Data queried successfully"
 
@@ -194,7 +266,7 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             return ""
         case "get_code_file_structure":
             path = args.get("path")
-            if path != None and isinstance(path, str):
+            if path is not None and isinstance(path, str):
                 return f"-> fetching directory structure for {path}\n"
             return "-> fetching directory structure from root of the repo\n"
         case "GetNodeNeighboursFromNodeID":
@@ -214,6 +286,13 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             return f"Analyzing file - {args.get('file_path')}\n"
         case "WebSearchTool":
             return f"-> searching the web for {args.get('query')}\n"
+        case "bash_command":
+            command = args.get("command")
+            working_dir = args.get("working_directory")
+            if command:
+                dir_info = f" in directory '{working_dir}'" if working_dir else ""
+                return f"-> executing command: {command}{dir_info}\n"
+            return "-> executing bash command\n"
         case "create_todo":
             title = args.get("title", "")
             priority = args.get("priority", "medium")
@@ -311,6 +390,104 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             task_description = args.get("task_description", "")
             context = args.get("context", "")
             return get_delegation_info_content(agent_type, task_description, context)
+        case "GetJiraIssue":
+            issue_key = args.get("issue_key")
+            if issue_key:
+                return f"-> fetching issue {issue_key}"
+            return ""
+        case "SearchJiraIssues":
+            jql = args.get("jql")
+            if jql:
+                return f"-> JQL: {jql}"
+            return ""
+        case "CreateJiraIssue":
+            project_key = args.get("project_key")
+            summary = args.get("summary")
+            if project_key and summary:
+                return f"-> creating issue in {project_key}: {summary}"
+            return ""
+        case "UpdateJiraIssue":
+            issue_key = args.get("issue_key")
+            if issue_key:
+                return f"-> updating issue {issue_key}"
+            return ""
+        case "AddJiraComment":
+            issue_key = args.get("issue_key")
+            if issue_key:
+                return f"-> adding comment to {issue_key}"
+            return ""
+        case "TransitionJiraIssue":
+            issue_key = args.get("issue_key")
+            transition = args.get("transition")
+            if issue_key and transition:
+                return f"-> moving {issue_key} to '{transition}'"
+            return ""
+        case "LinkJiraIssues":
+            issue_key = args.get("issue_key")
+            linked_issue_key = args.get("linked_issue_key")
+            link_type = args.get("link_type")
+            if issue_key and linked_issue_key:
+                return f"-> linking {issue_key} {link_type or 'to'} {linked_issue_key}"
+            return ""
+        case "GetJiraProjects":
+            return "-> fetching all accessible projects"
+        case "GetJiraProjectDetails":
+            project_key = args.get("project_key")
+            if project_key:
+                return f"-> fetching details for project {project_key}"
+            return ""
+        case "GetJiraProjectUsers":
+            project_key = args.get("project_key")
+            query = args.get("query")
+            if project_key and query:
+                return f"-> searching users in {project_key}: {query}"
+            elif project_key:
+                return f"-> fetching users in {project_key}"
+            return ""
+        case "GetConfluenceSpaces":
+            space_type = args.get("space_type")
+            limit = args.get("limit")
+            if space_type and space_type != "all":
+                return f"-> fetching {space_type} spaces (limit: {limit or 25})"
+            return f"-> fetching all accessible spaces (limit: {limit or 25})"
+        case "GetConfluencePage":
+            page_id = args.get("page_id")
+            if page_id:
+                return f"-> fetching page {page_id}"
+            return ""
+        case "SearchConfluencePages":
+            cql = args.get("cql")
+            if cql:
+                return f"-> CQL: {cql}"
+            return ""
+        case "GetConfluenceSpacePages":
+            space_id = args.get("space_id")
+            status = args.get("status")
+            if space_id:
+                status_text = (
+                    f" ({status} pages)" if status and status != "current" else ""
+                )
+                return f"-> fetching pages in space {space_id}{status_text}"
+            return ""
+        case "CreateConfluencePage":
+            space_id = args.get("space_id")
+            title = args.get("title")
+            if space_id and title:
+                return f"-> creating page in space {space_id}: {title}"
+            return ""
+        case "UpdateConfluencePage":
+            page_id = args.get("page_id")
+            version_number = args.get("version_number")
+            if page_id:
+                return f"-> updating page {page_id} (version {version_number})"
+            return ""
+        case "AddConfluenceComment":
+            page_id = args.get("page_id")
+            parent_comment_id = args.get("parent_comment_id")
+            if page_id:
+                comment_type = "reply" if parent_comment_id else "comment"
+                return f"-> adding {comment_type} to page {page_id}"
+            return ""
         case _:
             return ""
 
@@ -323,13 +500,13 @@ def get_tool_result_info_content(tool_name: str, content: List[Any] | str | Any)
                     res = "\n-> retrieved code snippets: \n" + "\n- content:\n".join(
                         [
                             f"""
-```{str(node.get('code_content'))[:min(len(str(node.get('code_content'))),600)]+" ..."}
+```{str(node.get("code_content"))[: min(len(str(node.get("code_content"))), 600)] + " ..."}
 ```
 """
                             for node in content
                         ]
                     )
-                except:
+                except Exception:
                     return ""
                 return res
             return ""
@@ -348,8 +525,8 @@ def get_tool_result_info_content(tool_name: str, content: List[Any] | str | Any)
                         path = item.get("relative_file_path")
                         code_content = item.get("code_content")
                         if code_content:
-                            text += f"{path}\n```{code_content[:min(len(code_content),300)]}``` \n"
-                        elif item.get("error") != None:
+                            text += f"{path}\n```{code_content[: min(len(code_content), 300)]}``` \n"
+                        elif item.get("error") is not None:
                             text += f"Error: {item.get('error')} \n"
                 return text
             return ""
@@ -358,7 +535,7 @@ def get_tool_result_info_content(tool_name: str, content: List[Any] | str | Any)
                 return f"""-> fetched successfully
 ```
 ---------------
-{content[:min(len(content),600)]} ...
+{content[: min(len(content), 600)]} ...
 ---------------
 ```
             """
@@ -423,6 +600,46 @@ description:
                 res = content.get("content")
                 if isinstance(res, str):
                     return res[: min(len(res), 600)] + " ..."
+            return ""
+        case "bash_command":
+            if isinstance(content, Dict):
+                success = content.get("success", False)
+                output = content.get("output", "")
+                error = content.get("error", "")
+                exit_code = content.get("exit_code", -1)
+
+                if not success:
+                    error_msg = f"Command failed with exit code {exit_code}"
+                    if error:
+                        error_msg += (
+                            f"\n\nError output:\n```\n{error[:min(len(error), 500)]}"
+                        )
+                        if len(error) > 500:
+                            error_msg += " ..."
+                        error_msg += "\n```"
+                    if output:
+                        error_msg += f"\n\nStandard output:\n```\n{output[:min(len(output), 500)]}"
+                        if len(output) > 500:
+                            error_msg += " ..."
+                        error_msg += "\n```"
+                    return error_msg
+                else:
+                    result_msg = (
+                        f"Command executed successfully (exit code: {exit_code})"
+                    )
+                    if output:
+                        result_msg += (
+                            f"\n\nOutput:\n```\n{output[:min(len(output), 1000)]}"
+                        )
+                        if len(output) > 1000:
+                            result_msg += "\n... (output truncated)"
+                        result_msg += "\n```"
+                    if error:
+                        result_msg += f"\n\nWarning/Error output:\n```\n{error[:min(len(error), 500)]}"
+                        if len(error) > 500:
+                            result_msg += " ..."
+                        result_msg += "\n```"
+                    return result_msg
             return ""
         case (
             "create_todo"

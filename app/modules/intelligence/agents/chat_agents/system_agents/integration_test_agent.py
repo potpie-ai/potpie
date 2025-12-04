@@ -52,6 +52,7 @@ class IntegrationTestAgent(ChatAgent):
                 "github_tool",
                 "fetch_file",
                 "analyze_code_structure",
+                "bash_command",
             ]
         )
 

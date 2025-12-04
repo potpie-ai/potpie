@@ -135,7 +135,9 @@ class CodeProviderCreatePullRequestTool:
             # Normalize input repo_name first (in case it comes in as "root/repo")
             normalized_input = normalize_repo_name(repo_name, provider_type)
             # Then convert to actual format for API calls
-            actual_repo_name = get_actual_repo_name_for_lookup(normalized_input, provider_type)
+            actual_repo_name = get_actual_repo_name_for_lookup(
+                normalized_input, provider_type
+            )
             logging.info(
                 f"[CREATE_PR] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}"
             )

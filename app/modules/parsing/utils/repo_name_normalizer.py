@@ -85,14 +85,12 @@ def get_actual_repo_name_for_lookup(repo_name: str, provider_type: str = None) -
         # Try using the username format first (as per GitHub API v3 compatibility)
         # If API calls fail, the caller should retry with 'root/repo' format
         actual_username = os.getenv("GITBUCKET_USERNAME")
-        
         if actual_username and repo_name.startswith(f"{actual_username}/"):
             logger.debug(
                 "GitBucket: Using username format '%s' for API calls (per GitHub API v3 compatibility)",
                 repo_name,
             )
             return repo_name
-        
         # If repo_name is already 'root/repo', use it as-is
         if repo_name.startswith("root/"):
             logger.debug(
@@ -100,7 +98,6 @@ def get_actual_repo_name_for_lookup(repo_name: str, provider_type: str = None) -
                 repo_name,
             )
             return repo_name
-        
         # If we have a username but repo_name doesn't match, try converting to root format
         # This handles cases where normalization happened but we need the API format
         if actual_username:

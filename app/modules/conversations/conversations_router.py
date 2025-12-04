@@ -355,7 +355,7 @@ class ConversationAPI:
         )
 
         # Start background task
-        execute_agent_background.delay(
+        task_result = execute_agent_background.delay(
             conversation_id=conversation_id,
             run_id=run_id,
             user_id=user_id,
@@ -363,6 +363,12 @@ class ConversationAPI:
             agent_id=agent_id,
             node_ids=node_ids_list,
             attachment_ids=attachment_ids or [],
+        )
+
+        # Store the Celery task ID for later revocation
+        redis_manager.set_task_id(conversation_id, run_id, task_result.id)
+        logger.info(
+            f"Started agent task {task_result.id} for {conversation_id}:{run_id}"
         )
 
         # Wait for background task to start (with health check)
@@ -484,12 +490,18 @@ class ConversationAPI:
             },
         )
 
-        execute_regenerate_background.delay(
+        task_result = execute_regenerate_background.delay(
             conversation_id=conversation_id,
             run_id=run_id,
             user_id=user_id,
             node_ids=request.node_ids or [],
             attachment_ids=attachment_ids,
+        )
+
+        # Store the Celery task ID for later revocation
+        redis_manager.set_task_id(conversation_id, run_id, task_result.id)
+        logger.info(
+            f"Started regenerate task {task_result.id} for {conversation_id}:{run_id}"
         )
 
         # Wait for background task to start (with health check)

@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional, Set
 import chardet
 from github import Github
 from github.GithubException import GithubException
@@ -95,6 +95,26 @@ class GitBucketProvider(ICodeProvider):
         """Ensure client is authenticated."""
         if not self.client:
             raise RuntimeError("Provider not authenticated. Call authenticate() first.")
+
+    def _get_repo(self, repo_name: str):
+        """
+        Get repository object with normalized repo name conversion.
+
+        Converts normalized repo name (e.g., 'user/repo') back to GitBucket's
+        actual identifier format (e.g., 'root/repo') for API calls.
+
+        Args:
+            repo_name: Normalized repository name
+
+        Returns:
+            Repository object from PyGithub
+        """
+        from app.modules.parsing.utils.repo_name_normalizer import (
+            get_actual_repo_name_for_lookup,
+        )
+
+        actual_repo_name = get_actual_repo_name_for_lookup(repo_name, "gitbucket")
+        return self.client.get_repo(actual_repo_name)
 
     # ============ Repository Operations ============
 
@@ -581,9 +601,14 @@ class GitBucketProvider(ICodeProvider):
             logging.info(f"[GITBUCKET] Getting commits for branch: {head_branch}")
             head_commits = repo.get_commits(sha=head_branch)
 
+            max_commits = 50  # Safety limit
+
             # Get commits on the base branch for comparison
-            base_commits = list(repo.get_commits(sha=base_branch))
-            base_commit_shas = {c.sha for c in base_commits}
+            base_commit_shas: Set[str] = set()
+            for idx, base_commit in enumerate(repo.get_commits(sha=base_branch)):
+                base_commit_shas.add(base_commit.sha)
+                if idx + 1 >= max_commits:
+                    break
 
             # Track files and their patches
             files_dict = {}

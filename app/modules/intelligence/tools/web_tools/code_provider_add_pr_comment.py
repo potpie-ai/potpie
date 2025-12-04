@@ -173,12 +173,16 @@ class CodeProviderAddPRCommentsTool:
             # Normalize input repo_name first (in case it comes in as "root/repo")
             normalized_input = normalize_repo_name(repo_name, provider_type)
             # Then convert to actual format for API calls
-            actual_repo_name = get_actual_repo_name_for_lookup(normalized_input, provider_type)
-            
+            actual_repo_name = get_actual_repo_name_for_lookup(
+                normalized_input, provider_type
+            )
+
             # Get provider for URL construction later
-            provider = CodeProviderFactory.create_provider_with_fallback(normalized_input)
+            provider = CodeProviderFactory.create_provider_with_fallback(
+                normalized_input
+            )
             g = provider.client
-            
+
             logging.info(
                 f"[ADD_PR_COMMENT] Provider type: {provider_type}, Original repo: {repo_name}, Normalized: {normalized_input}, Actual repo for API: {actual_repo_name}"
             )
@@ -407,7 +411,11 @@ class CodeProviderAddPRCommentsTool:
                     # Use the normalized input we already computed
                     normalized_repo_name = normalized_input
                     # Construct GitBucket URL using normalized name
-                    base_url = provider.get_api_base_url() if hasattr(provider, 'get_api_base_url') else "http://localhost:8080"
+                    base_url = (
+                        provider.get_api_base_url()
+                        if hasattr(provider, "get_api_base_url")
+                        else "http://localhost:8080"
+                    )
                     if base_url.endswith("/api/v3"):
                         base_url = base_url[:-7]  # Remove '/api/v3'
                     pr_url = f"{base_url}/{normalized_repo_name}/pull/{pr_number}"
