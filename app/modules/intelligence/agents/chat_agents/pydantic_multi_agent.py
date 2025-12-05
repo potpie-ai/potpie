@@ -821,6 +821,7 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
             defer_model_check=True,
             end_strategy="exhaustive",
             # model_settings={"max_tokens": 64000},
+            instrument=True,
         )
         self._supervisor_agent = supervisor_agent
         return supervisor_agent
