@@ -3,8 +3,11 @@ Bash Command Tool
 
 Allows agents to run bash commands (grep, awk, find, etc.) on the codebase.
 Only works if the project's worktree exists in the repo manager.
+If the worktree doesn't exist, it will attempt to clone the repository using
+the same logic as the parsing flow (supports GitBucket private repos).
 """
 
+import asyncio
 import logging
 import os
 import shlex
@@ -16,6 +19,9 @@ from langchain_core.tools import StructuredTool
 from app.modules.projects.projects_service import ProjectService
 from app.modules.repo_manager import RepoManager
 from app.modules.utils.gvisor_runner import run_command_isolated, CommandResult
+from app.modules.code_provider.code_provider_service import CodeProviderService
+from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
+from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
 
 logger = logging.getLogger(__name__)
 
@@ -238,6 +244,10 @@ class BashCommandTool:
         except Exception as e:
             logger.warning(f"BashCommandTool: Failed to initialize RepoManager: {e}")
 
+        # Initialize code provider service and parse helper for cloning repos
+        self.code_provider_service = CodeProviderService(sql_db)
+        self.parse_helper = ParseHelper(sql_db)
+
     def _get_project_details(self, project_id: str) -> Dict[str, str]:
         """Get project details and validate user access."""
         details = self.project_service.get_project_from_db_by_id_sync(project_id)
@@ -279,49 +289,154 @@ class BashCommandTool:
 
         return None
 
-    def _run(
+    async def _clone_repository(
+        self,
+        repo_name: str,
+        branch: Optional[str],
+        commit_id: Optional[str],
+        user_id: str,
+    ) -> Optional[str]:
+        """
+        Clone repository using the same logic as the parsing flow.
+        Supports GitBucket private repos with authentication.
+
+        Args:
+            repo_name: Full repository name (e.g., 'owner/repo')
+            branch: Branch name
+            commit_id: Commit SHA
+            user_id: User ID
+
+        Returns:
+            Path to the cloned repository, or None if cloning failed
+        """
+        logger.info(
+            f"[BASH_COMMAND] Attempting to clone repository {repo_name} "
+            f"(branch={branch}, commit={commit_id})"
+        )
+
+        try:
+            # Get the repo object from code provider service
+            github, repo = self.code_provider_service.get_repo(repo_name)
+
+            # Extract auth from the Github client
+            auth = None
+            if hasattr(github, "_Github__requester") and hasattr(
+                github._Github__requester, "auth"
+            ):
+                auth = github._Github__requester.auth
+
+            # Determine target directory for cloning
+            target_dir = os.getenv("PROJECT_PATH", "/tmp/repos")
+            os.makedirs(target_dir, exist_ok=True)
+
+            # Use the ref (commit_id or branch)
+            ref = commit_id if commit_id else branch
+            if not ref:
+                logger.error(
+                    f"[BASH_COMMAND] No branch or commit_id provided for {repo_name}"
+                )
+                return None
+
+            # Create repo_details for the parse helper
+            # Use "HEAD" as placeholder when no branch (commit-only checkout)
+            # Explicitly set commit_id in its proper field
+            repo_details = RepoDetails(
+                repo_name=repo_name,
+                branch_name=branch or "HEAD",
+                commit_id=commit_id,
+            )
+
+            # Download and extract the repository using the same logic as parsing
+            extracted_dir = await self.parse_helper.download_and_extract_tarball(
+                repo, ref, target_dir, auth, repo_details, user_id
+            )
+
+            if not extracted_dir or not os.path.exists(extracted_dir):
+                logger.error(
+                    f"[BASH_COMMAND] Failed to clone repository {repo_name}: "
+                    "extracted directory does not exist"
+                )
+                return None
+
+            logger.info(
+                f"[BASH_COMMAND] Successfully cloned repository {repo_name} to {extracted_dir}"
+            )
+
+            # Register the cloned repo with the repo manager
+            if self.repo_manager:
+                try:
+                    # Get repository metadata
+                    metadata = {}
+                    try:
+                        metadata = ParseHelper.extract_repository_metadata(repo)
+                    except Exception as meta_error:
+                        logger.warning(
+                            f"[BASH_COMMAND] Failed to extract repository metadata: {meta_error}"
+                        )
+
+                    # Copy to repo manager location using the same logic as parsing
+                    await self.parse_helper._copy_repo_to_repo_manager(
+                        repo_name,
+                        extracted_dir,
+                        branch,
+                        commit_id,
+                        user_id,
+                        metadata,
+                    )
+
+                    # Get the registered worktree path
+                    worktree_path = self._get_worktree_path(repo_name, branch, commit_id)
+                    if worktree_path:
+                        logger.info(
+                            f"[BASH_COMMAND] Registered repo with repo manager at {worktree_path}"
+                        )
+                        return worktree_path
+                except Exception as register_error:
+                    logger.warning(
+                        f"[BASH_COMMAND] Failed to register repo with repo manager: {register_error}. "
+                        "Using extracted directory directly."
+                    )
+
+            # If repo manager registration failed or wasn't available, use extracted_dir
+            return extracted_dir
+
+        except Exception as e:
+            logger.error(f"[BASH_COMMAND] Failed to clone repository {repo_name}: {e}")
+            return None
+
+    def _execute_command(
         self,
         project_id: str,
         command: str,
+        worktree_path: str,
         working_directory: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Execute bash command in the repository worktree."""
-        try:
-            # Check if repo manager is available
-            if not self.repo_manager:
-                return {
-                    "success": False,
-                    "error": "Repo manager is not enabled. Bash commands require a local worktree.",
-                    "output": "",
-                    "exit_code": -1,
-                }
+        """
+        Execute bash command in the given worktree path.
+        This is the core execution logic shared by both _run and _arun.
 
-            # Get project details
+        Args:
+            project_id: Project ID for logging
+            command: The bash command to execute
+            worktree_path: Path to the repository worktree
+            working_directory: Optional subdirectory within the repo
+
+        Returns:
+            Dictionary with success, output, error, and exit_code
+        """
+        try:
+            # Get project details for logging
             details = self._get_project_details(project_id)
             repo_name = details["project_name"]
             branch = details.get("branch_name")
             commit_id = details.get("commit_id")
 
-            # Get worktree path
-            worktree_path = self._get_worktree_path(repo_name, branch, commit_id)
-            if not worktree_path:
-                return {
-                    "success": False,
-                    "error": f"Worktree not found for project {project_id}. The repository must be parsed and available in the repo manager.",
-                    "output": "",
-                    "exit_code": -1,
-                }
-
             # SECURITY: Normalize paths to prevent directory traversal
-            # Only the specific project's worktree will be accessible
             worktree_path = os.path.abspath(worktree_path)
 
             # SECURITY: Determine working directory and validate it's within the worktree
-            # This ensures commands can only access files within this specific repository
             if working_directory:
-                # Resolve the working directory path
                 requested_dir = os.path.normpath(working_directory)
-                # Prevent directory traversal attacks
                 if os.path.isabs(requested_dir) or ".." in requested_dir:
                     return {
                         "success": False,
@@ -331,10 +446,8 @@ class BashCommandTool:
                     }
 
                 cmd_dir = os.path.join(worktree_path, requested_dir)
-                # Resolve to absolute path and ensure it's within worktree
                 cmd_dir = os.path.abspath(cmd_dir)
 
-                # Security check: ensure cmd_dir is within worktree_path
                 if (
                     not cmd_dir.startswith(worktree_path + os.sep)
                     and cmd_dir != worktree_path
@@ -356,11 +469,9 @@ class BashCommandTool:
             else:
                 cmd_dir = worktree_path
 
-            # Calculate relative path from worktree root for use in sandbox
-            # The gVisor runner will mount worktree_path, so we need relative path
             relative_working_dir = os.path.relpath(cmd_dir, worktree_path)
             if relative_working_dir == ".":
-                relative_working_dir = None  # Use root of mounted directory
+                relative_working_dir = None
 
             # SECURITY: Validate command before execution
             is_safe, safety_error = _validate_command_safety(command)
@@ -370,8 +481,7 @@ class BashCommandTool:
                 )
                 return {
                     "success": False,
-                    "error": safety_error
-                    or "Command is not allowed for security reasons",
+                    "error": safety_error or "Command is not allowed for security reasons",
                     "output": "",
                     "exit_code": -1,
                 }
@@ -381,13 +491,10 @@ class BashCommandTool:
                 f"(project: {repo_name}@{commit_id or branch})"
             )
 
-            # Parse command into list for gVisor runner
-            # Split the command properly, handling quoted strings
+            # Parse command
             try:
-                # Use shlex to properly parse the command while preserving quotes
                 command_parts = shlex.split(command)
             except ValueError as e:
-                # If parsing fails, try a simpler approach
                 logger.warning(
                     f"[BASH_COMMAND] Failed to parse command with shlex: {e}, using simple split"
                 )
@@ -395,14 +502,12 @@ class BashCommandTool:
 
             # If we need to run in a subdirectory, prepend cd command
             if relative_working_dir and relative_working_dir != ".":
-                # Prepend cd command to change to the subdirectory
                 cd_command = f"cd {shlex.quote(relative_working_dir)} && {' '.join(shlex.quote(arg) for arg in command_parts)}"
                 final_command = ["sh", "-c", cd_command]
             else:
                 final_command = command_parts
 
-            # SECURITY: Don't pass environment variables - they will be filtered by gVisor runner
-            # but we don't want to pass them at all to prevent any exposure
+            # Safe environment variables
             safe_env = {
                 "PATH": "/usr/local/bin:/usr/bin:/bin",
                 "HOME": "/tmp",
@@ -413,15 +518,14 @@ class BashCommandTool:
             }
 
             # Execute command with gVisor isolation
-            # Only mount the worktree_path as READ-ONLY - this ensures commands can only access this specific repo
             try:
                 result: CommandResult = run_command_isolated(
                     command=final_command,
-                    working_dir=worktree_path,  # Mount only the worktree root (as read-only)
-                    repo_path=None,  # Don't mount separately since working_dir is the repo
-                    env=safe_env,  # Use minimal safe environment, not os.environ
-                    timeout=30,  # 30 second timeout
-                    use_gvisor=True,  # Enable gVisor isolation
+                    working_dir=worktree_path,
+                    repo_path=None,
+                    env=safe_env,
+                    timeout=30,
+                    use_gvisor=True,
                 )
 
                 logger.info(
@@ -452,6 +556,89 @@ class BashCommandTool:
                 "exit_code": -1,
             }
         except Exception as e:
+            logger.exception(f"[BASH_COMMAND] Unexpected error in execute_command: {e}")
+            return {
+                "success": False,
+                "error": f"Unexpected error: {str(e)}",
+                "output": "",
+                "exit_code": -1,
+            }
+
+    def _run(
+        self,
+        project_id: str,
+        command: str,
+        working_directory: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Execute bash command in the repository worktree."""
+        try:
+            # Check if repo manager is available
+            if not self.repo_manager:
+                return {
+                    "success": False,
+                    "error": "Repo manager is not enabled. Bash commands require a local worktree.",
+                    "output": "",
+                    "exit_code": -1,
+                }
+
+            # Get project details
+            details = self._get_project_details(project_id)
+            repo_name = details["project_name"]
+            branch = details.get("branch_name")
+            commit_id = details.get("commit_id")
+
+            # Get worktree path
+            worktree_path = self._get_worktree_path(repo_name, branch, commit_id)
+            if not worktree_path:
+                logger.info(
+                    f"[BASH_COMMAND] Worktree not found for project {project_id}, "
+                    f"attempting to clone repository {repo_name}"
+                )
+                # Try to clone the repository using the same logic as parsing flow
+                try:
+                    # Run async clone in sync context
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        worktree_path = loop.run_until_complete(
+                            self._clone_repository(repo_name, branch, commit_id, self.user_id)
+                        )
+                    finally:
+                        loop.close()
+
+                    if not worktree_path:
+                        return {
+                            "success": False,
+                            "error": f"Worktree not found for project {project_id} and failed to clone repository. "
+                            "Please ensure the repository is accessible and try again.",
+                            "output": "",
+                            "exit_code": -1,
+                        }
+                    logger.info(
+                        f"[BASH_COMMAND] Successfully cloned repository to {worktree_path}"
+                    )
+                except Exception as clone_error:
+                    logger.error(
+                        f"[BASH_COMMAND] Failed to clone repository {repo_name}: {clone_error}"
+                    )
+                    return {
+                        "success": False,
+                        "error": f"Worktree not found for project {project_id} and failed to clone repository: {clone_error}",
+                        "output": "",
+                        "exit_code": -1,
+                    }
+
+            # Execute the command using shared execution logic
+            return self._execute_command(project_id, command, worktree_path, working_directory)
+
+        except ValueError as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "output": "",
+                "exit_code": -1,
+            }
+        except Exception as e:
             logger.exception(f"[BASH_COMMAND] Unexpected error: {e}")
             return {
                 "success": False,
@@ -466,12 +653,78 @@ class BashCommandTool:
         command: str,
         working_directory: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Async wrapper for _run."""
-        import asyncio
+        """Async implementation that handles cloning natively."""
+        try:
+            # Check if repo manager is available
+            if not self.repo_manager:
+                return {
+                    "success": False,
+                    "error": "Repo manager is not enabled. Bash commands require a local worktree.",
+                    "output": "",
+                    "exit_code": -1,
+                }
 
-        return await asyncio.to_thread(
-            self._run, project_id, command, working_directory
-        )
+            # Get project details
+            details = self._get_project_details(project_id)
+            repo_name = details["project_name"]
+            branch = details.get("branch_name")
+            commit_id = details.get("commit_id")
+
+            # Get worktree path
+            worktree_path = self._get_worktree_path(repo_name, branch, commit_id)
+            if not worktree_path:
+                logger.info(
+                    f"[BASH_COMMAND] Worktree not found for project {project_id}, "
+                    f"attempting to clone repository {repo_name}"
+                )
+                # Clone repository asynchronously
+                try:
+                    worktree_path = await self._clone_repository(
+                        repo_name, branch, commit_id, self.user_id
+                    )
+                    if not worktree_path:
+                        return {
+                            "success": False,
+                            "error": f"Worktree not found for project {project_id} and failed to clone repository. "
+                            "Please ensure the repository is accessible and try again.",
+                            "output": "",
+                            "exit_code": -1,
+                        }
+                    logger.info(
+                        f"[BASH_COMMAND] Successfully cloned repository to {worktree_path}"
+                    )
+                except Exception as clone_error:
+                    logger.error(
+                        f"[BASH_COMMAND] Failed to clone repository {repo_name}: {clone_error}"
+                    )
+                    return {
+                        "success": False,
+                        "error": f"Worktree not found for project {project_id} and failed to clone repository: {clone_error}",
+                        "output": "",
+                        "exit_code": -1,
+                    }
+
+            # Run the rest of the command execution in a thread to not block
+            # Pass the already-resolved worktree_path to avoid re-checking
+            return await asyncio.to_thread(
+                self._execute_command, project_id, command, worktree_path, working_directory
+            )
+
+        except ValueError as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "output": "",
+                "exit_code": -1,
+            }
+        except Exception as e:
+            logger.exception(f"[BASH_COMMAND] Unexpected error in async run: {e}")
+            return {
+                "success": False,
+                "error": f"Unexpected error: {str(e)}",
+                "output": "",
+                "exit_code": -1,
+            }
 
 
 def bash_command_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
