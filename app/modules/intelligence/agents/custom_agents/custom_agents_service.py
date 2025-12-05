@@ -90,7 +90,6 @@ class CustomAgentService:
     ) -> CustomAgentShareModel:
         """Create a share for an agent with another user"""
         try:
-
             # Get the agent to log its current state
             agent = await self.get_agent_model(agent_id)
             if agent:
@@ -138,7 +137,6 @@ class CustomAgentService:
     async def revoke_share(self, agent_id: str, shared_with_user_id: str) -> bool:
         """Revoke access to an agent for a specific user"""
         try:
-
             # Get the agent to log its current state
             agent = await self.get_agent_model(agent_id)
             if agent:
@@ -191,7 +189,6 @@ class CustomAgentService:
     async def list_agent_shares(self, agent_id: str) -> list[str]:
         """List all emails this agent has been shared with"""
         try:
-
             # Get all user IDs this agent is shared with
             shares = (
                 self.db.query(CustomAgentShareModel)
@@ -222,7 +219,6 @@ class CustomAgentService:
     async def make_agent_private(self, agent_id: str, user_id: str) -> Optional[Agent]:
         """Make an agent private, removing all shares and changing visibility"""
         try:
-
             # Get the agent and verify ownership
             agent = await self._get_agent_by_id_and_user(agent_id, user_id)
             if not agent:
@@ -280,7 +276,6 @@ class CustomAgentService:
             raise
 
     def _convert_to_agent_schema(self, custom_agent: CustomAgentModel) -> Agent:
-
         task_schemas = []
         for i, task in enumerate(custom_agent.tasks, start=1):
             expected_output = task.get("expected_output", {})
