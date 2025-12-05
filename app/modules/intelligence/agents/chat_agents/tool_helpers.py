@@ -114,6 +114,8 @@ def get_tool_run_message(tool_name: str):
             return "Fetching Jira project details"
         case "GetJiraProjectUsers":
             return "Fetching Jira project users"
+        case "ListConfluenceIntegrations":
+            return "Listing Confluence integrations"
         case "GetConfluenceSpaces":
             return "Fetching Confluence spaces"
         case "GetConfluencePage":
@@ -228,6 +230,8 @@ def get_tool_response_message(tool_name: str):
             return "Jira project details retrieved"
         case "GetJiraProjectUsers":
             return "Jira project users retrieved"
+        case "ListConfluenceIntegrations":
+            return "Confluence integrations listed"
         case "GetConfluenceSpaces":
             return "Confluence spaces retrieved"
         case "GetConfluencePage":
@@ -444,49 +448,65 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             elif project_key:
                 return f"-> fetching users in {project_key}"
             return ""
+        case "ListConfluenceIntegrations":
+            return "-> fetching all available Confluence workspaces"
         case "GetConfluenceSpaces":
             space_type = args.get("space_type")
             limit = args.get("limit")
+            integration_id = args.get("integration_id")
+            integration_info = f" (integration: {integration_id[:8]}...)" if integration_id else ""
             if space_type and space_type != "all":
-                return f"-> fetching {space_type} spaces (limit: {limit or 25})"
-            return f"-> fetching all accessible spaces (limit: {limit or 25})"
+                return f"-> fetching {space_type} spaces{integration_info} (limit: {limit or 25})"
+            return f"-> fetching all accessible spaces{integration_info} (limit: {limit or 25})"
         case "GetConfluencePage":
             page_id = args.get("page_id")
+            integration_id = args.get("integration_id")
+            integration_info = f" (integration: {integration_id[:8]}...)" if integration_id else ""
             if page_id:
-                return f"-> fetching page {page_id}"
+                return f"-> fetching page {page_id}{integration_info}"
             return ""
         case "SearchConfluencePages":
             cql = args.get("cql")
+            integration_id = args.get("integration_id")
+            integration_info = f" (integration: {integration_id[:8]}...)" if integration_id else ""
             if cql:
-                return f"-> CQL: {cql}"
+                return f"-> CQL: {cql}{integration_info}"
             return ""
         case "GetConfluenceSpacePages":
             space_id = args.get("space_id")
             status = args.get("status")
+            integration_id = args.get("integration_id")
+            integration_info = f" (integration: {integration_id[:8]}...)" if integration_id else ""
             if space_id:
                 status_text = (
                     f" ({status} pages)" if status and status != "current" else ""
                 )
-                return f"-> fetching pages in space {space_id}{status_text}"
+                return f"-> fetching pages in space {space_id}{status_text}{integration_info}"
             return ""
         case "CreateConfluencePage":
             space_id = args.get("space_id")
             title = args.get("title")
+            integration_id = args.get("integration_id")
+            integration_info = f" (integration: {integration_id[:8]}...)" if integration_id else ""
             if space_id and title:
-                return f"-> creating page in space {space_id}: {title}"
+                return f"-> creating page in space {space_id}: {title}{integration_info}"
             return ""
         case "UpdateConfluencePage":
             page_id = args.get("page_id")
             version_number = args.get("version_number")
+            integration_id = args.get("integration_id")
+            integration_info = f" (integration: {integration_id[:8]}...)" if integration_id else ""
             if page_id:
-                return f"-> updating page {page_id} (version {version_number})"
+                return f"-> updating page {page_id} (version {version_number}){integration_info}"
             return ""
         case "AddConfluenceComment":
             page_id = args.get("page_id")
             parent_comment_id = args.get("parent_comment_id")
+            integration_id = args.get("integration_id")
+            integration_info = f" (integration: {integration_id[:8]}...)" if integration_id else ""
             if page_id:
                 comment_type = "reply" if parent_comment_id else "comment"
-                return f"-> adding {comment_type} to page {page_id}"
+                return f"-> adding {comment_type} to page {page_id}{integration_info}"
             return ""
         case _:
             return ""

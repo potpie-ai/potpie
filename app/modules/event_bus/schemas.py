@@ -49,6 +49,9 @@ class WebhookEvent(BaseModel):
     received_at: datetime = Field(
         default_factory=datetime.utcnow, description="When webhook was received"
     )
+    unique_identifier: Optional[str] = Field(
+        None, description="Unique identifier for trigger hash matching (e.g., jira-{cloud_id})"
+    )
     metadata: EventMetadata = Field(
         default_factory=EventMetadata, description="Event metadata"
     )

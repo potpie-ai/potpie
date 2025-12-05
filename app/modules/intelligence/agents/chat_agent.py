@@ -103,8 +103,18 @@ class ChatAgent(ABC):
 
 
 class AgentWithInfo:
-    def __init__(self, agent: ChatAgent, id: str, name: str, description: str):
+    def __init__(
+        self,
+        agent: ChatAgent,
+        id: str,
+        name: str,
+        description: str,
+        workflow_agent: bool = False,
+        require_repo_context: bool = True,
+    ):
         self.id = id
         self.name = name
         self.description = description
         self.agent = agent
+        self.workflow_agent = workflow_agent  # True for workflow-only agents
+        self.require_repo_context = require_repo_context  # False for lightweight agents

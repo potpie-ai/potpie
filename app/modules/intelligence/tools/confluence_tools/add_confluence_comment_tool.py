@@ -19,6 +19,9 @@ from .confluence_client import (
 class AddConfluenceCommentInput(BaseModel):
     """Input schema for add_confluence_comment tool."""
 
+    integration_id: str = Field(
+        description="The Confluence integration UUID (NOT site_name). Get the 'integration_id' UUID field from 'List Confluence Integrations' tool - do NOT use 'site_name' field. Example: 'da376af7-bff5-4c2f-a5da-0398de3601a8'"
+    )
     page_id: str = Field(
         description="The ID of the page to comment on (get from 'Search Confluence Pages' or 'Get Confluence Page')"
     )
@@ -84,6 +87,7 @@ class AddConfluenceCommentTool:
 
     async def arun(
         self,
+        integration_id: str,
         page_id: str,
         comment: str,
         parent_comment_id: Optional[str] = None,
@@ -93,6 +97,7 @@ class AddConfluenceCommentTool:
         Add a comment to a Confluence page.
 
         Args:
+            integration_id: The Confluence integration ID to use
             page_id: The page ID
             comment: Comment text
             parent_comment_id: Optional parent comment for replies
@@ -113,7 +118,16 @@ class AddConfluenceCommentTool:
                 }
 
             # Get Confluence client
-            client = await get_confluence_client_for_user(self.user_id, self.db)
+            try:
+                client = await get_confluence_client_for_user(
+                    self.user_id, self.db, integration_id=integration_id
+                )
+            except ValueError as ve:
+                # Handle multi-integration error
+                error_data = ve.args[0] if ve.args else {}
+                if isinstance(error_data, dict):
+                    return {"success": False, **error_data}
+                return {"success": False, "error": str(ve)}
             if not client:
                 return {
                     "success": False,
@@ -157,13 +171,14 @@ class AddConfluenceCommentTool:
 
     def run(
         self,
+        integration_id: str,
         page_id: str,
         comment: str,
         parent_comment_id: Optional[str] = None,
         status: str = "current",
     ) -> Dict[str, Any]:
         """Synchronous version that runs the async version."""
-        return asyncio.run(self.arun(page_id, comment, parent_comment_id, status))
+        return asyncio.run(self.arun(integration_id, page_id, comment, parent_comment_id, status))
 
 
 def add_confluence_comment_tool(db: Session, user_id: str) -> StructuredTool:
@@ -185,6 +200,11 @@ def add_confluence_comment_tool(db: Session, user_id: str) -> StructuredTool:
         name="Add Confluence Comment",
         description="""Add a comment to a Confluence page or reply to an existing comment.
 
+        **IMPORTANT: If user has multiple Confluence workspaces:**
+        1. First call 'List Confluence Integrations' to get available workspaces
+        2. Match user's mentioned workspace name to get integration_id
+        3. Pass that integration_id to this tool
+
         Use this when you need to:
         - Provide feedback on documentation
         - Ask questions about page content
@@ -193,6 +213,7 @@ def add_confluence_comment_tool(db: Session, user_id: str) -> StructuredTool:
         - Add notes without modifying page content
 
         Inputs:
+        - integration_id (str): REQUIRED - Confluence workspace ID from 'List Confluence Integrations'
         - page_id (str): Page ID to comment on (get from 'Search Confluence Pages' or 'Get Confluence Page')
         - comment (str): Comment text (plain text or HTML)
         - parent_comment_id (str, optional): Parent comment ID to create a reply (omit for top-level comment)

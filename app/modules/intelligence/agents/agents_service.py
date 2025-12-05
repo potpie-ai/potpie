@@ -20,6 +20,7 @@ from .chat_agents.system_agents import (
     low_level_design_agent,
     qna_agent,
     unit_test_agent,
+    confluence_workflow_agent,
 )
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.prompts.prompt_service import PromptService
@@ -38,6 +39,8 @@ class AgentInfo(BaseModel):
     description: str
     status: str
     visibility: Optional[AgentVisibility] = None
+    is_workflow_agent: bool = False
+    requires_repo_context: bool = True
 
 
 class AgentsService:
@@ -134,6 +137,18 @@ class AgentsService:
                     prompt_provider,
                 ),
             ),
+            "confluence_workflow_agent": AgentWithInfo(
+                id="confluence_workflow_agent",
+                name="Confluence Documentation Agent",
+                description="Specialized agent for creating and managing Confluence documentation pages within workflows",
+                agent=confluence_workflow_agent.ConfluenceWorkflowAgent(
+                    llm_provider,
+                    tools_provider,
+                    prompt_provider,
+                ),
+                workflow_agent=True,  # This agent is for workflows only
+                require_repo_context=False,  # Lightweight - no repo parsing needed
+            ),
         }
 
     async def execute(self, ctx: ChatContext):
@@ -144,17 +159,50 @@ class AgentsService:
             yield chunk
 
     async def list_available_agents(
-        self, current_user: dict, list_system_agents: bool
+        self,
+        current_user: dict,
+        list_system_agents: bool,
+        include_workflow_agents: bool = False,
     ) -> List[AgentInfo]:
-        system_agents = [
-            AgentInfo(
-                id=id,
-                name=self.system_agents[id].name,
-                description=self.system_agents[id].description,
-                status="SYSTEM",
-            )
-            for (id) in self.system_agents
-        ]
+        """
+        List available agents for the current user.
+
+        Args:
+            current_user: Current user dict with user_id
+            list_system_agents: Include system agents (chat agents)
+            include_workflow_agents: Include workflow-only agents (for workflow editor)
+
+        Returns:
+            List of AgentInfo objects
+        """
+        # Filter system agents based on context (chat UI vs workflow editor)
+        if include_workflow_agents:
+            # For workflows: include ALL system agents (chat + workflow agents)
+            system_agents = [
+                AgentInfo(
+                    id=id,
+                    name=self.system_agents[id].name,
+                    description=self.system_agents[id].description,
+                    status="SYSTEM",
+                    is_workflow_agent=self.system_agents[id].workflow_agent,
+                    requires_repo_context=self.system_agents[id].require_repo_context,
+                )
+                for (id) in self.system_agents
+            ]
+        else:
+            # For chat UI: exclude workflow-only agents
+            system_agents = [
+                AgentInfo(
+                    id=id,
+                    name=self.system_agents[id].name,
+                    description=self.system_agents[id].description,
+                    status="SYSTEM",
+                    is_workflow_agent=self.system_agents[id].workflow_agent,
+                    requires_repo_context=self.system_agents[id].require_repo_context,
+                )
+                for (id) in self.system_agents
+                if not self.system_agents[id].workflow_agent
+            ]
 
         try:
             custom_agents = await CustomAgentService(

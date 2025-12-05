@@ -19,6 +19,9 @@ from .confluence_client import (
 class GetConfluenceSpacesInput(BaseModel):
     """Input schema for get_confluence_spaces tool."""
 
+    integration_id: str = Field(
+        description="The Confluence integration UUID (NOT site_name). Get the 'integration_id' UUID field from 'List Confluence Integrations' tool - do NOT use 'site_name' field. Example: 'da376af7-bff5-4c2f-a5da-0398de3601a8'"
+    )
     limit: int = Field(
         default=25,
         description="Maximum number of spaces to return (default: 25, max: 250)",
@@ -67,11 +70,12 @@ class GetConfluenceSpacesTool:
         self.db = db
         self.user_id = user_id
 
-    async def arun(self, limit: int = 25, space_type: str = "all") -> Dict[str, Any]:
+    async def arun(self, integration_id: str, limit: int = 25, space_type: str = "all") -> Dict[str, Any]:
         """
         Get list of Confluence spaces.
 
         Args:
+            integration_id: The Confluence integration ID to use
             limit: Maximum number of spaces to return
             space_type: Filter by type (global, personal, all)
 
@@ -90,7 +94,16 @@ class GetConfluenceSpacesTool:
                 }
 
             # Get Confluence client
-            client = await get_confluence_client_for_user(self.user_id, self.db)
+            try:
+                client = await get_confluence_client_for_user(
+                    self.user_id, self.db, integration_id=integration_id
+                )
+            except ValueError as ve:
+                # Handle multi-integration error
+                error_data = ve.args[0] if ve.args else {}
+                if isinstance(error_data, dict):
+                    return {"success": False, **error_data}
+                return {"success": False, "error": str(ve)}
             if not client:
                 return {
                     "success": False,
@@ -136,9 +149,9 @@ class GetConfluenceSpacesTool:
             logging.error(f"Error getting Confluence spaces: {str(e)}")
             return {"success": False, "error": str(e)}
 
-    def run(self, limit: int = 25, space_type: str = "all") -> Dict[str, Any]:
+    def run(self, integration_id: str, limit: int = 25, space_type: str = "all") -> Dict[str, Any]:
         """Synchronous version that runs the async version."""
-        return asyncio.run(self.arun(limit, space_type))
+        return asyncio.run(self.arun(integration_id, limit, space_type))
 
 
 def get_confluence_spaces_tool(db: Session, user_id: str) -> StructuredTool:
@@ -160,6 +173,11 @@ def get_confluence_spaces_tool(db: Session, user_id: str) -> StructuredTool:
         name="Get Confluence Spaces",
         description="""Get list of Confluence spaces available to the user.
 
+        **IMPORTANT: If user has multiple Confluence workspaces:**
+        1. First call 'List Confluence Integrations' to get available workspaces
+        2. Match user's mentioned workspace name to get integration_id
+        3. Pass that integration_id to this tool
+
         Use this as the FIRST step when working with Confluence to discover available spaces.
 
         Use this when you need to:
@@ -168,6 +186,7 @@ def get_confluence_spaces_tool(db: Session, user_id: str) -> StructuredTool:
         - Distinguish between global (team) and personal spaces
 
         Inputs:
+        - integration_id (str): REQUIRED - Confluence workspace ID from 'List Confluence Integrations'
         - limit (int): Maximum spaces to return (default: 25, max: 250)
         - space_type (str): Filter by 'global', 'personal', or 'all' (default: 'all')
 

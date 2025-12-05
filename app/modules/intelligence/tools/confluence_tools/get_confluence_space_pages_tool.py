@@ -19,6 +19,9 @@ from .confluence_client import (
 class GetConfluenceSpacePagesInput(BaseModel):
     """Input schema for get_confluence_space_pages tool."""
 
+    integration_id: str = Field(
+        description="The Confluence integration UUID (NOT site_name). Get the 'integration_id' UUID field from 'List Confluence Integrations' tool - do NOT use 'site_name' field. Example: 'da376af7-bff5-4c2f-a5da-0398de3601a8'"
+    )
     space_id: str = Field(
         description="The numeric space ID from 'Get Confluence Spaces' tool (the 'id' field, NOT the 'key' field). Example: '1245186'"
     )
@@ -76,6 +79,7 @@ class GetConfluenceSpacePagesTool:
 
     async def arun(
         self,
+        integration_id: str,
         space_id: str,
         limit: int = 25,
         status: str = "current",
@@ -84,6 +88,7 @@ class GetConfluenceSpacePagesTool:
         Get pages from a Confluence space.
 
         Args:
+            integration_id: The Confluence integration ID to use
             space_id: The space ID
             limit: Maximum number of pages
             status: Filter by status
@@ -103,7 +108,16 @@ class GetConfluenceSpacePagesTool:
                 }
 
             # Get Confluence client
-            client = await get_confluence_client_for_user(self.user_id, self.db)
+            try:
+                client = await get_confluence_client_for_user(
+                    self.user_id, self.db, integration_id=integration_id
+                )
+            except ValueError as ve:
+                # Handle multi-integration error
+                error_data = ve.args[0] if ve.args else {}
+                if isinstance(error_data, dict):
+                    return {"success": False, **error_data}
+                return {"success": False, "error": str(ve)}
             if not client:
                 return {
                     "success": False,
@@ -153,12 +167,13 @@ class GetConfluenceSpacePagesTool:
 
     def run(
         self,
+        integration_id: str,
         space_id: str,
         limit: int = 25,
         status: str = "current",
     ) -> Dict[str, Any]:
         """Synchronous version that runs the async version."""
-        return asyncio.run(self.arun(space_id, limit, status))
+        return asyncio.run(self.arun(integration_id, space_id, limit, status))
 
 
 def get_confluence_space_pages_tool(db: Session, user_id: str) -> StructuredTool:
@@ -180,6 +195,11 @@ def get_confluence_space_pages_tool(db: Session, user_id: str) -> StructuredTool
         name="Get Confluence Space Pages",
         description="""List all pages within a specific Confluence space.
 
+        **IMPORTANT: If user has multiple Confluence workspaces:**
+        1. First call 'List Confluence Integrations' to get available workspaces
+        2. Match user's mentioned workspace name to get integration_id
+        3. Pass that integration_id to this tool
+
         Use this when you need to:
         - Browse all pages in a space to understand its structure
         - Find page hierarchies (parent-child relationships)
@@ -187,6 +207,7 @@ def get_confluence_space_pages_tool(db: Session, user_id: str) -> StructuredTool
         - List draft or archived pages
 
         Inputs:
+        - integration_id (str): REQUIRED - Confluence workspace ID from 'List Confluence Integrations'
         - space_id (str): The numeric space ID (NOT the key). Get the 'id' field from 'Get Confluence Spaces' tool output.
         - limit (int): Maximum pages to return (default: 25, max: 250)
         - status (str): Filter by 'current' (published), 'draft', 'archived', or 'any' (default: 'current')

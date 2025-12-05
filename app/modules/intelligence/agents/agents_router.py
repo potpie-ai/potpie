@@ -36,10 +36,16 @@ class AgentsAPI:
         list_system_agents: bool = Query(
             default=True, description="Include system agents in the response"
         ),
+        include_workflow_agents: bool = Query(
+            default=False,
+            description="Include workflow-only agents (for workflow editor)",
+        ),
     ):
         user_id: str = user["user_id"]
         llm_provider = ProviderService(db, user_id)
         tools_provider = ToolService(db, user_id)
         prompt_provider = PromptService(db)
         controller = AgentsController(db, llm_provider, prompt_provider, tools_provider)
-        return await controller.list_available_agents(user, list_system_agents)
+        return await controller.list_available_agents(
+            user, list_system_agents, include_workflow_agents
+        )

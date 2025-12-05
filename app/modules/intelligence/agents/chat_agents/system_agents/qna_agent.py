@@ -72,6 +72,7 @@ class QnAAgent(ChatAgent):
                 "transition_jira_issue",
                 "get_jira_projects",
                 "get_jira_project_users",
+                "list_confluence_integrations",
                 "get_confluence_spaces",
                 "get_confluence_page",
                 "search_confluence_pages",

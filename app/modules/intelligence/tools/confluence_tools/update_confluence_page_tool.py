@@ -19,6 +19,9 @@ from .confluence_client import (
 class UpdateConfluencePageInput(BaseModel):
     """Input schema for update_confluence_page tool."""
 
+    integration_id: str = Field(
+        description="The Confluence integration UUID (NOT site_name). Get the 'integration_id' UUID field from 'List Confluence Integrations' tool - do NOT use 'site_name' field. Example: 'da376af7-bff5-4c2f-a5da-0398de3601a8'"
+    )
     page_id: str = Field(
         description="The ID of the page to update (get from 'Search Confluence Pages' or 'Get Confluence Page')"
     )
@@ -93,6 +96,7 @@ class UpdateConfluencePageTool:
 
     async def arun(
         self,
+        integration_id: str,
         page_id: str,
         version_number: int,
         title: Optional[str] = None,
@@ -103,6 +107,7 @@ class UpdateConfluencePageTool:
         Update an existing Confluence page.
 
         Args:
+            integration_id: The Confluence integration ID to use
             page_id: The page ID
             version_number: Current version number
             title: New title (optional)
@@ -124,7 +129,16 @@ class UpdateConfluencePageTool:
                 }
 
             # Get Confluence client
-            client = await get_confluence_client_for_user(self.user_id, self.db)
+            try:
+                client = await get_confluence_client_for_user(
+                    self.user_id, self.db, integration_id=integration_id
+                )
+            except ValueError as ve:
+                # Handle multi-integration error
+                error_data = ve.args[0] if ve.args else {}
+                if isinstance(error_data, dict):
+                    return {"success": False, **error_data}
+                return {"success": False, "error": str(ve)}
             if not client:
                 return {
                     "success": False,
@@ -189,6 +203,7 @@ class UpdateConfluencePageTool:
 
     def run(
         self,
+        integration_id: str,
         page_id: str,
         version_number: int,
         title: Optional[str] = None,
@@ -196,7 +211,7 @@ class UpdateConfluencePageTool:
         status: str = "current",
     ) -> Dict[str, Any]:
         """Synchronous version that runs the async version."""
-        return asyncio.run(self.arun(page_id, version_number, title, body, status))
+        return asyncio.run(self.arun(integration_id, page_id, version_number, title, body, status))
 
 
 def update_confluence_page_tool(db: Session, user_id: str) -> StructuredTool:
@@ -218,6 +233,11 @@ def update_confluence_page_tool(db: Session, user_id: str) -> StructuredTool:
         name="Update Confluence Page",
         description="""Update an existing Confluence page's title or content.
 
+        **IMPORTANT: If user has multiple Confluence workspaces:**
+        1. First call 'List Confluence Integrations' to get available workspaces
+        2. Match user's mentioned workspace name to get integration_id
+        3. Pass that integration_id to this tool
+
         CRITICAL: MUST use 'Get Confluence Page' tool FIRST to get current version number.
 
         Use this when you need to:
@@ -226,6 +246,7 @@ def update_confluence_page_tool(db: Session, user_id: str) -> StructuredTool:
         - Modify page titles or add new sections
 
         Inputs:
+        - integration_id (str): REQUIRED - Confluence workspace ID from 'List Confluence Integrations'
         - page_id (str): Page ID to update
         - version_number (int): Current version number (REQUIRED - get from 'Get Confluence Page')
         - title (str, optional): New title (omit to keep current)
