@@ -863,11 +863,25 @@ class GithubService:
     ) -> List[Dict[str, Any]]:
         """
         Get repository structure as JSON for a specific branch.
+        Uses Git Tree API for efficient single-call fetching of entire repo structure.
+        Falls back to recursive fetching if Git Tree API fails.
         """
         try:
             github, repo = self.get_repo(repo_name)
 
-            # Fetch structure starting from root
+            # Try Git Tree API first (single API call for entire tree)
+            try:
+                structure = await self._fetch_repo_structure_via_git_tree(
+                    repo, branch_name
+                )
+                if structure:
+                    return structure
+            except Exception as tree_error:
+                logger.warning(
+                    f"Git Tree API failed for {repo_name}, falling back to recursive fetch: {str(tree_error)}"
+                )
+
+            # Fallback to recursive fetching (original method)
             structure = await self._fetch_repo_structure_async(
                 repo,
                 path="",
@@ -883,6 +897,134 @@ class GithubService:
         except Exception as e:
             logger.error(f"Error fetching repo structure for {repo_name}: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
+
+    async def _fetch_repo_structure_via_git_tree(
+        self, repo: Any, branch_name: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch entire repository structure using Git Tree API.
+        This makes a single API call instead of recursive calls per directory.
+
+        Returns a list of file/directory nodes in hierarchical structure.
+        """
+        try:
+            # Get the branch reference to find the commit SHA
+            branch = await asyncio.get_event_loop().run_in_executor(
+                self.executor, lambda: repo.get_branch(branch_name)
+            )
+            commit_sha = branch.commit.sha
+
+            # Get the entire tree recursively in ONE API call
+            tree = await asyncio.get_event_loop().run_in_executor(
+                self.executor, lambda: repo.get_git_tree(commit_sha, recursive=True)
+            )
+
+            # Build hierarchical structure from flat tree
+            return self._build_tree_from_git_tree(tree.tree)
+
+        except Exception as e:
+            logger.error(f"Error fetching git tree: {str(e)}")
+            raise
+
+    def _build_tree_from_git_tree(
+        self, tree_elements: List[Any]
+    ) -> List[Dict[str, Any]]:
+        """
+        Convert flat Git Tree API response into hierarchical structure.
+
+        Git Tree API returns flat list like:
+        - src/main.py (blob)
+        - src/utils/helper.py (blob)
+        - src/utils (tree)
+
+        We convert this to nested structure for the UI.
+        """
+        # Create a dict to hold the tree structure
+        root: Dict[str, Any] = {"children": {}}
+
+        for element in tree_elements:
+            path = element.path
+            element_type = element.type  # 'blob' for files, 'tree' for directories
+
+            # Skip files that don't pass our filters
+            name = path.split("/")[-1]
+
+            # Skip hidden files/directories (starting with .)
+            path_parts = path.split("/")
+            if any(part.startswith(".") for part in path_parts):
+                continue
+
+            if element_type == "blob":
+                # It's a file - check if valid
+                if FileUtils.is_excluded_file_name(name):
+                    continue
+                if not FileUtils.is_valid_file_name(name):
+                    continue
+
+            # Build the path in our tree structure
+            current = root
+            parts = path.split("/")
+
+            for i, part in enumerate(parts):
+                is_last = i == len(parts) - 1
+
+                if part not in current["children"]:
+                    if is_last and element_type == "blob":
+                        # It's a file
+                        current["children"][part] = {
+                            "type": "file",
+                            "name": part,
+                            "path": path,
+                        }
+                    else:
+                        # It's a directory
+                        current["children"][part] = {
+                            "type": "directory",
+                            "name": part,
+                            "path": "/".join(parts[: i + 1]),
+                            "children": {},
+                        }
+
+                current = current["children"][part]
+
+        # Convert the dict structure to list structure
+        return self._convert_tree_dict_to_list(root["children"])
+
+    def _convert_tree_dict_to_list(
+        self, tree_dict: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """
+        Convert tree dict with children as dicts to list format expected by UI.
+        """
+        result = []
+
+        for name, node in tree_dict.items():
+            if node["type"] == "file":
+                result.append(
+                    {
+                        "type": "file",
+                        "name": node["name"],
+                        "path": node["path"],
+                    }
+                )
+            else:
+                # Directory - recursively convert children
+                children_list = self._convert_tree_dict_to_list(
+                    node.get("children", {})
+                )
+
+                # Only include directories that have children (after filtering)
+                if children_list:
+                    result.append(
+                        {
+                            "type": "directory",
+                            "name": node["name"],
+                            "path": node["path"],
+                            "children": children_list,
+                        }
+                    )
+
+        return result
 
     async def check_public_repo(self, repo_name: str) -> bool:
         try:
