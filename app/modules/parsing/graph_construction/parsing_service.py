@@ -201,16 +201,15 @@ class ParsingService:
 
     def apply_filters_to_directory(self, directory: str, filters: ParseFilters):
         """
-        Walks through the directory and removes files/folders that match the filters.
+        Walks through the directory and removes files/folders that match the exclusion filters.
         """
         logger.info(f"Applying filters to directory: {directory}")
 
-        # If no filters are set (empty lists and include_mode=False), don't skip anything
+        # If no filters are set, don't skip anything
         if (
             not filters.excluded_directories
             and not filters.excluded_files
             and not filters.excluded_extensions
-            and not filters.include_mode
         ):
             return
 
@@ -220,31 +219,18 @@ class ParsingService:
                 rel_root = ""
 
             # Filter directories in-place to prevent walking into them
-            # We iterate over a copy of dirs to safely modify it
             for d in list(dirs):
                 dir_path = os.path.join(root, d)
                 rel_path = os.path.join(rel_root, d)
 
-                should_remove = False
-
-                # Check directory exclusions
+                # Check if directory should be excluded
                 path_parts = rel_path.split(os.sep)
-                for excluded_dir in filters.excluded_directories:
-                    if excluded_dir in path_parts:
-                        should_remove = True
-                        break
+                should_remove = any(
+                    excluded_dir in path_parts
+                    for excluded_dir in filters.excluded_directories
+                )
 
-                # If include_mode is True, we might need to keep it if it's a parent of an included file?
-                # But the spec says "If true, above become INCLUDE instead of EXCLUDE".
-                # This is tricky for directories. If I include "src", I should keep "src".
-                # If I include "src/utils", I should keep "src" and "src/utils".
-                # For now, let's assume directory filtering is strict exclusion/inclusion.
-
-                # Actually, for include_mode, we should probably only remove files that don't match.
-                # Removing directories might be dangerous if they contain included files.
-                # But if the directory ITSELF is excluded (in exclude mode), we remove it.
-
-                if not filters.include_mode and should_remove:
+                if should_remove:
                     shutil.rmtree(dir_path)
                     dirs.remove(d)
                     logger.info(f"Removed excluded directory: {rel_path}")
@@ -254,43 +240,33 @@ class ParsingService:
                 file_path = os.path.join(root, f)
                 rel_path = os.path.join(rel_root, f)
 
-                matches_filter = False
+                should_remove = False
 
-                # Check directory exclusions (again, for the file's path)
+                # Check directory exclusions for file's path
                 path_parts = rel_path.split(os.sep)
                 dir_parts = path_parts[:-1]
                 for excluded_dir in filters.excluded_directories:
                     if excluded_dir in dir_parts:
-                        matches_filter = True
+                        should_remove = True
                         break
 
-                if not matches_filter:
+                if not should_remove:
                     # Check extension exclusions
                     for ext in filters.excluded_extensions:
                         if not ext.startswith("."):
                             ext = "." + ext
                         if file_path.endswith(ext):
-                            matches_filter = True
+                            should_remove = True
                             break
 
-                if not matches_filter:
+                if not should_remove:
                     # Check file pattern exclusions (glob matching)
                     for excluded_pattern in filters.excluded_files:
                         if fnmatch.fnmatch(
                             rel_path, excluded_pattern
                         ) or fnmatch.fnmatch(f, excluded_pattern):
-                            matches_filter = True
+                            should_remove = True
                             break
-
-                should_remove = False
-                if filters.include_mode:
-                    # In include mode, remove if it DOES NOT match any filter
-                    if not matches_filter:
-                        should_remove = True
-                else:
-                    # In exclude mode, remove if it DOES match a filter
-                    if matches_filter:
-                        should_remove = True
 
                 if should_remove:
                     try:

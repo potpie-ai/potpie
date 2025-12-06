@@ -59,19 +59,16 @@ class RepoMap:
 
     def should_skip_file(self, file_path: str, rel_path: str) -> bool:
         """
-        Determine if file should be skipped based on filters.
+        Determine if file should be skipped based on exclusion filters.
         Returns True if file should be EXCLUDED.
         """
-        # If no filters are set (empty lists and include_mode=False), don't skip anything
+        # If no filters are set, don't skip anything
         if (
             not self.parse_filters.excluded_directories
             and not self.parse_filters.excluded_files
             and not self.parse_filters.excluded_extensions
-            and not self.parse_filters.include_mode
         ):
             return False
-
-        matches_filter = False
 
         # Check directory exclusions
         path_parts = rel_path.split(os.sep)
@@ -80,38 +77,24 @@ class RepoMap:
 
         for excluded_dir in self.parse_filters.excluded_directories:
             if excluded_dir in dir_parts:
-                matches_filter = True
-                break
+                return True
 
-        if not matches_filter:
-            # Check extension exclusions
+        # Check extension exclusions
+        for ext in self.parse_filters.excluded_extensions:
             # Ensure extension starts with .
-            for ext in self.parse_filters.excluded_extensions:
-                if not ext.startswith("."):
-                    ext = "." + ext
-                if file_path.endswith(ext):
-                    matches_filter = True
-                    break
+            if not ext.startswith("."):
+                ext = "." + ext
+            if file_path.endswith(ext):
+                return True
 
-        if not matches_filter:
-            # Check file pattern exclusions (glob matching)
-            for excluded_pattern in self.parse_filters.excluded_files:
-                if fnmatch.fnmatch(rel_path, excluded_pattern) or fnmatch.fnmatch(
-                    os.path.basename(rel_path), excluded_pattern
-                ):
-                    matches_filter = True
-                    break
+        # Check file pattern exclusions (glob matching)
+        for excluded_pattern in self.parse_filters.excluded_files:
+            if fnmatch.fnmatch(rel_path, excluded_pattern) or fnmatch.fnmatch(
+                os.path.basename(rel_path), excluded_pattern
+            ):
+                return True
 
-        # If include_mode is True:
-        # matches_filter=True means it matched one of the "included" criteria -> Keep it (Skip=False)
-        # matches_filter=False means it didn't match any "included" criteria -> Skip it (Skip=True)
-        if self.parse_filters.include_mode:
-            return not matches_filter
-
-        # If include_mode is False (default):
-        # matches_filter=True means it matched one of the "excluded" criteria -> Skip it (Skip=True)
-        # matches_filter=False means it didn't match any "excluded" criteria -> Keep it (Skip=False)
-        return matches_filter
+        return False
 
     def get_repo_map(
         self, chat_files, other_files, mentioned_fnames=None, mentioned_idents=None

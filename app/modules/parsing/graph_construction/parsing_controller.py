@@ -202,7 +202,6 @@ class ParsingController:
                         ),
                         "excluded_files": sorted(f.get("excluded_files", [])),
                         "excluded_extensions": sorted(f.get("excluded_extensions", [])),
-                        "include_mode": f.get("include_mode", False),
                     }
 
                 normalized_current = normalize_filters(current_filters)
@@ -418,7 +417,6 @@ class ParsingController:
                 "excluded_directories": sorted(f.get("excluded_directories", [])),
                 "excluded_files": sorted(f.get("excluded_files", [])),
                 "excluded_extensions": sorted(f.get("excluded_extensions", [])),
-                "include_mode": f.get("include_mode", False),
             }
 
         filters_match = normalize_filters(current_filters) == normalize_filters(

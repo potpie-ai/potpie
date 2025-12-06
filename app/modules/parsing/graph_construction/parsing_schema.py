@@ -4,10 +4,11 @@ from pydantic import BaseModel, Field
 
 
 class ParseFilters(BaseModel):
+    """Filters for excluding files and directories during repository parsing."""
+
     excluded_directories: List[str] = Field(default_factory=list)
     excluded_files: List[str] = Field(default_factory=list)
     excluded_extensions: List[str] = Field(default_factory=list)
-    include_mode: bool = False
 
 
 class ParsingRequest(BaseModel):
