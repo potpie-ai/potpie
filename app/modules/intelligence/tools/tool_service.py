@@ -70,6 +70,12 @@ from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool im
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_name_tool import (
     get_code_from_probable_node_name_tool,
 )
+from app.modules.intelligence.tools.kg_based_tools.get_dependencies_tool import (
+    get_dependencies_tool,
+)
+from app.modules.intelligence.tools.kg_based_tools.get_dependents_tool import (
+    get_dependents_tool,
+)
 from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool import (
     get_nodes_from_tags_tool,
 )
@@ -208,6 +214,8 @@ class ToolService:
             "get_circular_dependencies": get_circular_dependencies_tool(
                 self.db, self.user_id
             ),
+            "get_dependencies": get_dependencies_tool(self.db, self.user_id),
+            "get_dependents": get_dependents_tool(self.db, self.user_id),
         }
 
         # Add bash command tool if repo manager is enabled
