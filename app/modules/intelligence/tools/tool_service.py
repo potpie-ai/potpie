@@ -57,6 +57,9 @@ from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_t
 from app.modules.intelligence.tools.kg_based_tools.get_call_chain_between_node_ids import (
     get_call_chain_between_node_ids,
 )
+from app.modules.intelligence.tools.kg_based_tools.get_circular_dependencies_tool import (
+    get_circular_dependencies_tool,
+)
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_multiple_node_ids_tool import (
     GetCodeFromMultipleNodeIdsTool,
     get_code_from_multiple_node_ids_tool,
@@ -200,6 +203,9 @@ class ToolService:
             ),
             "search_code_docstring": node_search_from_text_tool(self.db, self.user_id),
             "get_call_chain_between_node_ids": get_call_chain_between_node_ids(
+                self.db, self.user_id
+            ),
+            "get_circular_dependencies": get_circular_dependencies_tool(
                 self.db, self.user_id
             ),
         }
