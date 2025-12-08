@@ -7,7 +7,7 @@ while maintaining single user identity based on email.
 
 import logging
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
@@ -28,7 +28,6 @@ from app.modules.users.user_model import User
 from app.modules.users.user_service import UserService
 from app.modules.auth.auth_schema import (
     AuthProviderCreate,
-    AuthProviderResponse,
     SSOLoginResponse,
 )
 
@@ -38,59 +37,61 @@ logger = logging.getLogger(__name__)
 class UnifiedAuthService:
     """
     Service for handling multi-provider authentication and account linking.
-    
+
     Key responsibilities:
     - Authenticate users across multiple providers
     - Link new providers to existing accounts
     - Prevent account duplication
     - Manage provider preferences
     """
-    
+
     def __init__(self, db: Session):
         self.db = db
         self.user_service = UserService(db)
-        
+
         # Initialize SSO providers
         self.sso_providers: Dict[str, BaseSSOProvider] = {
             "google": GoogleSSOProvider(),
             "azure": AzureSSOProvider(),
         }
-    
+
     def get_sso_provider(self, provider_name: str) -> Optional[BaseSSOProvider]:
         """Get SSO provider by name"""
         return self.sso_providers.get(provider_name.lower())
-    
+
     async def verify_sso_token(
         self, provider_name: str, id_token: str
     ) -> Optional[Any]:
         """
         Verify an SSO ID token using the appropriate provider.
-        
+
         Returns SSOUserInfo if valid, None if invalid.
         """
         provider = self.get_sso_provider(provider_name)
         if not provider:
             logger.error(f"Unknown SSO provider: {provider_name}")
             return None
-        
+
         try:
             user_info = await provider.verify_token(id_token)
             return user_info
         except ValueError as e:
             logger.error(f"Token verification failed for {provider_name}: {str(e)}")
             return None
-    
+
     # ===== Provider Management =====
-    
+
     def get_user_providers(self, user_id: str) -> List[UserAuthProvider]:
         """Get all auth providers for a user"""
         return (
             self.db.query(UserAuthProvider)
             .filter(UserAuthProvider.user_id == user_id)
-            .order_by(UserAuthProvider.is_primary.desc(), UserAuthProvider.linked_at.desc())
+            .order_by(
+                UserAuthProvider.is_primary.desc(), UserAuthProvider.linked_at.desc()
+            )
             .all()
         )
-    
+
     def get_provider(
         self, user_id: str, provider_type: str
     ) -> Optional[UserAuthProvider]:
@@ -105,7 +106,7 @@ class UnifiedAuthService:
             )
             .first()
         )
-    
+
     def add_provider(
         self,
         user_id: str,
@@ -115,7 +116,7 @@ class UnifiedAuthService:
     ) -> UserAuthProvider:
         """
         Add a new authentication provider to a user's account.
-        
+
         If this is the first provider, it becomes primary.
         """
         # Check if provider already exists
@@ -125,11 +126,11 @@ class UnifiedAuthService:
                 f"Provider {provider_create.provider_type} already exists for user {user_id}"
             )
             return existing
-        
+
         # Check if this is the first provider
         existing_providers = self.get_user_providers(user_id)
         is_first = len(existing_providers) == 0
-        
+
         # Create new provider
         new_provider = UserAuthProvider(
             user_id=user_id,
@@ -145,9 +146,9 @@ class UnifiedAuthService:
             linked_by_ip=ip_address,
             linked_by_user_agent=user_agent,
         )
-        
+
         self.db.add(new_provider)
-        
+
         # If setting as primary, unset other primary providers
         if new_provider.is_primary:
             self.db.query(UserAuthProvider).filter(
@@ -156,10 +157,10 @@ class UnifiedAuthService:
                     UserAuthProvider.id != new_provider.id,
                 )
             ).update({"is_primary": False})
-        
+
         self.db.commit()
         self.db.refresh(new_provider)
-        
+
         # Audit log
         self._log_auth_event(
             user_id=user_id,
@@ -169,47 +170,43 @@ class UnifiedAuthService:
             ip_address=ip_address,
             user_agent=user_agent,
         )
-        
+
         logger.info(
             f"Added provider {provider_create.provider_type} for user {user_id}"
         )
         return new_provider
-    
+
     def set_primary_provider(self, user_id: str, provider_type: str) -> bool:
         """Set a provider as the primary login method"""
         provider = self.get_provider(user_id, provider_type)
         if not provider:
-            logger.warning(
-                f"Provider {provider_type} not found for user {user_id}"
-            )
+            logger.warning(f"Provider {provider_type} not found for user {user_id}")
             return False
-        
+
         # Unset all other primary providers
         self.db.query(UserAuthProvider).filter(
             UserAuthProvider.user_id == user_id
         ).update({"is_primary": False})
-        
+
         # Set this as primary
         provider.is_primary = True
         self.db.commit()
-        
+
         logger.info(f"Set primary provider to {provider_type} for user {user_id}")
         return True
-    
+
     def unlink_provider(self, user_id: str, provider_type: str) -> bool:
         """
         Unlink a provider from a user's account.
-        
+
         Cannot unlink if it's the only provider (would lock user out).
         If unlinking primary provider, automatically set another as primary.
         """
         provider = self.get_provider(user_id, provider_type)
         if not provider:
-            logger.warning(
-                f"Provider {provider_type} not found for user {user_id}"
-            )
+            logger.warning(f"Provider {provider_type} not found for user {user_id}")
             return False
-        
+
         # Check if this is the only provider
         all_providers = self.get_user_providers(user_id)
         if len(all_providers) <= 1:
@@ -217,20 +214,20 @@ class UnifiedAuthService:
                 f"Cannot unlink last provider {provider_type} for user {user_id}"
             )
             raise ValueError("Cannot unlink the only authentication provider")
-        
+
         was_primary = provider.is_primary
-        
+
         # Delete the provider
         self.db.delete(provider)
         self.db.commit()
-        
+
         # If it was primary, set another as primary
         if was_primary:
             remaining = self.get_user_providers(user_id)
             if remaining:
                 remaining[0].is_primary = True
                 self.db.commit()
-        
+
         # Audit log
         self._log_auth_event(
             user_id=user_id,
@@ -238,19 +235,19 @@ class UnifiedAuthService:
             provider_type=provider_type,
             status="success",
         )
-        
+
         logger.info(f"Unlinked provider {provider_type} for user {user_id}")
         return True
-    
+
     def update_last_used(self, user_id: str, provider_type: str):
         """Update last_used_at for a provider"""
         provider = self.get_provider(user_id, provider_type)
         if provider:
             provider.last_used_at = datetime.utcnow()
             self.db.commit()
-    
+
     # ===== Authentication Flow =====
-    
+
     def authenticate_or_create(
         self,
         email: str,
@@ -265,31 +262,39 @@ class UnifiedAuthService:
     ) -> Tuple[User, SSOLoginResponse]:
         """
         Main authentication flow for any provider.
-        
+
         Three scenarios:
         1. User exists with this provider → Login
         2. User exists but not this provider → Create pending link
         3. User doesn't exist → Create new user
-        
+
         Returns: (User, SSOLoginResponse)
         """
         email = email.lower().strip()
-        
+
         # Check if user exists by email
         existing_user = self.user_service.get_user_by_email(email)
-        
+
         if existing_user:
             # Check if this provider is already linked
             existing_provider = self.get_provider(existing_user.uid, provider_type)
-            
+
             if existing_provider:
                 # Scenario 1: User exists with this provider → Login
                 self.update_last_used(existing_user.uid, provider_type)
-                
+
+                # Set this provider as primary since user is signing in with it
+                # This ensures the correct email is shown in the sidebar
+                if not existing_provider.is_primary:
+                    logger.info(
+                        f"Setting {provider_type} as primary provider for user {existing_user.uid} (user signed in with this provider)"
+                    )
+                    self.set_primary_provider(existing_user.uid, provider_type)
+
                 # Update last login
                 existing_user.last_login_at = datetime.utcnow()
                 self.db.commit()
-                
+
                 # Audit log
                 self._log_auth_event(
                     user_id=existing_user.uid,
@@ -299,7 +304,7 @@ class UnifiedAuthService:
                     ip_address=ip_address,
                     user_agent=user_agent,
                 )
-                
+
                 return existing_user, SSOLoginResponse(
                     status="success",
                     user_id=existing_user.uid,
@@ -309,8 +314,10 @@ class UnifiedAuthService:
                 )
             else:
                 # Scenario 2: User exists but not this provider → Create pending link
-                existing_providers = [p.provider_type for p in self.get_user_providers(existing_user.uid)]
-                
+                existing_providers = [
+                    p.provider_type for p in self.get_user_providers(existing_user.uid)
+                ]
+
                 linking_token = self._create_pending_link(
                     user_id=existing_user.uid,
                     provider_type=provider_type,
@@ -319,7 +326,7 @@ class UnifiedAuthService:
                     ip_address=ip_address,
                     user_agent=user_agent,
                 )
-                
+
                 # Audit log
                 self._log_auth_event(
                     user_id=existing_user.uid,
@@ -329,7 +336,7 @@ class UnifiedAuthService:
                     ip_address=ip_address,
                     user_agent=user_agent,
                 )
-                
+
                 return existing_user, SSOLoginResponse(
                     status="needs_linking",
                     user_id=existing_user.uid,
@@ -352,7 +359,7 @@ class UnifiedAuthService:
                 ip_address=ip_address,
                 user_agent=user_agent,
             )
-            
+
             # Audit log
             self._log_auth_event(
                 user_id=new_user.uid,
@@ -362,7 +369,7 @@ class UnifiedAuthService:
                 ip_address=ip_address,
                 user_agent=user_agent,
             )
-            
+
             return new_user, SSOLoginResponse(
                 status="new_user",
                 user_id=new_user.uid,
@@ -370,9 +377,9 @@ class UnifiedAuthService:
                 display_name=new_user.display_name,
                 message="Account created successfully",
             )
-    
+
     # ===== Pending Provider Links =====
-    
+
     def _create_pending_link(
         self,
         user_id: str,
@@ -384,8 +391,8 @@ class UnifiedAuthService:
     ) -> str:
         """Create a pending provider link (expires in 15 minutes)"""
         token = secrets.token_urlsafe(32)
-        expires_at = datetime.utcnow() + timedelta(minutes=15)
-        
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+
         pending_link = PendingProviderLink(
             user_id=user_id,
             provider_type=provider_type,
@@ -396,17 +403,19 @@ class UnifiedAuthService:
             ip_address=ip_address,
             user_agent=user_agent,
         )
-        
+
         self.db.add(pending_link)
         self.db.commit()
-        
-        logger.info(f"Created pending link for user {user_id}, provider {provider_type}")
+
+        logger.info(
+            f"Created pending link for user {user_id}, provider {provider_type}"
+        )
         return token
-    
+
     def confirm_provider_link(self, linking_token: str) -> Optional[UserAuthProvider]:
         """
         Confirm and complete a pending provider link.
-        
+
         Returns the newly linked provider or None if token invalid/expired.
         """
         pending = (
@@ -414,42 +423,84 @@ class UnifiedAuthService:
             .filter(PendingProviderLink.token == linking_token)
             .first()
         )
-        
+
         if not pending:
             logger.warning(f"Invalid linking token: {linking_token}")
             return None
-        
-        # Check expiration
-        if pending.expires_at < datetime.utcnow():
-            logger.warning(f"Expired linking token: {linking_token}")
+
+        # Check expiration - ensure both datetimes are timezone-aware
+        now = datetime.now(timezone.utc)
+        expires_at = pending.expires_at
+        # If expires_at is naive, make it timezone-aware (assume UTC)
+        if expires_at is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        # If expires_at is timezone-aware, ensure now is also timezone-aware
+        elif expires_at is not None and expires_at.tzinfo is not None:
+            # Both are timezone-aware, comparison should work
+            pass
+        logger.info(
+            f"Current time (UTC): {now}, Expires at: {expires_at}, expires_at.tzinfo: {expires_at.tzinfo if expires_at else None}"
+        )
+        if expires_at and expires_at < now:
+            logger.warning(
+                f"Expired linking token: {linking_token} (expired at {expires_at}, now is {now})"
+            )
             self.db.delete(pending)
             self.db.commit()
             return None
-        
-        # Create the provider
-        provider_create = AuthProviderCreate(
-            provider_type=pending.provider_type,
-            provider_uid=pending.provider_uid,
-            provider_data=pending.provider_data,
-        )
-        
-        new_provider = self.add_provider(
-            user_id=pending.user_id,
-            provider_create=provider_create,
-            ip_address=pending.ip_address,
-            user_agent=pending.user_agent,
-        )
-        
-        # Delete the pending link
-        self.db.delete(pending)
-        self.db.commit()
-        
-        logger.info(
-            f"Confirmed provider link for user {pending.user_id}, "
-            f"provider {pending.provider_type}"
-        )
-        return new_provider
-    
+
+        logger.info("Token is valid, checking if provider already exists...")
+        # Check if provider already exists (might have been added via signup endpoint)
+        existing_provider = self.get_provider(pending.user_id, pending.provider_type)
+        if existing_provider:
+            logger.info(
+                f"Provider {pending.provider_type} already exists for user {pending.user_id}. "
+                f"Provider ID: {existing_provider.id}. Deleting pending link."
+            )
+            self.db.delete(pending)
+            self.db.commit()
+            return existing_provider
+
+        logger.info("Provider doesn't exist, creating new provider...")
+        try:
+            # Check if user already has providers (to determine if this should be primary)
+            existing_providers = self.get_user_providers(pending.user_id)
+            has_existing_providers = len(existing_providers) > 0
+
+            # When linking a provider, don't make it primary if user already has providers
+            # This preserves the original sign-in method's email in the sidebar
+            is_primary = (
+                not has_existing_providers
+            )  # Only primary if it's the first provider
+
+            # Create the provider
+            provider_create = AuthProviderCreate(
+                provider_type=pending.provider_type,
+                provider_uid=pending.provider_uid,
+                provider_data=pending.provider_data,
+                is_primary=is_primary,  # Explicitly set based on whether user has existing providers
+            )
+            new_provider = self.add_provider(
+                user_id=pending.user_id,
+                provider_create=provider_create,
+                ip_address=pending.ip_address,
+                user_agent=pending.user_agent,
+            )
+
+            # Delete the pending link
+            self.db.delete(pending)
+            self.db.commit()
+
+            logger.info(
+                f"Confirmed provider link for user {pending.user_id}, "
+                f"provider {pending.provider_type}"
+            )
+            return new_provider
+        except Exception as e:
+            logger.error(f"Error confirming provider link: {str(e)}", exc_info=True)
+            self.db.rollback()
+            raise
+
     def cancel_pending_link(self, linking_token: str) -> bool:
         """Cancel a pending provider link"""
         pending = (
@@ -457,17 +508,17 @@ class UnifiedAuthService:
             .filter(PendingProviderLink.token == linking_token)
             .first()
         )
-        
+
         if pending:
             self.db.delete(pending)
             self.db.commit()
             logger.info(f"Cancelled pending link: {linking_token}")
             return True
-        
+
         return False
-    
+
     # ===== Helper Methods =====
-    
+
     def _create_user_with_provider(
         self,
         email: str,
@@ -481,21 +532,10 @@ class UnifiedAuthService:
         user_agent: Optional[str],
     ) -> User:
         """Create a new user with their first auth provider"""
-        # Extract organization from email
-        email_domain = email.split("@")[1] if "@" in email else None
-        organization = None
+        # Extract organization from email using utility function
+        from app.modules.utils.email_helper import extract_organization_from_email
         
-        if email_domain:
-            personal_domains = {
-                "gmail.com",
-                "yahoo.com",
-                "hotmail.com",
-                "outlook.com",
-                "icloud.com",
-                "protonmail.com",
-            }
-            if email_domain not in personal_domains:
-                organization = email_domain
+        organization = extract_organization_from_email(email)
         
         # Create user
         new_user = User(
@@ -507,10 +547,10 @@ class UnifiedAuthService:
             created_at=datetime.utcnow(),
             last_login_at=datetime.utcnow(),
         )
-        
+
         self.db.add(new_user)
         self.db.flush()  # Get the user ID
-        
+
         # Create provider
         provider = UserAuthProvider(
             user_id=new_user.uid,
@@ -524,14 +564,14 @@ class UnifiedAuthService:
             linked_by_ip=ip_address,
             linked_by_user_agent=user_agent,
         )
-        
+
         self.db.add(provider)
         self.db.commit()
         self.db.refresh(new_user)
-        
+
         logger.info(f"Created new user {new_user.uid} with provider {provider_type}")
         return new_user
-    
+
     def _log_auth_event(
         self,
         user_id: Optional[str],
@@ -552,12 +592,12 @@ class UnifiedAuthService:
             user_agent=user_agent,
             error_message=error_message,
         )
-        
+
         self.db.add(log_entry)
         self.db.commit()
-    
+
     # ===== Organization SSO Config =====
-    
+
     def get_org_sso_config(self, domain: str) -> Optional[OrganizationSSOConfig]:
         """Get SSO configuration for a domain"""
         return (
@@ -570,20 +610,19 @@ class UnifiedAuthService:
             )
             .first()
         )
-    
+
     def should_enforce_sso(self, email: str) -> Tuple[bool, Optional[str]]:
         """
         Check if SSO should be enforced for this email.
-        
+
         Returns: (enforce_sso, sso_provider)
         """
         email_domain = email.split("@")[1] if "@" in email else None
         if not email_domain:
             return False, None
-        
+
         config = self.get_org_sso_config(email_domain)
         if config and config.enforce_sso:
             return True, config.sso_provider
-        
-        return False, None
 
+        return False, None
