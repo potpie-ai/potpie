@@ -88,9 +88,7 @@ class NodeSearchFromTextTool:
             )
         )
         if not project:
-            raise ValueError(
-                f"Project with ID '{project_id}' not found in database for user '{self.user_id}'"
-            )
+            return [{"error": f"Project with ID '{project_id}' not found for user '{self.user_id}'"}]
 
         validated_project_id = project["id"]
 
