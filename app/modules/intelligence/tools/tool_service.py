@@ -54,6 +54,9 @@ from app.modules.intelligence.tools.jira_tools import (
 from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import (
     get_ask_knowledge_graph_queries_tool,
 )
+from app.modules.intelligence.tools.kg_based_tools.get_call_chain_between_node_ids import (
+    get_call_chain_between_node_ids,
+)
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_multiple_node_ids_tool import (
     GetCodeFromMultipleNodeIdsTool,
     get_code_from_multiple_node_ids_tool,
@@ -196,6 +199,9 @@ class ToolService:
                 self.db, self.user_id
             ),
             "search_code_docstring": node_search_from_text_tool(self.db, self.user_id),
+            "get_call_chain_between_node_ids": get_call_chain_between_node_ids(
+                self.db, self.user_id
+            ),
         }
 
         # Add bash command tool if repo manager is enabled
