@@ -15,7 +15,9 @@ logger = logging.getLogger(__name__)
 
 class GetDependedByInput(BaseModel):
     project_id: str = Field(description="The project ID, this is a UUID")
-    node_id: str = Field(description="The node ID to find dependents for, this is a UUID")
+    node_id: str = Field(
+        description="The node ID to find dependents for, this is a UUID"
+    )
 
 
 class GetDependentsTool:
@@ -25,7 +27,7 @@ class GetDependentsTool:
         - Functions/methods that call this node (CALLS relationship)
         - Classes that inherit from this node (REFERENCES from child classes)
         - Files/modules that import this node (REFERENCES)
-        
+
         :param project_id: string, the project ID (UUID).
         :param node_id: string, the node ID to find dependents for.
 
@@ -66,20 +68,20 @@ class GetDependentsTool:
                 )
 
             dependents = self._get_dependents(project_id, node_id)
-            
+
             if not dependents:
                 return {
                     "node_id": node_id,
                     "project_id": project_id,
                     "depended_by": [],
-                    "message": "No incoming dependencies found for this node"
+                    "message": "No incoming dependencies found for this node",
                 }
 
             return {
                 "node_id": node_id,
                 "project_id": project_id,
                 "depended_by": dependents,
-                "count": len(dependents)
+                "count": len(dependents),
             }
         except Exception as e:
             logger.error(f"Error in GetDependedByTool: {str(e)}")
@@ -90,7 +92,7 @@ class GetDependentsTool:
         MATCH (target:NODE {node_id: $node_id, repoId: $project_id})
         OPTIONAL MATCH (source:NODE {repoId: $project_id})-[r:CALLS|REFERENCES]->(target)
         WHERE source IS NOT NULL AND source <> target
-        RETURN DISTINCT 
+        RETURN DISTINCT
             source.node_id AS node_id,
             source.name AS name,
             source.file_path AS file_path,
@@ -106,16 +108,20 @@ class GetDependentsTool:
             dependents = []
             for record in result:
                 if record["node_id"]:
-                    dependents.append({
-                        "node_id": record["node_id"],
-                        "name": record["name"],
-                        "file_path": record["file_path"],
-                        "start_line": record["start_line"],
-                        "end_line": record["end_line"],
-                        "docstring": record["docstring"],
-                        "relationship_type": record["relationship_type"],
-                        "node_type": record["labels"][0] if record["labels"] else None
-                    })
+                    dependents.append(
+                        {
+                            "node_id": record["node_id"],
+                            "name": record["name"],
+                            "file_path": record["file_path"],
+                            "start_line": record["start_line"],
+                            "end_line": record["end_line"],
+                            "docstring": record["docstring"],
+                            "relationship_type": record["relationship_type"],
+                            "node_type": record["labels"][0]
+                            if record["labels"]
+                            else None,
+                        }
+                    )
             return dependents
 
     def __del__(self):
@@ -130,13 +136,13 @@ def get_dependents_tool(sql_db: Session, user_id: str) -> StructuredTool:
         func=tool_instance.run,
         name="Get Dependents",
         description="""Retrieves nodes that depend on a given node (incoming dependencies).
-                       This includes functions/methods that call this node, classes that inherit from it, 
+                       This includes functions/methods that call this node, classes that inherit from it,
                        and files/modules that import it.
-                       
+
                        Inputs:
                        - project_id (str): The project ID (UUID)
                        - node_id (str): The node ID to find dependents for (UUID)
-                       
+
                        Returns list of nodes that depend on this node with their file paths, docstrings, and relationship types.""",
         args_schema=GetDependedByInput,
     )
