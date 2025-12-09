@@ -6,6 +6,7 @@ for long-running tasks, providing state management across multiple delegations.
 """
 
 import uuid
+from contextvars import ContextVar
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from enum import Enum
@@ -154,23 +155,33 @@ class TodoManager:
         }
 
 
-# Global todo manager instance for the session
-# This will be replaced with a new instance for each agent run
-_todo_manager = None
+# Context variable for todo manager - provides isolation per execution context
+# This ensures parallel agent runs have separate, isolated state
+_todo_manager_ctx: ContextVar[Optional[TodoManager]] = ContextVar(
+    "_todo_manager_ctx", default=None
+)
 
 
 def _get_todo_manager() -> TodoManager:
-    """Get the current todo manager, creating a new one if needed"""
-    global _todo_manager
-    if _todo_manager is None:
-        _todo_manager = TodoManager()
-    return _todo_manager
+    """Get the current todo manager for this execution context, creating a new one if needed.
+    
+    Uses ContextVar to ensure each async execution context (agent run) has its own isolated instance.
+    This allows parallel agent runs to have separate state without interference.
+    """
+    manager = _todo_manager_ctx.get()
+    if manager is None:
+        manager = TodoManager()
+        _todo_manager_ctx.set(manager)
+    return manager
 
 
 def _reset_todo_manager() -> None:
-    """Reset the todo manager for a new agent run"""
-    global _todo_manager
-    _todo_manager = TodoManager()
+    """Reset the todo manager for a new agent run - creates a completely fresh instance in this execution context.
+    
+    This ensures each agent run starts with a clean state, isolated from other parallel runs.
+    """
+    new_manager = TodoManager()
+    _todo_manager_ctx.set(new_manager)
 
 
 def _format_current_todo_list() -> str:

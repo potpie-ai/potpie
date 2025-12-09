@@ -2,6 +2,7 @@ import functools
 import re
 import traceback
 import json
+import asyncio
 from typing import List, AsyncGenerator, Sequence, Dict, Any, Optional
 from dataclasses import dataclass
 from enum import Enum
@@ -22,7 +23,7 @@ from pydantic_ai.messages import (
     UserContent,
     ModelMessage,
 )
-from pydantic_ai.exceptions import ModelRetry, AgentRunError, UserError
+from pydantic_ai.exceptions import ModelRetry, AgentRunError, UserError, ModelHTTPError
 from pydantic_ai.usage import UsageLimits
 from langchain_core.tools import StructuredTool
 
@@ -210,6 +211,16 @@ def create_tool_call_response(event: FunctionToolCallEvent) -> ToolCallResponse:
         # Note: This won't prevent errors when pydantic_ai tries to serialize
         # the message history later, but it allows the current tool call to proceed
         args_dict = {}
+        # Attempt to sanitize the underlying message part so future serialization succeeds
+        try:
+            safe_args = json.dumps(args_dict)
+            setattr(event.part, "args", safe_args)
+        except Exception as sanitize_error:
+            logger.warning(
+                "Unable to sanitize malformed tool call arguments for '%s': %s",
+                tool_name,
+                sanitize_error,
+            )
 
     if is_delegation_tool(tool_name):
         agent_type = extract_agent_type_from_delegation_tool(tool_name)
@@ -308,27 +319,72 @@ class PydanticMultiAgent(ChatAgent):
         self._supervisor_agent: Optional[Agent] = None
         # Track the current supervisor run to extract message history for subagents
         self._current_supervisor_run: Optional[Any] = None
+        # Track active streaming tasks for delegation tools (tool_call_id -> queue)
+        self._active_delegation_streams: Dict[str, asyncio.Queue] = {}
+        # Cache results from streaming to avoid duplicate execution (task_key -> result)
+        self._delegation_result_cache: Dict[str, str] = {}
+        # Store streamed content for each delegation (cache_key -> list of chunks)
+        self._delegation_streamed_content: Dict[str, List[ChatAgentResponse]] = {}
+        # Map tool_call_id to cache_key for retrieving streamed content
+        self._delegation_cache_key_map: Dict[str, str] = {}
+
+        # Reset todo manager, code changes manager, and requirement manager on initialization to ensure fresh state
+        from app.modules.intelligence.tools.todo_management_tool import (
+            _reset_todo_manager,
+        )
+        from app.modules.intelligence.tools.code_changes_manager import (
+            _reset_code_changes_manager,
+        )
+        from app.modules.intelligence.tools.requirement_verification_tool import (
+            _reset_requirement_manager,
+        )
+
+        _reset_todo_manager()
+        _reset_code_changes_manager()
+        _reset_requirement_manager()
+        logger.info(
+            "🔄 Reset todo manager, code changes manager, and requirement manager on agent initialization"
+        )
 
     # Constants for agent instructions
-    DELEGATE_AGENT_INSTRUCTIONS = """You are a focused task execution agent with access to all available tools. Execute the assigned task efficiently and provide clear, concise results.
+    DELEGATE_AGENT_INSTRUCTIONS = """You are a focused task execution subagent. You receive a specific task with all necessary context from the supervisor agent. Execute the task completely and stream your work back.
 
-**PARENT AGENT CONTEXT:**
-- You have access to the parent agent's full conversation history up to this point
-- This includes all previous messages, tool calls, and tool responses from the supervisor
-- Use this context to understand what has already been done and avoid redundant work
-- You can reference previous tool results and analysis from the parent agent's conversation
+**YOUR ROLE:**
+- You are a SUBAGENT - you execute focused tasks delegated by the supervisor
+- You receive ONLY the task description and context provided by the supervisor - NO additional conversation history
+- You have access to ALL the same tools as the supervisor (except delegation) - use them freely
+- Your responses stream back to the user in real-time, so be verbose about your progress
+- You may be asked to reason through problems, analyze situations, or think through complex issues - treat these as execution tasks
 
-**CODE MANAGEMENT:**
-- Use code changes tools (add_file_to_changes, update_file_lines, insert_lines, delete_lines) instead of including code in response text
-- Use show_updated_file and show_diff to display changes effectively
-- Keep responses concise and avoid large code blocks in your text
+**WHAT YOU RECEIVE:**
+- A clear task description from the supervisor
+- Relevant context (file paths, code snippets, previous findings, what the supervisor has learned, current problems/questions) the supervisor chose to include
+- Project information (ID, name, etc.)
+- You do NOT receive the full conversation history - only what the supervisor explicitly passes
 
-**EXECUTION:**
-- Execute tasks completely without asking for clarification unless absolutely critical
-- Make reasonable assumptions and mention them
-- Leverage the parent agent's context to avoid re-fetching information already obtained
-- Use tools to gather information and perform actions
-- Return focused, actionable results"""
+**EXECUTION APPROACH:**
+1. Read the task and context carefully - this is ALL the information you have
+2. For reasoning tasks: Synthesize what's known, identify gaps, and suggest next steps
+3. For execution tasks: Use tools to gather any additional information you need
+4. Execute the task completely - don't ask for clarification unless absolutely critical
+5. Make reasonable assumptions and state them explicitly
+6. Stream your thinking and progress - the user sees your work in real-time
+
+**TOOL USAGE:**
+- You have ALL supervisor tools: code analysis, file fetching, bash commands, code changes management, etc.
+- Use code changes tools (add_file_to_changes, update_file_lines, insert_lines, delete_lines) for modifications
+- Use show_updated_file and show_diff to display changes to the user
+- Use fetch_file with with_line_numbers=true for precise editing
+
+**OUTPUT FORMAT:**
+- Stream your work as you go - the user sees everything in real-time
+- End with "## Task Result" section containing a concise summary
+- The Task Result should be actionable and complete - the supervisor uses this for coordination
+
+**REMEMBER:**
+- You are isolated - use the tools to find what you need
+- Your streaming output shows the user your progress
+- Be thorough but focused on the specific task"""
 
     # Tool name constants
     TOOL_NAME_SHOW_UPDATED_FILE = "show_updated_file"
@@ -409,49 +465,68 @@ class PydanticMultiAgent(ChatAgent):
 
     @staticmethod
     def _create_delegation_prompt(
-        task_description: str, project_context: str, task_specific_context: str = ""
+        task_description: str,
+        project_context: str,
+        supervisor_context: str = "",
     ) -> str:
-        """Create the delegation prompt for subagents"""
-        full_context_parts = [project_context]
-        if task_specific_context and task_specific_context.strip():
-            full_context_parts.append(f"Task-specific context: {task_specific_context}")
+        """Create the delegation prompt for subagents.
 
-        full_context = "\n\n".join(full_context_parts)
+        Subagents are ISOLATED - they receive ONLY:
+        1. The task description
+        2. Project context (IDs, names)
+        3. Context explicitly provided by the supervisor
 
-        return f"""Execute this focused task for the supervisor:
+        They do NOT receive conversation history or previous tool results.
+        """
+        context_sections = []
 
-**TASK:**
+        if project_context:
+            context_sections.append(f"**PROJECT:**\n{project_context}")
+
+        if supervisor_context and supervisor_context.strip():
+            context_sections.append(
+                f"**CONTEXT FROM SUPERVISOR:**\n{supervisor_context}"
+            )
+
+        full_context = (
+            "\n\n".join(context_sections)
+            if context_sections
+            else "No additional context provided."
+        )
+
+        return f"""You are a SUBAGENT executing a focused task. You have access to ALL tools to complete this work.
+
+**YOUR TASK:**
 {task_description}
 
-**PROJECT CONTEXT:**
+**AVAILABLE CONTEXT:**
 {full_context}
 
-**PARENT AGENT CONTEXT:**
-You have access to the parent agent's full conversation history, including:
-- All previous messages and responses
-- All tool calls made by the parent agent
-- All tool call results and responses
-- Any analysis or information already gathered
+**IMPORTANT - YOU ARE ISOLATED:**
+- You do NOT have access to the supervisor's conversation history
+- You do NOT see previous tool calls or their results
+- The context above is ALL the information provided to you
+- Use your tools to gather any additional information you need
 
-**YOUR MISSION:**
-Execute the task above and return ONLY the specific, actionable result the supervisor needs.
-- Leverage the parent agent's context to avoid redundant work
-- Reference previous tool results and analysis when relevant
-- Build upon what the parent agent has already discovered
+**EXECUTION APPROACH:**
+1. Read the task and context carefully
+2. Use tools to gather information (file reads, code searches, etc.)
+3. Execute the task completely - be thorough
+4. Stream your progress - the user sees your work in real-time
+5. Make reasonable assumptions and state them
 
-**OUTPUT FORMAT:**
-Start your response with "## Task Result" and then provide the focused answer.
+**TOOL USAGE:**
+- Use fetch_file with with_line_numbers=true for precise file editing
+- Use code changes tools (add_file_to_changes, update_file_lines, insert_lines, delete_lines) for modifications
+- Use show_updated_file and show_diff to display your changes
+- Use bash_command for running commands if needed
 
-**CRITICAL GUIDELINES:**
-1. Review the parent agent's conversation history to understand what has already been done
-2. Use tools to gather additional information, analyze code, or perform actions as needed
-3. Be specific and concise - avoid broad explanations or redundant context gathering
-4. Focus on answering the exact question or completing the exact task
-5. If you make code changes, use show_updated_file and show_diff to display them
-6. Don't restate the problem - just solve it and report the result
-7. Reference relevant information from the parent agent's context when it's useful
+**OUTPUT:**
+- Stream your thinking and work as you go
+- End with "## Task Result" containing a concise, actionable summary
+- The supervisor will use your Task Result for coordination
 
-**RESULT:** Should be specific, actionable, and immediately usable by the supervisor."""
+Now execute the task completely."""
 
     @staticmethod
     def _format_delegation_error(
@@ -542,6 +617,164 @@ Start your response with "## Task Result" and then provide the focused answer.
 
         return full_response
 
+    async def _stream_subagent_response(
+        self,
+        agent: Agent,
+        user_prompt: str,
+        agent_type: str = "subagent",
+        message_history: Optional[List[ModelMessage]] = None,
+    ) -> AsyncGenerator[ChatAgentResponse, None]:
+        """Stream subagent response as it comes in"""
+        async with agent.iter(
+            user_prompt=user_prompt,
+            message_history=message_history or [],
+            usage_limits=UsageLimits(request_limit=None),
+        ) as run:
+            async for node in run:
+                if Agent.is_model_request_node(node):
+                    # Stream tokens from the model's request
+                    try:
+                        async with node.stream(run.ctx) as request_stream:
+                            async for event in request_stream:
+                                if isinstance(event, PartStartEvent) and isinstance(
+                                    event.part, TextPart
+                                ):
+                                    yield ChatAgentResponse(
+                                        response=event.part.content,
+                                        tool_calls=[],
+                                        citations=[],
+                                    )
+                                if isinstance(event, PartDeltaEvent) and isinstance(
+                                    event.delta, TextPartDelta
+                                ):
+                                    yield ChatAgentResponse(
+                                        response=event.delta.content_delta,
+                                        tool_calls=[],
+                                        citations=[],
+                                    )
+                    except Exception as e:
+                        error_response = self._handle_stream_error(
+                            e, f"{agent_type} model request stream"
+                        )
+                        if error_response:
+                            yield error_response
+                        continue
+
+                elif Agent.is_call_tools_node(node):
+                    # Stream tool calls and results from subagent
+                    async for response in self._process_tool_call_node(node, run.ctx):
+                        yield response
+
+                elif Agent.is_end_node(node):
+                    logger.info(f"{agent_type} result streamed successfully!!")
+                    break
+
+    def _create_delegation_cache_key(self, task_description: str, context: str) -> str:
+        """Create a unique cache key for delegation result caching"""
+        import hashlib
+
+        content = f"{task_description}::{context}"
+        return hashlib.md5(content.encode()).hexdigest()[:16]
+
+    async def _stream_subagent_to_queue(
+        self,
+        agent_type_str: str,
+        task_description: str,
+        context: str,
+        stream_queue: asyncio.Queue,
+        cache_key: str,
+    ):
+        """Stream subagent response to a queue for real-time streaming.
+
+        This is the ONLY place where the subagent actually executes.
+        The result is cached so delegate_function can return it without re-executing.
+
+        NOTE: Due to pydantic_ai's architecture, streaming during tool execution is limited.
+        We collect all chunks and store them for yielding when the tool completes.
+        The chunks are stored in self._delegation_streamed_content for the tool result handler.
+        """
+        full_response = ""
+        collected_chunks: List[ChatAgentResponse] = []
+
+        try:
+            # Convert agent type string to AgentType enum
+            agent_type = AgentType(agent_type_str)
+
+            # Create the delegate agent with all tools
+            delegate_agent = self._create_agent(agent_type, self._current_context)
+
+            # Build project context (minimal - subagent is isolated)
+            project_context = self._create_project_context_info(self._current_context)
+            max_project_context_length = 1500
+            if len(project_context) > max_project_context_length:
+                project_context = project_context[:max_project_context_length] + "..."
+
+            # Create delegation prompt - NO conversation history, just task + context
+            full_task = self._create_delegation_prompt(
+                task_description,
+                project_context,
+                context,
+            )
+
+            logger.info(
+                f"Starting subagent streaming for {agent_type.value} with cache_key={cache_key}"
+            )
+
+            # Stream the subagent response and collect all chunks
+            async for chunk in self._stream_subagent_response(
+                delegate_agent,
+                full_task,
+                agent_type.value,
+                message_history=[],  # No message history - subagent is isolated
+            ):
+                # Store chunk for later yielding when tool completes
+                collected_chunks.append(chunk)
+                # Also put in queue for any real-time consumers
+                await stream_queue.put(chunk)
+                # Collect text for the final result
+                if chunk.response:
+                    full_response += chunk.response
+
+            # Signal completion
+            await stream_queue.put(None)
+
+            # Store all collected chunks for yielding when tool result comes
+            self._delegation_streamed_content[cache_key] = collected_chunks
+            logger.info(
+                f"Collected {len(collected_chunks)} chunks for cache_key={cache_key}"
+            )
+
+            # Cache the result for delegate_function to retrieve
+            if full_response:
+                # Extract task result section
+                summary = extract_task_result_from_response(full_response)
+                self._delegation_result_cache[cache_key] = (
+                    summary if summary else full_response
+                )
+                logger.info(
+                    f"Cached delegation result for {cache_key} (length: {len(self._delegation_result_cache[cache_key])} chars)"
+                )
+            else:
+                self._delegation_result_cache[cache_key] = (
+                    "## Task Result\n\nNo output from subagent."
+                )
+
+        except Exception as e:
+            logger.error(f"Error streaming subagent response: {e}", exc_info=True)
+            # Put error response in queue
+            error_chunk = self._create_error_response(
+                f"*Error in subagent execution: {str(e)}*"
+            )
+            collected_chunks.append(error_chunk)
+            await stream_queue.put(error_chunk)
+            await stream_queue.put(None)
+            # Store collected chunks (including error)
+            self._delegation_streamed_content[cache_key] = collected_chunks
+            # Cache error result
+            self._delegation_result_cache[cache_key] = (
+                f"## Task Result\n\n❌ Error during subagent execution: {str(e)}"
+            )
+
     @staticmethod
     async def _yield_tool_result_event(
         event: FunctionToolResultEvent,
@@ -599,38 +832,281 @@ Start your response with "## Task Result" and then provide the focused answer.
                 logger.info(f"{context} result streamed successfully!!")
                 break
 
+    async def _consume_queue_chunks(
+        self,
+        queue: asyncio.Queue,
+        timeout: float = 0.1,
+        max_chunks: int = 10,
+    ) -> tuple[List[ChatAgentResponse], bool]:
+        """Consume chunks from a queue with timeout, yielding up to max_chunks
+
+        Returns:
+            Tuple of (chunks_list, is_completed) where is_completed is True if
+            the stream has finished (None sentinel received)
+        """
+        chunks: List[ChatAgentResponse] = []
+        for _ in range(max_chunks):
+            try:
+                chunk = await asyncio.wait_for(queue.get(), timeout=timeout)
+                if chunk is None:  # Sentinel value indicating completion
+                    return chunks, True  # Return chunks and completion flag
+                chunks.append(chunk)
+            except asyncio.TimeoutError:
+                break  # No more chunks available within timeout
+        return chunks, False  # Return chunks and not completed
+
     async def _process_tool_call_node(
         self, node: Any, ctx: Any
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         """Process tool call nodes and yield responses"""
         try:
             async with node.stream(ctx) as handle_stream:
+                # Track active delegation streams for this tool call node
+                active_streams: Dict[str, asyncio.Queue] = {}
+                # Track streaming tasks to ensure they complete
+                streaming_tasks: Dict[str, asyncio.Task] = {}
+
                 async for event in handle_stream:
+                    # Actively consume chunks from all active delegation streams
+                    # This ensures we stream chunks as they arrive, not just at event boundaries
+                    for tool_call_id in list(active_streams.keys()):
+                        queue = active_streams[tool_call_id]
+                        chunks, completed = await self._consume_queue_chunks(
+                            queue, timeout=0.05, max_chunks=20
+                        )
+                        for chunk in chunks:
+                            yield chunk
+                        if completed:
+                            # Stream completed, clean up
+                            active_streams.pop(tool_call_id, None)
+                            self._active_delegation_streams.pop(tool_call_id, None)
+                            # Cancel the streaming task if it's still running
+                            if tool_call_id in streaming_tasks:
+                                task = streaming_tasks.pop(tool_call_id)
+                                if not task.done():
+                                    task.cancel()
+                                    try:
+                                        await task
+                                    except asyncio.CancelledError:
+                                        pass
+
                     if isinstance(event, FunctionToolCallEvent):
+                        tool_call_id = event.part.tool_call_id or ""
+                        tool_name = event.part.tool_name
+
+                        # Yield the tool call event
                         yield ChatAgentResponse(
                             response="",
                             tool_calls=[create_tool_call_response(event)],
                             citations=[],
                         )
+
+                        # If this is a delegation tool, start streaming the subagent response
+                        if is_delegation_tool(tool_name) and tool_call_id:
+                            try:
+                                # Extract task info from tool call arguments
+                                args_dict = event.part.args_as_dict()
+                                task_description = args_dict.get("task_description", "")
+                                context = args_dict.get("context", "")
+                                agent_type_str = (
+                                    extract_agent_type_from_delegation_tool(tool_name)
+                                )
+
+                                # Create cache key for coordination with delegate_function
+                                cache_key = self._create_delegation_cache_key(
+                                    task_description, context
+                                )
+
+                                # Store the cache_key -> tool_call_id mapping for later retrieval
+                                self._delegation_cache_key_map[tool_call_id] = cache_key
+
+                                # Create a queue for streaming chunks
+                                stream_queue: asyncio.Queue = asyncio.Queue()
+                                active_streams[tool_call_id] = stream_queue
+                                self._active_delegation_streams[tool_call_id] = (
+                                    stream_queue
+                                )
+
+                                # Start streaming the subagent response in the background
+                                # This is the ONLY place the subagent executes - it will cache the result
+                                streaming_task = asyncio.create_task(
+                                    self._stream_subagent_to_queue(
+                                        agent_type_str,
+                                        task_description,
+                                        context,
+                                        stream_queue,
+                                        cache_key,
+                                    )
+                                )
+                                streaming_tasks[tool_call_id] = streaming_task
+
+                                # Yield a visual indicator that subagent is starting
+                                yield ChatAgentResponse(
+                                    response="\n\n---\n🤖 **Subagent Starting...**\n\n",
+                                    tool_calls=[],
+                                    citations=[],
+                                )
+
+                                # Immediately try to consume any early chunks
+                                chunks, completed = await self._consume_queue_chunks(
+                                    stream_queue, timeout=0.01, max_chunks=5
+                                )
+                                for chunk in chunks:
+                                    yield chunk
+                                if completed:
+                                    active_streams.pop(tool_call_id, None)
+                                    self._active_delegation_streams.pop(
+                                        tool_call_id, None
+                                    )
+                                    streaming_tasks.pop(tool_call_id, None)
+
+                            except Exception as e:
+                                logger.warning(
+                                    f"Error setting up subagent streaming for {tool_name}: {e}"
+                                )
+                                # Clean up the queue if there was an error
+                                if tool_call_id in active_streams:
+                                    del active_streams[tool_call_id]
+                                if tool_call_id in self._active_delegation_streams:
+                                    del self._active_delegation_streams[tool_call_id]
+                                if tool_call_id in streaming_tasks:
+                                    task = streaming_tasks.pop(tool_call_id)
+                                    if not task.done():
+                                        task.cancel()
+
                     if isinstance(event, FunctionToolResultEvent):
+                        tool_call_id = event.result.tool_call_id or ""
+                        tool_name = event.result.tool_name or "unknown"
+
+                        # If this was a delegation tool, yield all collected streamed content
+                        if is_delegation_tool(tool_name) and tool_call_id:
+                            # Get the cache_key for this tool_call_id
+                            cache_key = self._delegation_cache_key_map.pop(
+                                tool_call_id, None
+                            )
+
+                            # Yield all collected chunks from the subagent
+                            if (
+                                cache_key
+                                and cache_key in self._delegation_streamed_content
+                            ):
+                                collected_chunks = (
+                                    self._delegation_streamed_content.pop(cache_key)
+                                )
+                                logger.info(
+                                    f"Yielding {len(collected_chunks)} collected subagent chunks for {tool_call_id}"
+                                )
+                                for chunk in collected_chunks:
+                                    yield chunk
+                                # Add a visual separator after subagent output
+                                yield ChatAgentResponse(
+                                    response="\n\n---\n✅ **Subagent Complete**\n\n",
+                                    tool_calls=[],
+                                    citations=[],
+                                )
+                            else:
+                                # Fallback: drain any remaining chunks from queue
+                                if tool_call_id in active_streams:
+                                    queue = active_streams[tool_call_id]
+                                    # Drain chunks with multiple attempts to catch all
+                                    for _ in range(10):  # Try up to 10 times
+                                        chunks, completed = (
+                                            await self._consume_queue_chunks(
+                                                queue, timeout=0.1, max_chunks=50
+                                            )
+                                        )
+                                        for chunk in chunks:
+                                            yield chunk
+                                        if completed:
+                                            break
+                                        # Small delay to allow more chunks to arrive
+                                        await asyncio.sleep(0.05)
+
+                            # Clean up streams
+                            active_streams.pop(tool_call_id, None)
+                            self._active_delegation_streams.pop(tool_call_id, None)
+
+                            # Cancel the streaming task if it's still running
+                            if tool_call_id in streaming_tasks:
+                                task = streaming_tasks.pop(tool_call_id)
+                                if not task.done():
+                                    task.cancel()
+                                    try:
+                                        await task
+                                    except asyncio.CancelledError:
+                                        pass
+                                streaming_tasks.pop(tool_call_id, None)
+
                         async for response in self._yield_tool_result_event(event):
                             yield response
+
+                # After all events are processed, drain any remaining chunks
+                for tool_call_id in list(active_streams.keys()):
+                    queue = active_streams[tool_call_id]
+                    # Wait longer for final chunks
+                    for _ in range(20):  # Try up to 20 times
+                        chunks, completed = await self._consume_queue_chunks(
+                            queue, timeout=0.1, max_chunks=50
+                        )
+                        for chunk in chunks:
+                            yield chunk
+                        if completed:
+                            break
+                        await asyncio.sleep(0.05)
+                    active_streams.pop(tool_call_id, None)
+                    self._active_delegation_streams.pop(tool_call_id, None)
+
+                # Cancel any remaining streaming tasks
+                for tool_call_id, task in list(streaming_tasks.items()):
+                    if not task.done():
+                        task.cancel()
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            pass
+                    streaming_tasks.pop(tool_call_id, None)
+
         except (
             ModelRetry,
             AgentRunError,
             UserError,
         ) as pydantic_error:
-            logger.warning(f"Pydantic-ai error in tool call stream: {pydantic_error}")
-            yield self._create_error_response(
-                "*Encountered an issue while calling tools. Trying to recover...*"
-            )
+            error_str = str(pydantic_error)
+            # Check for duplicate tool_result error specifically
+            if "tool_result" in error_str.lower() and "multiple" in error_str.lower():
+                logger.error(
+                    f"Duplicate tool_result error in tool call stream: {pydantic_error}. "
+                    f"This indicates pydantic_ai's internal message history has duplicate tool results. "
+                    f"This may require restarting the agent run with a fresh context."
+                )
+                yield self._create_error_response(
+                    "*Encountered a message history error. This may require starting a new conversation.*"
+                )
+            else:
+                logger.warning(
+                    f"Pydantic-ai error in tool call stream: {pydantic_error}"
+                )
+                yield self._create_error_response(
+                    "*Encountered an issue while calling tools. Trying to recover...*"
+                )
         except anyio.WouldBlock:
             logger.warning("Tool call stream would block - continuing...")
         except Exception as e:
-            logger.error(f"Unexpected error in tool call stream: {e}")
-            yield self._create_error_response(
-                "*An unexpected error occurred during tool execution. Continuing...*"
-            )
+            error_str = str(e)
+            # Check for duplicate tool_result error
+            if "tool_result" in error_str.lower() and "multiple" in error_str.lower():
+                logger.error(
+                    f"Duplicate tool_result error in tool call stream: {e}. "
+                    f"This indicates pydantic_ai's internal message history has duplicate tool results."
+                )
+                yield self._create_error_response(
+                    "*Encountered a message history error. This may require starting a new conversation.*"
+                )
+            else:
+                logger.error(f"Unexpected error in tool call stream: {e}")
+                yield self._create_error_response(
+                    "*An unexpected error occurred during tool execution. Continuing...*"
+                )
 
     def _create_mcp_servers(self) -> List[MCPServerStreamableHTTP]:
         """Create MCP server instances from configuration"""
@@ -662,12 +1138,27 @@ Start your response with "## Task Result" and then provide the focused answer.
             for tool in tools
         ]
 
-    def _build_delegate_agent_tools(self) -> List[Tool]:
-        """Build the tool list for delegate agents"""
-        return self._wrap_structured_tools(self.tools)
+    def _deduplicate_tools_by_name(self, tools: List[Tool]) -> List[Tool]:
+        """Deduplicate tools by name, keeping the first occurrence of each tool name"""
+        seen_names = set()
+        deduplicated = []
+        for tool in tools:
+            if tool.name not in seen_names:
+                seen_names.add(tool.name)
+                deduplicated.append(tool)
+            else:
+                logger.warning(
+                    f"Duplicate tool name '{tool.name}' detected, keeping first occurrence"
+                )
+        return deduplicated
 
-    def _build_supervisor_agent_tools(self) -> List[Tool]:
-        """Build the tool list for supervisor agent including delegation, todo, and code changes tools"""
+    def _build_delegate_agent_tools(self) -> List[Tool]:
+        """Build the tool list for delegate agents - includes ALL supervisor tools EXCEPT delegation tools.
+
+        This ensures subagents have full capability to execute tasks independently without
+        needing to delegate further. The subagent gets the same tools as the supervisor
+        (todo management, code changes, requirement verification, etc.) to work autonomously.
+        """
         # Import tools here to avoid circular imports
         from app.modules.intelligence.tools.todo_management_tool import (
             create_todo_management_tools,
@@ -675,17 +1166,108 @@ Start your response with "## Task Result" and then provide the focused answer.
         from app.modules.intelligence.tools.code_changes_manager import (
             create_code_changes_management_tools,
         )
+        from app.modules.intelligence.tools.requirement_verification_tool import (
+            create_requirement_verification_tools,
+        )
 
         todo_tools = create_todo_management_tools()
         code_changes_tools = create_code_changes_management_tools()
+        requirement_tools = create_requirement_verification_tools()
+
+        # Subagents get ALL tools EXCEPT delegation tools - they execute, don't delegate
+        all_tools = (
+            self._wrap_structured_tools(self.tools)
+            + self._wrap_structured_tools(todo_tools)
+            + self._wrap_structured_tools(code_changes_tools)
+            + self._wrap_structured_tools(requirement_tools)
+        )
+        return self._deduplicate_tools_by_name(all_tools)
+
+    def _build_supervisor_agent_tools(self) -> List[Tool]:
+        """Build the tool list for supervisor agent including delegation, todo, code changes, and requirement verification tools"""
+        # Import tools here to avoid circular imports
+        from app.modules.intelligence.tools.todo_management_tool import (
+            create_todo_management_tools,
+        )
+        from app.modules.intelligence.tools.code_changes_manager import (
+            create_code_changes_management_tools,
+        )
+        from app.modules.intelligence.tools.requirement_verification_tool import (
+            create_requirement_verification_tools,
+        )
+
+        todo_tools = create_todo_management_tools()
+        code_changes_tools = create_code_changes_management_tools()
+        requirement_tools = create_requirement_verification_tools()
 
         # Create delegation tools
         delegation_tools = []
         for agent_type in self.delegate_agents.keys():
             if agent_type == AgentType.THINK_EXECUTE:
-                description = "🔨 DELEGATE TO TASK EXECUTION AGENT - Delegate focused work to save your context! Great for: information gathering, code searches, targeted implementations, debugging specific issues, analyzing code sections. The subagent will return clean, focused results and has access to your full conversation history (all messages, tool calls, and responses) up to this point. Use this liberally to break down complex tasks! IMPORTANT: The subagent automatically receives your conversation context, but you can also use the 'context' parameter to pass specific already-fetched information (file paths, code snippets, analysis results) to highlight key details - this is critical for efficiency!"
+                description = """🔨 DELEGATE TO SUBAGENT - Spin up a focused worker with ALL your tools to execute specific tasks or reason through problems.
+
+**WHAT IS A SUBAGENT:**
+- A subagent is an isolated execution context with access to ALL your tools (except delegation)
+- It receives ONLY what you explicitly provide: task_description and context
+- It does NOT inherit your conversation history - it starts fresh with just your input
+- Its work streams back to the user in real-time, then you get a summary result
+
+**WHY DELEGATE:**
+1. **Context Efficiency**: Your context stays clean - subagent's tool calls don't bloat your history
+2. **Token Savings**: Heavy tool usage happens in subagent's context, not yours
+3. **Parallelization**: Spin up MULTIPLE subagents simultaneously for independent tasks
+4. **Focus**: Subagents work on one specific task without distraction
+5. **Reasoning Tool**: Use delegation to pause and think through complex problems in isolation
+
+**WHEN TO DELEGATE:**
+- ✅ **Reasoning & Thinking**: When you need to pause, recollect thoughts, and figure out a problem - delegate reasoning tasks to think through the situation
+- ✅ Any task requiring multiple tool calls (searches, file reads, analysis)
+- ✅ Code implementations in specific files/modules
+- ✅ Debugging and investigation tasks
+- ✅ Code analysis and understanding tasks
+- ✅ Research and comparison tasks
+- ✅ ANY task you want executed in isolation
+
+**CRITICAL - CONTEXT PARAMETER:**
+Since subagents DON'T get your history, YOU MUST provide comprehensive context:
+- File paths and line numbers you've already identified
+- Code snippets relevant to the task
+- Analysis results or findings from your previous work
+- Configuration values, error messages, or specific details
+- Everything the subagent needs to execute WITHOUT re-fetching
+
+**PARALLELIZATION:**
+Call this tool MULTIPLE TIMES in parallel for independent tasks:
+- E.g., "Analyze module A" and "Analyze module B" simultaneously
+- Each subagent works independently with its own context
+- Results stream back and you coordinate the final synthesis
+
+**OUTPUT:**
+- Subagent streams its work in real-time (visible to user)
+- You receive a "## Task Result" summary for coordination
+- Use the result to inform your next steps"""
             else:
-                description = f"🤖 DELEGATE TO {agent_type.value.upper()} - Delegate focused work to save your context! The subagent will return clean, focused results and has access to your full conversation history (all messages, tool calls, and responses) up to this point. Use this liberally to break down complex tasks! IMPORTANT: The subagent automatically receives your conversation context, but you can also use the 'context' parameter to pass specific already-fetched information (file paths, code snippets, analysis results) to highlight key details - this is critical for efficiency!"
+                description = f"""🤖 DELEGATE TO {agent_type.value.upper()} SUBAGENT - Isolated execution with full tool access.
+
+**WHAT IS A SUBAGENT:**
+- An isolated execution context with ALL your tools (except delegation)
+- Receives ONLY what you provide: task_description + context
+- Does NOT inherit conversation history - starts fresh
+- Streams work to user, returns summary to you
+
+**WHY DELEGATE:**
+- Context Efficiency: Keeps your context clean
+- Token Savings: Heavy work happens in subagent context
+- Parallelization: Run multiple subagents simultaneously
+- Focus: Dedicated execution for specific tasks
+
+**CRITICAL - CONTEXT PARAMETER:**
+Subagents DON'T get your history. Provide comprehensive context:
+- Relevant file paths, line numbers, code snippets
+- Previous findings and analysis results
+- Everything needed for autonomous execution
+
+**PARALLELIZATION:** Call multiple times in parallel for independent tasks."""
 
             delegation_tools.append(
                 Tool(
@@ -695,12 +1277,15 @@ Start your response with "## Task Result" and then provide the focused answer.
                 )
             )
 
-        return (
+        all_tools = (
             self._wrap_structured_tools(self.tools)
             + delegation_tools
             + self._wrap_structured_tools(todo_tools)
             + self._wrap_structured_tools(code_changes_tools)
+            + self._wrap_structured_tools(requirement_tools)
         )
+        # Deduplicate tools by name before returning
+        return self._deduplicate_tools_by_name(all_tools)
 
     def _create_default_delegate_agents(self) -> Dict[AgentType, AgentConfig]:
         """Create default specialized agents if none provided"""
@@ -708,53 +1293,10 @@ Start your response with "## Task Result" and then provide the focused answer.
             AgentType.THINK_EXECUTE: AgentConfig(
                 role="Task Execution Specialist",
                 goal="Execute specific tasks with clear, actionable results",
-                backstory="""You are a focused task executor for specific, well-defined tasks.
-
-You receive tasks that have clear, specific expected outputs. Your job is to provide exactly what the supervisor needs - no more, no less.
-
-IMPORTANT: You have access to the parent agent's full conversation history, including all previous messages, tool calls, and tool responses. Use this context to understand what has already been done and avoid redundant work.
-
-CRITICAL: Do ALL your work inside the "## Task Result" section.
-
-Your approach:
-1. Review the parent agent's conversation history to understand what has already been discovered
-2. Understand exactly what specific information is needed
-3. Start the "## Task Result" section immediately
-4. Provide the specific answer/information requested
-5. Keep results concise and focused
-6. Include only what the supervisor needs to make a decision
-7. Leverage previous tool results and analysis from the parent agent when relevant
-
-You are used for specific lookups, small implementations, and focused tasks - not broad analysis or context gathering.""",
+                backstory="""You are a focused task executor that works in isolated context. Execute specific tasks completely and return only the final result to keep the supervisor's context clean.""",
                 tasks=[
                     TaskConfig(
-                        description="""Execute the specific, well-defined task assigned by the supervisor.
-
-This task has a clear expected output. Provide exactly what the supervisor needs.
-
-PARENT AGENT CONTEXT:
-- You have access to the parent agent's full conversation history (all messages, tool calls, and responses)
-- Review this context to understand what has already been done
-- Reference previous tool results and analysis when relevant
-- Avoid re-fetching information the parent agent has already gathered
-
-CRITICAL INSTRUCTIONS:
-- Review the parent agent's conversation history first to understand the context
-- Do ALL your work inside the "## Task Result" section
-- Provide the specific information/answer requested
-- Keep results concise and focused
-- Don't provide broad analysis or context gathering
-- Be efficient - supervisor needs specific information
-- Leverage the parent agent's previous work to avoid redundant operations
-
-TASK RESULT SECTION REQUIREMENTS:
-- Start with "## Task Result" immediately
-- Provide the specific answer/information requested
-- Include any code, files, or data needed
-- Keep it focused on what the supervisor asked for
-- End with the specific result requested
-
-Remember: You are used for specific lookups and focused tasks, not broad analysis. Use the parent agent's context to work efficiently.""",
+                        description="""Execute the specific task assigned by the supervisor. Do all work in your isolated context and return only the final result in "## Task Result" format.""",
                         expected_output="Specific task completion with concrete execution results and deliverables",
                     )
                 ],
@@ -794,38 +1336,101 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
             model=self.llm_provider.get_pydantic_model(),
             tools=self._build_supervisor_agent_tools(),
             mcp_servers=self._create_mcp_servers(),
+            instrument=True,
             instructions=f"""
-            You are a problem-solving supervisor who orchestrates subagents to efficiently solve complex tasks.
+            You are a SUPERVISOR AGENT who orchestrates SUBAGENTS to efficiently solve complex tasks.
+            
+            **YOUR CORE RESPONSIBILITY:**
+            You coordinate work by delegating focused tasks to subagents. Your context stays clean with planning and coordination, while subagents handle the heavy tool usage.
+            
+            Be verbose about your reasoning. Before tool calls, explain what you're doing. After results, explain what you learned and next steps.
 
             **🚀 MANDATORY PLANNING PHASE (DO THIS FIRST):**
             1. **Analyze:** Understand the request, identify objectives, dependencies, and constraints
             2. **Break down:** Split into logical, delegable chunks (self-contained, clear outcomes, minimal interdependencies)
             3. **Create TODOs:** Use `create_todo` for every step (main tasks → subtasks), mark dependencies, set status to "pending"
-            4. **Plan delegation:** Identify what to delegate, determine execution order, plan context needs
+            4. **Plan delegation:** Identify what to delegate, determine which tasks can run IN PARALLEL, plan context to provide
             5. **Document:** Summarize problem, list chunks, explain strategy, note assumptions
 
             **📋 EXECUTION & ADAPTATION:**
-            - Execute systematically: Follow your plan, delegate tasks with proper context
+            - Execute systematically: Follow your plan, delegate tasks with COMPREHENSIVE context
             - Track progress: Update todo status (pending → in_progress → completed), add notes as you learn
             - Adapt: Update plan and TODOs based on discoveries - your plan can evolve!
             - Verify: Ensure all TODOs complete and objective met
 
-            **🎯 INTELLIGENT DELEGATION:**
-            **Why delegate:** Subagents return clean results via "## Task Result" format, saving your context.
-
-            **When to delegate:** targeted analysis, research, implementation slices etc.
-            for information gathering pertaining to the problem don't delegate task since the gathered context might be useful later on aswell
-
-            **How to delegate effectively:**
-            - Break tasks into focused chunks with clear success criteria
-            - **AUTOMATIC CONTEXT:** Subagents automatically receive your full conversation history (all messages, tool calls, and responses) up to the delegation point - they can see everything you've done
-            - **OPTIONAL HIGHLIGHTING:** Use the `context` parameter to highlight specific key information (file paths, code snippets, analysis results, config values) that are most relevant to the task
-            - Group related tasks to share context efficiently
-            - Example context: "Main function in app/main.py:45-67 uses Config class from app/core/config.py with 'database_url' property. Error at line 52."
-            - Subagents can reference your previous tool results and analysis, so they won't need to re-fetch information you've already gathered
+            **🎯 SUBAGENT DELEGATION - YOUR MOST POWERFUL TOOL (INCLUDING REASONING):**
+            
+            **CRITICAL UNDERSTANDING: Subagents are ISOLATED execution contexts**
+            - Subagents have ALL your tools (code search, file read, bash, code changes, etc.) EXCEPT delegation
+            - Subagents DO NOT receive your conversation history or previous tool results
+            - Subagents receive ONLY: task_description + context you explicitly provide
+            - Subagents stream their work to the user in real-time
+            - You receive only their final "## Task Result" summary
+            
+            **WHY THIS ARCHITECTURE:**
+            - 🧹 **Context Clean**: Your context stays focused on coordination, not tool output bloat
+            - 💰 **Token Efficient**: Heavy tool usage happens in subagent context, not yours
+            - ⚡ **Parallelization**: Spin up MULTIPLE subagents simultaneously for independent tasks
+            - 🎯 **Focus**: Each subagent works on one specific, well-defined task
+            - 🧠 **Reasoning Tool**: Use delegation as your "think tool" - delegate reasoning tasks when you need to pause and figure out problems
+            
+            **WHEN TO DELEGATE (use liberally):**
+            - ✅ **REASONING & THINKING**: When you need to pause, recollect your thoughts, and figure out the problem at hand - delegate to a subagent with context about what you've learned, the current problem, what information you have/missing, and what you're considering. The subagent will reason through it and provide analysis.
+            - ✅ ANY task requiring multiple tool calls (searches, file reads, analysis)
+            - ✅ Code implementations - delegate file-specific work
+            - ✅ Debugging and investigation - delegate deep dives
+            - ✅ Code analysis and understanding tasks
+            - ✅ Research tasks requiring web search or doc reading
+            - ✅ Basically ANY focused task - keep your context clean!
+            
+            **WHEN NOT TO DELEGATE:**
+            - ❌ High-level planning and coordination (your job)
+            - ❌ Final synthesis of multiple subagent results (your job)
+            - ❌ Tasks requiring information from multiple unrelated subagent results
+            
+            **🔥 CRITICAL: PROVIDING CONTEXT TO SUBAGENTS:**
+            Since subagents DON'T get your history, the `context` parameter is ESSENTIAL:
+            
+            **You MUST include in context:**
+            - File paths and line numbers you've identified
+            - Code snippets relevant to the task
+            - Previous findings/analysis the subagent needs
+            - Error messages, configuration values, specific details
+            - EVERYTHING the subagent needs to work autonomously
+            
+            **Example of GOOD context:**
+            ```
+            "context": "The bug is in app/api/router.py lines 45-67. The function process_request() calls validate_input() which returns None instead of raising an exception. Previous error: 'NoneType has no attribute data'. Related function validate_input() is in app/utils/validators.py:23-45. The fix should make validate_input raise ValueError on invalid input."
+            ```
+            
+            **Example of BAD context:**
+            ```
+            "context": "Check the router file" // Too vague! Subagent has to re-discover everything
+            ```
+            
+            **⚡ PARALLELIZATION - RUN MULTIPLE SUBAGENTS SIMULTANEOUSLY:**
+            For independent tasks, delegate to MULTIPLE subagents at once:
+            - Call delegate_to_think_execute multiple times in the SAME response
+            - Each subagent works independently with its own context
+            - Results stream back interleaved, you synthesize at the end
+            
+            **Example parallel delegation:**
+            - "Analyze authentication flow in app/auth/" (subagent 1)
+            - "Analyze database models in app/models/" (subagent 2)  
+            - "Check API endpoints in app/api/" (subagent 3)
+            All three run simultaneously!
+            
+            **REMEMBER:**
+            - Delegate liberally - every delegation keeps YOUR context cleaner
+            - Provide COMPREHENSIVE context - subagents are isolated
+            - Use parallel delegation for independent tasks
+            - Your job is coordination, subagents do the heavy lifting
 
             **Code Management:**
             - **CRITICAL:** All your code changes for this session are tracked in the code changes manager - it persists throughout the conversation
+            - **VIRTUAL WORKSPACE:** Edits you make inside the code changes manager are NOT applied to the actual repo and won't be visible via other tools that read from the repository. This manager only stores your pending changes so you can organize and review them before publishing diffs.
+            - Changes in code changes manager are not applied to the actual repo and won't be visible via other tools that read from the repository. This manager only stores your pending changes so you can organize and review them before publishing diffs. So always check code changes manager when updating files sequentially.
+                Do not expect changes to be applied to the actual repo or see changes in other tools
             - **ALWAYS use code changes tools** (not response text): `add_file_to_changes`, `update_file_lines`, `replace_in_file`, `insert_lines`, `delete_lines`
             - **For precise editing, ALWAYS fetch files with line numbers:** Use `fetch_file` with `with_line_numbers=true` to see exact line numbers and indentation before editing. This ensures you know the exact line numbers and indentation to use with `insert_lines`, `delete_lines`, and `update_file_lines`
             - **CRITICAL: Preserve proper indentation:** When using `insert_lines` or `update_file_lines`, match the indentation of surrounding lines exactly. Fetch the file first to see the exact indentation pattern, then preserve it in your updates
@@ -843,15 +1448,42 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
             - Why: Code in tools saves 70-85% tokens vs response text that accumulates in history
             - Write code only once, don't show changes and then update it in the code changes manager
 
+            **📋 REQUIREMENT VERIFICATION (CRITICAL FOR COMPLEX OUTPUTS):**
+            - **When to use:** For any task with specific output requirements, deliverables, or success criteria
+            - **At task start (MANDATORY):** Use `add_requirements` to document ALL output requirements as a markdown list
+              * Format as markdown bullets or numbered list
+              * Each requirement on a separate line
+              * Be specific and measurable - avoid vague statements
+              * Examples: "- Function handles null inputs gracefully", "- API returns 200 status code", "- Code changes limited to single file"
+              * Capture ALL requirements upfront before starting work
+            - **Before finalizing (MANDATORY):** ALWAYS call `get_requirements` and verify each requirement is met
+              * Read through the requirements document systematically
+              * For each requirement, verify it's satisfied in your work/output
+              * If any requirement is NOT met, fix it before finalizing
+              * Only finalize when ALL requirements are verified
+              * Consider delegating verification to subagent for complex requirements
+            - **To update:** Use `add_requirements` again with the complete updated list (it replaces existing)
+            - **To clear:** Use `delete_requirements` only when starting completely fresh
+            - **Why this matters:** Ensures you deliver exactly what was requested and catch issues before the user does
+
             **🚀 PROACTIVE PROBLEM SOLVING:**
             - Solve completely without asking unless critical info is missing
             - Make reasonable assumptions, state them explicitly
             - Choose best approach when multiple options exist
             - Add steps to TODO and execute systematically
+            
+            IMPORTANT:
+
+            DO NOT UPDATE EXISTING TESTS OR WRITE NEW TESTS: only implement the fix, tests aren't meant to be updated.
+            Almost all fixes are single file changes, try to keep the changes minimal and within a file. Make sure the final diff has changes in a single file and no unnecessary changes
+            Follow the task instructions and generate diff for the fix
 
             Your Identity:
             Role: {self.config.role}
             Goal: {self.config.goal}
+            
+            Task instructions:
+            {self.config.tasks[0].description}
 
             {multimodal_instructions}
 
@@ -868,144 +1500,99 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
         return supervisor_agent
 
     def _create_delegation_function(self, agent_type: AgentType):
-        """Create a delegation function for a specific agent type"""
+        """Create a delegation function for a specific agent type.
+
+        IMPORTANT: This function does NOT execute the subagent itself.
+        The subagent execution happens in _stream_subagent_to_queue which runs
+        in parallel and caches the result. This function waits for that cached result.
+
+        This design ensures:
+        1. Subagent only executes once (not twice)
+        2. Streaming happens in real-time to the user
+        3. Supervisor gets the result after streaming completes
+        """
 
         async def delegate_function(
             ctx: RunContext[None], task_description: str, context: str = ""
         ) -> str:
-            """Delegate a task to a specialized agent.
+            """Delegate a task to a subagent for isolated execution.
+
+            CRITICAL: Subagents are ISOLATED - they receive ONLY what you provide here.
+            They do NOT get your conversation history or previous tool results.
 
             Args:
-                task_description: The specific task to delegate to the subagent. Should be clear and focused.
-                context: Optional context to pass to the subagent (file paths, code snippets, analysis results,
-                        configuration values, or any relevant information already fetched). This helps avoid
-                        redundant work - pass any context the subagent would otherwise need to fetch.
+                task_description: Clear, detailed description of the task to execute.
+                    Be specific about what you want the subagent to do.
+                context: ESSENTIAL context for the subagent. Since subagents are isolated,
+                    you MUST provide all relevant information:
+                    - File paths and line numbers you've identified
+                    - Code snippets relevant to the task
+                    - Previous findings or analysis results
+                    - Error messages, configuration values, specific details
+                    - Everything the subagent needs to work autonomously
+
+                    Example: "Bug in app/api/router.py:45-67. Function process_request()
+                    calls validate_input() which returns None. Error: 'NoneType has no
+                    attribute data'. validate_input() is in app/utils/validators.py:23-45."
 
             Returns:
-                The task result from the subagent in "## Task Result" format.
+                The task result from the subagent's "## Task Result" section.
+                The full subagent work is streamed to the user in real-time.
             """
             try:
                 logger.info(
-                    f"Delegating task to {agent_type.value} agent: {task_description}"
+                    f"Delegation function called for {agent_type.value}: {task_description[:100]}..."
                 )
 
-                # Extract parent agent's conversation history up to this point
-                # This includes all messages, tool calls, and responses from the supervisor
-                parent_message_history = []
-                try:
-                    # Try to get messages from the stored supervisor run
-                    # This run contains all messages (user messages, model responses, tool calls, tool results)
-                    run_messages = None
+                # Create cache key to coordinate with _stream_subagent_to_queue
+                cache_key = self._create_delegation_cache_key(task_description, context)
 
-                    # Method 1: Use the stored supervisor run reference
-                    if self._current_supervisor_run:
-                        # Try to get messages from the run's state
-                        run_state = getattr(self._current_supervisor_run, "state", None)
-                        if run_state:
-                            run_messages = getattr(run_state, "messages", None)
+                # Wait for the streaming task to complete and cache the result
+                # The actual subagent execution happens in _stream_subagent_to_queue
+                # which was started when the tool call event was detected
+                max_wait_time = 300  # 5 minutes max wait
+                poll_interval = 0.1  # 100ms polling
+                waited = 0
 
-                        # If not in state, try direct access
-                        if not run_messages:
-                            run_messages = getattr(
-                                self._current_supervisor_run, "messages", None
-                            )
+                logger.info(f"Waiting for cached result with key={cache_key}")
 
-                    # Method 2: Try accessing from RunContext as fallback
-                    if not run_messages:
-                        if hasattr(ctx, "messages"):
-                            run_messages = ctx.messages
-
-                    if run_messages:
-                        # Convert to list and ensure it's in the right format
-                        if isinstance(run_messages, (list, tuple)):
-                            parent_message_history = list(run_messages)
-                            logger.info(
-                                f"Extracted {len(parent_message_history)} messages from parent agent context for subagent"
-                            )
-                        else:
-                            logger.warning(
-                                f"Run messages is not a list/tuple: {type(run_messages)}"
-                            )
-                    else:
-                        logger.debug(
-                            "Could not find messages in supervisor run. Subagent will run without parent context."
-                        )
-                except Exception as e:
-                    logger.warning(
-                        f"Could not extract parent agent message history: {e}. Subagent will run without parent context."
-                    )
-
-                # Create the delegate agent
-                delegate_agent = self._create_agent(agent_type, self._current_context)
-
-                # Build comprehensive context for the subagent
-                project_context = self._create_project_context_info(
-                    self._current_context
-                )
-
-                # Create delegation prompt using helper
-                full_task = self._create_delegation_prompt(
-                    task_description, project_context, context
-                )
-
-                # Run the delegate agent with independent usage tracking and streaming
-                # Pass parent agent's conversation history so subagent has full context
-                logger.info(
-                    f"Starting {agent_type.value} agent execution with parent context..."
-                )
-
-                # Collect streaming response using helper, passing parent message history
-                full_response = await self._collect_agent_streaming_response(
-                    delegate_agent,
-                    full_task,
-                    agent_type.value,
-                    message_history=parent_message_history,
-                )
-
-                logger.info(
-                    f"Task completed by {agent_type.value} agent. Full response length: {len(full_response)} chars"
-                )
-                logger.info(
-                    f"[{agent_type.value}] Full response: {full_response[:10000]}{'...' if len(full_response) > 10000 else ''}"
-                )
-
-                # Enhanced output parsing with error handling
-                if full_response and len(full_response.strip()) > 0:
-                    # Extract the Task Result section for clean supervisor context
-                    summary = extract_task_result_from_response(full_response)
-
-                    if summary and len(summary.strip()) > 0:
+                while waited < max_wait_time:
+                    if cache_key in self._delegation_result_cache:
+                        result = self._delegation_result_cache.pop(
+                            cache_key
+                        )  # Remove from cache
                         logger.info(
-                            f"Extracted task result for supervisor (length: {len(summary)} chars)"
+                            f"Retrieved cached result for {agent_type.value} "
+                            f"(key={cache_key}, length={len(result)} chars)"
                         )
-                        return summary
-                    else:
-                        # No valid result found, return formatted error
-                        logger.warning(
-                            f"No valid task result found in {agent_type.value} response"
+                        return result
+
+                    await asyncio.sleep(poll_interval)
+                    waited += poll_interval
+
+                    # Log progress periodically
+                    if int(waited) % 10 == 0 and waited > 0:
+                        logger.debug(
+                            f"Still waiting for delegation result... ({waited}s)"
                         )
-                        return self._format_delegation_error(
-                            agent_type,
-                            task_description,
-                            "no_result",
-                            "No valid task result found",
-                            full_response,
-                        )
-                else:
-                    # No output or empty result
-                    logger.error(
-                        f"Empty or invalid result from {agent_type.value} agent"
-                    )
-                    return self._format_delegation_error(
-                        agent_type,
-                        task_description,
-                        "empty_result",
-                        "Empty or invalid result",
-                        full_response,
-                    )
+
+                # Timeout - this shouldn't happen normally
+                logger.error(
+                    f"Timeout waiting for delegation result (key={cache_key}). "
+                    f"This may indicate the streaming task failed to start."
+                )
+                return self._format_delegation_error(
+                    agent_type,
+                    task_description,
+                    "timeout",
+                    f"Timed out waiting for subagent result after {max_wait_time}s",
+                    "",
+                )
 
             except Exception as e:
-                logger.error(f"Error in delegation to {agent_type.value}: {e}")
+                logger.error(
+                    f"Error in delegation to {agent_type.value}: {e}", exc_info=True
+                )
                 return self._format_delegation_error(
                     agent_type, task_description, type(e).__name__, str(e), ""
                 )
@@ -1296,10 +1883,29 @@ Image Analysis Notes:
     async def _prepare_multimodal_message_history(
         self, ctx: ChatContext
     ) -> List[ModelMessage]:
-        """Prepare message history with multimodal support"""
+        """Prepare message history with multimodal support.
+
+        Limits history size to prevent token limit issues. Keeps only the most recent
+        messages to stay within reasonable token limits.
+        """
         history_messages = []
 
-        for msg in ctx.history:
+        # Limit history to prevent token bloat (max 8 messages or ~50k tokens estimated)
+        # This prevents "prompt too long" errors and reduces chance of duplicate tool_result issues
+        max_history_messages = 8
+        limited_history = (
+            ctx.history[-max_history_messages:]
+            if len(ctx.history) > max_history_messages
+            else ctx.history
+        )
+
+        if len(ctx.history) > max_history_messages:
+            logger.warning(
+                f"Message history truncated from {len(ctx.history)} to {len(limited_history)} messages "
+                f"to prevent token limit issues"
+            )
+
+        for msg in limited_history:
             # For now, keep history as text-only to avoid token bloat
             # Images are only added to the current query
             history_messages.append(ModelResponse([TextPart(content=str(msg))]))
@@ -1315,17 +1921,23 @@ Image Analysis Notes:
         # Store context for delegation functions
         self._current_context = ctx
 
-        # Reset todo manager for this agent run to ensure isolation
+        # Reset todo manager, code changes manager, and requirement manager for this agent run to ensure isolation
         from app.modules.intelligence.tools.todo_management_tool import (
             _reset_todo_manager,
         )
         from app.modules.intelligence.tools.code_changes_manager import (
             _reset_code_changes_manager,
         )
+        from app.modules.intelligence.tools.requirement_verification_tool import (
+            _reset_requirement_manager,
+        )
 
         _reset_todo_manager()
         _reset_code_changes_manager()
-        logger.info("🔄 Reset todo manager and code changes manager for new agent run")
+        _reset_requirement_manager()
+        logger.info(
+            "🔄 Reset todo manager, code changes manager, and requirement manager for new agent run"
+        )
 
         # Check if we have images and if the model supports vision
         if ctx.has_images() and self.llm_provider.is_vision_model():
@@ -1437,6 +2049,24 @@ Image Analysis Notes:
         # Store context for delegation functions
         self._current_context = ctx
 
+        # Reset todo manager, code changes manager, and requirement manager for this agent run to ensure isolation
+        from app.modules.intelligence.tools.todo_management_tool import (
+            _reset_todo_manager,
+        )
+        from app.modules.intelligence.tools.code_changes_manager import (
+            _reset_code_changes_manager,
+        )
+        from app.modules.intelligence.tools.requirement_verification_tool import (
+            _reset_requirement_manager,
+        )
+
+        _reset_todo_manager()
+        _reset_code_changes_manager()
+        _reset_requirement_manager()
+        logger.info(
+            "🔄 Reset todo manager, code changes manager, and requirement manager for new agent run"
+        )
+
         # Check if we have images and if the model supports vision
         if ctx.has_images() and self.llm_provider.is_vision_model():
             logger.info(
@@ -1504,12 +2134,16 @@ Image Analysis Notes:
         try:
             # Try to initialize MCP servers with timeout handling
             try:
+                # Limit history to prevent token bloat
+                limited_history = (
+                    ctx.history[-8:] if len(ctx.history) > 8 else ctx.history
+                )
                 async with supervisor_agent.run_mcp_servers():
                     async with supervisor_agent.iter(
                         user_prompt=ctx.query,
                         message_history=[
                             ModelResponse([TextPart(content=msg)])
-                            for msg in ctx.history
+                            for msg in limited_history
                         ],
                         usage_limits=UsageLimits(
                             request_limit=None
@@ -1526,27 +2160,64 @@ Image Analysis Notes:
                             # Clear the reference when done
                             self._current_supervisor_run = None
 
-            except (TimeoutError, anyio.WouldBlock, Exception) as mcp_error:
+            except (
+                TimeoutError,
+                anyio.WouldBlock,
+                ModelHTTPError,
+                Exception,
+            ) as mcp_error:
                 error_detail = f"{type(mcp_error).__name__}: {str(mcp_error)}"
+                error_str = str(mcp_error).lower()
+
+                # Check for specific error types
+                if isinstance(mcp_error, ModelHTTPError):
+                    error_body = getattr(mcp_error, "body", {})
+                    error_message = (
+                        error_body.get("error", {}).get("message", "")
+                        if isinstance(error_body, dict)
+                        else str(error_body)
+                    )
+
+                    # Check for duplicate tool_result error
+                    if (
+                        "tool_result" in error_message.lower()
+                        and "multiple" in error_message.lower()
+                    ):
+                        logger.error(
+                            f"Duplicate tool_result error detected in ModelHTTPError: {error_message}. "
+                            f"This indicates pydantic_ai's message history has duplicate tool results. "
+                            f"This may be caused by retries or error recovery. The message history may need to be cleared."
+                        )
+                    # Check for token limit error
+                    elif (
+                        "too long" in error_message.lower()
+                        or "maximum" in error_message.lower()
+                    ):
+                        logger.error(
+                            f"Token limit exceeded: {error_message}. "
+                            f"Message history is too large. Consider reducing history size or starting a new conversation."
+                        )
+
                 logger.warning(
                     f"MCP server initialization failed in stream: {error_detail}",
                     exc_info=True,
                 )
                 # Check if it's a JSON parsing error
-                if (
-                    "json" in str(mcp_error).lower()
-                    or "parse" in str(mcp_error).lower()
-                ):
+                if "json" in error_str or "parse" in error_str:
                     logger.error(
                         f"JSON parsing error during MCP server initialization in stream - MCP server may be returning malformed or incomplete JSON. Full traceback:\n{traceback.format_exc()}"
                     )
                 logger.info("Continuing without MCP servers...")
 
-                # Fallback without MCP servers
+                # Fallback without MCP servers - use limited history to prevent token issues
+                limited_history = (
+                    ctx.history[-8:] if len(ctx.history) > 8 else ctx.history
+                )
                 async with supervisor_agent.iter(
                     user_prompt=ctx.query,
                     message_history=[
-                        ModelResponse([TextPart(content=msg)]) for msg in ctx.history
+                        ModelResponse([TextPart(content=msg)])
+                        for msg in limited_history
                     ],
                     usage_limits=UsageLimits(
                         request_limit=None

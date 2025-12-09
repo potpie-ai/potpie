@@ -31,6 +31,9 @@ from .exceptions import UnsupportedProviderError
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.openai import OpenAIProvider
+from app.modules.intelligence.provider.openrouter_gemini_model import (
+    OpenRouterGeminiModel,
+)
 from pydantic_ai.providers.anthropic import AnthropicProvider
 import litellm
 
@@ -242,6 +245,74 @@ def robust_llm_call(settings: Optional[RetrySettings] = None):
     return decorator
 
 
+def sanitize_messages_for_tracing(messages: list) -> list:
+    """
+    Sanitize messages to prevent OpenTelemetry encoding errors.
+    Converts None content values to empty strings to avoid:
+    'Invalid type <class 'NoneType'> of value None' errors.
+
+    Args:
+        messages: List of message dictionaries with 'role' and 'content' keys
+
+    Returns:
+        List of sanitized messages with None content converted to empty strings
+    """
+    sanitized = []
+    for idx, msg in enumerate(messages):
+        try:
+            if isinstance(msg, dict):
+                sanitized_msg = msg.copy()
+                # Convert None content to empty string for OpenTelemetry compatibility
+                if "content" in sanitized_msg and sanitized_msg["content"] is None:
+                    sanitized_msg["content"] = ""
+                    logging.debug(
+                        f"Sanitized message {idx}: converted None content to empty string"
+                    )
+                # Handle nested content structures (e.g., multimodal messages)
+                elif "content" in sanitized_msg and isinstance(
+                    sanitized_msg["content"], list
+                ):
+                    sanitized_content = []
+                    for item_idx, item in enumerate(sanitized_msg["content"]):
+                        if item is None:
+                            # Skip None items in content list
+                            logging.debug(
+                                f"Sanitized message {idx}: skipping None item at index {item_idx} in content list"
+                            )
+                            continue
+                        elif isinstance(item, dict):
+                            sanitized_item = item.copy()
+                            # Handle None values in nested dicts
+                            for key, value in sanitized_item.items():
+                                if value is None:
+                                    sanitized_item[key] = ""
+                                    logging.debug(
+                                        f"Sanitized message {idx}: converted None value for key '{key}' to empty string"
+                                    )
+                            sanitized_content.append(sanitized_item)
+                        else:
+                            sanitized_content.append(item)
+                    sanitized_msg["content"] = sanitized_content
+                # Also sanitize other fields that might be None
+                for key, value in sanitized_msg.items():
+                    if value is None and key != "content":
+                        sanitized_msg[key] = ""
+                        logging.debug(
+                            f"Sanitized message {idx}: converted None value for key '{key}' to empty string"
+                        )
+                sanitized.append(sanitized_msg)
+            else:
+                sanitized.append(msg)
+        except Exception as e:
+            # Log error but continue processing - don't break on one bad message
+            logging.warning(
+                f"Error sanitizing message {idx}: {e}. Message will be included as-is.",
+                exc_info=True,
+            )
+            sanitized.append(msg)
+    return sanitized
+
+
 # Available models with their metadata
 AVAILABLE_MODELS = [
     AvailableModelOption(
@@ -325,6 +396,14 @@ AVAILABLE_MODELS = [
         is_inference_model=True,
     ),
     AvailableModelOption(
+        id="anthropic/claude-opus-4-5-20251101",
+        name="Claude 4.5 Opus",
+        description="Latest Claude Opus tier for maximum reasoning depth",
+        provider="anthropic",
+        is_chat_model=True,
+        is_inference_model=False,
+    ),
+    AvailableModelOption(
         id="openrouter/deepseek/deepseek-chat-v3-0324",
         name="DeepSeek V3",
         description="DeepSeek's latest chat model",
@@ -356,6 +435,14 @@ AVAILABLE_MODELS = [
         is_chat_model=True,
         is_inference_model=True,
     ),
+    AvailableModelOption(
+        id="openrouter/google/gemini-3-pro-preview",
+        name="Gemini 3 Pro Preview",
+        description="Latest Gemini 3 Pro capabilities via OpenRouter",
+        provider="gemini",
+        is_chat_model=True,
+        is_inference_model=True,
+    ),
 ]
 
 # Extract unique platform providers from the available models
@@ -373,6 +460,10 @@ class ProviderService:
         litellm.modify_params = True
         self.db = db
         self.user_id = user_id
+
+        # Cache for API keys to avoid repeated secret manager checks
+        # Key: provider name, Value: API key (or None if not found)
+        self._api_key_cache: Dict[str, Optional[str]] = {}
 
         # Load user preferences
         user_pref = db.query(UserPreferences).filter_by(user_id=user_id).first()
@@ -459,19 +550,35 @@ class ProviderService:
         return {"message": "AI provider configuration updated successfully"}
 
     def _get_api_key(self, provider: str) -> str:
-        """Get API key for the specified provider."""
+        """Get API key for the specified provider. Caches the result per provider for the session."""
+        # Check cache first
+        if provider in self._api_key_cache:
+            cached_key = self._api_key_cache[provider]
+            if cached_key is not None:
+                return cached_key
+            # If cached as None, we already checked and it's not available
+            return None
+
+        # Check environment variable first (fastest)
         env_key = os.getenv("LLM_API_KEY", None)
         if env_key:
+            self._api_key_cache[provider] = env_key
             return env_key
 
+        # Try to get from secret manager (only once per provider per session)
         try:
             secret = SecretManager.get_secret(provider, self.user_id, self.db)
+            self._api_key_cache[provider] = secret
             return secret
         except Exception as e:
             if "404" in str(e):
+                # Try provider-specific env var as fallback
                 env_key = os.getenv(f"{provider.upper()}_API_KEY")
                 if env_key:
+                    self._api_key_cache[provider] = env_key
                     return env_key
+                # Cache None to indicate we've checked and it's not available
+                self._api_key_cache[provider] = None
                 return None
             raise e
 
@@ -598,6 +705,9 @@ class ProviderService:
         **kwargs,
     ) -> Union[str, AsyncGenerator[str, None], Any]:
         """Call LLM with a specific model identifier (e.g., 'openrouter/perplexity/sonar')."""
+        # Sanitize messages to prevent OpenTelemetry encoding errors
+        messages = sanitize_messages_for_tracing(messages)
+
         # Build configuration for the specific model
         config = self._build_config_for_model_identifier(model_identifier)
 
@@ -687,6 +797,9 @@ class ProviderService:
         self, messages: list, stream: bool = False, config_type: str = "chat"
     ) -> Union[str, AsyncGenerator[str, None]]:
         """Call LLM with the specified messages with robust error handling."""
+        # Sanitize messages to prevent OpenTelemetry encoding errors
+        messages = sanitize_messages_for_tracing(messages)
+
         # Select the appropriate config based on config_type
         config = self.chat_config if config_type == "chat" else self.inference_config
 
@@ -718,6 +831,9 @@ class ProviderService:
         self, messages: list, output_schema: BaseModel, config_type: str = "chat"
     ) -> Any:
         """Call LLM and parse the response into a structured output using a Pydantic model."""
+        # Sanitize messages to prevent OpenTelemetry encoding errors
+        messages = sanitize_messages_for_tracing(messages)
+
         # Select the appropriate config
         config = self.chat_config if config_type == "chat" else self.inference_config
 
@@ -786,6 +902,8 @@ class ProviderService:
         config_type: str = "chat",
     ) -> Union[str, AsyncGenerator[str, None]]:
         """Call LLM with multimodal support (text + images)"""
+        # Sanitize messages to prevent OpenTelemetry encoding errors
+        messages = sanitize_messages_for_tracing(messages)
 
         # Check if multimodal is enabled
         if not config_provider.get_is_multimodal_enabled():
@@ -1053,6 +1171,8 @@ class ProviderService:
             "gemini-2.0-flash",
             "gemini-2.5",
             "gemini-2.5-pro",
+            "gemini-3",
+            "gemini-3-pro",
             "gemini-ultra",
             # Other models that might support vision
             "deepseek-chat",
@@ -1117,7 +1237,12 @@ class ProviderService:
                     or "http://localhost:11434"
                 )
                 provider_kwargs["base_url"] = base_url_root.rstrip("/") + "/v1"
-            return OpenAIModel(
+            model_class = (
+                OpenRouterGeminiModel
+                if config.auth_provider == "openrouter" and config.provider == "gemini"
+                else OpenAIModel
+            )
+            return model_class(
                 model_name=model_name,
                 provider=OpenAIProvider(
                     api_key=api_key,

@@ -1,4 +1,5 @@
 from datetime import datetime
+import logging
 import os
 from typing import List, Optional
 
@@ -38,6 +39,8 @@ from app.modules.integrations.integrations_schema import (
     IntegrationSaveRequest,
     IntegrationSaveResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -79,6 +82,13 @@ async def get_api_key_user(
         )
 
     return user
+
+
+from app.modules.conversations.utils.conversation_routing import (
+    normalize_run_id,
+    ensure_unique_run_id,
+    start_celery_task_and_stream,
+)
 
 
 @router.post("/conversations/", response_model=CreateConversationResponse)
@@ -129,6 +139,12 @@ async def get_parsing_status(
 async def post_message(
     conversation_id: str,
     message: MessageRequest,
+    stream: bool = Query(True, description="Whether to stream the response"),
+    session_id: Optional[str] = Query(None, description="Session ID for reconnection"),
+    prev_human_message_id: Optional[str] = Query(
+        None, description="Previous human message ID for deterministic session ID"
+    ),
+    cursor: Optional[str] = Query(None, description="Stream cursor for replay"),
     db: Session = Depends(get_db),
     async_db: AsyncSession = Depends(get_async_db),
     user=Depends(get_api_key_user),
@@ -146,9 +162,39 @@ async def post_message(
 
     # Note: email is no longer available with API key auth
     controller = ConversationController(db, async_db, user_id, None)
-    message_stream = controller.post_message(conversation_id, message, stream=False)
-    async for chunk in message_stream:
-        return chunk
+
+    if not stream:
+        # Non-streaming behavior - use direct execution
+        message_stream = controller.post_message(conversation_id, message, stream=False)
+        async for chunk in message_stream:
+            return chunk
+
+    # Streaming with session management and Celery (matching v1 behavior)
+    run_id = normalize_run_id(
+        conversation_id, user_id, session_id, prev_human_message_id
+    )
+
+    # For fresh requests without cursor, ensure we get a unique stream
+    if not cursor:
+        run_id = ensure_unique_run_id(conversation_id, run_id)
+
+    # Extract agent_id from conversation (will be handled in background task)
+    agent_id = None
+
+    # Use node_ids from message
+    node_ids_list = message.node_ids or []
+
+    # Start background task and return streaming response using shared function
+    return start_celery_task_and_stream(
+        conversation_id=conversation_id,
+        run_id=run_id,
+        user_id=user_id,
+        query=message.content,
+        agent_id=agent_id,
+        node_ids=node_ids_list,
+        attachment_ids=message.attachment_ids or [],
+        cursor=cursor,
+    )
 
 
 @router.post("/project/{project_id}/message/")

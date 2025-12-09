@@ -13,6 +13,7 @@ import os
 import inspect
 import functools
 import difflib
+from contextvars import ContextVar
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Union
 from enum import Enum
@@ -172,15 +173,38 @@ class CodeChangesManager:
                         f"CodeChangesManager._get_current_content: Fetching file content from repository "
                         f"for '{file_path}' in repo '{project_details['project_name']}'"
                     )
-                    repo_content = cp_service.get_file_content(
-                        repo_name=project_details["project_name"],
-                        file_path=file_path,
-                        branch_name=project_details.get("branch_name"),
-                        start_line=None,
-                        end_line=None,
-                        project_id=project_id,
-                        commit_id=project_details.get("commit_id"),
+                    # Wrap git operations in safe handler to prevent SIGSEGV and timeouts
+                    from app.modules.code_provider.git_safe import (
+                        safe_git_operation,
+                        GitOperationError,
                     )
+
+                    def _fetch_file_content():
+                        return cp_service.get_file_content(
+                            repo_name=project_details["project_name"],
+                            file_path=file_path,
+                            branch_name=project_details.get("branch_name"),
+                            start_line=None,
+                            end_line=None,
+                            project_id=project_id,
+                            commit_id=project_details.get("commit_id"),
+                        )
+
+                    try:
+                        repo_content = safe_git_operation(
+                            _fetch_file_content,
+                            max_retries=2,
+                            timeout=30.0,  # 30 second timeout per attempt
+                            operation_name=f"get_file_content({file_path})",
+                        )
+                    except GitOperationError as git_error:
+                        # If safe wrapper fails after retries, log and continue to filesystem fallback
+                        logger.warning(
+                            f"CodeChangesManager._get_current_content: Safe git operation failed after retries: {git_error}. "
+                            f"Falling back to filesystem for '{file_path}'"
+                        )
+                        repo_content = None
+
                     if repo_content:
                         lines = repo_content.split("\n")
                         logger.info(
@@ -205,15 +229,20 @@ class CodeChangesManager:
                 # Fall through to try filesystem
 
         # If not available via code provider, try to read from filesystem
+        # WARNING: This fallback can cause issues if file should be in changes but isn't found
+        # (e.g., due to path mismatch). This returns ORIGINAL file content, which may overwrite changes.
         logger.debug(
             f"CodeChangesManager._get_current_content: Attempting to read '{file_path}' from filesystem"
         )
         codebase_content = self._read_file_from_codebase(file_path)
         if codebase_content is not None:
             lines = codebase_content.split("\n")
-            logger.info(
-                f"CodeChangesManager._get_current_content: Retrieved '{file_path}' from filesystem "
-                f"({len(codebase_content)} chars, {len(lines)} lines)"
+            logger.warning(
+                f"CodeChangesManager._get_current_content: ⚠️ WARNING - Retrieved '{file_path}' from filesystem "
+                f"({len(codebase_content)} chars, {len(lines)} lines). "
+                f"This may be the ORIGINAL file content, not the current changes. "
+                f"If this file should have pending changes, they may be overwritten. "
+                f"Consider providing project_id/db for proper repository access."
             )
             return codebase_content
         else:
@@ -223,7 +252,8 @@ class CodeChangesManager:
 
         # File doesn't exist in changes, repository, or filesystem - treat as new file
         logger.warning(
-            f"CodeChangesManager._get_current_content: File '{file_path}' not found anywhere - treating as new file (empty content)"
+            f"CodeChangesManager._get_current_content: File '{file_path}' not found anywhere - treating as new file (empty content). "
+            f"This may be intentional for creating new files, but verify the file path is correct."
         )
         return ""
 
@@ -233,21 +263,55 @@ class CodeChangesManager:
         new_content: str,
         description: Optional[str] = None,
         preserve_previous: bool = True,
+        preserve_change_type: bool = True,
+        original_content: Optional[str] = None,
     ) -> bool:
-        """Internal method to apply a content update"""
+        """Internal method to apply a content update
+
+        Args:
+            file_path: Path to the file
+            new_content: New content for the file
+            description: Optional description of the change
+            preserve_previous: Whether to preserve previous_content when updating existing changes
+            preserve_change_type: Whether to preserve ADD change type for new files
+            original_content: Original content before any modifications (used when creating new FileChange)
+        """
         logger.debug(
-            f"CodeChangesManager._apply_update: Applying update to '{file_path}' (preserve_previous={preserve_previous})"
+            f"CodeChangesManager._apply_update: Applying update to '{file_path}' (preserve_previous={preserve_previous}, preserve_change_type={preserve_change_type}, original_content={'provided' if original_content is not None else 'None'})"
         )
         previous_content = None
         if file_path in self.changes:
             existing = self.changes[file_path]
+
+            # Don't update if file is marked for deletion (unless explicitly allowed)
+            if existing.change_type == ChangeType.DELETE:
+                logger.warning(
+                    f"CodeChangesManager._apply_update: File '{file_path}' is marked for deletion. "
+                    f"Not applying update. Use delete_file to unmark deletion first."
+                )
+                return False
+
             if preserve_previous and existing.previous_content:
                 previous_content = existing.previous_content
             elif preserve_previous:
                 previous_content = existing.content
+
+            # Preserve original change type if it was ADD (for new files)
+            # Only change to UPDATE if it was already UPDATE or if preserve_change_type is False
+            original_change_type = existing.change_type
+            if preserve_change_type and original_change_type == ChangeType.ADD:
+                # Keep as ADD for new files
+                new_change_type = ChangeType.ADD
+                logger.debug(
+                    f"CodeChangesManager._apply_update: Preserving ADD change type for new file '{file_path}'"
+                )
+            else:
+                # Change to UPDATE for existing files or when preserve_change_type is False
+                new_change_type = ChangeType.UPDATE
+
             # Update the change
             existing.content = new_content
-            existing.change_type = ChangeType.UPDATE
+            existing.change_type = new_change_type
             existing.updated_at = datetime.now().isoformat()
             if description:
                 existing.description = description
@@ -255,14 +319,24 @@ class CodeChangesManager:
                 existing.previous_content = previous_content
         else:
             # New file in changes (not yet committed)
+            # Use original_content as previous_content if provided (this is the original file content before any modifications)
+            # Default to UPDATE, but caller should use add_file() for new files
             change = FileChange(
                 file_path=file_path,
                 change_type=ChangeType.UPDATE,
                 content=new_content,
-                previous_content=previous_content,
+                previous_content=(
+                    original_content
+                    if original_content is not None
+                    else previous_content
+                ),
                 description=description,
             )
             self.changes[file_path] = change
+            logger.debug(
+                f"CodeChangesManager._apply_update: Created new FileChange for '{file_path}' "
+                f"with previous_content={'set' if original_content is not None else 'None'}"
+            )
         return True
 
     def update_file(
@@ -277,6 +351,11 @@ class CodeChangesManager:
             f"CodeChangesManager.update_file: Updating file '{file_path}' with full content (content length: {len(content)} chars)"
         )
         result = self._apply_update(file_path, content, description, preserve_previous)
+        if not result:
+            logger.warning(
+                f"CodeChangesManager.update_file: Failed to update file '{file_path}' - file may be marked for deletion"
+            )
+            return False
         logger.info(
             f"CodeChangesManager.update_file: Successfully updated file '{file_path}'"
         )
@@ -321,7 +400,9 @@ class CodeChangesManager:
 
             if len(lines) == 1 and lines[0] == "":
                 logger.warning(
-                    f"CodeChangesManager.update_file_lines: WARNING - File '{file_path}' appears to be empty or only contains empty string!"
+                    f"CodeChangesManager.update_file_lines: ⚠️ WARNING - File '{file_path}' appears to be empty or not found. "
+                    f"This may indicate the file doesn't exist in the repository. "
+                    f"Operation will proceed, creating/updating the file with new content."
                 )
 
             # Validate line numbers (1-indexed)
@@ -329,9 +410,14 @@ class CodeChangesManager:
                 f"CodeChangesManager.update_file_lines: Validating start_line={start_line} against file with {len(lines)} lines"
             )
             if start_line < 1 or start_line > len(lines):
+                error_msg = (
+                    f"Invalid start_line {start_line}. File has {len(lines)} lines. "
+                    f"⚠️ NOTE: If you've performed insert_lines or delete_lines operations on this file, "
+                    f"the line numbers have shifted. Please fetch the current file state to get the correct line numbers."
+                )
                 return {
                     "success": False,
-                    "error": f"Invalid start_line {start_line}. File has {len(lines)} lines.",
+                    "error": error_msg,
                 }
 
             if end_line is None:
@@ -344,9 +430,14 @@ class CodeChangesManager:
                 }
 
             if end_line > len(lines):
+                error_msg = (
+                    f"Invalid end_line {end_line}. File has {len(lines)} lines. "
+                    f"⚠️ NOTE: If you've performed insert_lines or delete_lines operations on this file, "
+                    f"the line numbers have shifted. Please fetch the current file state to get the correct line numbers."
+                )
                 return {
                     "success": False,
-                    "error": f"Invalid end_line {end_line}. File has {len(lines)} lines.",
+                    "error": error_msg,
                 }
 
             # Convert to 0-indexed for list operations
@@ -365,8 +456,23 @@ class CodeChangesManager:
             updated_content = "\n".join(updated_lines)
 
             # Apply the update
+            # Pass current_content as original_content if file is not in changes yet
+            # (this preserves the original file content for diff generation)
             change_desc = description or f"Updated lines {start_line}-{end_line}"
-            self._apply_update(file_path, updated_content, change_desc)
+            original_content = (
+                current_content if file_path not in self.changes else None
+            )
+            update_success = self._apply_update(
+                file_path,
+                updated_content,
+                change_desc,
+                original_content=original_content,
+            )
+            if not update_success:
+                return {
+                    "success": False,
+                    "error": f"Cannot update file '{file_path}': file is marked for deletion. Use delete_file to unmark deletion first, or clear the file from changes.",
+                }
 
             # Calculate context around updated area
             context_lines_before = 3
@@ -423,6 +529,9 @@ class CodeChangesManager:
         count: int = 0,
         description: Optional[str] = None,
         case_sensitive: bool = False,
+        word_boundary: bool = False,
+        project_id: Optional[str] = None,
+        db: Optional[Session] = None,
     ) -> Dict[str, Any]:
         """
         Replace pattern matches in a file using regex
@@ -434,20 +543,35 @@ class CodeChangesManager:
             count: Maximum number of replacements (0 = all)
             description: Optional description of the change
             case_sensitive: Whether pattern matching is case-sensitive
+            word_boundary: If True, wrap pattern with word boundaries (\\b) to match whole words only
+            project_id: Optional project ID to fetch file content from repository
+            db: Optional database session for repository access
 
         Returns:
             Dict with success status and replacement information
         """
         logger.info(
-            f"CodeChangesManager.replace_in_file: Replacing pattern '{pattern}' in '{file_path}' (count={count}, case_sensitive={case_sensitive})"
+            f"CodeChangesManager.replace_in_file: Replacing pattern '{pattern}' in '{file_path}' "
+            f"(count={count}, case_sensitive={case_sensitive}, word_boundary={word_boundary}, project_id={project_id}, db={'provided' if db else 'None'})"
         )
         try:
-            current_content = self._get_current_content(file_path)
+            current_content = self._get_current_content(
+                file_path, project_id=project_id, db=db
+            )
+
+            # Apply word boundary if requested
+            actual_pattern = pattern
+            if word_boundary:
+                # Wrap pattern with word boundaries to match whole words only
+                actual_pattern = r"\b" + pattern + r"\b"
+                logger.debug(
+                    f"CodeChangesManager.replace_in_file: Applied word boundary, pattern is now: '{actual_pattern}'"
+                )
 
             # Compile regex pattern
             flags = 0 if case_sensitive else re.IGNORECASE
             try:
-                regex = re.compile(pattern, flags)
+                regex = re.compile(actual_pattern, flags)
             except re.error as e:
                 return {"success": False, "error": f"Invalid regex pattern: {str(e)}"}
 
@@ -470,11 +594,23 @@ class CodeChangesManager:
                 replace_count = min(count, len(matches))
 
             # Apply the update
+            # Pass current_content as original_content if file is not in changes yet
+            # (this preserves the original file content for diff generation)
             change_desc = (
                 description
                 or f"Replaced '{pattern}' with '{replacement}' ({replace_count} occurrences)"
             )
-            self._apply_update(file_path, new_content, change_desc)
+            original_content = (
+                current_content if file_path not in self.changes else None
+            )
+            update_success = self._apply_update(
+                file_path, new_content, change_desc, original_content=original_content
+            )
+            if not update_success:
+                return {
+                    "success": False,
+                    "error": f"Cannot replace in file '{file_path}': file is marked for deletion. Use delete_file to unmark deletion first, or clear the file from changes.",
+                }
 
             # Get match locations for reporting
             match_locations = []
@@ -590,11 +726,26 @@ class CodeChangesManager:
             updated_content = "\n".join(updated_lines)
 
             # Apply the update
+            # Pass current_content as original_content if file is not in changes yet
+            # (this preserves the original file content for diff generation)
             change_desc = (
                 description
                 or f"Inserted {len(new_lines)} lines {position} line {line_number}"
             )
-            self._apply_update(file_path, updated_content, change_desc)
+            original_content = (
+                current_content if file_path not in self.changes else None
+            )
+            update_success = self._apply_update(
+                file_path,
+                updated_content,
+                change_desc,
+                original_content=original_content,
+            )
+            if not update_success:
+                return {
+                    "success": False,
+                    "error": f"Cannot insert lines in file '{file_path}': file is marked for deletion. Use delete_file to unmark deletion first, or clear the file from changes.",
+                }
 
             # Calculate context around inserted area
             context_lines_before = 3
@@ -647,6 +798,8 @@ class CodeChangesManager:
         start_line: int,
         end_line: Optional[int] = None,
         description: Optional[str] = None,
+        project_id: Optional[str] = None,
+        db: Optional[Session] = None,
     ) -> Dict[str, Any]:
         """
         Delete specific lines from a file (1-indexed)
@@ -656,16 +809,28 @@ class CodeChangesManager:
             start_line: Starting line number (1-indexed, inclusive)
             end_line: Ending line number (1-indexed, inclusive). If None, only start_line is deleted
             description: Optional description of the change
+            project_id: Optional project ID to fetch file content from repository
+            db: Optional database session for repository access
 
         Returns:
             Dict with success status and deletion information
         """
         logger.info(
-            f"CodeChangesManager.delete_lines: Deleting lines {start_line}-{end_line or start_line} from '{file_path}'"
+            f"CodeChangesManager.delete_lines: Deleting lines {start_line}-{end_line or start_line} from '{file_path}' "
+            f"(project_id={project_id}, db={'provided' if db else 'None'})"
         )
         try:
-            current_content = self._get_current_content(file_path)
+            current_content = self._get_current_content(
+                file_path, project_id=project_id, db=db
+            )
             lines = current_content.split("\n")
+
+            # Warn if file appears to be empty or non-existent
+            if len(lines) == 1 and lines[0] == "":
+                logger.warning(
+                    f"CodeChangesManager.delete_lines: ⚠️ WARNING - File '{file_path}' appears to be empty or not found. "
+                    f"This may indicate the file doesn't exist in the repository."
+                )
 
             # Validate line numbers
             if start_line < 1 or start_line > len(lines):
@@ -684,9 +849,14 @@ class CodeChangesManager:
                 }
 
             if end_line > len(lines):
+                error_msg = (
+                    f"Invalid end_line {end_line}. File has {len(lines)} lines. "
+                    f"⚠️ NOTE: If you've performed insert_lines or delete_lines operations on this file, "
+                    f"the line numbers have shifted. Please fetch the current file state to get the correct line numbers."
+                )
                 return {
                     "success": False,
-                    "error": f"Invalid end_line {end_line}. File has {len(lines)} lines.",
+                    "error": error_msg,
                 }
 
             # Convert to 0-indexed
@@ -702,8 +872,23 @@ class CodeChangesManager:
             updated_content = "\n".join(updated_lines)
 
             # Apply the update
+            # Pass current_content as original_content if file is not in changes yet
+            # (this preserves the original file content for diff generation)
             change_desc = description or f"Deleted lines {start_line}-{end_line}"
-            self._apply_update(file_path, updated_content, change_desc)
+            original_content = (
+                current_content if file_path not in self.changes else None
+            )
+            update_success = self._apply_update(
+                file_path,
+                updated_content,
+                change_desc,
+                original_content=original_content,
+            )
+            if not update_success:
+                return {
+                    "success": False,
+                    "error": f"Cannot delete lines from file '{file_path}': file is marked for deletion. Use delete_file to unmark deletion first, or clear the file from changes.",
+                }
 
             logger.info(
                 f"CodeChangesManager.delete_lines: Successfully deleted {len(deleted_lines)} line(s) ({start_line}-{end_line}) from '{file_path}'"
@@ -803,7 +988,14 @@ class CodeChangesManager:
         # Sort by file path
         files.sort(key=lambda x: x.file_path)
 
-        return [asdict(f) | {"change_type": f.change_type.value} for f in files]
+        # Convert to dict format, ensuring change_type is correctly set
+        result = []
+        for f in files:
+            file_dict = asdict(f)
+            # Ensure change_type is the string value, not the enum
+            file_dict["change_type"] = f.change_type.value
+            result.append(file_dict)
+        return result
 
     def search_content(
         self,
@@ -1144,26 +1336,87 @@ class CodeChangesManager:
         new_lines = new_content.splitlines(keepends=True)
 
         # Generate unified diff
+        # Use lineterm="\n" to ensure proper newlines between diff header lines
         diff = difflib.unified_diff(
             old_lines,
             new_lines,
             fromfile=old_path,
             tofile=new_path,
-            lineterm="",
+            lineterm="\n",
             n=context_lines,
         )
 
+        # Join with newlines to ensure proper formatting
+        # The diff lines already have newlines from lineterm="\n"
         return "".join(diff)
 
+    def _generate_git_diff_patch(
+        self,
+        file_path: str,
+        old_content: str,
+        new_content: str,
+        context_lines: int = 3,
+    ) -> str:
+        """
+        Generate a git-style diff patch for a single file
+
+        Args:
+            file_path: Path to the file
+            old_content: Original file content
+            new_content: New file content
+            context_lines: Number of context lines to include in diff
+
+        Returns:
+            Git-style diff patch string
+        """
+        old_lines = old_content.splitlines(keepends=True) if old_content else []
+        new_lines = new_content.splitlines(keepends=True) if new_content else []
+
+        # Generate unified diff
+        # Use lineterm="\n" to ensure proper newlines between diff header lines
+        diff_lines = list(
+            difflib.unified_diff(
+                old_lines,
+                new_lines,
+                fromfile=f"a/{file_path}",
+                tofile=f"b/{file_path}",
+                lineterm="\n",
+                n=context_lines,
+            )
+        )
+
+        if not diff_lines:
+            return ""
+
+        # Convert to git diff format
+        # Start with git diff header
+        git_diff = f"diff --git a/{file_path} b/{file_path}\n"
+
+        # The unified_diff output format is:
+        # --- a/file
+        # +++ b/file
+        # @@ -old_start,old_count +new_start,new_count @@
+        # ...
+        # We keep the --- and +++ lines as-is, and add the rest
+        # The diff lines already have newlines from lineterm="\n"
+        git_diff += "".join(diff_lines)
+
+        return git_diff
+
     def export_changes(
-        self, format: str = "dict"
+        self,
+        format: str = "dict",
+        project_id: Optional[str] = None,
+        db: Optional[Session] = None,
     ) -> Union[Dict[str, str], List[Dict[str, Any]], str]:
         """
         Export changes in different formats
 
         Args:
             format: 'dict' (file_path -> content), 'list' (list of change dicts),
-                   'json' (JSON string)
+                   'json' (JSON string), 'diff' (git-style diff patch)
+            project_id: Optional project ID for fetching original content from repository (for diff format)
+            db: Optional database session for repository access (for diff format)
         """
         logger.info(
             f"CodeChangesManager.export_changes: Exporting {len(self.changes)} file changes in '{format}' format"
@@ -1186,37 +1439,109 @@ class CodeChangesManager:
             ]
         elif format == "json":
             return self.serialize()
+        elif format == "diff":
+            # Generate git-style diff patches for all files
+            patches = []
+            for file_path, change in sorted(self.changes.items()):
+                if change.change_type == ChangeType.DELETE:
+                    old_content = change.previous_content or ""
+                    new_content = ""
+                elif change.change_type == ChangeType.ADD:
+                    old_content = ""
+                    new_content = change.content or ""
+                else:  # UPDATE
+                    new_content = change.content or ""
+                    # Try to get old content from previous_content, repository, or filesystem
+                    if change.previous_content is not None:
+                        old_content = change.previous_content
+                    elif project_id and db:
+                        # Try repository
+                        try:
+                            from app.modules.code_provider.code_provider_service import (
+                                CodeProviderService,
+                            )
+                            from app.modules.projects.projects_model import Project
+
+                            project = (
+                                db.query(Project)
+                                .filter(Project.id == project_id)
+                                .first()
+                            )
+                            if project:
+                                cp_service = CodeProviderService(db)
+                                repo_content = cp_service.get_file_content(
+                                    repo_name=project.repo_name,
+                                    file_path=file_path,
+                                    branch_name=project.branch_name,
+                                    start_line=None,
+                                    end_line=None,
+                                    project_id=project_id,
+                                    commit_id=project.commit_id,
+                                )
+                                old_content = repo_content or ""
+                            else:
+                                old_content = ""
+                        except Exception:
+                            old_content = ""
+                    else:
+                        # Fallback to filesystem
+                        old_content = self._read_file_from_codebase(file_path) or ""
+
+                patch = self._generate_git_diff_patch(
+                    file_path, old_content, new_content
+                )
+                if patch:
+                    patches.append(patch)
+
+            return "\n".join(patches)
         else:
-            raise ValueError(f"Unknown format: {format}")
+            raise ValueError(
+                f"Unknown format: {format}. Supported formats: 'dict', 'list', 'json', 'diff'"
+            )
 
 
-# Global code changes manager instance
-_code_changes_manager: Optional[CodeChangesManager] = None
+# Context variable for code changes manager - provides isolation per execution context
+# This ensures parallel agent runs have separate, isolated state
+_code_changes_manager_ctx: ContextVar[Optional[CodeChangesManager]] = ContextVar(
+    "_code_changes_manager_ctx", default=None
+)
 
 
 def _get_code_changes_manager() -> CodeChangesManager:
-    """Get the current code changes manager, creating a new one if needed"""
-    global _code_changes_manager
-    if _code_changes_manager is None:
-        logger.info("CodeChangesManager: Creating new manager instance")
-        _code_changes_manager = CodeChangesManager()
+    """Get the current code changes manager for this execution context, creating a new one if needed.
+
+    Uses ContextVar to ensure each async execution context (agent run) has its own isolated instance.
+    This allows parallel agent runs to have separate state without interference.
+    """
+    manager = _code_changes_manager_ctx.get()
+    if manager is None:
         logger.info(
-            f"CodeChangesManager: Created new manager with session ID {_code_changes_manager.session_id}"
+            "CodeChangesManager: Creating new manager instance for this execution context"
         )
-    return _code_changes_manager
+        manager = CodeChangesManager()
+        _code_changes_manager_ctx.set(manager)
+        logger.info(
+            f"CodeChangesManager: Created new manager with session ID {manager.session_id}"
+        )
+    return manager
 
 
 def _reset_code_changes_manager() -> None:
-    """Reset the code changes manager for a new agent run"""
-    global _code_changes_manager
-    old_session = _code_changes_manager.session_id if _code_changes_manager else None
-    old_count = len(_code_changes_manager.changes) if _code_changes_manager else 0
+    """Reset the code changes manager for a new agent run - creates a completely fresh instance in this execution context.
+
+    This ensures each agent run starts with a clean state, isolated from other parallel runs.
+    """
+    old_manager = _code_changes_manager_ctx.get()
+    old_session = old_manager.session_id if old_manager else None
+    old_count = len(old_manager.changes) if old_manager else 0
     logger.info(
-        f"CodeChangesManager: Resetting manager (old session: {old_session}, old file count: {old_count})"
+        f"CodeChangesManager: Resetting manager for this execution context (old session: {old_session}, old file count: {old_count})"
     )
-    _code_changes_manager = CodeChangesManager()
+    # Always create a completely fresh instance - don't reuse any state
+    new_manager = CodeChangesManager()
+    _code_changes_manager_ctx.set(new_manager)
     logger.info(
-        f"CodeChangesManager: Reset complete, new session ID: {_code_changes_manager.session_id}"
+        f"CodeChangesManager: Reset complete, new session ID: {new_manager.session_id}"
     )
 
 
@@ -1287,7 +1612,11 @@ class ClearFileInput(BaseModel):
 class ExportChangesInput(BaseModel):
     format: str = Field(
         default="dict",
-        description="Export format: 'dict' (file_path -> content), 'list' (list of changes), or 'json' (JSON string)",
+        description="Export format: 'dict' (file_path -> content), 'list' (list of changes), 'json' (JSON string), or 'diff' (git-style diff patch)",
+    )
+    project_id: Optional[str] = Field(
+        default=None,
+        description="Optional project ID to fetch original content from repository for accurate diff. Use project_id from conversation context.",
     )
 
 
@@ -1327,6 +1656,16 @@ class ReplaceInFileInput(BaseModel):
     case_sensitive: bool = Field(
         default=False, description="Whether pattern matching is case-sensitive"
     )
+    word_boundary: bool = Field(
+        default=False,
+        description="If True, wrap pattern with word boundaries (\\b) to match whole words only. "
+        "Useful to prevent matching partial strings within words (e.g., 'test function' won't match 'another_test function').",
+    )
+    project_id: Optional[str] = Field(
+        default=None,
+        description="Optional project ID (from context) to fetch file content from repository. "
+        "Use the project_id from the conversation context for better content retrieval.",
+    )
 
 
 class InsertLinesInput(BaseModel):
@@ -1356,6 +1695,11 @@ class DeleteLinesInput(BaseModel):
     )
     description: Optional[str] = Field(
         default=None, description="Optional description of the change"
+    )
+    project_id: Optional[str] = Field(
+        default=None,
+        description="Optional project ID (from context) to fetch file content from repository. "
+        "Use the project_id from the conversation context for better content retrieval.",
     )
 
 
@@ -1714,10 +2058,20 @@ def update_file_lines_tool(input_data: UpdateFileLinesInput) -> str:
 def replace_in_file_tool(input_data: ReplaceInFileInput) -> str:
     """Replace pattern matches in a file using regex"""
     logger.info(
-        f"Tool replace_in_file_tool: Replacing pattern '{input_data.pattern}' in '{input_data.file_path}'"
+        f"Tool replace_in_file_tool: Replacing pattern '{input_data.pattern}' in '{input_data.file_path}' "
+        f"(project_id={input_data.project_id})"
     )
     try:
         manager = _get_code_changes_manager()
+        db = None
+        if input_data.project_id:
+            logger.info(
+                f"Tool replace_in_file_tool: Project ID provided ({input_data.project_id}), fetching database session"
+            )
+            from app.core.database import get_db
+
+            db = next(get_db())
+            logger.debug("Tool replace_in_file_tool: Database session obtained")
         result = manager.replace_in_file(
             file_path=input_data.file_path,
             pattern=input_data.pattern,
@@ -1725,6 +2079,9 @@ def replace_in_file_tool(input_data: ReplaceInFileInput) -> str:
             count=input_data.count,
             description=input_data.description,
             case_sensitive=input_data.case_sensitive,
+            word_boundary=input_data.word_boundary,
+            project_id=input_data.project_id,
+            db=db,
         )
 
         if result.get("success"):
@@ -1804,15 +2161,27 @@ def insert_lines_tool(input_data: InsertLinesInput) -> str:
 def delete_lines_tool(input_data: DeleteLinesInput) -> str:
     """Delete specific lines from a file"""
     logger.info(
-        f"Tool delete_lines_tool: Deleting lines {input_data.start_line}-{input_data.end_line or input_data.start_line} from '{input_data.file_path}'"
+        f"Tool delete_lines_tool: Deleting lines {input_data.start_line}-{input_data.end_line or input_data.start_line} "
+        f"from '{input_data.file_path}' (project_id={input_data.project_id})"
     )
     try:
         manager = _get_code_changes_manager()
+        db = None
+        if input_data.project_id:
+            logger.info(
+                f"Tool delete_lines_tool: Project ID provided ({input_data.project_id}), fetching database session"
+            )
+            from app.core.database import get_db
+
+            db = next(get_db())
+            logger.debug("Tool delete_lines_tool: Database session obtained")
         result = manager.delete_lines(
             file_path=input_data.file_path,
             start_line=input_data.start_line,
             end_line=input_data.end_line,
             description=input_data.description,
+            project_id=input_data.project_id,
+            db=db,
         )
 
         if result.get("success"):
@@ -1955,56 +2324,117 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
 
             db = next(get_db())
 
-        # Generate diffs
-        diffs = manager.generate_diff(
-            file_path=input_data.file_path,
-            context_lines=input_data.context_lines,
-            project_id=input_data.project_id,
-            db=db,
+        # Generate git-style diffs for each file
+        files_to_diff = (
+            [input_data.file_path]
+            if input_data.file_path
+            else list(manager.changes.keys())
         )
+        git_diffs = []
 
-        if not diffs:
-            return "📋 **No diffs to display**\n\nNo changes found."
-
-        result = "\n\n---\n\n## 📝 **Code Changes Diff**\n\n"
-        result += f"Total files changed: **{summary['total_files']}**\n\n"
-
-        change_emoji = {"add": "➕", "update": "✏️", "delete": "🗑️"}
-
-        # Show summary by change type
-        result += "**Changes by type:**\n"
-        for change_type, count in summary["change_counts"].items():
-            if count > 0:
-                emoji = change_emoji.get(change_type, "📄")
-                result += f"- {emoji} {change_type.title()}: {count}\n"
-        result += "\n"
-
-        # Display each file's diff
-        for file_path, diff_content in diffs.items():
-            file_info = next(
-                (f for f in summary["files"] if f["file_path"] == file_path), None
-            )
-            if not file_info:
+        for file_path in files_to_diff:
+            if file_path not in manager.changes:
                 continue
 
-            emoji = change_emoji.get(file_info["change_type"], "📄")
-            change_type = file_info["change_type"]
+            change = manager.changes[file_path]
 
-            result += f"### {emoji} **{file_path}** ({change_type})\n\n"
+            # Get old content
+            if change.change_type == ChangeType.DELETE:
+                old_content = change.previous_content or ""
+                new_content = ""
+            elif change.change_type == ChangeType.ADD:
+                old_content = ""
+                new_content = change.content or ""
+            else:  # UPDATE
+                new_content = change.content or ""
+                if change.previous_content is not None:
+                    old_content = change.previous_content
+                else:
+                    # Try to get from repository first if project_id/db provided
+                    old_content = None
+                    if input_data.project_id and db:
+                        try:
+                            from app.modules.code_provider.code_provider_service import (
+                                CodeProviderService,
+                            )
+                            from app.modules.projects.projects_model import Project
 
-            if file_info.get("description"):
-                result += f"*{file_info['description']}*\n\n"
+                            project = (
+                                db.query(Project)
+                                .filter(Project.id == input_data.project_id)
+                                .first()
+                            )
+                            if project:
+                                cp_service = CodeProviderService(db)
+                                repo_content = cp_service.get_file_content(
+                                    repo_name=project.repo_name,
+                                    file_path=file_path,
+                                    branch_name=project.branch_name,
+                                    start_line=None,
+                                    end_line=None,
+                                    project_id=input_data.project_id,
+                                    commit_id=project.commit_id,
+                                )
+                                if repo_content:
+                                    old_content = repo_content
+                        except Exception as e:
+                            logger.warning(
+                                f"Tool show_diff_tool: Error fetching from repository: {e}"
+                            )
+                            old_content = None
 
-            # Display the diff
-            if diff_content:
-                result += "```diff\n"
-                result += diff_content
-                result += "\n```\n\n"
-            else:
-                result += "*(No changes detected)*\n\n"
+                    # Fallback to filesystem
+                    if old_content is None:
+                        old_content = manager._read_file_from_codebase(file_path)
 
-        result += "---\n\n"
-        result += "💡 **Tip:** Use `export_changes(format='json')` to export all changes for persistence or sharing.\n"
+                    # If file doesn't exist, treat as new file
+                    if old_content is None or old_content == "":
+                        old_content = ""
+
+            # Generate git-style diff
+            git_diff = manager._generate_git_diff_patch(
+                file_path=file_path,
+                old_content=old_content or "",
+                new_content=new_content or "",
+                context_lines=input_data.context_lines,
+            )
+
+            if git_diff:
+                git_diffs.append(git_diff)
+
+        if not git_diffs:
+            return "📋 **No diffs to display**\n\nNo changes found."
+
+        # Combine all diffs into a single string
+        combined_diff = "\n".join(git_diffs)
+
+        # Write diff to .data folder as JSON
+        try:
+            data_dir = ".data"
+            os.makedirs(data_dir, exist_ok=True)
+
+            # Generate unique filename with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"diff_{timestamp}_{uuid.uuid4().hex[:8]}.json"
+            filepath = os.path.join(data_dir, filename)
+
+            # Create JSON with model_patch field
+            diff_data = {"model_patch": combined_diff}
+
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(diff_data, f, indent=2, ensure_ascii=False)
+
+            logger.info(f"Tool show_diff_tool: Diff written to {filepath}")
+        except Exception as e:
+            logger.warning(
+                f"Tool show_diff_tool: Failed to write diff to .data folder: {e}"
+            )
+
+        # Output clean diff format
+        result = "--generated diff--\n\n"
+        result += "```\n"
+        result += combined_diff
+        result += "\n```\n\n--generated diff--\n"
 
         return result
     except Exception as e:
@@ -2152,7 +2582,20 @@ def export_changes_tool(input_data: ExportChangesInput) -> str:
     )
     try:
         manager = _get_code_changes_manager()
-        exported = manager.export_changes(format=input_data.format)
+
+        # Get database session if project_id provided (needed for diff format)
+        db = None
+        if input_data.project_id:
+            logger.info(
+                f"Tool export_changes_tool: Project ID provided ({input_data.project_id}), fetching database session"
+            )
+            from app.core.database import get_db
+
+            db = next(get_db())
+
+        exported = manager.export_changes(
+            format=input_data.format, project_id=input_data.project_id, db=db
+        )
 
         if input_data.format == "json":
             # Return JSON directly (might be long, but that's expected)
@@ -2167,6 +2610,11 @@ def export_changes_tool(input_data: ExportChangesInput) -> str:
             if len(exported) > 5:
                 result += f"... and {len(exported) - 5} more files\n"
             return result
+        elif input_data.format == "diff":
+            # Return diff patch format with "Generated Diff:" heading
+            if not exported or not isinstance(exported, str):
+                return "❌ No diff generated or invalid format"
+            return f"Generated Diff:\n\n```\n{exported}\n```"
         else:  # list format
             if not isinstance(exported, list):
                 return f"❌ Expected list format, got {type(exported)}"
@@ -2210,25 +2658,25 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
         ),
         SimpleTool(
             name="update_file_lines",
-            description="Update specific lines in a file using line numbers. Use this for targeted line-by-line replacements. Lines are 1-indexed. Specify start_line and optionally end_line to replace a range. CRITICAL: You MUST preserve proper indentation - match the indentation of surrounding lines exactly. Fetch the file with line numbers first to see the exact indentation. After updating, always verify the changes by fetching the updated lines to ensure indentation and content are correct. IMPORTANT: You MUST provide project_id from the conversation context to access existing file content from the repository.",
+            description="Update specific lines in a file using line numbers. Use this for targeted line-by-line replacements. Lines are 1-indexed. Specify start_line and optionally end_line to replace a range. CRITICAL: You MUST preserve proper indentation - match the indentation of surrounding lines exactly. BEST PRACTICES: (1) Always fetch the file with line numbers first (get_file_from_changes with_line_numbers=true) to see exact indentation and current line numbers. (2) After updating, verify changes by fetching the updated lines to ensure indentation and content are correct. (3) For sequential operations: If you've performed insert_lines or delete_lines on this file, the line numbers have shifted - always fetch the current file state before using update_file_lines to get correct line numbers. (4) You MUST provide project_id from the conversation context to access existing file content from the repository.",
             func=update_file_lines_tool,
             args_schema=UpdateFileLinesInput,
         ),
         SimpleTool(
             name="replace_in_file",
-            description="Replace pattern matches in a file using regex. Use this to replace text patterns throughout a file. Supports regex capturing groups (\\1, \\2, etc.) in replacement. Set count=0 to replace all occurrences.",
+            description="Replace pattern matches in a file using regex. Use this to replace text patterns throughout a file. Supports regex capturing groups (\\1, \\2, etc.) in replacement. Set count=0 to replace all occurrences. Use word_boundary=True to match whole words only (prevents matching partial strings within words). BEST PRACTICES: (1) After replacing, verify changes by fetching the file (get_file_from_changes) to confirm replacements were applied correctly. (2) For sequential operations: Always provide project_id from conversation context for proper content retrieval, especially when performing multiple operations on the same file. (3) Use word_boundary=True when you want to match whole words/phrases and avoid partial matches within variable or function names.",
             func=replace_in_file_tool,
             args_schema=ReplaceInFileInput,
         ),
         SimpleTool(
             name="insert_lines",
-            description="Insert content at a specific line number in a file. Use this to add new code at a specific location. Lines are 1-indexed. Set insert_after=False to insert before the specified line. CRITICAL: You MUST preserve proper indentation - match the indentation level of the line you're inserting after/before, or maintain consistent indentation for the code block you're adding. Fetch the file with line numbers first to see the exact indentation. After inserting, always verify the changes by fetching the inserted lines in context to ensure indentation and placement are correct. IMPORTANT: You MUST provide project_id from the conversation context to access existing file content from the repository.",
+            description="Insert content at a specific line number in a file. Use this to add new code at a specific location. Lines are 1-indexed. Set insert_after=False to insert before the specified line. CRITICAL: You MUST preserve proper indentation - match the indentation level of the line you're inserting after/before, or maintain consistent indentation for the code block you're adding. BEST PRACTICES: (1) Always fetch the file with line numbers first (get_file_from_changes with_line_numbers=true) to see exact indentation and current line numbers. (2) After inserting, verify changes by fetching the inserted lines in context to ensure indentation and placement are correct. (3) For sequential operations: If you've performed insert_lines or delete_lines on this file, line numbers have shifted - always fetch the current file state before subsequent operations. (4) You MUST provide project_id from the conversation context to access existing file content from the repository.",
             func=insert_lines_tool,
             args_schema=InsertLinesInput,
         ),
         SimpleTool(
             name="delete_lines",
-            description="Delete specific lines from a file using line numbers. Use this to remove unwanted code. Lines are 1-indexed. Specify start_line and optionally end_line to delete a range.",
+            description="Delete specific lines from a file using line numbers. Use this to remove unwanted code. Lines are 1-indexed. Specify start_line and optionally end_line to delete a range. BEST PRACTICES: (1) Always fetch the file with line numbers first (get_file_from_changes with_line_numbers=true) to get correct line numbers, especially after previous insert/delete operations. (2) After deleting, verify changes by fetching the file to confirm lines were removed correctly. (3) For sequential operations: Line numbers shift after deletions - always fetch current file state before subsequent line-based operations. (4) Provide project_id from conversation context for proper content retrieval, especially when performing sequential operations on the same file.",
             func=delete_lines_tool,
             args_schema=DeleteLinesInput,
         ),
@@ -2240,7 +2688,7 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
         ),
         SimpleTool(
             name="get_file_from_changes",
-            description="Get change information and content for a specific file from the code changes manager.",
+            description="Get change information and content for a specific file from the code changes manager. BEST PRACTICES: (1) Use with_line_numbers=true before line-based operations (update_file_lines, insert_lines, delete_lines) to see exact line numbers and indentation. (2) Use after editing operations to verify changes were applied correctly. (3) Essential for sequential operations - fetch current state between operations to get correct line numbers after insertions/deletions.",
             func=get_file_tool,
             args_schema=GetFileInput,
         ),
@@ -2276,7 +2724,7 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
         ),
         SimpleTool(
             name="export_changes",
-            description="Export all code changes in various formats (dict, list, or json). Use 'json' format for persistence.",
+            description="Export all code changes in various formats (dict, list, json, or diff). Use 'json' format for persistence, 'diff' format for git-style patch.",
             func=export_changes_tool,
             args_schema=ExportChangesInput,
         ),
@@ -2288,13 +2736,13 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
         ),
         SimpleTool(
             name="show_diff",
-            description="Display unified diffs showing changes between managed code and the actual codebase. This tool streams the formatted diffs directly into the agent response without going through the LLM, allowing users to see exactly what was changed. Use this at the end of your response to show all the code changes you've made. The content is automatically shown to the user without consuming LLM context. Optional project_id fetches original content from repository for accurate diffs against the branch.",
+            description="Display unified diffs showing changes between managed code and the actual codebase. This tool streams the formatted diffs directly into the agent response without going through the LLM, allowing users to see exactly what was changed. Use this at the end of your response to show all the code changes you've made. The content is automatically shown to the user without consuming LLM context. BEST PRACTICES: (1) Use project_id to fetch original content from repository for accurate diffs against the branch. (2) When changes are spread across many lines, increase context_lines parameter (default 3) to show more surrounding context in the diff.",
             func=show_diff_tool,
             args_schema=ShowDiffInput,
         ),
         SimpleTool(
             name="get_file_diff",
-            description="Get the diff for a specific file against the repository branch. Shows what has changed in this file compared to the original repository version. Use project_id from conversation context to get accurate diffs against the branch.",
+            description="Get the diff for a specific file against the repository branch. Shows what has changed in this file compared to the original repository version. BEST PRACTICES: (1) Use project_id from conversation context to get accurate diffs against the branch. (2) When changes are spread across many lines, increase context_lines parameter (default 3) to show more surrounding context in the diff.",
             func=get_file_diff_tool,
             args_schema=GetFileDiffInput,
         ),

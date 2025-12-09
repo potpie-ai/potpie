@@ -274,18 +274,27 @@ class RepoManager(IRepoManager):
         commit_id: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> bool:
+        # First, try to find via metadata entry
         entry = self._load_metadata_entry(repo_name, branch, commit_id)
-        if not entry:
-            return False
+        if entry:
+            if user_id and entry.get("user_id") != user_id:
+                return False
 
-        if user_id and entry.get("user_id") != user_id:
-            return False
+            local_path = entry.get("local_path")
+            if local_path and os.path.exists(local_path):
+                return True
 
-        local_path = entry.get("local_path")
-        if not local_path or not os.path.exists(local_path):
-            return False
+        # Fallback: Check if repository exists in expected filesystem location
+        # This handles cases where repo exists but wasn't registered in metadata
+        if not branch and not commit_id:  # Only for base repo lookups
+            expected_path = self._get_repo_local_path(repo_name)
+            if expected_path.exists() and expected_path.is_dir():
+                # Check if it's a valid git repository
+                git_dir = expected_path / ".git"
+                if git_dir.exists():
+                    return True
 
-        return True
+        return False
 
     def register_repo(
         self,
@@ -323,16 +332,28 @@ class RepoManager(IRepoManager):
         commit_id: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> Optional[str]:
+        # First, try to find via metadata entry
         entry = self._load_metadata_entry(repo_name, branch, commit_id)
-        if not entry:
-            return None
+        if entry:
+            if user_id and entry.get("user_id") != user_id:
+                return None
 
-        if user_id and entry.get("user_id") != user_id:
-            return None
+            local_path = entry.get("local_path")
+            if local_path and os.path.exists(local_path):
+                return local_path
 
-        local_path = entry.get("local_path")
-        if local_path and os.path.exists(local_path):
-            return local_path
+        # Fallback: Check if repository exists in expected filesystem location
+        # This handles cases where repo exists but wasn't registered in metadata
+        if not branch and not commit_id:  # Only for base repo lookups
+            expected_path = self._get_repo_local_path(repo_name)
+            if expected_path.exists() and expected_path.is_dir():
+                # Check if it's a valid git repository
+                git_dir = expected_path / ".git"
+                if git_dir.exists():
+                    logger.debug(
+                        f"[REPO_MANAGER] Found unregistered repo at filesystem path: {expected_path}"
+                    )
+                    return str(expected_path)
 
         return None
 

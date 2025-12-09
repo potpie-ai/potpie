@@ -58,6 +58,14 @@ def get_tool_run_message(tool_name: str):
             return "Listing todos"
         case "get_todo_summary":
             return "Getting todo summary"
+        case "add_requirements":
+            return "Updating requirements document"
+        case "delete_requirements":
+            return "Clearing requirements document"
+        case "get_requirements":
+            return "Retrieving requirements document"
+        case "think":
+            return "Processing thoughts"
         case "add_file_to_changes":
             return "Adding file to code changes"
         case "update_file_in_changes":
@@ -172,6 +180,14 @@ def get_tool_response_message(tool_name: str):
             return "Todos listed successfully"
         case "get_todo_summary":
             return "Todo summary generated successfully"
+        case "add_requirements":
+            return "Requirements document updated successfully"
+        case "delete_requirements":
+            return "Requirements document cleared successfully"
+        case "get_requirements":
+            return "Requirements document retrieved successfully"
+        case "think":
+            return "Thoughts processed successfully"
         case "add_file_to_changes":
             return "File added to code changes successfully"
         case "update_file_in_changes":
@@ -314,6 +330,18 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
             return "-> listing all todos\n"
         case "get_todo_summary":
             return "-> generating todo summary\n"
+        case "add_requirements":
+            requirements = args.get("requirements", "")
+            preview = requirements[:150] if len(requirements) > 150 else requirements
+            return f"-> updating requirements document: {preview}{'...' if len(requirements) > 150 else ''}\n"
+        case "delete_requirements":
+            return "-> clearing requirements document\n"
+        case "get_requirements":
+            return "-> retrieving requirements document\n"
+        case "think":
+            thought = args.get("thought", "")
+            preview = thought[:200] if len(thought) > 200 else thought
+            return f"-> processing thoughts: {preview}{'...' if len(thought) > 200 else ''}\n"
         case "add_file_to_changes":
             file_path = args.get("file_path", "")
             return f"-> adding file to code changes: {file_path}\n"
@@ -675,6 +703,11 @@ description:
             if isinstance(content, str):
                 return content
             return str(content)
+        case "add_requirements" | "delete_requirements" | "get_requirements":
+            # For requirement verification tools, return the content directly
+            if isinstance(content, str):
+                return content
+            return str(content)
         case tool_name if tool_name.startswith("delegate_to_"):
             # Handle delegation tools - extract agent type and return appropriate result content
             agent_type = tool_name[12:]  # Remove "delegate_to_" prefix
@@ -685,73 +718,34 @@ description:
 
 
 def get_delegation_call_message(agent_type: str) -> str:
-    """Get user-friendly message when delegating to a specialist agent"""
-    base_message = ""
+    """Get user-friendly message when delegating to a subagent"""
     match agent_type:
         case "think_execute":
-            base_message = "🧠 Delegating to Think & Execute Agent for problem-solving and execution"
+            return "🚀 Starting subagent with full tool access - streaming work in real-time..."
         case _:
-            base_message = f"🤖 Delegating to {agent_type} specialist"
-
-    # Add current todo list state to show progress
-    todo_list = _format_current_todo_list()
-    if todo_list.strip():
-        base_message += f"\n\n{todo_list}"
-    elif _todo_import_failed:
-        base_message += "\n\n📋 **Current Todo List:** (Todo management not available - dependencies missing)"
-    else:
-        base_message += "\n\n📋 **Current Todo List:** No active todos"
-
-    return base_message
+            return f"🚀 Starting {agent_type} subagent - streaming work in real-time..."
 
 
 def get_delegation_response_message(agent_type: str) -> str:
-    """Get user-friendly message when delegation completes (now with clean task summary)"""
-    base_message = ""
+    """Get user-friendly message when delegation completes"""
     match agent_type:
         case "think_execute":
-            base_message = (
-                "✅ Think & Execute Agent completed task - returning clean task summary"
-            )
+            return "✅ Subagent completed - returning task result to supervisor"
         case _:
-            base_message = f"✅ {agent_type} specialist completed task - returning clean task summary"
-
-    # Add current todo list state to show updated progress
-    todo_list = _format_current_todo_list()
-    if todo_list.strip():
-        base_message += f"\n\n{todo_list}"
-    elif _todo_import_failed:
-        base_message += "\n\n📋 **Current Todo List:** (Todo management not available - dependencies missing)"
-    else:
-        base_message += "\n\n📋 **Current Todo List:** No active todos"
-
-    return base_message
+            return f"✅ {agent_type} subagent completed - returning task result to supervisor"
 
 
 def get_delegation_info_content(
     agent_type: str, task_description: str, context: str = ""
 ) -> str:
-    """Get detailed info about what the specialist agent will do"""
-    info = ""
-    match agent_type:
-        case "think_execute":
-            info = f"**Think & Execute Task:**\n{task_description}"
-            if context:
-                info += f"\n\n**Context:**\n{context}"
-        case _:
-            info = f"**{agent_type} Task:**\n{task_description}"
-            if context:
-                info += f"\n\n**Context:**\n{context}"
-
-    # Add current todo list state for context
-    todo_list = _format_current_todo_list()
-    if todo_list.strip():
-        info += f"\n\n{todo_list}"
-    elif _todo_import_failed:
-        info += "\n\n📋 **Current Todo List:** (Todo management not available - dependencies missing)"
+    """Get detailed info about what the subagent will do"""
+    info = f"**Subagent Task:**\n{task_description}"
+    if context:
+        # Truncate context preview for display
+        context_preview = context[:500] + "..." if len(context) > 500 else context
+        info += f"\n\n**Context Provided:**\n{context_preview}"
     else:
-        info += "\n\n📋 **Current Todo List:** No active todos"
-
+        info += "\n\n⚠️ *No context provided - subagent will need to gather information independently*"
     return info
 
 
@@ -762,19 +756,13 @@ def get_delegation_info_with_todo_context(
     base_info = get_delegation_info_content(agent_type, task_description, context)
 
     if todo_id:
-        base_info += f"\n\n**Todo ID:** {todo_id}"
-        base_info += "\n*This task is being tracked in the todo management system*"
+        base_info += f"\n\n**Linked Todo:** {todo_id}"
+        base_info += "\n*Subagent work tracked in todo system*"
 
     return base_info
 
 
 def get_delegation_result_content(agent_type: str, result: str) -> str:
-    """Get formatted result from specialist agent (now returns detailed task result)"""
+    """Get formatted result from subagent - returns the task result for supervisor coordination"""
     # Display the full task result without truncation - it can be detailed and include code snippets
-    display_result = result
-
-    match agent_type:
-        case "think_execute":
-            return f"**Task Completion Result:**\n\n{display_result}"
-        case _:
-            return f"**{agent_type} Task Result:**\n\n{display_result}"
+    return f"**Subagent Result:**\n\n{result}"

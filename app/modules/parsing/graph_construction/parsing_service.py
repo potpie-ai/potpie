@@ -66,6 +66,29 @@ class ParsingService:
         project_manager = ProjectService(self.db)
         extracted_dir = None
         try:
+            # Early check: if project already exists and is READY for this commit, skip parsing
+            if cleanup_graph and repo_details.commit_id:
+                existing_project = await project_manager.get_project_from_db_by_id(
+                    project_id
+                )
+                if existing_project:
+                    is_latest = await self.parse_helper.check_commit_status(
+                        str(project_id), requested_commit_id=repo_details.commit_id
+                    )
+                    if is_latest:
+                        logger.info(
+                            "Skipping parse for project %s - already parsed at commit %s",
+                            project_id,
+                            existing_project.get("commit_id"),
+                        )
+                        await project_manager.update_project_status(
+                            project_id, ProjectStatusEnum.READY
+                        )
+                        return {
+                            "message": "Project already parsed for requested commit",
+                            "id": project_id,
+                        }
+
             if cleanup_graph:
                 neo4j_config = config_provider.get_neo4j_config()
 

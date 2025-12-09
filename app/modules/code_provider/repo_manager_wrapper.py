@@ -436,7 +436,7 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
         if not ref:
             base_path = self._repo_manager.get_repo_path(repo_name)
             if base_path and os.path.exists(base_path):
-                logger.debug(
+                logger.info(
                     f"[REPO_MANAGER] Found base repo for {repo_name} at {base_path}"
                 )
                 return base_path
@@ -461,12 +461,18 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
 
         # Try to create/access worktree from base repo
         try:
-            from git import Repo
+            from app.modules.code_provider.git_safe import safe_git_repo_operation
 
-            repo = Repo(base_path)
+            def _setup_worktree(repo):
+                # Get or create worktree for this ref
+                return self._ensure_worktree(repo, ref, commit_id is not None)
 
-            # Get or create worktree for this ref
-            worktree_path = self._ensure_worktree(repo, ref, commit_id is not None)
+            worktree_path = safe_git_repo_operation(
+                base_path,
+                _setup_worktree,
+                max_retries=2,
+                operation_name=f"setup_worktree({repo_name}@{ref})",
+            )
             logger.debug(
                 f"[REPO_MANAGER] Created/accessed worktree for {repo_name}@{ref} at {worktree_path}"
             )

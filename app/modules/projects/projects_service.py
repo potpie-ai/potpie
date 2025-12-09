@@ -203,17 +203,18 @@ class ProjectService:
         )
 
         if commit_id:
-            # If commit_id is provided, try to find exact match first
+            # If commit_id is provided, only check by commit_id (no fallback to branch)
+            # This ensures repo+commit_id maps to exactly one project
             project = query.filter(Project.commit_id == commit_id).first()
             if project:
                 logger.info(f"Found project by commit_id: {project.id}")
                 return project
-            # ✅ FIX: Fall through to branch-based lookup instead of returning None
             logger.info(
-                f"No project found with commit_id={commit_id}, falling back to branch lookup"
+                f"No project found with commit_id={commit_id}; not falling back to branch lookup."
             )
+            return None
 
-        # Fall back to branch_name lookup
+        # Fall back to branch_name lookup only if commit_id was not provided
         project = query.filter(Project.branch_name == branch_name).first()
         if project:
             logger.info(f"Found project by branch_name: {project.id}")

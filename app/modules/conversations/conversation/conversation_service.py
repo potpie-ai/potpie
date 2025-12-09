@@ -225,11 +225,31 @@ class ConversationService:
                 conversation, title, user_id, hidden
             )
 
-            asyncio.create_task(
-                CodeProviderService(self.db).get_project_structure_async(
-                    conversation.project_ids[0]
-                )
-            )
+            # Fetch project structure in background with timeout and error handling
+            # This is fire-and-forget to avoid blocking conversation creation
+            async def _fetch_structure_with_timeout():
+                try:
+                    # Add timeout to prevent hanging on large repositories
+                    # Note: This may not interrupt synchronous blocking calls, but will
+                    # prevent the task from running indefinitely
+                    await asyncio.wait_for(
+                        CodeProviderService(self.db).get_project_structure_async(
+                            conversation.project_ids[0]
+                        ),
+                        timeout=30.0,  # 30 second timeout
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"Timeout fetching project structure for project {conversation.project_ids[0]}"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Error fetching project structure for project {conversation.project_ids[0]}: {e}",
+                        exc_info=True,
+                    )
+
+            # Create background task - fire and forget
+            asyncio.create_task(_fetch_structure_with_timeout())
 
             await self._add_system_message(conversation_id, project_name, user_id)
 

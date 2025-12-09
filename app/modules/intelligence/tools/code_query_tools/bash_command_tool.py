@@ -19,6 +19,10 @@ from app.modules.utils.gvisor_runner import run_command_isolated, CommandResult
 
 logger = logging.getLogger(__name__)
 
+# Character limits for command output to prevent sending insanely large content to LLM
+MAX_OUTPUT_LENGTH = 80000  # 80k characters for stdout
+MAX_ERROR_LENGTH = 10000  # 10k characters for stderr
+
 # SECURITY: Commands that are ALWAYS blocked (write/modify operations)
 ALWAYS_BLOCKED_COMMANDS = {
     "rm",
@@ -429,12 +433,52 @@ class BashCommandTool:
                     f"(success: {result.success}) for project {project_id}"
                 )
 
-                return {
+                # Truncate output if it exceeds character limits
+                output = result.stdout
+                error = result.stderr
+                output_truncated = False
+                error_truncated = False
+
+                if len(output) > MAX_OUTPUT_LENGTH:
+                    output = output[:MAX_OUTPUT_LENGTH]
+                    output_truncated = True
+                    logger.warning(
+                        f"[BASH_COMMAND] Output truncated from {len(result.stdout)} to {MAX_OUTPUT_LENGTH} characters "
+                        f"for project {project_id}"
+                    )
+
+                if len(error) > MAX_ERROR_LENGTH:
+                    error = error[:MAX_ERROR_LENGTH]
+                    error_truncated = True
+                    logger.warning(
+                        f"[BASH_COMMAND] Error output truncated from {len(result.stderr)} to {MAX_ERROR_LENGTH} characters "
+                        f"for project {project_id}"
+                    )
+
+                # Build response with truncation notices
+                response = {
                     "success": result.success,
-                    "output": result.stdout,
-                    "error": result.stderr,
+                    "output": output,
+                    "error": error,
                     "exit_code": result.returncode,
                 }
+
+                # Add truncation notices if applicable
+                truncation_notices = []
+                if output_truncated:
+                    truncation_notices.append(
+                        f"⚠️ Output truncated: showing first {MAX_OUTPUT_LENGTH:,} characters of {len(result.stdout):,} total"
+                    )
+                if error_truncated:
+                    truncation_notices.append(
+                        f"⚠️ Error output truncated: showing first {MAX_ERROR_LENGTH:,} characters of {len(result.stderr):,} total"
+                    )
+
+                if truncation_notices:
+                    # Prepend truncation notices to output
+                    response["output"] = "\n".join(truncation_notices) + "\n\n" + response["output"]
+
+                return response
             except Exception as e:
                 logger.error(f"[BASH_COMMAND] Error executing command with gVisor: {e}")
                 return {
