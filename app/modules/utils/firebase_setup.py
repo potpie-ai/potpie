@@ -5,11 +5,21 @@ import os
 
 import firebase_admin
 from firebase_admin import credentials
+from firebase_admin.exceptions import AlreadyExistsError
 
 
 class FirebaseSetup:
     @staticmethod
     def firebase_init():
+        # Check if Firebase is already initialized
+        try:
+            firebase_admin.get_app()
+            logging.info("Firebase app already initialized.")
+            return
+        except ValueError:
+            # Firebase is not initialized, proceed with initialization
+            pass
+
         # Construct the paths for both file types.
         base64_file_path = os.path.join(os.getcwd(), "firebase_service_account.txt")
         json_file_path = os.path.join(os.getcwd(), "firebase_service_account.json")
@@ -43,7 +53,11 @@ class FirebaseSetup:
             cred = credentials.Certificate(service_account_json)
 
             # Initialize the Firebase app with the credentials.
-            firebase_admin.initialize_app(cred)
+            try:
+                firebase_admin.initialize_app(cred)
+                logging.info("Firebase app initialized successfully.")
+            except AlreadyExistsError:
+                logging.info("Firebase app already exists (initialized elsewhere).")
 
         except Exception as e:
             logging.error(f"Error loading Firebase service account credentials: {e}")

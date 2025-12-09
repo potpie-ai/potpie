@@ -7,6 +7,7 @@ from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth
 from firebase_admin.exceptions import FirebaseError
+import firebase_admin
 
 load_dotenv(override=True)
 
@@ -76,6 +77,23 @@ class AuthService:
                     headers={"WWW-Authenticate": 'Bearer realm="auth_required"'},
                 )
             try:
+                # Check if Firebase is initialized before verifying token
+                try:
+                    firebase_admin.get_app()
+                except ValueError:
+                    # Firebase is not initialized, try to initialize it
+                    logging.warning("Firebase app not initialized. Attempting to initialize...")
+                    from app.modules.utils.firebase_setup import FirebaseSetup
+                    try:
+                        FirebaseSetup.firebase_init()
+                    except Exception as init_err:
+                        logging.error(f"Failed to initialize Firebase: {str(init_err)}")
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="Firebase is not properly configured. Please check server logs.",
+                            headers={"WWW-Authenticate": 'Bearer error="server_error"'},
+                        )
+                
                 logging.info(
                     f"DEBUG: Verifying Firebase token: {credential.credentials[:20]}..."
                 )
@@ -87,6 +105,9 @@ class AuthService:
                     f"DEBUG: Token email: {decoded_token.get('email', 'unknown')}"
                 )
                 request.state.user = decoded_token
+            except HTTPException:
+                # Re-raise HTTP exceptions as-is
+                raise
             except Exception as err:
                 logging.error(f"DEBUG: Firebase token verification failed: {str(err)}")
                 raise HTTPException(
