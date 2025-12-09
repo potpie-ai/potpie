@@ -1943,7 +1943,7 @@ async def update_integration_status(
 
 
 # New endpoints using schema models
-@router.post("/create", response_model=IntegrationResponse)
+@router.post("/create", response_model=IntegrationResponse,status_code=201)
 async def create_integration(
     request: IntegrationCreateRequest,
     integrations_service: IntegrationsService = Depends(get_integrations_service),
