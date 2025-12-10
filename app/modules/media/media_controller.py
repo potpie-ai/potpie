@@ -72,20 +72,14 @@ class MediaController:
         except MediaServiceError as e:
             logger.error(f"Media service error: {str(e)}")
             raise create_media_error(
-                500,
-                MediaError.PROCESSING_ERROR,
-                "Failed to upload image",
-                str(e)
+                500, MediaError.PROCESSING_ERROR, "Failed to upload image", str(e)
             )
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"Unexpected error uploading image: {str(e)}")
             raise create_media_error(
-                500,
-                MediaError.PROCESSING_ERROR,
-                "An unexpected error occurred",
-                None
+                500, MediaError.PROCESSING_ERROR, "An unexpected error occurred", None
             )
 
     async def upload_document(
@@ -112,20 +106,14 @@ class MediaController:
         except MediaServiceError as e:
             logger.error(f"Media service error: {str(e)}")
             raise create_media_error(
-                500,
-                MediaError.PROCESSING_ERROR,
-                "Failed to upload document",
-                str(e)
+                500, MediaError.PROCESSING_ERROR, "Failed to upload document", str(e)
             )
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"Unexpected error uploading document: {str(e)}")
             raise create_media_error(
-                500,
-                MediaError.PROCESSING_ERROR,
-                "An unexpected error occurred",
-                None
+                500, MediaError.PROCESSING_ERROR, "An unexpected error occurred", None
             )
 
     async def upload_document(

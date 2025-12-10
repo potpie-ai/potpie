@@ -1,4 +1,5 @@
 """Celery tasks for attachment cleanup operations."""
+
 import logging
 
 from celery import Task
@@ -51,7 +52,7 @@ def get_orphan_attachment_stats(self: Task):
 
         return stats
 
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to get orphan stats")
         raise
     finally:

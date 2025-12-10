@@ -275,7 +275,9 @@ class MediaAPI:
         In production, cleanup runs automatically via Celery beat.
         """
         # TODO: Add admin role check
-        from app.modules.media.attachment_cleanup_service import AttachmentCleanupService
+        from app.modules.media.attachment_cleanup_service import (
+            AttachmentCleanupService,
+        )
 
         cleanup_service = AttachmentCleanupService(db)
 

@@ -35,6 +35,7 @@ class MediaServiceError(Exception):
 
 class MediaError:
     """Structured error codes for media operations"""
+
     MULTIMODAL_DISABLED = "MULTIMODAL_DISABLED"
     FILE_TOO_LARGE = "FILE_TOO_LARGE"
     UNSUPPORTED_FORMAT = "UNSUPPORTED_FORMAT"
@@ -85,10 +86,38 @@ class MediaService:
     ]
 
     CODE_FILE_EXTENSIONS = [
-        ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".cpp", ".c", ".h",
-        ".cs", ".rb", ".go", ".rs", ".php", ".swift", ".kt", ".scala",
-        ".sh", ".bash", ".sql", ".r", ".m", ".mm", ".md", ".json", ".xml",
-        ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg"
+        ".py",
+        ".js",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".java",
+        ".cpp",
+        ".c",
+        ".h",
+        ".cs",
+        ".rb",
+        ".go",
+        ".rs",
+        ".php",
+        ".swift",
+        ".kt",
+        ".scala",
+        ".sh",
+        ".bash",
+        ".sql",
+        ".r",
+        ".m",
+        ".mm",
+        ".md",
+        ".json",
+        ".xml",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".ini",
+        ".conf",
+        ".cfg",
     ]
 
     MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
@@ -492,7 +521,7 @@ class MediaService:
                 400,
                 MediaError.UNSUPPORTED_FORMAT,
                 f"Unsupported image type: {mime_type}",
-                f"Allowed types: {', '.join(self.ALLOWED_IMAGE_TYPES.keys())}"
+                f"Allowed types: {', '.join(self.ALLOWED_IMAGE_TYPES.keys())}",
             )
 
         # Check file size
@@ -501,7 +530,7 @@ class MediaService:
                 400,
                 MediaError.FILE_TOO_LARGE,
                 "Image size exceeds maximum allowed",
-                f"File: {len(file_data)} bytes, Limit: {self.MAX_IMAGE_SIZE} bytes"
+                f"File: {len(file_data)} bytes, Limit: {self.MAX_IMAGE_SIZE} bytes",
             )
 
         # Verify it's actually a valid image
@@ -511,10 +540,7 @@ class MediaService:
         except Exception as e:
             logger.warning(f"Image validation failed: {str(e)}")
             raise create_media_error(
-                400,
-                MediaError.INVALID_FILE,
-                "Invalid or corrupted image file",
-                str(e)
+                400, MediaError.INVALID_FILE, "Invalid or corrupted image file", str(e)
             )
 
     async def _process_image(

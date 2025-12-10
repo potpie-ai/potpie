@@ -406,12 +406,12 @@ const [documentPreviews, setDocumentPreviews] = useState<DocumentPreview[]>([]);
 // Separate handlers for images and documents
 const handleDocumentSelect = async (files: FileList | null) => {
   if (!files) return;
-  
-  const newDocs = Array.from(files).filter(file => 
-    !file.type.startsWith('image/') && 
+
+  const newDocs = Array.from(files).filter(file =>
+    !file.type.startsWith('image/') &&
     isSupportedDocumentType(file)
   );
-  
+
   // Validate before adding
   for (const doc of newDocs) {
     const validation = await validateDocument(doc);
@@ -432,10 +432,10 @@ const handleDocumentSelect = async (files: FileList | null) => {
   onChange={(e) => {
     const files = e.target.files;
     if (!files) return;
-    
+
     const images = Array.from(files).filter(f => f.type.startsWith('image/'));
     const docs = Array.from(files).filter(f => !f.type.startsWith('image/'));
-    
+
     if (images.length) handleImageSelect({ files: images } as any);
     if (docs.length) handleDocumentSelect({ files: docs } as any);
   }}
@@ -482,11 +482,11 @@ static async uploadDocument(
   if (!validation.valid) {
     throw new Error(validation.error);
   }
-  
+
   // 2. Upload with progress
   const formData = new FormData();
   formData.append('file', file);
-  
+
   const response = await axios.post(
     `${baseUrl}/api/v1/media/upload`,
     formData,
@@ -498,7 +498,7 @@ static async uploadDocument(
       }
     }
   );
-  
+
   return {
     id: response.data.id,
     tokenCount: validation.estimatedTokens
@@ -514,13 +514,13 @@ static async validateDocument(
   formData.append('file_size', file.size.toString());
   formData.append('file_name', file.name);
   formData.append('mime_type', file.type);
-  
+
   const response = await axios.post(
     `${baseUrl}/api/v1/media/validate-document`,
     formData,
     { headers: await getHeaders() }
   );
-  
+
   return response.data;
 }
 ```
@@ -585,15 +585,15 @@ async def chunk_document(
     """Split large documents into chunks."""
     token_counter = get_token_counter()
     chunks = []
-    
+
     # Simple sentence-based chunking
     sentences = extracted_text.split('. ')
     current_chunk = []
     current_tokens = 0
-    
+
     for sentence in sentences:
         sentence_tokens = token_counter.count_tokens(sentence, model)
-        
+
         if current_tokens + sentence_tokens > max_tokens_per_chunk:
             # Save current chunk
             chunks.append({
@@ -606,7 +606,7 @@ async def chunk_document(
         else:
             current_chunk.append(sentence)
             current_tokens += sentence_tokens
-    
+
     # Add final chunk
     if current_chunk:
         chunks.append({
@@ -614,7 +614,7 @@ async def chunk_document(
             'token_count': current_tokens,
             'chunk_index': len(chunks)
         })
-    
+
     return chunks
 ```
 
@@ -646,4 +646,3 @@ The document attachment flow has a solid foundation but requires significant UX 
 4. **Poor error handling** - Frustrating failures
 
 Addressing these issues in priority order will transform the POC into a production-ready feature that users can rely on.
-

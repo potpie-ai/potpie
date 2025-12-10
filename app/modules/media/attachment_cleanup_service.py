@@ -1,4 +1,5 @@
 """Service for cleaning up orphaned attachments."""
+
 import os
 import logging
 from datetime import datetime, timezone, timedelta
@@ -43,7 +44,9 @@ class AttachmentCleanupService:
 
         Returns dict with cleanup statistics.
         """
-        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=self.orphan_ttl_hours)
+        cutoff_time = datetime.now(timezone.utc) - timedelta(
+            hours=self.orphan_ttl_hours
+        )
 
         # Find orphaned attachments
         orphans = (
@@ -99,7 +102,9 @@ class AttachmentCleanupService:
 
                 # Also delete extracted text file if stored separately
                 if attachment.file_metadata:
-                    extracted_text_path = attachment.file_metadata.get("extracted_text_path")
+                    extracted_text_path = attachment.file_metadata.get(
+                        "extracted_text_path"
+                    )
                     if extracted_text_path:
                         try:
                             self.media_service.s3_client.delete_object(
@@ -119,7 +124,9 @@ class AttachmentCleanupService:
 
     def get_orphan_stats(self) -> dict:
         """Get statistics about orphaned attachments (for monitoring)."""
-        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=self.orphan_ttl_hours)
+        cutoff_time = datetime.now(timezone.utc) - timedelta(
+            hours=self.orphan_ttl_hours
+        )
 
         total_orphans = (
             self.db.query(MessageAttachment)
