@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db, get_async_db
 from app.modules.auth.auth_service import AuthService
+from app.modules.intelligence.provider.token_counter import get_token_counter
 from app.modules.conversations.access.access_schema import (
     RemoveAccessRequest,
     ShareChatRequest,
@@ -224,6 +225,7 @@ class ConversationAPI:
         conversation_id: str,
         content: str = Form(...),
         node_ids: Optional[str] = Form(None),
+        attachment_ids: Optional[str] = Form(None),
         images: Optional[List[UploadFile]] = File(None),
         stream: bool = Query(True, description="Whether to stream the response"),
         session_id: Optional[str] = Query(
@@ -252,8 +254,17 @@ class ConversationAPI:
                 detail="Subscription required to create a conversation.",
             )
 
-        # Process images if present
-        attachment_ids = []
+        # Parse attachment_ids from form data if provided
+        parsed_attachment_ids = []
+        if attachment_ids:
+            try:
+                parsed_attachment_ids = json.loads(attachment_ids)
+            except json.JSONDecodeError:
+                raise HTTPException(
+                    status_code=400, detail="Invalid attachment_ids format"
+                )
+
+        # Process images if present and add to attachment_ids
         if images:
             media_service = MediaService(db)
             for i, image in enumerate(images):
@@ -268,13 +279,13 @@ class ConversationAPI:
                             mime_type=image.content_type,
                             message_id=None,  # Will be linked after message creation
                         )
-                        attachment_ids.append(upload_result.id)
+                        parsed_attachment_ids.append(upload_result.id)
                     except Exception as e:
                         logger.error(
                             f"Failed to upload image {image.filename}: {str(e)}"
                         )
                         # Clean up any successfully uploaded attachments
-                        for uploaded_id in attachment_ids:
+                        for uploaded_id in parsed_attachment_ids:
                             try:
                                 await media_service.delete_attachment(uploaded_id)
                             except:
@@ -296,7 +307,7 @@ class ConversationAPI:
         message = MessageRequest(
             content=content,
             node_ids=parsed_node_ids,
-            attachment_ids=attachment_ids if attachment_ids else None,
+            attachment_ids=parsed_attachment_ids if parsed_attachment_ids else None,
         )
 
         controller = ConversationController(db, async_db, user_id, user_email)
@@ -339,6 +350,9 @@ class ConversationAPI:
         # Use parsed node_ids
         node_ids_list = parsed_node_ids or []
 
+        # Use parsed attachment_ids
+        attachment_ids_list = parsed_attachment_ids or []
+
         # Set initial "queued" status before starting the task
         redis_manager = RedisStreamManager()
         redis_manager.set_task_status(conversation_id, run_id, "queued")
@@ -362,7 +376,7 @@ class ConversationAPI:
             query=content,
             agent_id=agent_id,
             node_ids=node_ids_list,
-            attachment_ids=attachment_ids or [],
+            attachment_ids=attachment_ids_list,
         )
 
         # Store the Celery task ID for later revocation
@@ -670,6 +684,119 @@ class ConversationAPI:
             redis_stream_generator(conversation_id, session_id, cursor),
             media_type="text/event-stream",
         )
+
+
+@router.get("/conversations/{conversation_id}/context-usage")
+async def get_context_usage(
+    conversation_id: str,
+    db: Session = Depends(get_db),
+    async_db: AsyncSession = Depends(get_async_db),
+    user=Depends(AuthService.check_auth),
+):
+    """Get current context window usage for a conversation."""
+    try:
+        user_id = user.get("user_id")
+        user_email = user.get("email")
+
+        controller = ConversationController(db, async_db, user_id, user_email)
+
+        # Get conversation info
+        conversation_info = await controller.get_conversation_info(conversation_id)
+
+        # Get agent model
+        agent_id = (
+            conversation_info.agent_ids[0] if conversation_info.agent_ids else None
+        )
+        if not agent_id:
+            raise HTTPException(status_code=400, detail="No agent configured")
+
+        # Get model configuration
+        from app.modules.intelligence.agents.agents_service import AgentsService
+        from app.modules.intelligence.provider.provider_service import ProviderService
+        from app.modules.intelligence.prompts.prompt_service import PromptService
+        from app.modules.intelligence.tools.tool_service import ToolService
+
+        provider_service = ProviderService(db, user_id)
+        tool_service = ToolService(db, user_id)
+        prompt_service = PromptService(db)
+        agent_service = AgentsService(
+            db, provider_service, prompt_service, tool_service
+        )
+
+        # Get model identifier
+        agent_type = await agent_service.validate_agent_id(user_id, agent_id)
+        if agent_type == "CUSTOM_AGENT":
+            custom_agent = await agent_service.custom_agent_service.get_agent_model(
+                agent_id
+            )
+            model = (
+                provider_service.chat_config.model if custom_agent else "openai/gpt-4o"
+            )
+        else:
+            model = provider_service.chat_config.model
+
+        # Get conversation messages (last 20 for context estimation)
+        messages = await controller.get_conversation_messages(
+            conversation_id, start=0, limit=20
+        )
+
+        # Count tokens
+        token_counter = get_token_counter()
+
+        # Extract message content
+        history_content = []
+        attachment_tokens = 0
+
+        for msg in messages:
+            if msg.content:
+                history_content.append(f"{msg.type}: {msg.content}")
+
+            # Count attachment tokens
+            if msg.has_attachments and msg.attachments:
+                for attachment in msg.attachments:
+                    if attachment.file_metadata:
+                        token_count = attachment.file_metadata.get("token_count", 0)
+                        if token_count:
+                            attachment_tokens += token_count
+
+        # Calculate usage
+        history_tokens = token_counter.count_messages_tokens(history_content, model)
+        total_tokens = history_tokens + attachment_tokens
+        context_limit = token_counter.get_context_limit(model)
+        remaining = context_limit - total_tokens
+        usage_percentage = (
+            (total_tokens / context_limit * 100) if context_limit > 0 else 0
+        )
+
+        # Determine warning level
+        if usage_percentage >= 95:
+            warning_level = "critical"
+        elif usage_percentage >= 80:
+            warning_level = "approaching"
+        else:
+            warning_level = "none"
+
+        return {
+            "conversation_id": conversation_id,
+            "model": model,
+            "context_limit": context_limit,
+            "current_usage": {
+                "conversation_history": history_tokens,
+                "text_attachments": attachment_tokens,
+                "image_attachments": 0,  # Images don't count toward context
+                "code_context": 0,  # Future: count node context
+                "total": total_tokens,
+            },
+            "remaining": remaining,
+            "usage_percentage": round(usage_percentage, 2),
+            "warning_level": warning_level,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting context usage: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/conversations/share", response_model=ShareChatResponse, status_code=201)

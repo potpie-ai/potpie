@@ -153,7 +153,8 @@ class BashCommandToolInput(BaseModel):
 
 class BashCommandTool:
     name: str = "bash_command"
-    description: str = """Run bash commands (grep, awk, find, sed, etc.) on the codebase.
+    description: str = (
+        """Run bash commands (grep, awk, find, sed, etc.) on the codebase.
 
         This tool allows you to execute common Unix/bash commands directly on the repository files.
         The command will be executed in the repository's worktree directory using gVisor sandbox isolation
@@ -217,6 +218,7 @@ class BashCommandTool:
                 "working_directory": "src"
             }
         """
+    )
     args_schema: type[BaseModel] = BashCommandToolInput
 
     def __init__(self, sql_db: Session, user_id: str):

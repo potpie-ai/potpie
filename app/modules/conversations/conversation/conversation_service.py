@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
-from typing import AsyncGenerator, List, Optional, Dict, Union
+from typing import Any, AsyncGenerator, List, Optional, Dict, Union
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from uuid6 import uuid7
@@ -149,6 +149,7 @@ class ConversationService:
     async def check_conversation_access(
         self, conversation_id: str, user_email: str, firebase_user_id: str = None
     ) -> str:
+
         if not user_email:
             return ConversationAccessType.WRITE
 
@@ -673,6 +674,24 @@ class ConversationService:
                 conversation_id
             )
 
+            # Prepare text attachments
+            text_attachments = await self._prepare_text_attachments(
+                attachment_ids or []
+            )
+
+            # Build additional_context from text attachments
+            additional_context = ""
+            if text_attachments:
+                text_parts = []
+                for att_id, att_data in text_attachments.items():
+                    text_parts.append(
+                        f"=== ATTACHED FILE: {att_data['file_name']} ===\n\n{att_data['text']}\n\n"
+                    )
+                additional_context = "\n".join(text_parts)
+                logger.info(
+                    f"Added {len(text_attachments)} text attachments to context"
+                )
+
             logger.info(
                 f"conversation_id: {conversation_id} Running agent {agent_id} with query: {query}"
             )
@@ -683,6 +702,7 @@ class ConversationService:
                 )
 
             if type == "CUSTOM_AGENT":
+                nodes = [] if node_ids is None else [node.node_id for node in node_ids]
                 res = (
                     await self.agent_service.custom_agent_service.execute_agent_runtime(
                         user_id,
@@ -691,8 +711,11 @@ class ConversationService:
                             project_name=project_name,
                             curr_agent_id=str(agent_id),
                             history=validated_history[-12:],
-                            node_ids=[node.node_id for node in node_ids],
+                            node_ids=nodes,
                             query=query,
+                            image_attachments=image_attachments,
+                            context_images=context_images,
+                            additional_context=additional_context,
                         ),
                     )
                 )
@@ -715,6 +738,47 @@ class ConversationService:
                     conversation_id, MessageType.AI_GENERATED
                 )
             else:
+                # Validate context limit before sending to LLM
+                if text_attachments:
+                    from app.modules.intelligence.provider.token_counter import (
+                        get_token_counter,
+                    )
+                    from app.modules.intelligence.provider.provider_service import (
+                        ProviderService,
+                    )
+
+                    token_counter = get_token_counter()
+                    provider_service = ProviderService(self.db, user_id)
+                    model = provider_service.chat_config.model
+
+                    # Count total context
+                    history_tokens = token_counter.count_messages_tokens(
+                        validated_history, model
+                    )
+                    additional_tokens = token_counter.count_tokens(
+                        additional_context, model
+                    )
+                    query_tokens = token_counter.count_tokens(query, model)
+
+                    total_tokens = history_tokens + additional_tokens + query_tokens
+                    context_limit = token_counter.get_context_limit(model)
+
+                    if total_tokens > context_limit:
+                        logger.error(
+                            f"Context exceeds limit: {total_tokens}/{context_limit} tokens "
+                            f"(history: {history_tokens}, attachments: {additional_tokens}, query: {query_tokens})"
+                        )
+                        raise ConversationServiceError(
+                            f"Message with attachments exceeds context window. "
+                            f"Total tokens: {total_tokens}, Model limit: {context_limit}. "
+                            f"Please remove some attachments or use a model with a larger context window."
+                        )
+
+                    logger.info(
+                        f"Context usage: {total_tokens}/{context_limit} tokens "
+                        f"({round(total_tokens/context_limit*100, 1)}%)"
+                    )
+
                 # Create enhanced ChatContext with multimodal support
                 nodes = [] if node_ids is None else [node.node_id for node in node_ids]
                 chat_context = ChatContext(
@@ -726,6 +790,7 @@ class ConversationService:
                     query=query,
                     image_attachments=image_attachments,
                     context_images=context_images,
+                    additional_context=additional_context,
                 )
 
                 res = self.agent_service.execute_stream(chat_context)
@@ -868,6 +933,64 @@ class ConversationService:
             logger.error(f"Error preparing conversation context images: {str(e)}")
             return None
 
+    async def _prepare_text_attachments(
+        self, attachment_ids: List[str]
+    ) -> Dict[str, Dict[str, Any]]:
+        """Prepare text attachments for LLM context."""
+        try:
+            if not attachment_ids:
+                return {}
+
+            from app.modules.media.media_model import AttachmentType
+
+            text_attachments = {}
+            for attachment_id in attachment_ids:
+                try:
+                    # Get attachment record
+                    attachment = await self.media_service.get_attachment(attachment_id)
+                    if not attachment:
+                        logger.warning(f"Attachment {attachment_id} not found")
+                        continue
+
+                    # Check if it's a text-based attachment
+                    if attachment.attachment_type in [
+                        AttachmentType.PDF,
+                        AttachmentType.DOCUMENT,
+                        AttachmentType.SPREADSHEET,
+                        AttachmentType.CODE,
+                    ]:
+                        # Get extracted text
+                        extracted_text = await self.media_service.get_extracted_text(
+                            attachment_id
+                        )
+
+                        if extracted_text:
+                            text_attachments[attachment_id] = {
+                                "text": extracted_text,
+                                "file_name": attachment.file_name,
+                                "mime_type": attachment.mime_type,
+                                "token_count": (
+                                    attachment.file_metadata.get("token_count", 0)
+                                    if attachment.file_metadata
+                                    else 0
+                                ),
+                            }
+                            logger.info(
+                                f"Prepared text attachment {attachment_id} ({attachment.file_name})"
+                            )
+
+                except Exception as e:
+                    logger.error(
+                        f"Failed to prepare text attachment {attachment_id}: {str(e)}"
+                    )
+                    continue
+
+            return text_attachments
+
+        except Exception as e:
+            logger.error(f"Error preparing text attachments: {str(e)}")
+            return {}
+
     async def delete_conversation(self, conversation_id: str, user_id: str) -> dict:
         try:
             access_level = await self.check_conversation_access(
@@ -923,6 +1046,7 @@ class ConversationService:
     async def get_conversation_info(
         self, conversation_id: str, user_id: str
     ) -> ConversationInfoResponse:
+
         try:
             print(
                 "[conversation_service] Getting info for conversation:", conversation_id
@@ -998,6 +1122,7 @@ class ConversationService:
     async def get_conversation_messages(
         self, conversation_id: str, start: int, limit: int, user_id: str
     ) -> List[MessageResponse]:
+
         try:
             access_level = await self.check_conversation_access(
                 conversation_id, self.user_email, user_id
