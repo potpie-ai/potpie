@@ -51,6 +51,9 @@ do {
 
 Write-Host "Postgres is up - applying database migrations"
 
+# Additional wait to ensure database is fully initialized
+Start-Sleep -Seconds 5
+
 # Ensure uv is available
 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
     Write-Host "Error: uv command not found. Install uv from https://docs.astral.sh/uv/getting-started/ before running this script."
@@ -72,12 +75,12 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# Start FastAPI application (using uvicorn instead of gunicorn for Windows compatibility)
-Write-Host "Starting momentum application..."
-Start-Process -NoNewWindow powershell -ArgumentList "uv run uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload --log-level debug"
-
 # Start Celery worker
 Write-Host "Starting Celery worker"
 Start-Process -NoNewWindow powershell -ArgumentList "uv run celery -A app.celery.celery_app worker --loglevel=debug -Q ${Env:CELERY_QUEUE_NAME}_process_repository,${Env:CELERY_QUEUE_NAME}_agent_tasks -E --pool=solo"
+
+# Start FastAPI application (using uvicorn instead of gunicorn for Windows compatibility)
+Write-Host "Starting momentum application..."
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload --log-level debug
 
 Write-Host "All services started successfully!"
