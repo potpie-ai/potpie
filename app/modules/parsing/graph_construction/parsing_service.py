@@ -122,7 +122,13 @@ class ParsingService:
                     language = self.parse_helper.detect_repo_language(extracted_dir)
 
             await self.analyze_directory(
-                extracted_dir, project_id, user_id, self.db, language, user_email
+                extracted_dir,
+                project_id,
+                user_id,
+                self.db,
+                language,
+                user_email,
+                repo_details,
             )
             message = "The project has been parsed successfully"
             return {"message": message, "id": project_id}
@@ -195,6 +201,7 @@ class ParsingService:
         db,
         language: str,
         user_email: str,
+        repo_details: ParsingRequest,
     ):
         logger.info(
             f"ParsingService: Parsing project {project_id}: Analyzing directory: {extracted_dir}"
@@ -247,8 +254,12 @@ class ParsingService:
                 )
 
                 # Generate docstrings using InferenceService
-                await self.inference_service.run_inference(project_id)
-                logger.info(f"DEBUGNEO4J: After inference project {project_id}")
+                if repo_details.inference:
+                    await self.inference_service.run_inference(project_id)
+                    await self.project_service.update_project_status(
+                        project_id, ProjectStatusEnum.READY
+                    )
+                logger.debug(f"DEBUGNEO4J: After inference project {project_id}")
                 self.inference_service.log_graph_stats(project_id)
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.READY
