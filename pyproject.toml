@@ -75,7 +75,7 @@ dependencies = [
     "tqdm>=4.67.1",
     "transformers>=4.57.1",
     "tree-sitter>=0.20.4",
-    "tree-sitter-languages>=1.10.2",
+    "tree-sitter-language-pack>=0.13.0",
     "uuid6>=2025.0.1",
     "uvicorn>=0.38.0",
 ]
