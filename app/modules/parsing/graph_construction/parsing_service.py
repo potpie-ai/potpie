@@ -18,6 +18,7 @@ from app.modules.parsing.graph_construction.parsing_helper import (
     ParsingServiceError,
 )
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
+from app.modules.parsing.utils.encoding_patch import apply_encoding_patch
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
@@ -27,6 +28,8 @@ from app.modules.utils.parse_webhook_helper import ParseWebhookHelper
 from .parsing_schema import ParsingRequest
 
 logger = logging.getLogger(__name__)
+
+apply_encoding_patch()
 
 
 class ParsingService:
