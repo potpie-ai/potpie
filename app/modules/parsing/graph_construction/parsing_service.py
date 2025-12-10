@@ -5,13 +5,6 @@ import traceback
 from asyncio import create_task
 from contextlib import contextmanager
 
-# Apply encoding patch BEFORE importing blar_graph
-from app.modules.parsing.utils.encoding_patch import apply_encoding_patch
-
-apply_encoding_patch()
-
-from blar_graph.db_managers import Neo4jManager
-from blar_graph.graph_construction.core.graph_builder import GraphConstructor
 from fastapi import HTTPException
 from git import Repo
 from sqlalchemy.orm import Session
@@ -25,16 +18,18 @@ from app.modules.parsing.graph_construction.parsing_helper import (
     ParsingServiceError,
 )
 from app.modules.parsing.knowledge_graph.inference_service import InferenceService
+from app.modules.parsing.utils.encoding_patch import apply_encoding_patch
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
 from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.parse_webhook_helper import ParseWebhookHelper
-from app.modules.utils.posthog_helper import PostHogClient
 
 from .parsing_schema import ParsingRequest
 
 logger = logging.getLogger(__name__)
+
+apply_encoding_patch()
 
 
 class ParsingService:
@@ -226,56 +221,7 @@ class ParsingService:
             logger.error(f"Project with ID {project_id} not found.")
             raise HTTPException(status_code=404, detail="Project not found.")
 
-        if language in ["python", "javascript", "typescript"]:
-            graph_manager = Neo4jManager(project_id, user_id)
-            self.create_neo4j_indices(
-                graph_manager
-            )  # commented since indices are created already
-
-            try:
-                graph_constructor = GraphConstructor(user_id, extracted_dir)
-                n, r = graph_constructor.build_graph()
-                graph_manager.create_nodes(n)
-                graph_manager.create_edges(r)
-                await self.project_service.update_project_status(
-                    project_id, ProjectStatusEnum.PARSED
-                )
-                PostHogClient().send_event(
-                    user_id,
-                    "project_status_event",
-                    {"project_id": project_id, "status": "Parsed"},
-                )
-
-                # Generate docstrings using InferenceService
-                await self.inference_service.run_inference(project_id)
-                logger.info(f"DEBUGNEO4J: After inference project {project_id}")
-                self.inference_service.log_graph_stats(project_id)
-                await self.project_service.update_project_status(
-                    project_id, ProjectStatusEnum.READY
-                )
-                create_task(
-                    EmailHelper().send_email(user_email, repo_name, branch_name)
-                )
-                PostHogClient().send_event(
-                    user_id,
-                    "project_status_event",
-                    {"project_id": project_id, "status": "Ready"},
-                )
-            except Exception as e:
-                logger.error(e)
-                logger.error(traceback.format_exc())
-                await self.project_service.update_project_status(
-                    project_id, ProjectStatusEnum.ERROR
-                )
-                await ParseWebhookHelper().send_slack_notification(project_id, str(e))
-                PostHogClient().send_event(
-                    user_id,
-                    "project_status_event",
-                    {"project_id": project_id, "status": "Error"},
-                )
-            finally:
-                graph_manager.close()
-        elif language != "other":
+        if language != "other":
             try:
                 neo4j_config = config_provider.get_neo4j_config()
                 service = CodeGraphService(
