@@ -675,7 +675,9 @@ class ConversationService:
             )
 
             # Prepare text attachments
-            text_attachments = await self._prepare_text_attachments(attachment_ids or [])
+            text_attachments = await self._prepare_text_attachments(
+                attachment_ids or []
+            )
 
             # Build additional_context from text attachments
             additional_context = ""
@@ -686,7 +688,9 @@ class ConversationService:
                         f"=== ATTACHED FILE: {att_data['file_name']} ===\n\n{att_data['text']}\n\n"
                     )
                 additional_context = "\n".join(text_parts)
-                logger.info(f"Added {len(text_attachments)} text attachments to context")
+                logger.info(
+                    f"Added {len(text_attachments)} text attachments to context"
+                )
 
             logger.info(
                 f"conversation_id: {conversation_id} Running agent {agent_id} with query: {query}"
@@ -736,16 +740,24 @@ class ConversationService:
             else:
                 # Validate context limit before sending to LLM
                 if text_attachments:
-                    from app.modules.intelligence.provider.token_counter import get_token_counter
-                    from app.modules.intelligence.provider.provider_service import ProviderService
+                    from app.modules.intelligence.provider.token_counter import (
+                        get_token_counter,
+                    )
+                    from app.modules.intelligence.provider.provider_service import (
+                        ProviderService,
+                    )
 
                     token_counter = get_token_counter()
                     provider_service = ProviderService(self.db, user_id)
                     model = provider_service.chat_config.model
 
                     # Count total context
-                    history_tokens = token_counter.count_messages_tokens(validated_history, model)
-                    additional_tokens = token_counter.count_tokens(additional_context, model)
+                    history_tokens = token_counter.count_messages_tokens(
+                        validated_history, model
+                    )
+                    additional_tokens = token_counter.count_tokens(
+                        additional_context, model
+                    )
                     query_tokens = token_counter.count_tokens(query, model)
 
                     total_tokens = history_tokens + additional_tokens + query_tokens
@@ -948,19 +960,29 @@ class ConversationService:
                         AttachmentType.CODE,
                     ]:
                         # Get extracted text
-                        extracted_text = await self.media_service.get_extracted_text(attachment_id)
+                        extracted_text = await self.media_service.get_extracted_text(
+                            attachment_id
+                        )
 
                         if extracted_text:
                             text_attachments[attachment_id] = {
                                 "text": extracted_text,
                                 "file_name": attachment.file_name,
                                 "mime_type": attachment.mime_type,
-                                "token_count": attachment.file_metadata.get("token_count", 0) if attachment.file_metadata else 0,
+                                "token_count": (
+                                    attachment.file_metadata.get("token_count", 0)
+                                    if attachment.file_metadata
+                                    else 0
+                                ),
                             }
-                            logger.info(f"Prepared text attachment {attachment_id} ({attachment.file_name})")
+                            logger.info(
+                                f"Prepared text attachment {attachment_id} ({attachment.file_name})"
+                            )
 
                 except Exception as e:
-                    logger.error(f"Failed to prepare text attachment {attachment_id}: {str(e)}")
+                    logger.error(
+                        f"Failed to prepare text attachment {attachment_id}: {str(e)}"
+                    )
                     continue
 
             return text_attachments

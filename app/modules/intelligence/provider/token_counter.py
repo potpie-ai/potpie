@@ -1,4 +1,5 @@
 """Token counting service for context window management."""
+
 import logging
 from typing import Dict, List, Optional
 import tiktoken
@@ -42,7 +43,9 @@ class TokenCounter:
                 actual_encoding = encoding_map.get(encoding_name, "cl100k_base")
                 self._encoders[encoding_name] = tiktoken.get_encoding(actual_encoding)
             except Exception as e:
-                logger.warning(f"Failed to get encoding {encoding_name}: {e}, using cl100k_base")
+                logger.warning(
+                    f"Failed to get encoding {encoding_name}: {e}, using cl100k_base"
+                )
                 self._encoders[encoding_name] = tiktoken.get_encoding("cl100k_base")
 
         return self._encoders[encoding_name]
@@ -65,7 +68,7 @@ class TokenCounter:
         messages: List[str],
         model: str,
         tokens_per_message: int = 3,
-        tokens_per_name: int = 1
+        tokens_per_name: int = 1,
     ) -> int:
         """
         Count tokens in a list of message strings.
@@ -116,7 +119,7 @@ class TokenCounter:
         conversation_history: List[str],
         additional_context: str,
         attachment_tokens: int,
-        model: str
+        model: str,
     ) -> Dict[str, int]:
         """Calculate total context usage breakdown."""
         history_tokens = self.count_messages_tokens(conversation_history, model)

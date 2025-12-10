@@ -1,6 +1,7 @@
 """Text extraction service for document attachments."""
+
 import logging
-from typing import Optional, Tuple
+from typing import Tuple
 from io import BytesIO
 import chardet
 
@@ -9,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 class TextExtractionError(Exception):
     """Base exception for text extraction errors."""
+
     pass
 
 
@@ -30,6 +32,7 @@ class TextExtractionService:
         if self._pypdf is None:
             try:
                 import pypdf
+
                 self._pypdf = pypdf
             except ImportError as e:
                 raise TextExtractionError("pypdf library not installed") from e
@@ -41,6 +44,7 @@ class TextExtractionService:
         if self._docx is None:
             try:
                 import docx
+
                 self._docx = docx
             except ImportError as e:
                 raise TextExtractionError("python-docx library not installed") from e
@@ -52,16 +56,14 @@ class TextExtractionService:
         if self._pandas is None:
             try:
                 import pandas as pd
+
                 self._pandas = pd
             except ImportError as e:
                 raise TextExtractionError("pandas library not installed") from e
         return self._pandas
 
     def extract_text(
-        self,
-        file_data: bytes,
-        mime_type: str,
-        file_name: str
+        self, file_data: bytes, mime_type: str, file_name: str
     ) -> Tuple[str, dict]:
         """
         Extract text from file data.
@@ -72,11 +74,17 @@ class TextExtractionService:
         try:
             if "pdf" in mime_type:
                 return self._extract_pdf(file_data)
-            elif "word" in mime_type or "vnd.openxmlformats-officedocument.wordprocessingml" in mime_type:
+            elif (
+                "word" in mime_type
+                or "vnd.openxmlformats-officedocument.wordprocessingml" in mime_type
+            ):
                 return self._extract_docx(file_data)
             elif "csv" in mime_type or mime_type == "text/csv":
                 return self._extract_csv(file_data)
-            elif "spreadsheet" in mime_type or "vnd.openxmlformats-officedocument.spreadsheetml" in mime_type:
+            elif (
+                "spreadsheet" in mime_type
+                or "vnd.openxmlformats-officedocument.spreadsheetml" in mime_type
+            ):
                 return self._extract_xlsx(file_data)
             elif mime_type == "text/plain" or mime_type.startswith("text/"):
                 return self._extract_text_file(file_data, mime_type)
@@ -157,18 +165,21 @@ class TextExtractionService:
         try:
             # Try UTF-8 first, then detect encoding
             try:
-                csv_text = file_data.decode('utf-8')
+                csv_text = file_data.decode("utf-8")
             except UnicodeDecodeError:
                 detected = chardet.detect(file_data)
-                encoding = detected['encoding'] or 'latin-1'
+                encoding = detected["encoding"] or "latin-1"
                 csv_text = file_data.decode(encoding)
 
             # Parse with pandas for better formatting
             import io
+
             df = self.pandas.read_csv(io.StringIO(csv_text))
 
             # Convert to readable format
-            extracted_text = f"CSV Data ({len(df)} rows, {len(df.columns)} columns):\n\n"
+            extracted_text = (
+                f"CSV Data ({len(df)} rows, {len(df.columns)} columns):\n\n"
+            )
             extracted_text += df.to_string(index=False)
 
             metadata = {
@@ -219,14 +230,14 @@ class TextExtractionService:
         try:
             # Detect encoding
             detected = chardet.detect(file_data)
-            encoding = detected['encoding'] or 'utf-8'
+            encoding = detected["encoding"] or "utf-8"
 
             extracted_text = file_data.decode(encoding)
 
             metadata = {
                 "extraction_method": "decode",
                 "encoding": encoding,
-                "confidence": detected['confidence'],
+                "confidence": detected["confidence"],
             }
 
             return extracted_text, metadata
@@ -238,14 +249,42 @@ class TextExtractionService:
     def _is_code_file(self, file_name: str, mime_type: str) -> bool:
         """Check if file is a code file based on extension."""
         code_extensions = {
-            '.py', '.js', '.ts', '.tsx', '.jsx', '.java', '.cpp', '.c', '.h',
-            '.cs', '.rb', '.go', '.rs', '.php', '.swift', '.kt', '.scala',
-            '.sh', '.bash', '.sql', '.r', '.m', '.mm', '.md', '.json', '.xml',
-            '.yaml', '.yml', '.toml', '.ini', '.conf', '.cfg'
+            ".py",
+            ".js",
+            ".ts",
+            ".tsx",
+            ".jsx",
+            ".java",
+            ".cpp",
+            ".c",
+            ".h",
+            ".cs",
+            ".rb",
+            ".go",
+            ".rs",
+            ".php",
+            ".swift",
+            ".kt",
+            ".scala",
+            ".sh",
+            ".bash",
+            ".sql",
+            ".r",
+            ".m",
+            ".mm",
+            ".md",
+            ".json",
+            ".xml",
+            ".yaml",
+            ".yml",
+            ".toml",
+            ".ini",
+            ".conf",
+            ".cfg",
         }
 
-        extension = '.' + file_name.split('.')[-1].lower() if '.' in file_name else ''
-        return extension in code_extensions or 'application/json' in mime_type
+        extension = "." + file_name.split(".")[-1].lower() if "." in file_name else ""
+        return extension in code_extensions or "application/json" in mime_type
 
     def _extract_code_file(self, file_data: bytes) -> Tuple[str, dict]:
         """Extract text from code file."""
@@ -257,4 +296,4 @@ class TextExtractionService:
 
     def should_store_inline(self, extracted_text: str) -> bool:
         """Determine if extracted text should be stored inline in JSONB."""
-        return len(extracted_text.encode('utf-8')) < self.INLINE_STORAGE_THRESHOLD
+        return len(extracted_text.encode("utf-8")) < self.INLINE_STORAGE_THRESHOLD

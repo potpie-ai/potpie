@@ -34,7 +34,10 @@ class MessageAttachment(Base):
         nullable=True,
         index=True,
     )
-    attachment_type = Column(SQLAEnum(AttachmentType, values_callable=lambda x: [e.value for e in x]), nullable=False)
+    attachment_type = Column(
+        SQLAEnum(AttachmentType, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+    )
     file_name = Column(String(255), nullable=False)
     file_size = Column(Integer, nullable=False)
     mime_type = Column(String(100), nullable=False)

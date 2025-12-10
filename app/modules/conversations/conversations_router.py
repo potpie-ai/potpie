@@ -260,7 +260,9 @@ class ConversationAPI:
             try:
                 parsed_attachment_ids = json.loads(attachment_ids)
             except json.JSONDecodeError:
-                raise HTTPException(status_code=400, detail="Invalid attachment_ids format")
+                raise HTTPException(
+                    status_code=400, detail="Invalid attachment_ids format"
+                )
 
         # Process images if present and add to attachment_ids
         if images:
@@ -702,7 +704,9 @@ async def get_context_usage(
         conversation_info = await controller.get_conversation_info(conversation_id)
 
         # Get agent model
-        agent_id = conversation_info.agent_ids[0] if conversation_info.agent_ids else None
+        agent_id = (
+            conversation_info.agent_ids[0] if conversation_info.agent_ids else None
+        )
         if not agent_id:
             raise HTTPException(status_code=400, detail="No agent configured")
 
@@ -715,13 +719,19 @@ async def get_context_usage(
         provider_service = ProviderService(db, user_id)
         tool_service = ToolService(db, user_id)
         prompt_service = PromptService(db)
-        agent_service = AgentsService(db, provider_service, prompt_service, tool_service)
+        agent_service = AgentsService(
+            db, provider_service, prompt_service, tool_service
+        )
 
         # Get model identifier
         agent_type = await agent_service.validate_agent_id(user_id, agent_id)
         if agent_type == "CUSTOM_AGENT":
-            custom_agent = await agent_service.custom_agent_service.get_agent_model(agent_id)
-            model = provider_service.chat_config.model if custom_agent else "openai/gpt-4o"
+            custom_agent = await agent_service.custom_agent_service.get_agent_model(
+                agent_id
+            )
+            model = (
+                provider_service.chat_config.model if custom_agent else "openai/gpt-4o"
+            )
         else:
             model = provider_service.chat_config.model
 
@@ -754,7 +764,9 @@ async def get_context_usage(
         total_tokens = history_tokens + attachment_tokens
         context_limit = token_counter.get_context_limit(model)
         remaining = context_limit - total_tokens
-        usage_percentage = (total_tokens / context_limit * 100) if context_limit > 0 else 0
+        usage_percentage = (
+            (total_tokens / context_limit * 100) if context_limit > 0 else 0
+        )
 
         # Determine warning level
         if usage_percentage >= 95:

@@ -64,7 +64,7 @@ class MediaAPI:
         file_name: str = Form(...),
         mime_type: str = Form(...),
         db: Session = Depends(get_db),
-        async_db = Depends(get_async_db),
+        async_db=Depends(get_async_db),
         user=Depends(AuthService.check_auth),
     ):
         """
