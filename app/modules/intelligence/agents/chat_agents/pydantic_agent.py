@@ -91,7 +91,8 @@ class PydanticRagAgent(ChatAgent):
             try:
                 # Add timeout and connection handling for MCP servers
                 mcp_server_instance = MCPServerStreamableHTTP(
-                    url=mcp_server["link"], timeout=10.0  # 10 second timeout
+                    url=mcp_server["link"],
+                    timeout=10.0,  # 10 second timeout
                 )
                 mcp_toolsets.append(mcp_server_instance)
                 logger.info(
@@ -133,12 +134,12 @@ class PydanticRagAgent(ChatAgent):
             CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             {self._create_task_description(task_config=config.tasks[0],ctx=ctx)}
             """,
-            "result_type": str,
             "output_retries": 3,
             "output_type": str,
             "defer_model_check": True,
             "end_strategy": "exhaustive",
             "model_settings": {"max_tokens": 14000},
+            "instrument": True,
         }
 
         if not allow_parallel_tools:

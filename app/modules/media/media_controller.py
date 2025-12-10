@@ -7,7 +7,12 @@ from sqlalchemy.orm import Session
 import io
 
 from app.core.config_provider import config_provider
-from app.modules.media.media_service import MediaService, MediaServiceError
+from app.modules.media.media_service import (
+    MediaService,
+    MediaServiceError,
+    MediaError,
+    create_media_error,
+)
 from app.modules.media.media_schema import (
     AttachmentUploadResponse,
     AttachmentAccessResponse,
@@ -66,12 +71,62 @@ class MediaController:
 
         except MediaServiceError as e:
             logger.error(f"Media service error: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise create_media_error(
+                500,
+                MediaError.PROCESSING_ERROR,
+                "Failed to upload image",
+                str(e)
+            )
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"Unexpected error uploading image: {str(e)}")
-            raise HTTPException(status_code=500, detail="Failed to upload image")
+            raise create_media_error(
+                500,
+                MediaError.PROCESSING_ERROR,
+                "An unexpected error occurred",
+                None
+            )
+
+    async def upload_document(
+        self, file: UploadFile, message_id: Optional[str] = None
+    ) -> AttachmentUploadResponse:
+        """Upload document with feature flag check"""
+        self._check_multimodal_enabled()
+        try:
+            # Validate file
+            if not file.filename:
+                raise HTTPException(status_code=400, detail="No file provided")
+
+            # Upload using media service
+            result = await self.media_service.upload_document(
+                file=file,
+                file_name=file.filename,
+                mime_type=file.content_type or "application/octet-stream",
+                message_id=message_id,
+            )
+
+            logger.info(f"User {self.user_id} uploaded document: {result.id}")
+            return result
+
+        except MediaServiceError as e:
+            logger.error(f"Media service error: {str(e)}")
+            raise create_media_error(
+                500,
+                MediaError.PROCESSING_ERROR,
+                "Failed to upload document",
+                str(e)
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error uploading document: {str(e)}")
+            raise create_media_error(
+                500,
+                MediaError.PROCESSING_ERROR,
+                "An unexpected error occurred",
+                None
+            )
 
     async def upload_document(
         self, file: UploadFile, message_id: Optional[str] = None

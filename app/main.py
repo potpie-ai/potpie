@@ -35,7 +35,8 @@ from app.modules.users.user_service import UserService
 from app.modules.utils.firebase_setup import FirebaseSetup
 
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.DEBUG if os.getenv("LOG_LEVEL") == "DEBUG" else logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
 )
 
 
@@ -51,17 +52,43 @@ class MainApp:
             )
             exit(1)
         self.setup_sentry()
+        self.setup_phoenix_tracing()
         self.app = FastAPI()
         self.setup_cors()
         self.include_routers()
 
     def setup_sentry(self):
         if os.getenv("ENV") == "production":
-            sentry_sdk.init(
-                dsn=os.getenv("SENTRY_DSN"),
-                traces_sample_rate=0.25,
-                profiles_sample_rate=1.0,
+            try:
+                # Explicitly configure integrations to avoid auto-enabling Strawberry
+                # which causes crashes when Strawberry is not installed
+                from sentry_sdk.integrations.fastapi import FastApiIntegration
+                from sentry_sdk.integrations.logging import LoggingIntegration
+                from sentry_sdk.integrations.stdlib import StdlibIntegration
+
+                sentry_sdk.init(
+                    dsn=os.getenv("SENTRY_DSN"),
+                    traces_sample_rate=0.25,
+                    profiles_sample_rate=1.0,
+                    default_integrations=False,
+                    integrations=[
+                        FastApiIntegration(),
+                        LoggingIntegration(),
+                        StdlibIntegration(),
+                    ],
+                )
+            except Exception as e:
+                logging.warning(f"Sentry initialization failed (non-fatal): {e}")
+
+    def setup_phoenix_tracing(self):
+        try:
+            from app.modules.intelligence.tracing.phoenix_tracer import (
+                initialize_phoenix_tracing,
             )
+
+            initialize_phoenix_tracing()
+        except Exception as e:
+            logging.warning(f"Phoenix tracing initialization failed (non-fatal): {e}")
 
     def setup_cors(self):
         origins = ["*"]

@@ -22,8 +22,7 @@ class FetchFileToolInput(BaseModel):
 
 class FetchFileTool:
     name: str = "fetch_file"
-    description: str = (
-        """Fetch file content from a repository using the project_id and file path.
+    description: str = """Fetch file content from a repository using the project_id and file path.
         Returns the content between optional start_line and end_line.
         Make sure the file exists before querying for it, confirm it by checking the file structure.
         File content is hashed for caching purposes. Cache won't be used if start_line or end_line are different.
@@ -67,7 +66,6 @@ class FetchFileTool:
         4:hello_world()
 
         """
-    )
     args_schema: Type[BaseModel] = FetchFileToolInput
 
     def __init__(self, sql_db: Session, user_id: str, internal_call: bool = False):
@@ -165,8 +163,11 @@ class FetchFileTool:
                     "content": content,
                 }
 
+            # Use repo_path for local repos, project_name for remote repos
+            repo_identifier = details.get("repo_path") or details["project_name"]
+
             content = self.cp_service.get_file_content(
-                repo_name=details["project_name"],
+                repo_name=repo_identifier,
                 file_path=file_path,
                 branch_name=details["branch_name"],
                 start_line=start_line if start_line is not None else None,

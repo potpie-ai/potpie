@@ -2,11 +2,17 @@ from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 from .sentry_oauth_v2 import SentryOAuthV2
 from .linear_oauth import LinearOAuth
+from .jira_oauth import JiraOAuth
+from .confluence_oauth import ConfluenceOAuth
 from .integrations_schema import (
     SentryIntegrationStatus,
     SentrySaveRequest,
     LinearIntegrationStatus,
     LinearSaveRequest,
+    JiraSaveRequest,
+    JiraIntegrationStatus,
+    ConfluenceSaveRequest,
+    ConfluenceIntegrationStatus,
     Integration as IntegrationSchema,
     IntegrationCreateRequest,
     IntegrationUpdateRequest,
@@ -24,7 +30,9 @@ from starlette.config import Config
 import logging
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+from .token_encryption import decrypt_token
 
 
 class IntegrationsService:
@@ -35,6 +43,8 @@ class IntegrationsService:
         self.config = Config()
         self.sentry_oauth = SentryOAuthV2(self.config)
         self.linear_oauth = LinearOAuth(self.config)
+        self.jira_oauth = JiraOAuth(self.config)
+        self.confluence_oauth = ConfluenceOAuth(self.config)
 
     def _db_to_schema(self, db_integration: Integration) -> IntegrationSchema:
         """Convert database model to schema model"""
@@ -614,7 +624,7 @@ class IntegrationsService:
         )
 
     async def save_sentry_integration(
-        self, request: SentrySaveRequest
+        self, request: SentrySaveRequest, user_id: str
     ) -> Dict[str, Any]:
         """Save Sentry integration with authorization code (backend handles token exchange)"""
         try:
@@ -716,21 +726,19 @@ class IntegrationsService:
             # Create scope data from organization information
             org_info = tokens["organization"]
 
-            # Check if this Sentry account is already integrated
-            sentry_user_id = tokens.get("user", {}).get("id")
-            if sentry_user_id:
-                existing_integration = await self.check_existing_sentry_integration(
-                    org_info["slug"], sentry_user_id
+            # Check if this Potpie user already integrated this Sentry org
+            existing_integration = await self.check_existing_sentry_integration(
+                org_info["slug"], user_id
+            )
+            if existing_integration:
+                logging.warning(
+                    f"Sentry account (org: {org_info['slug']}, user: {user_id}) is already integrated: {existing_integration['integration_id']}"
                 )
-                if existing_integration:
-                    logging.warning(
-                        f"Sentry account (org: {org_info['slug']}, user: {sentry_user_id}) is already integrated: {existing_integration['integration_id']}"
-                    )
-                    raise Exception(
-                        f"Sentry account is already integrated. "
-                        f"Existing integration ID: {existing_integration['integration_id']}. "
-                        f"Please delete the existing integration first if you want to reconnect."
-                    )
+                raise Exception(
+                    f"Sentry account is already integrated. "
+                    f"Existing integration ID: {existing_integration['integration_id']}. "
+                    f"Please delete the existing integration first if you want to reconnect."
+                )
 
             scope_data = ScopeData(
                 org_slug=org_info["slug"],
@@ -762,11 +770,11 @@ class IntegrationsService:
             setattr(
                 db_integration,
                 "unique_identifier",
-                f"{org_info['slug']}-{tokens.get('user', {}).get('id', 'unknown')}",
+                f"{org_info['slug']}-{user_id}",  # Use Potpie user_id for uniqueness
             )
             setattr(
-                db_integration, "created_by", tokens.get("user", {}).get("id", "system")
-            )  # Use actual user ID from OAuth
+                db_integration, "created_by", user_id
+            )  # Use Potpie user_id, not Sentry OAuth user ID
             setattr(db_integration, "created_at", created_at)
             setattr(db_integration, "updated_at", created_at)
 
@@ -836,7 +844,7 @@ class IntegrationsService:
             db_integration = (
                 self.db.query(Integration)
                 .filter(Integration.integration_type == "linear")
-                .filter(Integration.active == True)
+                .filter(Integration.active == True)  # noqa: E712
                 .filter(Integration.unique_identifier == organization_id)
                 .first()
             )
@@ -859,9 +867,11 @@ class IntegrationsService:
             )
             return None
 
-    async def get_all_integrations(self) -> Dict[str, Dict[str, Any]]:
-        """Get all integrations from database (legacy method)"""
-        db_integrations = self.db.query(Integration).all()
+    async def get_integrations_by_user(self, user_id: str) -> Dict[str, Dict[str, Any]]:
+        """Get all integrations created by a specific user"""
+        db_integrations = (
+            self.db.query(Integration).filter(Integration.created_by == user_id).all()
+        )
         return {
             str(integration.integration_id): self._db_to_dict(integration)
             for integration in db_integrations
@@ -923,6 +933,10 @@ class IntegrationsService:
 
                 logging.info(f"Deleting integration: {integration_details}")
 
+                # Clean up Jira webhooks if this is a Jira integration
+                if db_integration.integration_type == "jira":
+                    await self._cleanup_jira_webhooks(db_integration)
+
                 # Perform the deletion
                 self.db.delete(db_integration)
                 self.db.commit()
@@ -938,6 +952,73 @@ class IntegrationsService:
             logging.error(f"Error deleting integration {integration_id}: {str(e)}")
             self.db.rollback()
             return False
+
+    async def _cleanup_jira_webhooks(self, db_integration: Integration) -> None:
+        """Clean up all registered Jira webhooks for an integration before deletion"""
+        try:
+            metadata = db_integration.integration_metadata or {}
+            webhooks = metadata.get("webhooks", [])
+
+            if not webhooks:
+                logging.info("No webhooks to clean up for Jira integration")
+                return
+
+            # Get access token and site_id from auth_data column (not metadata)
+            auth_data = db_integration.auth_data or {}
+            access_token = auth_data.get("access_token")
+
+            # Get site_id from scope_data or metadata
+            scope_data = db_integration.scope_data or {}
+            site_id = scope_data.get("org_slug") or metadata.get("site_id")
+
+            if not access_token or not site_id:
+                logging.warning(
+                    f"Cannot cleanup webhooks: missing access_token or site_id for integration {db_integration.integration_id}"
+                )
+                logging.debug(
+                    f"auth_data: {auth_data}, scope_data: {scope_data}, metadata: {metadata}"
+                )
+                return
+
+            access_token = decrypt_token(access_token)
+
+            # Delete each webhook
+            deleted_count = 0
+            failed_count = 0
+
+            for webhook in webhooks:
+                webhook_id = webhook.get("id")
+                if webhook_id:
+                    try:
+                        success = await self.jira_oauth.delete_webhook(
+                            cloud_id=site_id,
+                            access_token=access_token,
+                            webhook_id=str(webhook_id),
+                        )
+                        if success:
+                            deleted_count += 1
+                            logging.info(
+                                f"Deleted Jira webhook {webhook_id} for integration {db_integration.integration_id}"
+                            )
+                        else:
+                            failed_count += 1
+                            logging.warning(
+                                f"Failed to delete Jira webhook {webhook_id}"
+                            )
+                    except Exception as e:
+                        failed_count += 1
+                        logging.error(
+                            f"Error deleting Jira webhook {webhook_id}: {str(e)}"
+                        )
+
+            logging.info(
+                f"Webhook cleanup complete for integration {db_integration.integration_id}: "
+                f"{deleted_count} deleted, {failed_count} failed"
+            )
+
+        except Exception as e:
+            logging.error(f"Error during webhook cleanup: {str(e)}")
+            # Don't raise - we still want to delete the integration even if webhook cleanup fails
 
     async def update_integration_status(
         self, integration_id: str, active: bool
@@ -1086,12 +1167,15 @@ class IntegrationsService:
         integration_type: Optional[IntegrationType] = None,
         status: Optional[IntegrationStatus] = None,
         active: Optional[bool] = None,
+        user_id: Optional[str] = None,
     ) -> IntegrationListResponse:
         """List integrations using schema models with filtering"""
         try:
             query = self.db.query(Integration)
 
             # Apply filters
+            if user_id is not None:
+                query = query.filter(Integration.created_by == user_id)
             if integration_type is not None:
                 query = query.filter(
                     Integration.integration_type == integration_type.value
@@ -1225,6 +1309,10 @@ class IntegrationsService:
                 f"Deleting integration (schema): integration_id='{integration_schema.integration_id}', name='{integration_schema.name}', type='{integration_schema.integration_type}', status='{integration_schema.status}', created_by='{integration_schema.created_by}', created_at='{integration_schema.created_at}'"
             )
 
+            # Clean up Jira webhooks if this is a Jira integration
+            if db_integration.integration_type == "jira":
+                await self._cleanup_jira_webhooks(db_integration)
+
             # Delete from database
             self.db.delete(db_integration)
             self.db.commit()
@@ -1259,6 +1347,25 @@ class IntegrationsService:
                 "logged_at": time.time(),
             }
 
+    async def log_jira_webhook(self, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Log Jira webhook data for debugging and processing"""
+        try:
+            # Minimal transformation for now; we store raw payload and timestamp
+            return {
+                "status": "success",
+                "message": "Jira webhook logged successfully",
+                "logged_at": time.time(),
+                "webhook_data": webhook_data,
+            }
+
+        except Exception as e:
+            logging.error(f"Error logging Jira webhook: {str(e)}")
+            return {
+                "status": "error",
+                "message": f"Failed to log Jira webhook: {str(e)}",
+                "logged_at": time.time(),
+            }
+
     # Linear OAuth methods
     async def get_linear_integration_status(
         self, user_id: str
@@ -1284,6 +1391,10 @@ class IntegrationsService:
         """Get the Linear OAuth integration instance"""
         return self.linear_oauth
 
+    def get_jira_oauth_instance(self) -> JiraOAuth:
+        """Get the Jira OAuth integration instance"""
+        return self.jira_oauth
+
     async def validate_linear_connection(self, user_id: str) -> bool:
         """Validate if a user has a valid Linear connection"""
         return self.linear_oauth.token_store.is_token_valid(user_id)
@@ -1291,6 +1402,37 @@ class IntegrationsService:
     async def get_linear_token_info(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Get Linear token information for a user (for debugging)"""
         return self.linear_oauth.token_store.get_tokens(user_id)
+
+    async def get_jira_integration_by_site_id(
+        self, site_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get Jira integration by site ID (cloud ID) using unique_identifier"""
+        try:
+            # Query for integration using prefixed site_id as unique_identifier
+            unique_id = f"jira-{site_id}"
+            db_integration = (
+                self.db.query(Integration)
+                .filter(Integration.integration_type == "jira")
+                .filter(Integration.active == True)  # noqa: E712
+                .filter(Integration.unique_identifier == unique_id)
+                .first()
+            )
+
+            if db_integration:
+                logging.info(
+                    f"Found Jira integration {db_integration.integration_id} "
+                    f"by site_id {site_id}"
+                )
+                return self._db_to_dict(db_integration)
+
+            logging.warning(f"No Jira integration found for site {site_id}")
+            return None
+
+        except Exception as e:
+            logging.error(
+                f"Error looking up Jira integration by site ID {site_id}: {str(e)}"
+            )
+            return None
 
     async def check_existing_linear_integration(
         self, org_id: str
@@ -1355,8 +1497,36 @@ class IntegrationsService:
             logging.error(f"Error checking for existing Sentry integration: {str(e)}")
             return None
 
+    async def check_existing_jira_integration(
+        self, site_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Check if a Jira site is already integrated"""
+        try:
+            unique_id = f"jira-{site_id}"
+            existing_integration = (
+                self.db.query(Integration)
+                .filter(
+                    Integration.integration_type == IntegrationType.JIRA.value,
+                    Integration.unique_identifier == unique_id,
+                )
+                .first()
+            )
+
+            if existing_integration:
+                logging.info(
+                    f"Found existing Jira integration for site {site_id}: {existing_integration.integration_id}"
+                )
+                return self._db_to_dict(existing_integration)
+
+            logging.info(f"No existing Jira integration found for site {site_id}")
+            return None
+
+        except Exception as e:
+            logging.error(f"Error checking for existing Jira integration: {str(e)}")
+            return None
+
     async def save_linear_integration(
-        self, request: LinearSaveRequest
+        self, request: LinearSaveRequest, user_id: str
     ) -> Dict[str, Any]:
         """Save Linear integration with authorization code (backend handles token exchange)"""
         try:
@@ -1515,7 +1685,7 @@ class IntegrationsService:
             setattr(
                 db_integration,
                 "created_by",
-                user_info.get("id", "system") if user_info else "system",
+                user_id,  # Use Potpie user_id, not Linear OAuth user ID
             )
             setattr(db_integration, "created_at", created_at)
             setattr(db_integration, "updated_at", created_at)
@@ -1636,3 +1806,887 @@ class IntegrationsService:
             logging.error(f"Error saving integration: {str(e)}")
             self.db.rollback()
             raise Exception(f"Failed to save integration: {str(e)}")
+
+    async def save_jira_integration(
+        self, request: JiraSaveRequest, user_id: str
+    ) -> Dict[str, Any]:
+        """Save Jira integration with authorization code"""
+        try:
+            from .token_encryption import encrypt_token
+
+            if not request.code or len(request.code) < 20:
+                raise Exception("Invalid authorization code format")
+
+            tokens = await self.jira_oauth.exchange_code_for_tokens(
+                request.code, request.redirect_uri
+            )
+
+            access_token = tokens.get("access_token")
+
+            if not access_token:
+                raise Exception("Failed to obtain access token from OAuth exchange")
+
+            resources = await self.jira_oauth.get_accessible_resources(access_token)
+            if not resources:
+                raise Exception("No accessible Jira resources returned for this user")
+
+            resource = resources[0]
+            site_id = resource.get("id")
+            site_name = resource.get("name", "Jira Site")
+            site_url = resource.get("url", "")
+
+            if site_id:
+                existing_integration = await self.check_existing_jira_integration(
+                    site_id
+                )
+                if existing_integration:
+                    raise Exception(
+                        "This Jira site is already connected. Please disconnect it before reconnecting."
+                    )
+
+            integration_id = str(uuid.uuid4())
+
+            try:
+                created_at = datetime.fromisoformat(
+                    request.timestamp.replace("Z", "+00:00")
+                )
+            except ValueError:
+                created_at = datetime.utcnow()
+
+            expires_at = None
+            if tokens.get("expires_at"):
+                expires_at = datetime.fromtimestamp(
+                    tokens["expires_at"], tz=timezone.utc
+                )
+            else:
+                expires_at = datetime.utcnow() + timedelta(
+                    seconds=tokens.get("expires_in", 3600)
+                )
+
+            encrypted_access_token = encrypt_token(access_token)
+            refresh_token = tokens.get("refresh_token")
+            encrypted_refresh_token = (
+                encrypt_token(refresh_token) if refresh_token else None
+            )
+
+            auth_data = AuthData(
+                access_token=encrypted_access_token,
+                refresh_token=encrypted_refresh_token,
+                token_type=tokens.get("token_type", "Bearer"),
+                expires_at=expires_at,
+                scope=tokens.get("scope", self.jira_oauth.default_scope),
+                code=None,
+            )
+
+            scope_data = ScopeData(
+                org_slug=site_id,
+                installation_id=None,
+                workspace_id=None,
+                project_id=None,
+            )
+
+            instance_name = request.instance_name or site_name
+
+            metadata = IntegrationMetadata(
+                instance_name=instance_name,
+                created_via="oauth",
+                description=f"Jira integration for {site_name}",
+                version=None,
+                tags=["jira"],
+            )
+
+            metadata_dict = metadata.model_dump(mode="json")
+            if site_url:
+                metadata_dict["site_url"] = site_url
+            metadata_dict["site_name"] = site_name
+            if site_id:
+                metadata_dict["site_id"] = site_id
+
+            # Cache tokens in in-memory store for compatibility endpoints
+            self.jira_oauth.token_store.store_tokens(
+                user_id,
+                {
+                    "access_token": access_token,
+                    "refresh_token": tokens.get("refresh_token"),
+                    "scope": tokens.get("scope"),
+                    "expires_at": tokens.get("expires_at"),
+                },
+            )
+
+            # Attempt to register a webhook on the Jira site so Atlassian will push events to us
+            try:
+                # Determine webhook callback URL from config or fallback to constructed URL
+                config = self.config
+                webhook_callback = config("JIRA_WEBHOOK_CALLBACK_URL", default=None)
+
+                if not webhook_callback:
+                    # Try to build based on API host if configured
+                    api_host = config("API_BASE_URL", default=None)
+                    if api_host:
+                        webhook_callback = (
+                            f"{api_host}/api/v1/integrations/jira/webhook"
+                        )
+
+                # Only create webhook if we have a callback URL
+                if webhook_callback and site_id and access_token:
+                    try:
+                        logging.info(
+                            "Registering Jira webhook for site %s to %s",
+                            site_id,
+                            webhook_callback,
+                        )
+                        webhook_resp = await self.jira_oauth.create_webhook(
+                            cloud_id=site_id,
+                            access_token=access_token,
+                            webhook_url=webhook_callback,
+                            events=[
+                                "jira:issue_created",
+                                "jira:issue_updated",
+                                "comment_created",
+                            ],
+                            name=f"Potpie webhook for {instance_name}",
+                        )
+
+                        # persist webhook id in metadata if available
+                        webhook_id = None
+                        if isinstance(webhook_resp, dict):
+                            # OAuth webhook response format: {"webhookRegistrationResult": [{"createdWebhookId": 1}]}
+                            registration_result = webhook_resp.get(
+                                "webhookRegistrationResult", []
+                            )
+                            if (
+                                registration_result
+                                and isinstance(registration_result, list)
+                                and len(registration_result) > 0
+                            ):
+                                webhook_id = registration_result[0].get(
+                                    "createdWebhookId"
+                                )
+
+                            # Fallback to other formats
+                            if not webhook_id:
+                                if webhook_resp.get("created") and isinstance(
+                                    webhook_resp.get("created"), list
+                                ):
+                                    webhook_id = webhook_resp["created"][0].get("id")
+                                else:
+                                    webhook_id = webhook_resp.get(
+                                        "id"
+                                    ) or webhook_resp.get("self")
+
+                        if webhook_id:
+                            metadata_dict.setdefault("webhooks", [])
+                            metadata_dict["webhooks"].append(
+                                {
+                                    "id": webhook_id,
+                                    "site_id": site_id,
+                                    "url": webhook_callback,
+                                }
+                            )
+                            logging.info(
+                                f"Stored webhook ID {webhook_id} in integration metadata"
+                            )
+
+                    except Exception as wh_exc:
+                        logging.warning(
+                            "Failed to register Jira webhook for site %s: %s",
+                            site_id,
+                            str(wh_exc),
+                        )
+            except Exception as e:
+                logging.error(f"Error during Jira webhook registration: {str(e)}")
+
+            db_integration = Integration()
+            setattr(db_integration, "integration_id", integration_id)
+            setattr(db_integration, "name", instance_name)
+            setattr(db_integration, "integration_type", IntegrationType.JIRA.value)
+            setattr(db_integration, "status", IntegrationStatus.ACTIVE.value)
+            setattr(db_integration, "active", True)
+            setattr(db_integration, "auth_data", auth_data.model_dump(mode="json"))
+            setattr(db_integration, "scope_data", scope_data.model_dump(mode="json"))
+            setattr(db_integration, "integration_metadata", metadata_dict)
+            setattr(
+                db_integration,
+                "unique_identifier",
+                f"jira-{site_id}" if site_id else f"jira-{integration_id}",
+            )
+            setattr(db_integration, "created_by", user_id)
+            setattr(db_integration, "created_at", created_at)
+            setattr(db_integration, "updated_at", created_at)
+
+            self.db.add(db_integration)
+            self.db.commit()
+            self.db.refresh(db_integration)
+
+            return {
+                "integration_id": integration_id,
+                "instance_name": instance_name,
+                "status": "active",
+                "integration_type": request.integration_type,
+                "site_id": site_id,
+                "site_name": site_name,
+                "site_url": site_url,
+                "created_at": created_at.isoformat(),
+                "has_tokens": True,
+                "requires_oauth": False,
+            }
+
+        except Exception as e:
+            logging.error(f"Error saving Jira integration: {str(e)}")
+            self.db.rollback()
+            raise Exception(f"Failed to save Jira integration: {str(e)}")
+
+    async def _get_jira_context(
+        self, integration_id: str, auto_refresh: bool = True
+    ) -> Dict[str, Any]:
+        """Retrieve decrypted token and site information for a Jira integration.
+
+        Args:
+            integration_id: The integration ID to fetch context for
+            auto_refresh: If True, automatically refresh expired tokens
+        """
+        db_integration = (
+            self.db.query(Integration)
+            .filter(Integration.integration_id == integration_id)
+            .first()
+        )
+
+        if not db_integration:
+            raise Exception(f"Integration not found: {integration_id}")
+
+        if db_integration.integration_type != IntegrationType.JIRA.value:
+            raise Exception(f"Integration {integration_id} is not a Jira integration")
+
+        auth_data = getattr(db_integration, "auth_data", {}) or {}
+        encrypted_token = auth_data.get("access_token")
+        encrypted_refresh_token = auth_data.get("refresh_token")
+
+        if not encrypted_token:
+            raise Exception("No access token stored for this integration")
+
+        access_token = decrypt_token(encrypted_token)
+
+        # Check if token is expired and refresh if needed
+        if auto_refresh:
+            expires_at = auth_data.get("expires_at")
+            token_expired = False
+
+            if expires_at:
+                if isinstance(expires_at, str):
+                    try:
+                        expires_at = datetime.fromisoformat(
+                            expires_at.replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        expires_at = None
+
+                if expires_at and datetime.now(timezone.utc) >= expires_at:
+                    token_expired = True
+
+            if token_expired and encrypted_refresh_token:
+                logging.info(
+                    f"Access token expired for integration {integration_id}, refreshing..."
+                )
+                try:
+                    refresh_token = decrypt_token(encrypted_refresh_token)
+                    new_tokens = await self.jira_oauth.refresh_access_token(
+                        refresh_token
+                    )
+
+                    # Update tokens in database
+                    from .token_encryption import encrypt_token
+
+                    auth_data["access_token"] = encrypt_token(
+                        new_tokens["access_token"]
+                    )
+                    if new_tokens.get("refresh_token"):
+                        auth_data["refresh_token"] = encrypt_token(
+                            new_tokens["refresh_token"]
+                        )
+                    auth_data["expires_at"] = datetime.fromtimestamp(
+                        new_tokens["expires_at"], tz=timezone.utc
+                    ).isoformat()
+
+                    setattr(db_integration, "auth_data", auth_data)
+                    setattr(db_integration, "updated_at", datetime.utcnow())
+                    self.db.commit()
+
+                    access_token = new_tokens["access_token"]
+                    logging.info(
+                        f"Successfully refreshed token for integration {integration_id}"
+                    )
+                except Exception as e:
+                    logging.error(f"Failed to refresh Jira token: {str(e)}")
+                    raise Exception(f"Failed to refresh expired token: {str(e)}")
+
+        metadata = getattr(db_integration, "integration_metadata", {}) or {}
+        scope_data = getattr(db_integration, "scope_data", {}) or {}
+
+        site_id = metadata.get("site_id") or scope_data.get("org_slug")
+        site_url = metadata.get("site_url") or metadata.get("siteUrl")
+        site_name = metadata.get("site_name")
+
+        if not site_id:
+            raise Exception("Jira site identifier not available for integration")
+
+        return {
+            "access_token": access_token,
+            "site_id": site_id,
+            "site_url": site_url,
+            "site_name": site_name,
+            "integration": db_integration,
+        }
+
+    async def get_jira_accessible_resources(
+        self, integration_id: str
+    ) -> Dict[str, Any]:
+        """Call Atlassian API to list accessible resources."""
+        context = await self._get_jira_context(integration_id)
+        access_token = context["access_token"]
+
+        try:
+            resources = await self.jira_oauth.get_accessible_resources(access_token)
+            return {
+                "resources": resources,
+                "site_id": context.get("site_id"),
+                "site_url": context.get("site_url"),
+            }
+        except Exception as e:
+            logging.error(
+                f"Failed to fetch Jira accessible resources for {integration_id}: {str(e)}"
+            )
+            raise
+
+    async def get_jira_projects(
+        self, integration_id: str, start_at: int = 0, max_results: int = 50
+    ) -> Dict[str, Any]:
+        """Fetch Jira projects available to the integration."""
+        context = await self._get_jira_context(integration_id)
+        access_token = context["access_token"]
+        site_id = context["site_id"]
+
+        url = f"{self.jira_oauth.API_BASE_URL}/ex/jira/{site_id}/rest/api/3/project/search"
+
+        params = {"startAt": start_at, "maxResults": max_results}
+
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                url,
+                params=params,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/json",
+                },
+            )
+
+        if response.status_code != 200:
+            logging.error(
+                "Failed to fetch Jira projects (%s): %s",
+                response.status_code,
+                response.text,
+            )
+            raise Exception(
+                f"Failed to fetch Jira projects: {response.status_code} {response.text}"
+            )
+
+        data = response.json()
+        data.update(
+            {
+                "site_id": site_id,
+                "site_url": context.get("site_url"),
+                "site_name": context.get("site_name"),
+            }
+        )
+        return data
+
+    async def get_jira_project_details(
+        self, integration_id: str, project_key_or_id: str
+    ) -> Dict[str, Any]:
+        """Fetch details for a single Jira project."""
+        context = await self._get_jira_context(integration_id)
+        access_token = context["access_token"]
+        site_id = context["site_id"]
+
+        url = f"{self.jira_oauth.API_BASE_URL}/ex/jira/{site_id}/rest/api/3/project/{project_key_or_id}"
+
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                url,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/json",
+                },
+            )
+
+        if response.status_code != 200:
+            logging.error(
+                "Failed to fetch Jira project details (%s): %s",
+                response.status_code,
+                response.text,
+            )
+            raise Exception(
+                f"Failed to fetch Jira project details: {response.status_code}"
+            )
+
+        data = response.json()
+        data.update(
+            {
+                "site_id": site_id,
+                "site_url": context.get("site_url"),
+                "site_name": context.get("site_name"),
+            }
+        )
+        return data
+
+    async def get_jira_integration_status(self, user_id: str) -> JiraIntegrationStatus:
+        """Return Jira integration status for a user."""
+        try:
+            db_integration = (
+                self.db.query(Integration)
+                .filter(Integration.integration_type == IntegrationType.JIRA.value)
+                .filter(Integration.created_by == user_id)
+                .filter(Integration.active == True)  # noqa: E712
+                .order_by(Integration.created_at.desc())
+                .first()
+            )
+
+            if not db_integration:
+                return JiraIntegrationStatus(user_id=user_id, is_connected=False)
+
+            auth_data = getattr(db_integration, "auth_data", {}) or {}
+
+            expires_at_value = auth_data.get("expires_at")
+            expires_at = None
+            if expires_at_value:
+                if isinstance(expires_at_value, datetime):
+                    expires_at = expires_at_value
+                else:
+                    try:
+                        expires_at = datetime.fromisoformat(
+                            str(expires_at_value).replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        expires_at = None
+
+            scope = auth_data.get("scope")
+
+            return JiraIntegrationStatus(
+                user_id=user_id,
+                is_connected=True,
+                connected_at=db_integration.created_at,
+                scope=scope,
+                expires_at=expires_at,
+            )
+
+        except Exception as e:
+            logging.error(f"Error fetching Jira integration status: {str(e)}")
+            return JiraIntegrationStatus(user_id=user_id, is_connected=False)
+
+    async def deactivate_jira_integrations_for_user(self, user_id: str) -> int:
+        """Deactivate Jira integrations created by the user and cleanup their webhooks."""
+        try:
+            # First, get all active integrations to cleanup webhooks
+            integrations_to_deactivate = (
+                self.db.query(Integration)
+                .filter(Integration.integration_type == IntegrationType.JIRA.value)
+                .filter(Integration.created_by == user_id)
+                .filter(Integration.active == True)  # noqa: E712
+                .all()
+            )
+
+            # Cleanup webhooks for each integration
+            for db_integration in integrations_to_deactivate:
+                try:
+                    await self._cleanup_jira_webhooks(db_integration)
+                    logging.info(
+                        f"Cleaned up webhooks for integration {db_integration.integration_id}"
+                    )
+                except Exception as webhook_error:
+                    logging.error(
+                        f"Failed to cleanup webhooks for integration {db_integration.integration_id}: {str(webhook_error)}"
+                    )
+                    # Continue with deactivation even if webhook cleanup fails
+
+            # Now deactivate the integrations
+            updated = (
+                self.db.query(Integration)
+                .filter(Integration.integration_type == IntegrationType.JIRA.value)
+                .filter(Integration.created_by == user_id)
+                .filter(Integration.active == True)  # noqa: E712
+                .update(
+                    {
+                        "active": False,
+                        "status": IntegrationStatus.INACTIVE.value,
+                        "updated_at": datetime.utcnow(),
+                    },
+                    synchronize_session=False,
+                )
+            )
+
+            self.db.commit()
+            return updated or 0
+        except Exception as e:
+            logging.error(
+                f"Error deactivating Jira integrations for {user_id}: {str(e)}"
+            )
+            self.db.rollback()
+            return 0
+
+    async def save_confluence_integration(
+        self, request: ConfluenceSaveRequest, user_id: str
+    ) -> Dict[str, Any]:
+        """Save Confluence integration with authorization code (associate with user_id)"""
+        try:
+            from .token_encryption import encrypt_token
+
+            if not request.code or len(request.code) < 20:
+                raise Exception("Invalid authorization code format")
+
+            tokens = await self.confluence_oauth.exchange_code_for_tokens(
+                request.code, request.redirect_uri
+            )
+
+            access_token = tokens.get("access_token")
+
+            if not access_token:
+                raise Exception("Failed to obtain access token from OAuth exchange")
+
+            resources = await self.confluence_oauth.get_accessible_resources(
+                access_token
+            )
+            if not resources:
+                raise Exception(
+                    "No accessible Confluence resources returned for this user"
+                )
+
+            resource = resources[0]
+            site_id = resource.get("id")
+            site_name = resource.get("name", "Confluence Site")
+            site_url = resource.get("url", "")
+
+            if site_id:
+                existing_integration = await self.check_existing_confluence_integration(
+                    site_id
+                )
+                if existing_integration:
+                    raise Exception(
+                        "This Confluence site is already connected. Please disconnect it before reconnecting."
+                    )
+
+            integration_id = str(uuid.uuid4())
+
+            try:
+                created_at = datetime.fromisoformat(
+                    request.timestamp.replace("Z", "+00:00")
+                )
+            except ValueError:
+                created_at = datetime.utcnow()
+
+            expires_at = None
+            if tokens.get("expires_at"):
+                expires_at = datetime.fromtimestamp(
+                    tokens["expires_at"], tz=timezone.utc
+                )
+            else:
+                expires_at = datetime.utcnow() + timedelta(
+                    seconds=tokens.get("expires_in", 3600)
+                )
+
+            encrypted_access_token = encrypt_token(access_token)
+            refresh_token = tokens.get("refresh_token")
+            encrypted_refresh_token = (
+                encrypt_token(refresh_token) if refresh_token else None
+            )
+
+            auth_data = AuthData(
+                access_token=encrypted_access_token,
+                refresh_token=encrypted_refresh_token,
+                token_type=tokens.get("token_type", "Bearer"),
+                expires_at=expires_at,
+                scope=tokens.get("scope", self.confluence_oauth.default_scope),
+                code=None,
+            )
+
+            scope_data = ScopeData(
+                org_slug=site_id,
+                installation_id=None,
+                workspace_id=None,
+                project_id=None,
+            )
+
+            instance_name = request.instance_name or site_name
+
+            metadata = IntegrationMetadata(
+                instance_name=instance_name,
+                created_via="oauth",
+                description=f"Confluence integration for {site_name}",
+                version=None,
+                tags=["confluence"],
+            )
+
+            metadata_dict = metadata.model_dump(mode="json")
+            if site_url:
+                metadata_dict["site_url"] = site_url
+            metadata_dict["site_name"] = site_name
+            if site_id:
+                metadata_dict["site_id"] = site_id
+
+            # Cache tokens in in-memory store for compatibility endpoints
+            self.confluence_oauth.token_store.store_tokens(
+                user_id,
+                {
+                    "access_token": access_token,
+                    "refresh_token": tokens.get("refresh_token"),
+                    "scope": tokens.get("scope"),
+                    "expires_at": tokens.get("expires_at"),
+                },
+            )
+
+            # Note: Confluence OAuth 2.0 apps cannot register webhooks
+            # Webhooks are only available for Atlassian Connect apps
+            logging.info(
+                "Confluence OAuth 2.0 integration created for site %s (webhooks not available)",
+                site_id,
+            )
+
+            db_integration = Integration()
+            setattr(db_integration, "integration_id", integration_id)
+            setattr(db_integration, "name", instance_name)
+            setattr(
+                db_integration, "integration_type", IntegrationType.CONFLUENCE.value
+            )
+            setattr(db_integration, "status", IntegrationStatus.ACTIVE.value)
+            setattr(db_integration, "active", True)
+            setattr(db_integration, "auth_data", auth_data.model_dump(mode="json"))
+            setattr(db_integration, "scope_data", scope_data.model_dump(mode="json"))
+            setattr(db_integration, "integration_metadata", metadata_dict)
+            setattr(
+                db_integration,
+                "unique_identifier",
+                f"confluence-{site_id}" if site_id else f"confluence-{integration_id}",
+            )
+            setattr(db_integration, "created_by", user_id)
+            setattr(db_integration, "created_at", created_at)
+            setattr(db_integration, "updated_at", created_at)
+
+            self.db.add(db_integration)
+            self.db.commit()
+            self.db.refresh(db_integration)
+
+            return {
+                "integration_id": integration_id,
+                "instance_name": instance_name,
+                "status": "active",
+                "integration_type": request.integration_type,
+                "site_id": site_id,
+                "site_name": site_name,
+                "site_url": site_url,
+                "created_at": created_at.isoformat(),
+                "has_tokens": True,
+                "requires_oauth": False,
+                "scope": tokens.get("scope"),
+            }
+
+        except Exception as e:
+            logging.error(f"Error saving Confluence integration: {str(e)}")
+            self.db.rollback()
+            raise
+
+    async def check_existing_confluence_integration(self, site_id: str) -> bool:
+        """Check if a Confluence site is already connected"""
+        unique_id = f"confluence-{site_id}"
+        existing = (
+            self.db.query(Integration)
+            .filter(Integration.integration_type == IntegrationType.CONFLUENCE.value)
+            .filter(Integration.active == True)  # noqa: E712
+            .filter(Integration.unique_identifier == unique_id)
+            .first()
+        )
+
+        return existing is not None
+
+    async def _get_confluence_context(self, integration_id: str) -> Dict[str, Any]:
+        """Helper to get Confluence integration context with decrypted tokens"""
+        from .token_encryption import decrypt_token
+
+        db_integration = (
+            self.db.query(Integration)
+            .filter(Integration.integration_id == integration_id)
+            .filter(Integration.integration_type == IntegrationType.CONFLUENCE.value)
+            .filter(Integration.active == True)  # noqa: E712
+            .first()
+        )
+
+        if not db_integration:
+            raise Exception(f"Confluence integration {integration_id} not found")
+
+        auth_data = getattr(db_integration, "auth_data", {}) or {}
+        metadata = getattr(db_integration, "integration_metadata", {}) or {}
+        scope_data = getattr(db_integration, "scope_data", {}) or {}
+
+        encrypted_access_token = auth_data.get("access_token")
+        if not encrypted_access_token:
+            raise Exception("No access token found for Confluence integration")
+
+        access_token = decrypt_token(encrypted_access_token)
+
+        site_id = metadata.get("site_id") or scope_data.get("org_slug")
+        if not site_id:
+            raise Exception("Confluence site identifier not available for integration")
+
+        return {
+            "access_token": access_token,
+            "site_id": site_id,
+            "site_url": metadata.get("site_url"),
+            "site_name": metadata.get("site_name"),
+            "integration": db_integration,
+        }
+
+    async def get_confluence_accessible_resources(
+        self, integration_id: str
+    ) -> Dict[str, Any]:
+        """Call Atlassian API to list accessible Confluence resources."""
+        context = await self._get_confluence_context(integration_id)
+        access_token = context["access_token"]
+
+        try:
+            resources = await self.confluence_oauth.get_accessible_resources(
+                access_token
+            )
+            return {
+                "resources": resources,
+                "site_id": context.get("site_id"),
+                "site_url": context.get("site_url"),
+            }
+        except Exception as e:
+            logging.error(
+                f"Failed to fetch Confluence accessible resources for {integration_id}: {str(e)}"
+            )
+            raise
+
+    async def get_confluence_spaces(
+        self, integration_id: str, start: int = 0, limit: int = 25
+    ) -> Dict[str, Any]:
+        """Fetch Confluence spaces available to the integration."""
+        context = await self._get_confluence_context(integration_id)
+        access_token = context["access_token"]
+        site_id = context["site_id"]
+        if not site_id:
+            raise Exception("Confluence site_id missing in context")
+
+        url = f"{self.confluence_oauth.API_BASE_URL}/ex/confluence/{site_id}/wiki/api/v2/spaces"
+
+        params = {"start": start, "limit": limit}
+
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                url,
+                params=params,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/json",
+                },
+            )
+
+        if response.status_code != 200:
+            logging.error(
+                "Failed to fetch Confluence spaces (%s): %s",
+                response.status_code,
+                response.text,
+            )
+            raise Exception(
+                f"Failed to fetch Confluence spaces: {response.status_code}"
+            )
+
+        data = response.json()
+        return {
+            "spaces": data.get("results", []),
+            "start": data.get("start", 0),
+            "limit": data.get("limit", limit),
+            "size": data.get("size", 0),
+            "_links": data.get("_links", {}),
+        }
+
+    async def get_confluence_integration_status(
+        self, user_id: str
+    ) -> ConfluenceIntegrationStatus:
+        """Return Confluence integration status for a user."""
+        try:
+            db_integration = (
+                self.db.query(Integration)
+                .filter(
+                    Integration.integration_type == IntegrationType.CONFLUENCE.value
+                )
+                .filter(Integration.created_by == user_id)
+                .filter(Integration.active == True)  # noqa: E712
+                .order_by(Integration.created_at.desc())
+                .first()
+            )
+
+            if not db_integration:
+                return ConfluenceIntegrationStatus(user_id=user_id, is_connected=False)
+
+            auth_data = getattr(db_integration, "auth_data", {}) or {}
+
+            expires_at_value = auth_data.get("expires_at")
+            expires_at = None
+            if expires_at_value:
+                if isinstance(expires_at_value, datetime):
+                    expires_at = expires_at_value
+                else:
+                    try:
+                        expires_at = datetime.fromisoformat(
+                            str(expires_at_value).replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        expires_at = None
+
+            scope = auth_data.get("scope")
+
+            return ConfluenceIntegrationStatus(
+                user_id=user_id,
+                is_connected=True,
+                connected_at=db_integration.created_at,
+                scope=scope,
+                expires_at=expires_at,
+            )
+
+        except Exception as e:
+            logging.error(f"Error fetching Confluence integration status: {str(e)}")
+            return ConfluenceIntegrationStatus(user_id=user_id, is_connected=False)
+
+    async def deactivate_confluence_integrations_for_user(self, user_id: str) -> int:
+        """Deactivate Confluence integrations created by the user."""
+        try:
+            # Note: Confluence OAuth 2.0 apps don't have webhooks to cleanup
+            updated = (
+                self.db.query(Integration)
+                .filter(
+                    Integration.integration_type == IntegrationType.CONFLUENCE.value
+                )
+                .filter(Integration.created_by == user_id)
+                .filter(Integration.active == True)  # noqa: E712
+                .update(
+                    {
+                        "active": False,
+                        "status": IntegrationStatus.INACTIVE.value,
+                        "updated_at": datetime.utcnow(),
+                    },
+                    synchronize_session=False,
+                )
+            )
+
+            self.db.commit()
+            return updated or 0
+        except Exception as e:
+            logging.error(
+                f"Error deactivating Confluence integrations for {user_id}: {str(e)}"
+            )
+            self.db.rollback()
+            return 0

@@ -61,6 +61,8 @@ def configure_celery(queue_prefix: str):
             "app.modules.event_bus.tasks.event_tasks.process_custom_event": {
                 "queue": "external-event"
             },
+            # Attachment cleanup tasks
+            "attachment_cleanup.*": {"queue": "default"},
         },
         # Optimize task distribution
         worker_prefetch_multiplier=1,
@@ -80,7 +82,22 @@ def configure_celery(queue_prefix: str):
 
 configure_celery(queue_name)
 
-# Import the lock decorator
+
+def setup_phoenix_tracing():
+    """Initialize Phoenix tracing for LLM monitoring in Celery workers."""
+    try:
+        from app.modules.intelligence.tracing.phoenix_tracer import (
+            initialize_phoenix_tracing,
+        )
+
+        initialize_phoenix_tracing()
+    except Exception as e:
+        logger.warning(
+            f"Phoenix tracing initialization failed in Celery worker (non-fatal): {e}"
+        )
+
+
+setup_phoenix_tracing()
 
 # Import the lock decorator
 from celery.contrib.abortable import AbortableTask  # noqa
@@ -89,3 +106,4 @@ from celery.contrib.abortable import AbortableTask  # noqa
 import app.celery.tasks.parsing_tasks  # noqa # Ensure the task module is imported
 import app.celery.tasks.agent_tasks  # noqa # Ensure the agent task module is imported
 import app.modules.event_bus.tasks.event_tasks  # noqa # Ensure event bus tasks are registered
+import app.celery.tasks.attachment_cleanup_tasks  # noqa # Ensure attachment cleanup tasks are registered

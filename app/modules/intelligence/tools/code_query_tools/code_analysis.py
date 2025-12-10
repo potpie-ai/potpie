@@ -414,8 +414,7 @@ class UniversalCodeAnalyzer:
 
 class UniversalAnalyzeCodeTool:
     name: str = "analyze_code_structure_universal"
-    description: str = (
-        """Universal code structure analyzer that works with multiple programming languages using Tree-sitter.
+    description: str = """Universal code structure analyzer that works with multiple programming languages using Tree-sitter.
         Supports Python, JavaScript, TypeScript, Java, C++, C, Rust, Go, PHP, Ruby, and more.
 
         Extracts detailed information about:
@@ -434,7 +433,6 @@ class UniversalAnalyzeCodeTool:
 
         Returns a structured analysis of the code with all extractable elements.
         """
-    )
     args_schema: Type[BaseModel] = UniversalAnalyzeCodeToolInput
 
     def __init__(self, sql_db: Session, user_id: str):
@@ -485,8 +483,11 @@ class UniversalAnalyzeCodeTool:
             details = self._get_project_details(project_id)
 
             # Get file content
+            # Use repo_path for local repos, project_name for remote repos
+            repo_identifier = details.get("repo_path") or details["project_name"]
+
             content = self.cp_service.get_file_content(
-                repo_name=details["project_name"],
+                repo_name=repo_identifier,
                 file_path=file_path,
                 start_line=None,
                 end_line=None,
@@ -566,7 +567,7 @@ class UniversalAnalyzeCodeTool:
 
 def universal_analyze_code_tool(sql_db: Session, user_id: str):
     """Factory function to create the universal code analysis tool."""
-    from langchain.tools import StructuredTool
+    from langchain_core.tools import StructuredTool
 
     tool_instance = UniversalAnalyzeCodeTool(sql_db, user_id)
     return StructuredTool.from_function(

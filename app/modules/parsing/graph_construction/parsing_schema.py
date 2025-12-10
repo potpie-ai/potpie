@@ -24,3 +24,5 @@ class ParsingResponse(BaseModel):
 class RepoDetails(BaseModel):
     repo_name: str
     branch_name: str
+    repo_path: Optional[str] = None
+    commit_id: Optional[str] = None
