@@ -30,6 +30,35 @@ class MediaServiceError(Exception):
     pass
 
 
+class MediaError:
+    """Structured error codes for media operations"""
+    MULTIMODAL_DISABLED = "MULTIMODAL_DISABLED"
+    FILE_TOO_LARGE = "FILE_TOO_LARGE"
+    UNSUPPORTED_FORMAT = "UNSUPPORTED_FORMAT"
+    INVALID_FILE = "INVALID_FILE"
+    EXTRACTION_FAILED = "EXTRACTION_FAILED"
+    STORAGE_ERROR = "STORAGE_ERROR"
+    NOT_FOUND = "NOT_FOUND"
+    ACCESS_DENIED = "ACCESS_DENIED"
+    PROCESSING_ERROR = "PROCESSING_ERROR"
+
+
+def create_media_error(
+    status_code: int,
+    code: str,
+    message: str,
+    details: Optional[str] = None,
+) -> HTTPException:
+    """Create a structured HTTPException for media errors"""
+    detail = {
+        "error": message,
+        "code": code,
+    }
+    if details:
+        detail["details"] = details
+    return HTTPException(status_code=status_code, detail=detail)
+
+
 class MediaService:
     # Configuration constants
     ALLOWED_IMAGE_TYPES = {
@@ -39,6 +68,25 @@ class MediaService:
         "image/webp": "WEBP",
         "image/gif": "GIF",
     }
+
+    SUPPORTED_DOCUMENT_MIME_TYPES = [
+        "application/pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/msword",
+    ]
+
+    SUPPORTED_SPREADSHEET_MIME_TYPES = [
+        "text/csv",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+    ]
+
+    CODE_FILE_EXTENSIONS = [
+        ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".cpp", ".c", ".h",
+        ".cs", ".rb", ".go", ".rs", ".php", ".swift", ".kt", ".scala",
+        ".sh", ".bash", ".sql", ".r", ".m", ".mm", ".md", ".json", ".xml",
+        ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg"
+    ]
 
     MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10MB
     MAX_DIMENSION = 2048  # Reduce from 4096 to preserve more detail in base64
@@ -220,9 +268,11 @@ class MediaService:
 
             # Validate file size (use same limit as images for now: 10MB)
             if len(file_data) > self.MAX_IMAGE_SIZE:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"File size ({len(file_data)} bytes) exceeds maximum ({self.MAX_IMAGE_SIZE} bytes)"
+                raise create_media_error(
+                    400,
+                    MediaError.FILE_TOO_LARGE,
+                    "File size exceeds maximum allowed",
+                    f"File: {len(file_data)} bytes, Limit: {self.MAX_IMAGE_SIZE} bytes"
                 )
 
             # Determine attachment type
@@ -235,7 +285,12 @@ class MediaService:
                 )
             except TextExtractionError as e:
                 logger.error(f"Text extraction failed for {file_name}: {e}")
-                raise HTTPException(status_code=400, detail=f"Failed to extract text: {str(e)}")
+                raise create_media_error(
+                    400,
+                    MediaError.EXTRACTION_FAILED,
+                    "Failed to extract text from document",
+                    str(e)
+                )
 
             # Count tokens
             token_count = self.token_counter.count_tokens(extracted_text, model)
@@ -304,6 +359,7 @@ class MediaService:
                 file_name=file_name,
                 mime_type=mime_type,
                 file_size=len(file_data),
+                token_count=token_count,
             )
 
         except HTTPException:
@@ -383,16 +439,20 @@ class MediaService:
         """Validate image file"""
         # Check MIME type
         if mime_type not in self.ALLOWED_IMAGE_TYPES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported image type: {mime_type}. Allowed types: {', '.join(self.ALLOWED_IMAGE_TYPES.keys())}",
+            raise create_media_error(
+                400,
+                MediaError.UNSUPPORTED_FORMAT,
+                f"Unsupported image type: {mime_type}",
+                f"Allowed types: {', '.join(self.ALLOWED_IMAGE_TYPES.keys())}"
             )
 
         # Check file size
         if len(file_data) > self.MAX_IMAGE_SIZE:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Image size ({len(file_data)} bytes) exceeds maximum allowed ({self.MAX_IMAGE_SIZE} bytes)",
+            raise create_media_error(
+                400,
+                MediaError.FILE_TOO_LARGE,
+                "Image size exceeds maximum allowed",
+                f"File: {len(file_data)} bytes, Limit: {self.MAX_IMAGE_SIZE} bytes"
             )
 
         # Verify it's actually a valid image
@@ -401,8 +461,11 @@ class MediaService:
             img.verify()
         except Exception as e:
             logger.warning(f"Image validation failed: {str(e)}")
-            raise HTTPException(
-                status_code=400, detail="Invalid or corrupted image file"
+            raise create_media_error(
+                400,
+                MediaError.INVALID_FILE,
+                "Invalid or corrupted image file",
+                str(e)
             )
 
     async def _process_image(
@@ -887,3 +950,33 @@ class MediaService:
         except Exception as e:
             logger.error(f"Error testing multimodal functionality: {str(e)}")
             return {"status": "error", "error": str(e), "multimodal_ready": False}
+
+    def get_supported_formats(self) -> dict:
+        """Return supported file formats and constraints"""
+        return {
+            "images": {
+                "mime_types": list(self.ALLOWED_IMAGE_TYPES.keys()),
+                "extensions": [".jpg", ".jpeg", ".png", ".webp", ".gif"],
+                "max_size_bytes": self.MAX_IMAGE_SIZE,
+                "description": "Image files for visual analysis",
+            },
+            "documents": {
+                "mime_types": self.SUPPORTED_DOCUMENT_MIME_TYPES,
+                "extensions": [".pdf", ".docx", ".doc"],
+                "max_size_bytes": self.MAX_IMAGE_SIZE,
+                "description": "Document files with text extraction",
+            },
+            "spreadsheets": {
+                "mime_types": self.SUPPORTED_SPREADSHEET_MIME_TYPES,
+                "extensions": [".csv", ".xlsx", ".xls"],
+                "max_size_bytes": self.MAX_IMAGE_SIZE,
+                "description": "Spreadsheet files with data extraction",
+            },
+            "code_files": {
+                "mime_types": ["text/plain", "application/json"],
+                "extensions": self.CODE_FILE_EXTENSIONS,
+                "max_size_bytes": self.MAX_IMAGE_SIZE,
+                "description": "Source code and configuration files",
+            },
+            "max_file_size_bytes": self.MAX_IMAGE_SIZE,
+        }

@@ -11,7 +11,9 @@ from app.modules.media.media_schema import (
     AttachmentUploadResponse,
     AttachmentAccessResponse,
     AttachmentInfo,
+    SupportedFormatsResponse,
 )
+from app.modules.media.media_service import MediaService
 
 
 router = APIRouter()
@@ -239,3 +241,51 @@ class MediaAPI:
 
         controller = MediaController(db, user_id, user_email)
         return await controller.test_multimodal_functionality(attachment_id)
+
+    @staticmethod
+    @router.get("/media/supported-formats", response_model=SupportedFormatsResponse)
+    async def get_supported_formats(
+        db: Session = Depends(get_db),
+    ):
+        """
+        Get supported file formats and constraints.
+
+        Returns information about:
+        - Supported image types (JPEG, PNG, WebP, GIF)
+        - Supported document types (PDF, DOCX)
+        - Supported spreadsheet types (CSV, XLSX)
+        - Supported code file extensions
+        - Maximum file size limits
+
+        This endpoint does not require authentication.
+        """
+        service = MediaService(db)
+        return service.get_supported_formats()
+
+    @staticmethod
+    @router.post("/media/admin/cleanup-orphans")
+    async def trigger_orphan_cleanup(
+        db: Session = Depends(get_db),
+        user=Depends(AuthService.check_auth),
+    ):
+        """
+        Manually trigger orphan attachment cleanup.
+
+        This is an admin endpoint for testing/monitoring.
+        In production, cleanup runs automatically via Celery beat.
+        """
+        # TODO: Add admin role check
+        from app.modules.media.attachment_cleanup_service import AttachmentCleanupService
+
+        cleanup_service = AttachmentCleanupService(db)
+
+        # First get stats
+        stats = cleanup_service.get_orphan_stats()
+
+        # Then run cleanup
+        result = cleanup_service.cleanup_orphaned_attachments()
+
+        return {
+            "before": stats,
+            "result": result,
+        }
