@@ -8,7 +8,7 @@ class TaskService:
     def __init__(self, db):
         self.db = db
 
-    def create_task(self, task_type: TaskType, custom_status: str, project_id: int):
+    def create_task(self, task_type: TaskType, custom_status: str, project_id: str):
         new_task = Task(
             task_type=task_type, custom_status=custom_status, project_id=project_id
         )

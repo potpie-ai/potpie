@@ -60,7 +60,7 @@ class ParsingService:
         repo_details: ParsingRequest,
         user_id: str,
         user_email: str,
-        project_id: int,
+        project_id: str,
         cleanup_graph: bool = True,
     ):
         project_manager = ProjectService(self.db)
@@ -196,7 +196,7 @@ class ParsingService:
     async def analyze_directory(
         self,
         extracted_dir: str,
-        project_id: int,
+        project_id: str,
         user_id: str,
         db,
         language: str,
@@ -206,16 +206,6 @@ class ParsingService:
         logger.info(
             f"ParsingService: Parsing project {project_id}: Analyzing directory: {extracted_dir}"
         )
-
-        # Validate that extracted_dir is a valid path
-        if not isinstance(extracted_dir, str):
-            logger.error(
-                f"ParsingService: Invalid extracted_dir type: {type(extracted_dir)}, value: {extracted_dir}"
-            )
-            raise ValueError(
-                f"Expected string path, got {type(extracted_dir)}: {extracted_dir}"
-            )
-
         if not os.path.exists(extracted_dir):
             logger.error(f"ParsingService: Directory does not exist: {extracted_dir}")
             raise FileNotFoundError(f"Directory not found: {extracted_dir}")
