@@ -241,13 +241,10 @@ class ParsingController:
                         )
                         logger.info(f"[DEBUG]   New parse_filters: {new_filters}")
                         project.parse_filters = new_filters
-                        project.parse_count = (project.parse_count or 1) + 1
                         db.add(project)
                         db.commit()
                         db.refresh(project)
-                        logger.info(
-                            f"[DEBUG] Filters updated successfully, parse_count now: {project.parse_count}"
-                        )
+                        logger.info("[DEBUG] Filters updated successfully")
 
                     logger.info(
                         f"Submitting parsing task for existing project {project_id}"
@@ -420,7 +417,7 @@ class ParsingController:
 
         return {
             "status": "MATCH" if filters_match else "MISMATCH",
-            "last_parsed_at": project.updated_at,  # Using updated_at as proxy for last_parsed_at if not set
+            "last_parsed_at": project.updated_at,  # Use updated_at to track when project was last parsed
             "project_status": project.status,
             "current_filters": current_filters,  # Return existing filters so UI can populate file selector
         }

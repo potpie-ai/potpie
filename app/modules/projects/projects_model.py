@@ -8,7 +8,6 @@ from sqlalchemy import (
     String,
     Text,
     func,
-    Integer,
 )
 from sqlalchemy.dialects.postgresql import BYTEA, JSONB
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -39,8 +38,6 @@ class Project(Base):
     status = Column(String(255), default="created")
 
     parse_filters = Column(JSONB, nullable=True)
-    last_parsed_at = Column(TIMESTAMP(timezone=True), nullable=True)
-    parse_count = Column(Integer, default=1)
 
     __table_args__ = (
         ForeignKeyConstraint(["user_id"], ["users.uid"], ondelete="CASCADE"),
