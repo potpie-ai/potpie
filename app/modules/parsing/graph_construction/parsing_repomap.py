@@ -11,7 +11,7 @@ from pygments.lexers import guess_lexer_for_filename
 from pygments.token import Token
 from pygments.util import ClassNotFound
 from tqdm import tqdm
-from tree_sitter_languages import get_language, get_parser
+from tree_sitter_language_pack import get_language, get_parser
 
 from app.core.database import get_db
 from app.modules.parsing.graph_construction.parsing_helper import (  # noqa: E402
