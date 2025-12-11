@@ -17,6 +17,7 @@ import httpx
 import urllib.parse
 import time
 from app.modules.utils.logger import setup_logger
+from app.modules.integrations import hash_user_id
 
 logger = setup_logger(__name__)
 
@@ -371,7 +372,7 @@ class AtlassianOAuthBase(ABC):
             self.token_store.remove_tokens(user_id)
             logger.info(
                 f"Revoked {self.product_name.capitalize()} OAuth tokens for user %s",
-                user_id,
+                hash_user_id(user_id),
             )
             return True
         except Exception:

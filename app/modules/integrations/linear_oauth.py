@@ -8,15 +8,10 @@ from starlette.config import Config
 import httpx
 import urllib.parse
 import time
-import hashlib
 from app.modules.utils.logger import setup_logger
+from app.modules.integrations import hash_user_id
 
 logger = setup_logger(__name__)
-
-
-def _hash_user_id(user_id: str) -> str:
-    """Hash user ID for safe logging (first 8 chars of SHA256)"""
-    return hashlib.sha256(user_id.encode()).hexdigest()[:8]
 
 
 class LinearOAuthStore:
@@ -225,7 +220,7 @@ class LinearOAuth:
             # For now, we'll just log the callback
             # In a real implementation, you'd exchange the code for tokens
             logger.debug(
-                f"Linear OAuth callback received for user {_hash_user_id(user_id)}"
+                f"Linear OAuth callback received for user {hash_user_id(user_id)}"
             )
             logger.debug("Code: [REDACTED]")
             logger.debug(f"State: {state}")
@@ -255,7 +250,7 @@ class LinearOAuth:
         try:
             self.token_store.remove_tokens(user_id)
             logger.info(
-                f"Linear OAuth access revoked for user: {_hash_user_id(user_id)}"
+                f"Linear OAuth access revoked for user: {hash_user_id(user_id)}"
             )
             return True
         except Exception:

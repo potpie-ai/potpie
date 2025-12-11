@@ -30,11 +30,11 @@ from starlette.config import Config
 import time
 import uuid
 from app.modules.utils.logger import setup_logger
+from app.modules.integrations import hash_user_id
+from datetime import datetime, timedelta, timezone
+from .token_encryption import decrypt_token
 
 logger = setup_logger(__name__)
-from datetime import datetime, timedelta, timezone
-
-from .token_encryption import decrypt_token
 
 
 class IntegrationsService:
@@ -324,50 +324,18 @@ class IntegrationsService:
         """Exchange OAuth authorization code for access tokens and get organization info"""
         try:
             import httpx
-            import time
 
             # Get OAuth client credentials from config
             client_id = self.config("SENTRY_CLIENT_ID", default="")
             client_secret = self.config("SENTRY_CLIENT_SECRET", default="")
             # Use the redirect_uri from the request instead of hardcoded config
 
-            # Comprehensive debugging for OAuth token exchange
-            logger.info("=== COMPREHENSIVE OAuth Token Exchange Debug ===")
-            logger.info(f"Timestamp: {time.time()}")
-            logger.info(f"Code length: {len(code)}")
-            logger.info(f"Code preview: {code[:20]}...")
-            logger.info(f"Code full: {code}")
-            logger.info(f"Redirect URI: {redirect_uri}")
-            logger.info(f"Redirect URI length: {len(redirect_uri)}")
-            logger.info(f"Client ID configured: {bool(client_id)}")
-            logger.info(f"Client ID length: {len(client_id) if client_id else 0}")
-            logger.info(
-                f"Client ID preview: {client_id[:8] + '...' if client_id and len(client_id) > 8 else client_id}"
-            )
-            logger.info(f"Client Secret configured: {bool(client_secret)}")
-            logger.info(
-                f"Client Secret length: {len(client_secret) if client_secret else 0}"
-            )
-            logger.info(
-                f"Client Secret preview: {client_secret[:8] + '...' if client_secret and len(client_secret) > 8 else client_secret}"
-            )
-
-            # Log the exact request that will be sent
-            logger.info("=== REQUEST DETAILS ===")
-            logger.info("Token URL: https://sentry.io/oauth/token/")
-            logger.info("Request method: POST")
-            logger.info("Content-Type: application/x-www-form-urlencoded")
-            logger.info(
-                "Request body fields: client_id, client_secret, grant_type, code, redirect_uri"
-            )
-            logger.info("Grant type: authorization_code")
-            logger.info(f"Code: {code}")
-            logger.info(f"Redirect URI: {redirect_uri}")
-            logger.info(f"Client ID: {client_id}")
-            logger.info(
-                f"Client Secret: {'*' * len(client_secret) if client_secret else 'NOT_SET'}"
-            )
-            logger.info("Note: Including redirect_uri in token exchange request")
+            # Debug logging for OAuth token exchange (DEBUG level only)
+            logger.debug("OAuth token exchange starting",
+                        code_length=len(code),
+                        has_client_id=bool(client_id),
+                        has_client_secret=bool(client_secret),
+                        has_redirect_uri=bool(redirect_uri))
 
             if not client_id or not client_secret or not redirect_uri:
                 missing = []
@@ -380,10 +348,6 @@ class IntegrationsService:
                 raise Exception(
                     f"Sentry OAuth credentials not configured. Missing: {', '.join(missing)}"
                 )
-
-            logger.info(
-                f"Exchanging OAuth code for tokens with client_id: {client_id[:8]}..."
-            )
 
             # Sentry OAuth token endpoint
             token_url = "https://sentry.io/oauth/token/"
@@ -398,20 +362,13 @@ class IntegrationsService:
                 "redirect_uri": redirect_uri,
             }
 
-            logger.info(f"Token exchange request data: {list(token_data.keys())}")
-            logger.info(f"Token URL: {token_url}")
-            logger.info("Note: Including redirect_uri for validation")
+            logger.debug("Token exchange request prepared",
+                        token_url=token_url,
+                        fields=list(token_data.keys()))
 
             # Make the token exchange request
             async with httpx.AsyncClient(timeout=30.0) as client:
-                logger.info("Making OAuth token exchange request...")
-
-                # Log the exact request data being sent (without secrets)
-                debug_data = {
-                    k: v for k, v in token_data.items() if k != "client_secret"
-                }
-                debug_data["client_secret"] = "***REDACTED***"
-                logger.info(f"Request payload (debug): {debug_data}")
+                logger.debug("Making OAuth token exchange request")
 
                 # Use form-encoded data as required by OAuth 2.0 spec
                 response = await client.post(
@@ -420,84 +377,41 @@ class IntegrationsService:
                     headers={"Content-Type": "application/x-www-form-urlencoded"},
                 )
 
-                # Comprehensive response debugging
-                logger.info("=== RESPONSE ANALYSIS ===")
-                logger.info(f"Response status code: {response.status_code}")
-                logger.info(f"Response reason: {response.reason_phrase}")
-                logger.info(f"Response URL: {response.url}")
-                logger.info(f"Response headers count: {len(response.headers)}")
-
-                # Log all response headers
-                for header_name, header_value in response.headers.items():
-                    logger.info(f"Response header - {header_name}: {header_value}")
-
-                logger.info(f"Response content length: {len(response.content)}")
-                logger.info(f"Response text: {response.text}")
-                logger.info(f"Response content (bytes): {response.content}")
-
-                # Try to parse as JSON
-                try:
-                    response_json = response.json()
-                    logger.info(f"Response JSON: {response_json}")
-                except Exception as json_error:
-                    logger.info(f"Response is not valid JSON: {json_error}")
+                # Log response details
+                logger.debug("OAuth token exchange response",
+                           status_code=response.status_code,
+                           content_length=len(response.content))
 
                 if response.status_code != 200:
-                    logger.error("=== ERROR ANALYSIS ===")
-                    logger.error(
-                        f"HTTP Error: {response.status_code} {response.reason_phrase}"
-                    )
-
                     # Try to parse error response for more details
                     try:
                         error_data = response.json()
-                        logger.error(f"Error response JSON: {error_data}")
-
                         error_type = error_data.get("error", "unknown")
                         error_description = error_data.get(
                             "error_description", "No description provided"
                         )
 
-                        logger.error(f"Error type: {error_type}")
-                        logger.error(f"Error description: {error_description}")
-
-                        # Detailed analysis based on error type
+                        logger.error("OAuth token exchange failed",
+                                   status_code=response.status_code,
+                                   error_type=error_type,
+                                   error_description=error_description)
+                        
+                        # Log helpful hints for common errors at DEBUG level
                         if error_type == "invalid_grant":
-                            logger.error("=== INVALID_GRANT ANALYSIS ===")
-                            logger.error("Possible causes:")
-                            logger.error("1. Authorization code expired (10 minutes)")
-                            logger.error("2. Authorization code already used")
-                            logger.error("3. Redirect URI mismatch")
-                            logger.error("4. Client credentials incorrect")
-                            logger.error("5. Grant type incorrect")
-                            logger.error("6. Code parameter malformed")
+                            logger.debug("Invalid grant error - common causes: "
+                                       "expired code, code already used, redirect URI mismatch, "
+                                       "or incorrect client credentials")
 
-                            # Additional debugging for invalid_grant
-                            logger.error("=== DEBUGGING INVALID_GRANT ===")
-                            logger.error(f"Code used: {code}")
-                            logger.error(f"Code length: {len(code)}")
-                            logger.error(f"Client ID used: {client_id}")
-                            logger.error("Grant type used: authorization_code")
-                            logger.error(
-                                "Note: redirect_uri NOT sent in token exchange (per Sentry docs)"
-                            )
-
-                    except Exception as parse_error:
-                        logger.error(
-                            f"Could not parse error response as JSON: {parse_error}"
-                        )
-                        logger.error(f"Raw response: {response.text}")
-                else:
-                    logger.info("=== SUCCESS ===")
-                    logger.info("OAuth token exchange successful!")
+                    except Exception:
+                        logger.error("OAuth token exchange failed",
+                                   status_code=response.status_code,
+                                   response_text=response.text[:200])  # Truncate response
 
                 response.raise_for_status()
 
                 # Parse the response
                 token_response = response.json()
-                logger.info(
-                    f"OAuth token exchange successful, received: {list(token_response.keys())}"
-                )
+                logger.info("OAuth token exchange successful")
 
                 # Get organization information using the access token
                 org_info = await self._get_sentry_organization_info(
@@ -516,9 +430,9 @@ class IntegrationsService:
                     "organization": org_info,
                 }
 
-                logger.info(
-                    f"Successfully exchanged code for tokens: {tokens.get('token_type')} token"
-                )
+                logger.debug("Token exchange complete",
+                           token_type=tokens.get('token_type'),
+                           has_refresh_token=bool(tokens.get('refresh_token')))
                 return tokens
 
         except Exception as e:
@@ -553,7 +467,7 @@ class IntegrationsService:
                 # Return the first organization (Sentry OAuth is typically scoped to one organization)
                 if organizations:
                     org = organizations[0]
-                    logger.info(f"Retrieved organization info: {org.get('slug')}")
+                    logger.debug("Retrieved organization info", org_slug=org.get('slug'))
                     return {
                         "id": str(org.get("id")),
                         "slug": org.get("slug"),
@@ -635,18 +549,13 @@ class IntegrationsService:
         """Save Sentry integration with authorization code (backend handles token exchange)"""
         try:
             from .token_encryption import encrypt_token
-            import time
 
-            logger.info("=== Sentry Integration Save Debug ===")
-            logger.info("Processing Sentry integration with authorization code")
-            logger.info(
-                f"Request data: instance_name={request.instance_name}, integration_type={request.integration_type}"
-            )
-            logger.info(f"Authorization code length: {len(request.code)}")
-            logger.info(f"Code preview: {request.code[:20]}...")
-            logger.info(f"Redirect URI from request: {request.redirect_uri}")
-            logger.info(f"Request timestamp: {request.timestamp}")
-            logger.info(f"Current timestamp: {time.time()}")
+            logger.info("Processing Sentry integration",
+                       instance_name=request.instance_name,
+                       integration_type=request.integration_type)
+            logger.debug("OAuth code validation",
+                        code_length=len(request.code),
+                        has_redirect_uri=bool(request.redirect_uri))
 
             # Validate the authorization code format and timing
             if not request.code or len(request.code) < 20:
@@ -667,13 +576,10 @@ class IntegrationsService:
                 current_time = datetime.now(timezone.utc)
                 time_diff = (current_time - request_time).total_seconds()
 
-                logger.info(
-                    f"Time difference between request and now: {time_diff} seconds"
-                )
-
                 if time_diff > 600:  # 10 minutes
                     logger.warning(
-                        f"Authorization code might be expired (age: {time_diff} seconds)"
+                        "Authorization code might be expired",
+                        age_seconds=time_diff
                     )
                     raise Exception(
                         f"Authorization code may be expired (age: {time_diff} seconds)"
@@ -682,8 +588,8 @@ class IntegrationsService:
             except ValueError as e:
                 logger.warning(f"Could not parse request timestamp: {e}")
 
-            # Exchange authorization code for tokens using clean implementation
-            logger.info("Exchanging authorization code for tokens")
+            # Exchange authorization code for tokens
+            logger.debug("Exchanging authorization code for tokens")
             tokens = await self.sentry_oauth.exchange_code_for_tokens(
                 request.code, request.redirect_uri
             )
@@ -738,7 +644,7 @@ class IntegrationsService:
             )
             if existing_integration:
                 logger.warning(
-                    f"Sentry account (org: {org_info['slug']}, user: {user_id}) is already integrated: {existing_integration['integration_id']}"
+                    f"Sentry account (org: {org_info['slug']}, user: {hash_user_id(user_id)}) is already integrated: {existing_integration['integration_id']}"
                 )
                 raise Exception(
                     f"Sentry account is already integrated. "
@@ -1089,7 +995,7 @@ class IntegrationsService:
             self.db.add(db_integration)
             self.db.commit()
             self.db.refresh(db_integration)
-            logger.info(f"Integration created: {integration_id}")
+            logger.info("Integration created", integration_id=integration_id)
 
             # Convert to schema model for response
             integration_schema = self._db_to_schema(db_integration)
@@ -1133,7 +1039,7 @@ class IntegrationsService:
             self.db.commit()
             self.db.refresh(db_integration)
 
-            logger.info(f"Integration name successfully updated: {integration_id}")
+            logger.info("Integration name successfully updated", integration_id=integration_id)
 
             integration_schema = self._db_to_schema(db_integration)
             return IntegrationResponse(
@@ -1327,7 +1233,7 @@ class IntegrationsService:
             self.db.delete(db_integration)
             self.db.commit()
 
-            logger.info(f"Integration successfully deleted (schema): {integration_id}")
+            logger.info("Integration successfully deleted (schema)", integration_id=integration_id)
             return IntegrationResponse(
                 success=True, data=integration_schema, error=None
             )
@@ -1494,12 +1400,12 @@ class IntegrationsService:
 
             if existing_integration:
                 logger.info(
-                    f"Found existing Sentry integration for org {org_slug}, user {user_id}: {existing_integration.integration_id}"
+                    f"Found existing Sentry integration for org {org_slug}, user {hash_user_id(user_id)}: {existing_integration.integration_id}"
                 )
                 return self._db_to_dict(existing_integration)
 
             logger.info(
-                f"No existing Sentry integration found for org {org_slug}, user {user_id}"
+                f"No existing Sentry integration found for org {org_slug}, user {hash_user_id(user_id)}"
             )
             return None
 
@@ -1528,7 +1434,7 @@ class IntegrationsService:
                 )
                 return self._db_to_dict(existing_integration)
 
-            logger.info(f"No existing Jira integration found for site {site_id}")
+            logger.debug("No existing Jira integration found for site", site_id=site_id)
             return None
 
         except Exception as e:
@@ -1541,7 +1447,6 @@ class IntegrationsService:
         """Save Linear integration with authorization code (backend handles token exchange)"""
         try:
             from .token_encryption import encrypt_token
-            import time
 
             # Validate the authorization code format and timing
             if not request.code or len(request.code) < 10:
@@ -1795,7 +1700,7 @@ class IntegrationsService:
             self.db.commit()
             self.db.refresh(db_integration)
 
-            logger.info(f"Integration saved successfully: {integration_id}")
+            logger.info("Integration saved successfully", integration_id=integration_id)
 
             # Return the integration data
             return {

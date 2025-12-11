@@ -9,6 +9,7 @@ import base64
 import json
 import time
 from app.modules.utils.logger import setup_logger
+from app.modules.integrations import hash_user_id
 
 import urllib.parse
 import jwt
@@ -151,8 +152,7 @@ async def initiate_sentry_oauth(
     try:
         # Log the OAuth initiation details
         logger.info("=== OAuth Initiation Debug ===")
-        logger.info(f"Redirect URI: {request.redirect_uri}")
-        logger.info(f"State: {request.state}")
+        logger.info("OAuth parameters", redirect_uri=request.redirect_uri, state=request.state)
 
         # Generate authorization URL. Sign the state to prevent tampering.
         signed_state = (
@@ -164,7 +164,7 @@ async def initiate_sentry_oauth(
             redirect_uri=request.redirect_uri, state=signed_state
         )
 
-        logger.info(f"Generated authorization URL: {auth_url}")
+        logger.info("Generated authorization URL for Sentry OAuth")
 
         return {
             "status": "success",
@@ -286,31 +286,30 @@ async def sentry_redirect_webhook(request: Request) -> Dict[str, Any]:
     try:
         # Log the incoming request details
         logger.info("Sentry webhook redirect received")
-        logger.info(f"Request method: {request.method}")
-        logger.info(f"Request URL: {request.url}")
-        logger.info(f"Request headers: {dict(request.headers)}")
+        logger.info("Request details", method=request.method, url=str(request.url))
+        logger.debug("Request headers", headers=dict(request.headers))
 
         # Get query parameters
         query_params = dict(request.query_params)
-        logger.info(f"Query parameters: {query_params}")
+        logger.info("Query parameters", params=query_params)
 
         # Try to get request body if it exists
         try:
             body = await request.body()
             if body:
-                logger.info(f"Request body: {body.decode('utf-8')}")
+                logger.debug("Request body received", body_length=len(body))
             else:
                 logger.info("Request body: (empty)")
         except Exception as e:
-            logger.warning(f"Could not read request body: {str(e)}")
+            logger.warning("Could not read request body", error=str(e))
 
         # Log form data if present
         try:
             form_data = await request.form()
             if form_data:
-                logger.info(f"Form data: {dict(form_data)}")
+                logger.debug("Form data received", fields=list(form_data.keys()))
         except Exception as e:
-            logger.info(f"No form data present: {str(e)}")
+            logger.debug("No form data present", error=str(e))
 
         return {
             "status": "success",
@@ -1193,13 +1192,12 @@ async def sentry_webhook(request: Request) -> Dict[str, Any]:
     try:
         # Log the incoming webhook request details
         logger.info("Sentry webhook received")
-        logger.info(f"Request method: {request.method}")
-        logger.info(f"Request URL: {request.url}")
-        logger.info(f"Request headers: {dict(request.headers)}")
+        logger.info("Request details", method=request.method, url=str(request.url))
+        logger.debug("Request headers", headers=dict(request.headers))
 
         # Get query parameters
         query_params = dict(request.query_params)
-        logger.info(f"Query parameters: {query_params}")
+        logger.info("Query parameters", params=query_params)
 
         # Try to get request body if it exists
         webhook_data = {}
@@ -1207,7 +1205,7 @@ async def sentry_webhook(request: Request) -> Dict[str, Any]:
             body = await request.body()
             if body:
                 body_text = body.decode("utf-8")
-                logger.info(f"Request body: {body_text}")
+                logger.debug("Request body received", body_length=len(body_text))
 
                 # Try to parse as JSON
                 try:
@@ -1218,17 +1216,17 @@ async def sentry_webhook(request: Request) -> Dict[str, Any]:
             else:
                 logger.info("Request body: (empty)")
         except Exception as e:
-            logger.warning(f"Could not read request body: {str(e)}")
+            logger.warning("Could not read request body", error=str(e))
 
         # Log form data if present
         try:
             form_data = await request.form()
             if form_data:
                 form_dict = {k: str(v) for k, v in form_data.items()}
-                logger.info(f"Form data: {form_dict}")
+                logger.debug("Form data received", fields=list(form_dict.keys()))
                 webhook_data.update(form_dict)
         except Exception as e:
-            logger.info(f"No form data present: {str(e)}")
+            logger.debug("No form data present", error=str(e))
 
         # Extract event type from headers or payload
         event_type = (
@@ -1321,7 +1319,7 @@ async def linear_webhook(
                 except json.JSONDecodeError:
                     webhook_data = {"raw_body": body_text}
         except Exception as e:
-            logger.warning(f"Could not read request body: {str(e)}")
+            logger.warning("Could not read request body", error=str(e))
 
         # Log form data if present
         try:
@@ -1515,7 +1513,7 @@ async def jira_webhook(
                 except json.JSONDecodeError:
                     webhook_data = {"raw_body": body_text}
         except Exception as e:
-            logger.warning(f"Could not read request body: {str(e)}")
+            logger.warning("Could not read request body", error=str(e))
 
         # Log form data if present
         try:
@@ -1611,7 +1609,7 @@ async def jira_webhook(
                 finally:
                     db.close()
             except Exception as e:
-                logger.debug(f"Jira webhook ID lookup failed: {e}")
+                logger.debug("Jira webhook ID lookup failed", error=str(e))
 
         # Fallback: Try site_id lookup via service (legacy/backup method)
         if not integration_id and site_id:
@@ -1622,7 +1620,7 @@ async def jira_webhook(
                 if integration:
                     integration_id = integration.get("integration_id")
             except Exception as e:
-                logger.debug(f"Jira webhook site lookup failed: {e}")
+                logger.debug("Jira webhook site lookup failed", error=str(e))
 
         # Fallback to query param or header
         query_params = dict(request.query_params)
@@ -1865,7 +1863,7 @@ async def delete_integration(
 
         # Log the deletion attempt
         logger.info(
-            f"User {user_id} attempting to delete integration: {integration_id}"
+            f"User {hash_user_id(user_id)} attempting to delete integration: {integration_id}"
         )
 
         success = await integrations_service.delete_integration(integration_id)
@@ -1875,7 +1873,7 @@ async def delete_integration(
                 detail=f"Failed to delete integration: {integration_id}",
             )
 
-        logger.info(f"Successfully deleted integration: {integration_id}")
+        logger.info("Successfully deleted integration", integration_id=integration_id)
         return {
             "status": "success",
             "message": f"Integration deleted: {integration_id}",
@@ -1888,7 +1886,7 @@ async def delete_integration(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(f"Error deleting integration {integration_id}")
+        logger.exception("Error deleting integration", integration_id=integration_id)
         raise HTTPException(
             status_code=500, detail=f"Failed to delete integration: {str(e)}"
         )
@@ -2008,21 +2006,23 @@ async def update_integration_schema(
 
         # Log the update attempt
         logger.info(
-            f"User {user_id} attempting to update integration name: {integration_id} to '{request.name}'"
+            f"User {hash_user_id(user_id)} attempting to update integration name: {integration_id} to '{request.name}'"
         )
 
         result = await integrations_service.update_integration(integration_id, request)
 
         if result.success:
-            logger.info(f"Successfully updated integration name: {integration_id}")
+            logger.info("Successfully updated integration name", integration_id=integration_id)
         else:
             logger.warning(
-                f"Failed to update integration name: {integration_id} - {result.error}"
+                "Failed to update integration name",
+                integration_id=integration_id,
+                error=result.error
             )
 
         return result
     except Exception as e:
-        logger.exception(f"Error updating integration name {integration_id}")
+        logger.exception("Error updating integration name", integration_id=integration_id)
         return IntegrationResponse(
             success=False, data=None, error=f"Failed to update integration: {str(e)}"
         )
@@ -2057,21 +2057,23 @@ async def delete_integration_schema(
 
         # Log the deletion attempt
         logger.info(
-            f"User {user_id} attempting to delete integration (schema): {integration_id}"
+            f"User {hash_user_id(user_id)} attempting to delete integration (schema): {integration_id}"
         )
 
         result = await integrations_service.delete_integration_schema(integration_id)
 
         if result.success:
-            logger.info(f"Successfully deleted integration (schema): {integration_id}")
+            logger.info("Successfully deleted integration (schema)", integration_id=integration_id)
         else:
             logger.warning(
-                f"Failed to delete integration (schema): {integration_id} - {result.error}"
+                "Failed to delete integration (schema)",
+                integration_id=integration_id,
+                error=result.error
             )
 
         return result
     except Exception as e:
-        logger.exception(f"Error deleting integration (schema) {integration_id}")
+        logger.exception("Error deleting integration (schema)", integration_id=integration_id)
         return IntegrationResponse(
             success=False, data=None, error=f"Failed to delete integration: {str(e)}"
         )
@@ -2381,8 +2383,7 @@ async def debug_test_token_exchange(
     """Debug endpoint to test OAuth token exchange with detailed logging"""
     try:
         logger.info("=== DEBUG TOKEN EXCHANGE TEST ===")
-        logger.info(f"Test code: {code}")
-        logger.info(f"Test redirect URI: {redirect_uri}")
+        logger.info("Test redirect URI", redirect_uri=redirect_uri)
 
         # Call the token exchange method directly
         result = await integrations_service._exchange_code_for_tokens(

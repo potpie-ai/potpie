@@ -28,7 +28,7 @@ def execute_agent_background(
 
     # Set up logging context with domain IDs
     with log_context(conversation_id=conversation_id, user_id=user_id, run_id=run_id):
-        logger.info(f"Starting background agent execution: {conversation_id}:{run_id}")
+        logger.info("Starting background agent execution")
 
         # Set task status to indicate task has started
         redis_manager.set_task_status(conversation_id, run_id, "running")
@@ -100,9 +100,7 @@ def execute_agent_background(
                     ):
                         # Check for cancellation
                         if redis_manager.check_cancellation(conversation_id, run_id):
-                            logger.info(
-                                f"Agent execution cancelled: {conversation_id}:{run_id}"
-                            )
+                            logger.info("Agent execution cancelled")
 
                             # Flush any buffered AI response chunks before cancelling
                             try:
@@ -113,11 +111,13 @@ def execute_agent_background(
                                 )
                                 if message_id:
                                     logger.debug(
-                                        f"Flushed partial AI response (message_id: {message_id}) for cancelled task: {conversation_id}:{run_id}"
+                                        "Flushed partial AI response for cancelled task",
+                                        message_id=message_id
                                     )
                             except Exception as e:
                                 logger.warning(
-                                    f"Failed to flush message buffer on cancellation: {str(e)}"
+                                    "Failed to flush message buffer on cancellation",
+                                    error=str(e)
                                 )
                             # Continue with cancellation even if flush fails
                             redis_manager.publish_event(
@@ -174,13 +174,9 @@ def execute_agent_background(
                 # Set task status to completed
                 redis_manager.set_task_status(conversation_id, run_id, "completed")
 
-                logger.info(
-                    f"Background agent execution completed: {conversation_id}:{run_id}"
-                )
+                logger.info("Background agent execution completed")
             else:
-                logger.info(
-                    f"Background agent execution cancelled: {conversation_id}:{run_id}"
-                )
+                logger.info("Background agent execution cancelled")
 
             # Return the completion status so on_success can check if it was cancelled
             return completed
@@ -236,7 +232,9 @@ def execute_regenerate_background(
     """Execute regeneration in the background and publish results to Redis streams"""
     redis_manager = RedisStreamManager()
 
-    logger.info(f"Starting background regenerate execution: {conversation_id}:{run_id}")
+    # Set up logging context with domain IDs
+    with log_context(conversation_id=conversation_id, user_id=user_id, run_id=run_id):
+        logger.info("Starting background regenerate execution")
 
     # Set task status to indicate task has started
     redis_manager.set_task_status(conversation_id, run_id, "running")
@@ -296,9 +294,7 @@ def execute_regenerate_background(
 
                     # Check for cancellation
                     if redis_manager.check_cancellation(conversation_id, run_id):
-                        logger.info(
-                            f"Regenerate execution cancelled: {conversation_id}:{run_id}"
-                        )
+                        logger.info("Regenerate execution cancelled")
 
                         # Flush any buffered AI response chunks before cancelling
                         try:
@@ -307,11 +303,13 @@ def execute_regenerate_background(
                             )
                             if message_id:
                                 logger.debug(
-                                    f"Flushed partial AI response (message_id: {message_id}) for cancelled regenerate: {conversation_id}:{run_id}"
+                                    "Flushed partial AI response for cancelled regenerate",
+                                    message_id=message_id
                                 )
                         except Exception as e:
                             logger.warning(
-                                f"Failed to flush message buffer on cancellation: {str(e)}"
+                                "Failed to flush message buffer on cancellation",
+                                error=str(e)
                             )
                         # Continue with cancellation even if flush fails
 
@@ -352,13 +350,9 @@ def execute_regenerate_background(
 
                 # Log completion of regeneration
                 if has_chunks:
-                    logger.info(
-                        f"Regeneration completed successfully for conversation {conversation_id}"
-                    )
+                    logger.info("Regeneration completed successfully")
                 else:
-                    logger.warning(
-                        f"No chunks received during regeneration for conversation {conversation_id}"
-                    )
+                    logger.warning("No chunks received during regeneration")
 
                 return True  # Indicate successful completion
 
@@ -378,43 +372,26 @@ def execute_regenerate_background(
             # Set task status to completed
             redis_manager.set_task_status(conversation_id, run_id, "completed")
 
-            logger.info(
-                f"Background regenerate execution completed: {conversation_id}:{run_id}"
-            )
+            logger.info("Background regenerate execution completed")
         else:
-            logger.info(
-                f"Background regenerate execution cancelled: {conversation_id}:{run_id}"
-            )
+            logger.info("Background regenerate execution cancelled")
 
         # Return the completion status so on_success can check if it was cancelled
         return completed
 
     except Exception as e:
-        logger.exception(
-            "Background regenerate execution failed",
-            conversation_id=conversation_id,
-            run_id=run_id,
-            user_id=user_id,
-        )
+            logger.exception("Background regenerate execution failed")
 
-        # Set task status to error
-        try:
-            redis_manager.set_task_status(conversation_id, run_id, "error")
-        except Exception:
-            logger.exception(
-                "Failed to set task status to error",
-                conversation_id=conversation_id,
-                run_id=run_id,
-            )
+            # Set task status to error
+            try:
+                redis_manager.set_task_status(conversation_id, run_id, "error")
+            except Exception:
+                logger.exception("Failed to set task status to error")
 
-        try:
-            redis_manager.publish_event(
-                conversation_id, run_id, "end", {"status": "error", "message": str(e)}
-            )
-        except Exception:
-            logger.exception(
-                "Failed to publish error event to Redis",
-                conversation_id=conversation_id,
-                run_id=run_id,
-            )
-        raise
+            try:
+                redis_manager.publish_event(
+                    conversation_id, run_id, "end", {"status": "error", "message": str(e)}
+                )
+            except Exception:
+                logger.exception("Failed to publish error event to Redis")
+            raise

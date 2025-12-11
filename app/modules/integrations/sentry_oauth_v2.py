@@ -141,22 +141,10 @@ class SentryOAuthV2:
                 "redirect_uri": redirect_uri,
             }
 
-            logger.info("=== Sentry OAuth Token Exchange ===")
-            logger.info(f"Token URL: {token_url}")
-            logger.info(f"Client ID: {self.client_id}")
-            logger.info(f"Code: {authorization_code}")
-            logger.info(f"Code length: {len(authorization_code)}")
-            logger.info(f"Code first 10 chars: {authorization_code[:10]}")
-            logger.info(f"Code last 10 chars: {authorization_code[-10:]}")
-            logger.info(f"Redirect URI: {redirect_uri}")
-            logger.info(f"Request data keys: {list(token_data.keys())}")
-
-            # Log the exact request payload (without secrets)
-            debug_payload = {
-                k: v for k, v in token_data.items() if k != "client_secret"
-            }
-            debug_payload["client_secret"] = "***REDACTED***"
-            logger.info(f"Request payload: {debug_payload}")
+            logger.debug("Sentry OAuth token exchange starting",
+                        code_length=len(authorization_code),
+                        has_client_id=bool(self.client_id),
+                        has_redirect_uri=bool(redirect_uri))
 
             # Make the token exchange request using httpx (as shown in Sentry docs)
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -169,13 +157,13 @@ class SentryOAuthV2:
                     },
                 )
 
-                logger.info(f"Response status: {response.status_code}")
-                logger.info(f"Response headers: {dict(response.headers)}")
-                logger.info(f"Response content: {response.text}")
+                logger.debug("Token exchange response received",
+                           status_code=response.status_code)
 
                 if response.status_code != 200:
-                    logger.error(f"Token exchange failed: {response.status_code}")
-                    logger.error(f"Response: {response.text}")
+                    logger.error("Token exchange failed",
+                               status_code=response.status_code,
+                               response_text=response.text[:200])  # Truncate
                     raise HTTPException(
                         status_code=response.status_code,
                         detail=f"Token exchange failed: {response.text}",
@@ -183,7 +171,8 @@ class SentryOAuthV2:
 
                 # Parse the token response
                 tokens = response.json()
-                logger.info(f"Received tokens: {list(tokens.keys())}")
+                logger.info("Sentry OAuth token exchange successful")
+                logger.debug("Received token fields", fields=list(tokens.keys()))
 
                 return tokens
 

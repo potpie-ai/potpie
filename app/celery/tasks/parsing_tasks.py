@@ -24,7 +24,7 @@ def process_parsing(
 ) -> None:
     # Set up logging context with domain IDs
     with log_context(project_id=project_id, user_id=user_id):
-        logger.info(f"Task received: Starting parsing process for project {project_id}")
+        logger.info("Task received: Starting parsing process")
         try:
             parsing_service = ParsingService(self.db, user_id)
 
@@ -44,18 +44,15 @@ def process_parsing(
                 end_time = time.time()
                 elapsed_time = end_time - start_time
                 logger.info(
-                    f"Parsing process took {elapsed_time:.2f} seconds for project {project_id}"
+                    "Parsing process completed",
+                    elapsed_seconds=round(elapsed_time, 2)
                 )
 
             # Use BaseTask's long-lived event loop for consistency
             self.run_async(run_parsing())
-            logger.info(f"Parsing process completed for project {project_id}")
+            logger.info("Parsing process completed successfully")
         except Exception:
-            logger.exception(
-                f"Error during parsing for project {project_id}",
-                project_id=project_id,
-                user_id=user_id,
-            )
+            logger.exception("Error during parsing")
             raise
 
 

@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import sys
 from contextlib import contextmanager
 from loguru import logger as _loguru_logger
@@ -9,12 +10,60 @@ from typing import Optional
 _LOGGING_CONFIGURED = False
 _logger = _loguru_logger
 
+# Sensitive data patterns to redact in logs
+SENSITIVE_PATTERNS = [
+    # Credentials in key=value format
+    (re.compile(r'(password|passwd|pwd)=["\']?([^"\'\s&]+)', re.IGNORECASE), r'\1=***REDACTED***'),
+    (re.compile(r'(token|access_token|refresh_token|id_token)=["\']?([^"\'\s&]+)', re.IGNORECASE), r'\1=***REDACTED***'),
+    (re.compile(r'(secret|client_secret|api_secret)=["\']?([^"\'\s&]+)', re.IGNORECASE), r'\1=***REDACTED***'),
+    (re.compile(r'(api[_-]?key|apikey)=["\']?([^"\'\s&]+)', re.IGNORECASE), r'\1=***REDACTED***'),
+    (re.compile(r'(auth|authorization)=["\']?([^"\'\s&]+)', re.IGNORECASE), r'\1=***REDACTED***'),
+    
+    # Bearer tokens
+    (re.compile(r'Bearer\s+([A-Za-z0-9\-._~+/]+=*)', re.IGNORECASE), r'Bearer ***REDACTED***'),
+    
+    # Basic auth
+    (re.compile(r'Basic\s+([A-Za-z0-9+/]+=*)', re.IGNORECASE), r'Basic ***REDACTED***'),
+    
+    # Redis/Database URLs with passwords
+    (re.compile(r'(redis|postgresql|mysql|mongodb)://([^:]+):([^@]+)@', re.IGNORECASE), r'\1://\2:***REDACTED***@'),
+    
+    # OAuth authorization codes (typically 20-100 chars alphanumeric)
+    (re.compile(r'([?&]code=)([A-Za-z0-9\-._~]{20,100})([&\s]|$)', re.IGNORECASE), r'\1***REDACTED***\3'),
+    
+    # Generic secrets in quotes
+    (re.compile(r'("(?:password|token|secret|api_key)"\s*:\s*)"([^"]+)"', re.IGNORECASE), r'\1"***REDACTED***"'),
+    (re.compile(r"('(?:password|token|secret|api_key)'\s*:\s*)'([^']+)'", re.IGNORECASE), r"\1'***REDACTED***'"),
+]
+
+
+def filter_sensitive_data(text: str) -> str:
+    """
+    Filter sensitive data from log messages.
+    
+    Args:
+        text: Log message text to filter
+        
+    Returns:
+        Filtered text with sensitive data redacted
+    """
+    if not isinstance(text, str):
+        return text
+    
+    filtered = text
+    for pattern, replacement in SENSITIVE_PATTERNS:
+        filtered = pattern.sub(replacement, filtered)
+    
+    return filtered
+
 
 def production_log_sink(message):
     """Custom sink for production that outputs flat JSON format for better machine readability.
 
     When serialize=True, loguru outputs JSON string. We parse it and reformat as flat JSON
     for easier parsing by log aggregation tools (ELK, Datadog, Splunk, CloudWatch, etc.).
+    
+    Also filters sensitive data patterns to prevent credential leakage.
     """
     try:
         # Parse the serialized JSON from loguru
@@ -34,25 +83,31 @@ def production_log_sink(message):
             "type": exc.get("type", {}).get("name", "Exception")
             if isinstance(exc.get("type"), dict)
             else str(exc.get("type", "Exception")),
-            "value": exc.get("value", ""),
-            "traceback": exc.get("traceback", ""),
+            "value": filter_sensitive_data(str(exc.get("value", ""))),
+            "traceback": filter_sensitive_data(str(exc.get("traceback", ""))),
         }
 
     # Build flat JSON structure - easier for log parsers
+    # Filter sensitive data from message
     log_data = {
         "timestamp": record.get("time", {}).get("repr", ""),
         "level": record.get("level", {}).get("name", "INFO"),
         "logger": record.get("extra", {}).get("name", record.get("name", "unknown")),
         "function": record.get("function", ""),
         "line": record.get("line", 0),
-        "message": record.get("message", ""),
+        "message": filter_sensitive_data(str(record.get("message", ""))),
     }
 
     # Add all extra fields (conversation_id, user_id, etc.) at top level
+    # Filter sensitive data from extra fields too
     extras = record.get("extra", {})
     for key, value in extras.items():
         if key != "name":  # Already included as "logger"
-            log_data[key] = value
+            # Convert value to string and filter if it's a string-like type
+            if isinstance(value, (str, bytes)):
+                log_data[key] = filter_sensitive_data(str(value))
+            else:
+                log_data[key] = value
 
     # Add exception if present
     if exception:
@@ -108,6 +163,10 @@ def configure_logging(level: Optional[str] = None):
             record["extra"]["name"] = record.get(
                 "name", record.get("module", "unknown")
             )
+        
+        # Filter sensitive data from the message
+        if "message" in record:
+            record["message"] = filter_sensitive_data(str(record["message"]))
 
     _logger = _logger.patch(patcher)
 
@@ -122,11 +181,22 @@ def configure_logging(level: Optional[str] = None):
             serialize=True,  # Get structured record, then format in sink
         )
     else:
+        # Development: Add colorized output with sensitive data filtering
+        def development_filter(record):
+            """Filter sensitive data in development logs"""
+            record["message"] = filter_sensitive_data(str(record["message"]))
+            # Filter extra fields
+            for key, value in record.get("extra", {}).items():
+                if isinstance(value, (str, bytes)):
+                    record["extra"][key] = filter_sensitive_data(str(value))
+            return True
+        
         _logger.add(
             sys.stdout,
             format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{extra[name]}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | <level>{message}</level> - {extra}",
             level=level,
             colorize=True,
+            filter=development_filter,
         )
 
     intercept_handler = InterceptHandler()

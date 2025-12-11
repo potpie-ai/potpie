@@ -31,10 +31,11 @@ class TokenEncryption:
                 )
                 encryption_key = Fernet.generate_key().decode()
                 # Log a non-reversible fingerprint for debugging (first 8 chars of SHA256)
+                # Using DEBUG level to avoid exposing key generation events in production logs
                 key_fingerprint = hashlib.sha256(encryption_key.encode()).hexdigest()[
                     :8
                 ]
-                logger.warning(
+                logger.debug(
                     f"Generated encryption key for development (fingerprint: {key_fingerprint})"
                 )
                 logger.warning(
