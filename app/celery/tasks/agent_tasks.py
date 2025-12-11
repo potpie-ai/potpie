@@ -380,13 +380,23 @@ def execute_regenerate_background(
         return completed
 
     except Exception as e:
-        logger.exception("Background regenerate execution failed")
+        logger.exception(
+            "Background regenerate execution failed",
+            conversation_id=conversation_id,
+            run_id=run_id,
+            user_id=user_id,
+        )
 
         # Set task status to error
         try:
             redis_manager.set_task_status(conversation_id, run_id, "error")
         except Exception:
-            logger.exception("Failed to set task status to error")
+            logger.exception(
+                "Failed to set task status to error",
+                conversation_id=conversation_id,
+                run_id=run_id,
+                user_id=user_id,
+            )
 
         # Ensure end event is always published
         try:
@@ -397,5 +407,10 @@ def execute_regenerate_background(
                 {"status": "error", "message": str(e)},
             )
         except Exception:
-            logger.exception("Failed to publish error event to Redis")
+            logger.exception(
+                "Failed to publish error event to Redis",
+                conversation_id=conversation_id,
+                run_id=run_id,
+                user_id=user_id,
+            )
         raise

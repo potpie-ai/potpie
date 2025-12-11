@@ -1177,7 +1177,8 @@ async def get_confluence_resources(
         raise
     except Exception as exc:
         logger.exception(
-            f"Error fetching Confluence resources for integration {integration_id}"
+            "Error fetching Confluence resources for integration",
+            integration_id=integration_id,
         )
         raise HTTPException(
             status_code=500,

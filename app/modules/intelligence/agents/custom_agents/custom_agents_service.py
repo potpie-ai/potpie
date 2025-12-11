@@ -488,14 +488,16 @@ class CustomAgentService:
                 user_id=user_id,
             )
             raise
-        except Exception:
+        except HTTPException:
+            raise
+        except Exception as e:
             self.db.rollback()
             logger.exception(
                 "Unexpected error while updating agent",
                 agent_id=agent_id,
                 user_id=user_id,
             )
-            raise HTTPException(status_code=500, detail="Failed to update agent")
+            raise HTTPException(status_code=500, detail="Failed to update agent") from e
 
     async def delete_agent(self, agent_id: str, user_id: str) -> Dict[str, Any]:
         """Delete a custom agent"""
