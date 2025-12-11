@@ -23,6 +23,67 @@ logger = logging.getLogger(__name__)
 MAX_OUTPUT_LENGTH = 80000  # 80k characters for stdout
 MAX_ERROR_LENGTH = 10000  # 10k characters for stderr
 
+# SECURITY: Whitelist of allowed read-only commands
+# Only these commands are permitted to execute
+ALLOWED_COMMANDS = {
+    # File search and listing
+    "grep",
+    "find",
+    "locate",
+    "which",
+    "whereis",
+    "ls",
+    "dir",  # Windows equivalent
+    # File content viewing (read-only)
+    "cat",
+    "head",
+    "tail",
+    "less",
+    "more",
+    "wc",  # Word count
+    "nl",  # Number lines
+    # Text processing (read-only operations)
+    "awk",  # Only read-only, -i flag blocked separately
+    "sed",  # Only read-only, -i flag blocked separately
+    "cut",
+    "sort",
+    "uniq",
+    "tr",
+    "grep",
+    "egrep",
+    "fgrep",
+    # File information
+    "file",
+    "stat",
+    "readlink",
+    "realpath",
+    # Directory operations (read-only)
+    "pwd",
+    "dirname",
+    "basename",
+    # Text utilities
+    "diff",  # Read-only comparison
+    "cmp",  # Read-only comparison
+    # Archive viewing (read-only)
+    "tar",  # Only with -t (list) flag, extraction blocked
+    "zipinfo",  # List zip contents
+    "unzip",  # Only with -l (list) flag, extraction blocked
+    # Process info (read-only)
+    "ps",
+    # System info (read-only)
+    "uname",
+    "date",
+    "id",
+    # String utilities
+    "strings",
+    "od",  # Octal dump
+    "hexdump",
+    # Search tools
+    "ag",  # The Silver Searcher
+    "rg",  # ripgrep
+    "ack",  # ack-grep
+}
+
 # SECURITY: Commands that are ALWAYS blocked (write/modify operations)
 ALWAYS_BLOCKED_COMMANDS = {
     "rm",
@@ -76,9 +137,44 @@ INJECTION_PATTERNS = [
 ]
 
 
+def _extract_command_name(command: str) -> str:
+    """
+    Extract the base command name from a command string.
+    Handles commands with paths, pipes, and arguments.
+
+    Args:
+        command: The command string
+
+    Returns:
+        The base command name (e.g., 'grep' from '/usr/bin/grep -r pattern .')
+    """
+    # Remove leading/trailing whitespace
+    command = command.strip()
+
+    # Handle pipes - extract first command
+    if "|" in command:
+        command = command.split("|")[0].strip()
+
+    # Split by whitespace to get first token
+    parts = command.split()
+    if not parts:
+        return ""
+
+    # Get the first part (command name or path)
+    first_part = parts[0]
+
+    # Extract just the command name (handle paths like /usr/bin/grep or ./script.sh)
+    # Remove any path components
+    if "/" in first_part:
+        first_part = first_part.split("/")[-1]
+
+    return first_part.lower()
+
+
 def _validate_command_safety(command: str) -> tuple[bool, Optional[str]]:
     """
     Validate that a command is safe (read-only) and doesn't attempt write operations.
+    Uses a whitelist approach - only explicitly allowed commands are permitted.
 
     Args:
         command: The command string to validate
@@ -98,7 +194,7 @@ def _validate_command_safety(command: str) -> tuple[bool, Optional[str]]:
                 f"Command contains write operation pattern '{pattern}'. Write operations are not allowed.",
             )
 
-    # Check for command injection patterns
+    # Check for command injection patterns (except pipes which are handled separately)
     for pattern in INJECTION_PATTERNS:
         if pattern in command:
             return (
@@ -106,12 +202,43 @@ def _validate_command_safety(command: str) -> tuple[bool, Optional[str]]:
                 f"Command contains injection pattern '{pattern}'. Command chaining/substitution is not allowed.",
             )
 
-    # Check if command starts with an always-blocked command
+    # SECURITY: Whitelist check - only allowed commands can execute
+    # Handle pipes - validate each command in the pipe chain
+    if "|" in command:
+        pipe_commands = [cmd.strip() for cmd in command.split("|")]
+        for pipe_cmd in pipe_commands:
+            cmd_name = _extract_command_name(pipe_cmd)
+            if not cmd_name:
+                return (
+                    False,
+                    "Invalid command in pipe chain.",
+                )
+            if cmd_name not in ALLOWED_COMMANDS:
+                return (
+                    False,
+                    f"Command '{cmd_name}' is not in the whitelist of allowed read-only commands. Only safe read-only commands like grep, find, cat, head, tail, etc. are permitted.",
+                )
+    else:
+        # Single command - check if it's whitelisted
+        cmd_name = _extract_command_name(command)
+        if not cmd_name:
+            return (
+                False,
+                "Invalid command.",
+            )
+        if cmd_name not in ALLOWED_COMMANDS:
+            return (
+                False,
+                f"Command '{cmd_name}' is not in the whitelist of allowed read-only commands. Only safe read-only commands like grep, find, cat, head, tail, etc. are permitted.",
+            )
+
+    # Additional check: block commands that are in the always-blocked list
+    # (redundant with whitelist, but provides clearer error messages)
     first_word = command_lower.split()[0] if command_lower.split() else ""
     if first_word in ALWAYS_BLOCKED_COMMANDS:
         return (
             False,
-            f"Command '{first_word}' is not allowed. This tool only supports read-only operations.",
+            f"Command '{first_word}' is explicitly blocked. This tool only supports read-only operations.",
         )
 
     # Check for write-blocked commands with dangerous flags
@@ -173,18 +300,24 @@ class BashCommandTool:
         IMPORTANT: This tool only works if the repository has been parsed and is available in the repo manager.
         If the worktree doesn't exist, the tool will return an error.
 
-        ✅ ALLOWED (Read-only commands):
+        ✅ ALLOWED (Whitelisted read-only commands only):
         - Search for patterns: grep -r "pattern" .
         - Find files: find . -name "*.py" -type f
-        - Process text: awk '/pattern/ {print $1}' file.txt (read-only)
+        - Process text: awk '/pattern/ {print $1}' file.txt (read-only, no -i flag)
         - Count occurrences: grep -c "pattern" file.txt
         - List files: ls -la directory/
         - Filter output: grep "error" log.txt | head -20 (pipes allowed for filtering)
         - View file contents: cat file.txt, head file.txt, tail file.txt
         - Check file info: stat file.txt, file file.txt
-        - Search in files: grep, ag, rg (ripgrep)
+        - Search in files: grep, ag (Silver Searcher), rg (ripgrep)
+        - Text utilities: sort, uniq, cut, wc, diff, cmp
+        - File information: stat, file, readlink, realpath
+        
+        ⚠️ SECURITY: Only whitelisted commands are allowed. Commands like python, python3, 
+        node, bash, sh, and other interpreters are BLOCKED for security reasons.
 
-        ❌ NOT ALLOWED (Write/modify commands):
+        ❌ NOT ALLOWED:
+        - Interpreters/executables: python, python3, node, bash, sh, perl, ruby, etc.
         - File modification: echo > file, sed -i, awk -i
         - File creation: touch, mkdir, > file, >> file
         - File deletion: rm, rmdir
@@ -194,6 +327,7 @@ class BashCommandTool:
         - Command chaining: ; && || (use pipes | for filtering instead)
         - Command substitution: `command` or $(command)
         - Environment access: env (blocked to prevent secret exposure)
+        - Any command not in the whitelist
         - Any command that modifies the filesystem
 
         🔒 Security Features:
@@ -385,24 +519,33 @@ class BashCommandTool:
                 f"(project: {repo_name}@{commit_id or branch})"
             )
 
-            # Parse command into list for gVisor runner
-            # Split the command properly, handling quoted strings
-            try:
-                # Use shlex to properly parse the command while preserving quotes
-                command_parts = shlex.split(command)
-            except ValueError as e:
-                # If parsing fails, try a simpler approach
-                logger.warning(
-                    f"[BASH_COMMAND] Failed to parse command with shlex: {e}, using simple split"
-                )
-                command_parts = command.split()
+            # Check if command contains pipes - pipes require shell execution
+            has_pipe = "|" in command
 
-            # If we need to run in a subdirectory, prepend cd command
-            if relative_working_dir and relative_working_dir != ".":
-                # Prepend cd command to change to the subdirectory
-                cd_command = f"cd {shlex.quote(relative_working_dir)} && {' '.join(shlex.quote(arg) for arg in command_parts)}"
-                final_command = ["sh", "-c", cd_command]
+            # If command has pipes or we need to run in a subdirectory, use shell execution
+            if has_pipe or (relative_working_dir and relative_working_dir != "."):
+                # Execute via shell to support pipes and working directory changes
+                if relative_working_dir and relative_working_dir != ".":
+                    # Change to subdirectory and run command
+                    shell_command = (
+                        f"cd {shlex.quote(relative_working_dir)} && {command}"
+                    )
+                else:
+                    # Just run the command (pipes require shell)
+                    shell_command = command
+                final_command = ["sh", "-c", shell_command]
             else:
+                # No pipes and no subdirectory - can use list-based execution for better security
+                # Parse command into list for gVisor runner
+                try:
+                    # Use shlex to properly parse the command while preserving quotes
+                    command_parts = shlex.split(command)
+                except ValueError as e:
+                    # If parsing fails, try a simpler approach
+                    logger.warning(
+                        f"[BASH_COMMAND] Failed to parse command with shlex: {e}, using simple split"
+                    )
+                    command_parts = command.split()
                 final_command = command_parts
 
             # SECURITY: Don't pass environment variables - they will be filtered by gVisor runner
@@ -476,7 +619,9 @@ class BashCommandTool:
 
                 if truncation_notices:
                     # Prepend truncation notices to output
-                    response["output"] = "\n".join(truncation_notices) + "\n\n" + response["output"]
+                    response["output"] = (
+                        "\n".join(truncation_notices) + "\n\n" + response["output"]
+                    )
 
                 return response
             except Exception as e:

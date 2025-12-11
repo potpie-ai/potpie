@@ -160,16 +160,7 @@ async def post_message(
             detail="Subscription required to create a conversation.",
         )
 
-    # Note: email is no longer available with API key auth
-    controller = ConversationController(db, async_db, user_id, None)
-
-    if not stream:
-        # Non-streaming behavior - use direct execution
-        message_stream = controller.post_message(conversation_id, message, stream=False)
-        async for chunk in message_stream:
-            return chunk
-
-    # Streaming with session management and Celery (matching v1 behavior)
+    # Use Celery for both streaming and non-streaming requests
     run_id = normalize_run_id(
         conversation_id, user_id, session_id, prev_human_message_id
     )
@@ -184,7 +175,27 @@ async def post_message(
     # Use node_ids from message
     node_ids_list = message.node_ids or []
 
-    # Start background task and return streaming response using shared function
+    if not stream:
+        # Non-streaming: use Celery but wait for complete response
+        from app.modules.conversations.utils.conversation_routing import (
+            start_celery_task_and_wait,
+        )
+
+        return await start_celery_task_and_wait(
+            conversation_id=conversation_id,
+            run_id=run_id,
+            user_id=user_id,
+            query=message.content,
+            agent_id=agent_id,
+            node_ids=node_ids_list,
+            attachment_ids=message.attachment_ids or [],
+        )
+
+    # Streaming: use Celery with streaming response
+    from app.modules.conversations.utils.conversation_routing import (
+        start_celery_task_and_stream,
+    )
+
     return start_celery_task_and_stream(
         conversation_id=conversation_id,
         run_id=run_id,

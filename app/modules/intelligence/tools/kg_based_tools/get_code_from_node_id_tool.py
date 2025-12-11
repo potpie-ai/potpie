@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_model import Project
+from app.modules.intelligence.tools.tool_utils import truncate_dict_response
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ class GetCodeFromNodeIdTool:
         if node_data.get("docstring", None):
             docstring = node_data["docstring"]
 
-        return {
+        result = {
             "node_id": node_id,
             "file_path": relative_file_path,
             "start_line": start_line,
@@ -131,6 +132,14 @@ class GetCodeFromNodeIdTool:
             "code_content": code_content,
             "docstring": docstring,
         }
+        
+        # Truncate response if it exceeds character limits
+        truncated_result = truncate_dict_response(result)
+        if len(str(result)) > 80000:
+            logger.warning(
+                f"get_code_from_node_id output truncated for node_id={node_id}, project_id={project_id}"
+            )
+        return truncated_result
 
     @staticmethod
     def _get_relative_file_path(file_path: str) -> str:
@@ -155,6 +164,9 @@ def get_code_from_node_id_tool(sql_db: Session, user_id: str) -> StructuredTool:
         description="""Retrieves code and docstring for a specific node id in a repository given its node ID
                        Inputs for the run method:
                        - project_id (str): The repository ID to retrieve code and docstring for, this is a UUID.
-                       - node_id (str): The node ID to retrieve code and docstring for, this is a UUID.""",
+                       - node_id (str): The node ID to retrieve code and docstring for, this is a UUID.
+                       
+                       ⚠️ IMPORTANT: Large code content may result in truncated responses (max 80,000 characters).
+                       If the response is truncated, a notice will be included indicating the truncation occurred.""",
         args_schema=GetCodeFromNodeIdInput,
     )

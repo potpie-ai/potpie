@@ -18,6 +18,10 @@ from app.modules.intelligence.provider.provider_service import (
 )
 from .agent_config import AgentConfig, TaskConfig
 from app.modules.utils.logger import setup_logger
+from app.modules.intelligence.tools.reasoning_manager import (
+    _get_reasoning_manager,
+    _reset_reasoning_manager,
+)
 
 from ..chat_agent import (
     ChatAgent,
@@ -79,6 +83,10 @@ class PydanticRagAgent(ChatAgent):
         self.tools = tools
         self.config = config
         self.mcp_servers = mcp_servers or []
+        # Initialize history processor for token-aware context management
+        from .history_processor import create_history_processor
+
+        self._history_processor = create_history_processor(llm_provider)
 
     def _create_agent(self, ctx: ChatContext) -> Agent:
         config = self.config
@@ -140,6 +148,7 @@ class PydanticRagAgent(ChatAgent):
             "end_strategy": "exhaustive",
             "model_settings": {"max_tokens": 14000},
             "instrument": True,
+            "history_processors": [self._history_processor],
         }
 
         if not allow_parallel_tools:
@@ -444,6 +453,14 @@ class PydanticRagAgent(ChatAgent):
             f"Running pydantic-ai agent {'with multimodal support' if ctx.has_images() else ''}"
         )
 
+        # Reset code changes manager for this agent run to ensure isolation
+        from app.modules.intelligence.tools.code_changes_manager import (
+            _reset_code_changes_manager,
+        )
+
+        _reset_code_changes_manager()
+        logger.info("🔄 Reset code changes manager for new agent run")
+
         # Check if we have images and if the model supports vision
         if ctx.has_images() and self.llm_provider.is_vision_model():
             logger.info(
@@ -557,6 +574,10 @@ class PydanticRagAgent(ChatAgent):
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         """Stream multimodal response using PydanticAI's native capabilities"""
+        # Reset reasoning manager for this run
+        _reset_reasoning_manager()
+        reasoning_manager = _get_reasoning_manager()
+
         try:
             # Debug multimodal content
             self._debug_multimodal_content(ctx)
@@ -583,6 +604,8 @@ class PydanticRagAgent(ChatAgent):
                                 if isinstance(event, PartStartEvent) and isinstance(
                                     event.part, TextPart
                                 ):
+                                    # Accumulate TextPart content for reasoning dump
+                                    reasoning_manager.append_content(event.part.content)
                                     yield ChatAgentResponse(
                                         response=event.part.content,
                                         tool_calls=[],
@@ -591,6 +614,10 @@ class PydanticRagAgent(ChatAgent):
                                 if isinstance(event, PartDeltaEvent) and isinstance(
                                     event.delta, TextPartDelta
                                 ):
+                                    # Accumulate TextPartDelta content for reasoning dump
+                                    reasoning_manager.append_content(
+                                        event.delta.content_delta
+                                    )
                                     yield ChatAgentResponse(
                                         response=event.delta.content_delta,
                                         tool_calls=[],
@@ -648,6 +675,12 @@ class PydanticRagAgent(ChatAgent):
 
                     elif Agent.is_end_node(node):
                         logger.info("multimodal result streamed successfully!!")
+                        # Finalize and save reasoning content
+                        reasoning_hash = reasoning_manager.finalize_and_save()
+                        if reasoning_hash:
+                            logger.info(
+                                f"Reasoning content saved with hash: {reasoning_hash}"
+                            )
 
         except Exception as e:
             logger.error(f"Error in multimodal stream: {str(e)}", exc_info=True)
@@ -659,6 +692,10 @@ class PydanticRagAgent(ChatAgent):
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         """Standard streaming execution with MCP server support"""
+        # Reset reasoning manager for this run
+        _reset_reasoning_manager()
+        reasoning_manager = _get_reasoning_manager()
+
         # Create agent directly
         agent = self._create_agent(ctx)
 
@@ -682,6 +719,10 @@ class PydanticRagAgent(ChatAgent):
                                             if isinstance(
                                                 event, PartStartEvent
                                             ) and isinstance(event.part, TextPart):
+                                                # Accumulate TextPart content for reasoning dump
+                                                reasoning_manager.append_content(
+                                                    event.part.content
+                                                )
                                                 yield ChatAgentResponse(
                                                     response=event.part.content,
                                                     tool_calls=[],
@@ -692,6 +733,10 @@ class PydanticRagAgent(ChatAgent):
                                             ) and isinstance(
                                                 event.delta, TextPartDelta
                                             ):
+                                                # Accumulate TextPartDelta content for reasoning dump
+                                                reasoning_manager.append_content(
+                                                    event.delta.content_delta
+                                                )
                                                 yield ChatAgentResponse(
                                                     response=event.delta.content_delta,
                                                     tool_calls=[],
@@ -812,6 +857,12 @@ class PydanticRagAgent(ChatAgent):
 
                             elif Agent.is_end_node(node):
                                 logger.info("result streamed successfully!!")
+                                # Finalize and save reasoning content
+                                reasoning_hash = reasoning_manager.finalize_and_save()
+                                if reasoning_hash:
+                                    logger.info(
+                                        f"Reasoning content saved with hash: {reasoning_hash}"
+                                    )
 
             except (TimeoutError, anyio.WouldBlock, Exception) as mcp_error:
                 logger.warning(f"MCP server initialization failed: {mcp_error}")
@@ -834,6 +885,10 @@ class PydanticRagAgent(ChatAgent):
                                             if isinstance(
                                                 event, PartStartEvent
                                             ) and isinstance(event.part, TextPart):
+                                                # Accumulate TextPart content for reasoning dump
+                                                reasoning_manager.append_content(
+                                                    event.part.content
+                                                )
                                                 yield ChatAgentResponse(
                                                     response=event.part.content,
                                                     tool_calls=[],
@@ -844,6 +899,10 @@ class PydanticRagAgent(ChatAgent):
                                             ) and isinstance(
                                                 event.delta, TextPartDelta
                                             ):
+                                                # Accumulate TextPartDelta content for reasoning dump
+                                                reasoning_manager.append_content(
+                                                    event.delta.content_delta
+                                                )
                                                 yield ChatAgentResponse(
                                                     response=event.delta.content_delta,
                                                     tool_calls=[],
@@ -964,6 +1023,12 @@ class PydanticRagAgent(ChatAgent):
 
                             elif Agent.is_end_node(node):
                                 logger.info("result streamed successfully!!")
+                                # Finalize and save reasoning content
+                                reasoning_hash = reasoning_manager.finalize_and_save()
+                                if reasoning_hash:
+                                    logger.info(
+                                        f"Reasoning content saved with hash: {reasoning_hash}"
+                                    )
 
                 except (ModelRetry, AgentRunError, UserError) as pydantic_error:
                     logger.error(

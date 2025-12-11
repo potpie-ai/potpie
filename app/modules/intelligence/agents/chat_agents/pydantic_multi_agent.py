@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     TextPartDelta,
     ModelResponse,
+    ModelRequest,
     TextPart,
     ImageUrl,
     UserContent,
@@ -41,6 +42,7 @@ from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from .agent_config import AgentConfig, TaskConfig
+from .history_processor import create_history_processor
 from app.modules.utils.logger import setup_logger
 
 from ..chat_agent import (
@@ -319,6 +321,9 @@ class PydanticMultiAgent(ChatAgent):
         self._supervisor_agent: Optional[Agent] = None
         # Track the current supervisor run to extract message history for subagents
         self._current_supervisor_run: Optional[Any] = None
+        # Initialize history processor for token-aware context management
+        # The processor stores compressed messages internally for reuse within the same execution
+        self._history_processor = create_history_processor(llm_provider)
         # Track active streaming tasks for delegation tools (tool_call_id -> queue)
         self._active_delegation_streams: Dict[str, asyncio.Queue] = {}
         # Cache results from streaming to avoid duplicate execution (task_key -> result)
@@ -404,8 +409,15 @@ class PydanticMultiAgent(ChatAgent):
         request_stream: Any, agent_type: str = "agent"
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         """Yield text streaming events from a request stream"""
+        from app.modules.intelligence.tools.reasoning_manager import (
+            _get_reasoning_manager,
+        )
+
+        reasoning_manager = _get_reasoning_manager()
         async for event in request_stream:
             if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                # Accumulate TextPart content for reasoning dump
+                reasoning_manager.append_content(event.part.content)
                 yield ChatAgentResponse(
                     response=event.part.content,
                     tool_calls=[],
@@ -414,6 +426,8 @@ class PydanticMultiAgent(ChatAgent):
             if isinstance(event, PartDeltaEvent) and isinstance(
                 event.delta, TextPartDelta
             ):
+                # Accumulate TextPartDelta content for reasoning dump
+                reasoning_manager.append_content(event.delta.content_delta)
                 yield ChatAgentResponse(
                     response=event.delta.content_delta,
                     tool_calls=[],
@@ -586,7 +600,12 @@ Now execute the task completely."""
         message_history: Optional[List[ModelMessage]] = None,
     ) -> str:
         """Collect streaming response from an agent run"""
+        from app.modules.intelligence.tools.reasoning_manager import (
+            _get_reasoning_manager,
+        )
+
         full_response = ""
+        reasoning_manager = _get_reasoning_manager()
 
         async with agent.iter(
             user_prompt=user_prompt,
@@ -602,6 +621,8 @@ Now execute the task completely."""
                                 event.part, TextPart
                             ):
                                 full_response += event.part.content
+                                # Accumulate TextPart content for reasoning dump
+                                reasoning_manager.append_content(event.part.content)
                                 logger.debug(
                                     f"[{agent_type}] Streaming chunk: {event.part.content[:100]}{'...' if len(event.part.content) > 100 else ''}"
                                 )
@@ -609,10 +630,20 @@ Now execute the task completely."""
                                 event.delta, TextPartDelta
                             ):
                                 full_response += event.delta.content_delta
+                                # Accumulate TextPartDelta content for reasoning dump
+                                reasoning_manager.append_content(
+                                    event.delta.content_delta
+                                )
                                 logger.debug(
                                     f"[{agent_type}] Streaming delta: {event.delta.content_delta[:100]}{'...' if len(event.delta.content_delta) > 100 else ''}"
                                 )
                 elif Agent.is_end_node(node):
+                    # Finalize and save reasoning content
+                    reasoning_hash = reasoning_manager.finalize_and_save()
+                    if reasoning_hash:
+                        logger.info(
+                            f"Reasoning content saved with hash: {reasoning_hash}"
+                        )
                     break
 
         return full_response
@@ -625,6 +656,11 @@ Now execute the task completely."""
         message_history: Optional[List[ModelMessage]] = None,
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         """Stream subagent response as it comes in"""
+        from app.modules.intelligence.tools.reasoning_manager import (
+            _get_reasoning_manager,
+        )
+
+        reasoning_manager = _get_reasoning_manager()
         async with agent.iter(
             user_prompt=user_prompt,
             message_history=message_history or [],
@@ -639,6 +675,8 @@ Now execute the task completely."""
                                 if isinstance(event, PartStartEvent) and isinstance(
                                     event.part, TextPart
                                 ):
+                                    # Accumulate TextPart content for reasoning dump
+                                    reasoning_manager.append_content(event.part.content)
                                     yield ChatAgentResponse(
                                         response=event.part.content,
                                         tool_calls=[],
@@ -647,6 +685,10 @@ Now execute the task completely."""
                                 if isinstance(event, PartDeltaEvent) and isinstance(
                                     event.delta, TextPartDelta
                                 ):
+                                    # Accumulate TextPartDelta content for reasoning dump
+                                    reasoning_manager.append_content(
+                                        event.delta.content_delta
+                                    )
                                     yield ChatAgentResponse(
                                         response=event.delta.content_delta,
                                         tool_calls=[],
@@ -667,6 +709,12 @@ Now execute the task completely."""
 
                 elif Agent.is_end_node(node):
                     logger.info(f"{agent_type} result streamed successfully!!")
+                    # Finalize and save reasoning content
+                    reasoning_hash = reasoning_manager.finalize_and_save()
+                    if reasoning_hash:
+                        logger.info(
+                            f"Reasoning content saved with hash: {reasoning_hash}"
+                        )
                     break
 
     def _create_delegation_cache_key(self, task_description: str, context: str) -> str:
@@ -830,6 +878,15 @@ Now execute the task completely."""
 
             elif Agent.is_end_node(node):
                 logger.info(f"{context} result streamed successfully!!")
+                # Finalize and save reasoning content
+                from app.modules.intelligence.tools.reasoning_manager import (
+                    _get_reasoning_manager,
+                )
+
+                reasoning_manager = _get_reasoning_manager()
+                reasoning_hash = reasoning_manager.finalize_and_save()
+                if reasoning_hash:
+                    logger.info(f"Reasoning content saved with hash: {reasoning_hash}")
                 break
 
     async def _consume_queue_chunks(
@@ -1320,6 +1377,8 @@ Subagents DON'T get your history. Provide comprehensive context:
             output_type=str,
             defer_model_check=True,
             end_strategy="exhaustive",
+            history_processors=[self._history_processor],
+            instrument=True,
         )
         self._agent_instances[agent_type] = agent
         return agent
@@ -1357,6 +1416,76 @@ Subagents DON'T get your history. Provide comprehensive context:
             - Track progress: Update todo status (pending → in_progress → completed), add notes as you learn
             - Adapt: Update plan and TODOs based on discoveries - your plan can evolve!
             - Verify: Ensure all TODOs complete and objective met
+            
+            **📊 PERIODIC PROGRESS SUMMARIZATION (CRITICAL FOR LONG-RUNNING TASKS):**
+            For long-running tasks and when context builds up, periodically summarize progress to manage context and enable smooth continuation.
+            
+            **WHEN TO SUMMARIZE:**
+            - ✅ **After major breakthroughs:** When you've made a significant discovery, solved a critical problem, or completed a major milestone
+            - ✅ **After recognizing a large task:** When you realize the scope is larger than initially thought, or you've identified multiple interconnected components
+            - ✅ **Periodic intervals:** After completing 3-5 significant steps, multiple subagent delegations, or when conversation history is getting long
+            - ✅ **Before complex phases:** Before starting a new major phase of work (e.g., before switching from investigation to implementation)
+            - ✅ **After accumulating context:** When you've gathered substantial information from multiple sources (files, searches, subagent results)
+            
+            **WHAT TO INCLUDE IN PROGRESS SUMMARIES:**
+            - **Current status:** Where you are in the overall task, what phase you're in
+            - **Key accomplishments:** Major discoveries, completed components, solved problems
+            - **Important findings:** Critical information learned (file locations, code patterns, architectural insights, decisions made)
+            - **Current blockers or challenges:** Any issues encountered or dependencies identified
+            - **Next steps:** What needs to happen next, updated plan if it changed
+            - **Context preservation:** Key file paths, line numbers, function names, or other details needed to continue
+            - **TODO status:** Brief overview of completed vs remaining tasks
+            
+            **FORMAT FOR PROGRESS SUMMARIES:**
+            Use a clear markdown format like:
+            ```
+            ## 📊 Progress Summary
+            
+            **Current Status:** [Brief description of where you are]
+            
+            **Key Accomplishments:**
+            - [Major milestone 1]
+            - [Major milestone 2]
+            
+            **Important Findings:**
+            - [Critical discovery 1 with file paths/line numbers]
+            - [Critical discovery 2]
+            
+            **Current Challenges:**
+            - [Any blockers or issues]
+            
+            **Next Steps:**
+            - [Immediate next action]
+            - [Upcoming tasks]
+            
+            **Context to Preserve:**
+            - [Key file: path/to/file.py:lines]
+            - [Important function/class names]
+            - [Decisions made]
+            ```
+            
+            **WHY THIS MATTERS:**
+            - **Context management:** Summaries preserve critical information even when detailed history is filtered
+            - **Continuation:** Makes it easier to pick up work after interruptions or when context is reset
+            - **Clarity:** Helps maintain clear mental model of progress and current state
+            - **Token efficiency:** Condenses accumulated context into actionable summaries
+            - **Breakthrough tracking:** Captures important discoveries that might otherwise be lost in history
+            
+            **REMEMBER:**
+            - Summarize proactively, not just when explicitly asked
+            - Focus on actionable information that enables continuation
+            - Include specific references (file paths, line numbers) for important findings
+            - Update your understanding of the task scope if it has changed
+            - These summaries are part of your conversation history, so they persist and help maintain context
+            
+            **🔄 TOOL CALL SUMMARIZATION (CRITICAL FOR CONTEXT MANAGEMENT):**
+            - **BEFORE calling a tool:** Briefly state what you're about to do and why (1-2 sentences)
+              Example: "Calling fetch_file to read the router implementation to understand the request flow"
+            - **AFTER receiving tool result:** Immediately summarize the key findings (2-3 sentences)
+              Example: "The router uses middleware X which validates Y. Found that function Z handles authentication at line 45."
+            - **Why this matters:** Tool results are large and get filtered from history later. Your summaries preserve context.
+            - **What to summarize:** Key findings, important details, decisions made, not the full tool output
+            - This helps maintain context even when old tool results are removed from message history
 
             **🎯 SUBAGENT DELEGATION - YOUR MOST POWERFUL TOOL (INCLUDING REASONING):**
             
@@ -1495,6 +1624,7 @@ Subagents DON'T get your history. Provide comprehensive context:
             defer_model_check=True,
             end_strategy="exhaustive",
             # model_settings={"max_tokens": 64000},
+            history_processors=[self._history_processor],
         )
         self._supervisor_agent = supervisor_agent
         return supervisor_agent
@@ -1880,14 +2010,232 @@ Image Analysis Notes:
         )
         return content
 
+    def _validate_and_fix_message_history(
+        self, messages: List[ModelMessage]
+    ) -> List[ModelMessage]:
+        """Validate message history and ensure tool calls/results are properly paired.
+
+        Anthropic API requires:
+        - Every tool_use block must have a tool_result block in the IMMEDIATELY NEXT message
+        - Removes orphaned tool results (results without corresponding calls)
+        - Removes orphaned tool calls (calls without corresponding results)
+        - Removes tool calls that don't have results in the next message
+
+        This prevents "tool_result without tool_use" and "tool_use without tool_result" errors.
+        """
+        if not messages:
+            return messages
+
+        def _extract_tool_call_ids(msg: ModelMessage) -> set:
+            """Extract all tool_call_ids from a message."""
+            ids = set()
+            parts_to_check = []
+            if isinstance(msg, ModelRequest):
+                parts_to_check = msg.parts
+            elif isinstance(msg, ModelResponse):
+                parts_to_check = msg.parts
+
+            for part in parts_to_check:
+                if hasattr(part, "__dict__"):
+                    part_dict = part.__dict__
+                    if "tool_call_id" in part_dict and part_dict["tool_call_id"]:
+                        ids.add(part_dict["tool_call_id"])
+                    if "part" in part_dict:
+                        part_obj = part_dict["part"]
+                        if hasattr(part_obj, "tool_call_id") and part_obj.tool_call_id:
+                            ids.add(part_obj.tool_call_id)
+                    if "result" in part_dict:
+                        result_obj = part_dict["result"]
+                        if (
+                            hasattr(result_obj, "tool_call_id")
+                            and result_obj.tool_call_id
+                        ):
+                            ids.add(result_obj.tool_call_id)
+            return ids
+
+        def _is_tool_call_msg(msg: ModelMessage) -> bool:
+            """Check if message contains tool calls (not results)."""
+            parts_to_check = []
+            if isinstance(msg, ModelRequest):
+                parts_to_check = msg.parts
+            elif isinstance(msg, ModelResponse):
+                parts_to_check = msg.parts
+
+            for part in parts_to_check:
+                if hasattr(part, "__dict__"):
+                    part_dict = part.__dict__
+                    # Check part_kind first
+                    if part_dict.get("part_kind") == "tool-call":
+                        return True
+                    # Has tool_call_id and tool_name but no result
+                    if "tool_call_id" in part_dict and "tool_name" in part_dict:
+                        if "result" not in part_dict and "content" not in part_dict:
+                            return True
+                    if "part" in part_dict:
+                        part_obj = part_dict["part"]
+                        if hasattr(part_obj, "tool_call_id") and hasattr(
+                            part_obj, "tool_name"
+                        ):
+                            if not hasattr(part_obj, "result"):
+                                return True
+            return False
+
+        def _is_tool_result_msg(msg: ModelMessage) -> bool:
+            """Check if message contains tool results."""
+            parts_to_check = []
+            if isinstance(msg, ModelRequest):
+                parts_to_check = msg.parts
+            elif isinstance(msg, ModelResponse):
+                parts_to_check = msg.parts
+
+            for part in parts_to_check:
+                if hasattr(part, "__dict__"):
+                    part_dict = part.__dict__
+                    # Check part_kind first
+                    if part_dict.get("part_kind") == "tool-return":
+                        return True
+                    # Has result or content with tool_call_id
+                    if "result" in part_dict or (
+                        "tool_call_id" in part_dict and "content" in part_dict
+                    ):
+                        return True
+            return False
+
+        # Track tool_call_ids that have been used (tool calls)
+        tool_call_ids_with_calls: set = set()
+        # Track tool_call_ids that have results
+        tool_call_ids_with_results: set = set()
+        # Track message metadata
+        message_tool_call_ids: list = []
+
+        # First pass: identify all tool calls and results
+        for i, msg in enumerate(messages):
+            call_ids = _extract_tool_call_ids(msg)
+            message_tool_call_ids.append(call_ids)
+
+            if _is_tool_call_msg(msg):
+                tool_call_ids_with_calls.update(call_ids)
+            elif _is_tool_result_msg(msg):
+                tool_call_ids_with_results.update(call_ids)
+
+        # Find orphaned tool calls and results
+        orphaned_calls = tool_call_ids_with_calls - tool_call_ids_with_results
+        orphaned_results = tool_call_ids_with_results - tool_call_ids_with_calls
+
+        # CRITICAL: Find tool calls that don't have results in the IMMEDIATELY NEXT message
+        tool_calls_without_next_result: set = set()
+        for i, msg in enumerate(messages):
+            if _is_tool_call_msg(msg):
+                call_ids = message_tool_call_ids[i]
+                if i + 1 < len(messages):
+                    next_result_ids = message_tool_call_ids[i + 1]
+                    # All call_ids must have results in next message
+                    missing = call_ids - next_result_ids
+                    if missing:
+                        tool_calls_without_next_result.update(missing)
+                        logger.debug(
+                            f"[Message History Validation] Tool calls at message {i} missing results in next message: {missing}"
+                        )
+                else:
+                    # No next message
+                    tool_calls_without_next_result.update(call_ids)
+
+        # Combine all problematic tool_call_ids
+        problematic_ids = (
+            orphaned_calls | orphaned_results | tool_calls_without_next_result
+        )
+
+        if problematic_ids:
+            logger.warning(
+                f"[Message History Validation] Found {len(problematic_ids)} problematic tool_call_ids: "
+                f"orphaned_calls={orphaned_calls}, orphaned_results={orphaned_results}, "
+                f"calls_without_next_result={tool_calls_without_next_result}. Removing to prevent API errors."
+            )
+
+            # Second pass: identify messages to remove (including their pairs)
+            messages_to_skip: set = set()
+
+            for i, msg in enumerate(messages):
+                call_ids = message_tool_call_ids[i]
+                is_tool_call = _is_tool_call_msg(msg)
+                is_tool_result = _is_tool_result_msg(msg)
+
+                if not call_ids:
+                    continue
+
+                # CRITICAL: Remove if ANY tool_call_id is problematic
+                if any(tid in problematic_ids for tid in call_ids):
+                    messages_to_skip.add(i)
+                    logger.debug(
+                        f"[Message History Validation] Marking message {i} for removal "
+                        f"(has problematic tool_call_ids)"
+                    )
+
+                    # Also remove paired messages
+                    if is_tool_call and i + 1 < len(messages):
+                        messages_to_skip.add(i + 1)
+                        logger.debug(
+                            f"[Message History Validation] Also removing paired result at message {i+1}"
+                        )
+                    if is_tool_result and i > 0 and _is_tool_call_msg(messages[i - 1]):
+                        messages_to_skip.add(i - 1)
+                        logger.debug(
+                            f"[Message History Validation] Also removing paired call at message {i-1}"
+                        )
+
+            # Build filtered messages
+            filtered_messages = [
+                msg for i, msg in enumerate(messages) if i not in messages_to_skip
+            ]
+
+            # Safety check
+            if not filtered_messages and messages:
+                logger.error(
+                    "[Message History Validation] All messages removed! Keeping original."
+                )
+                return messages
+
+            return filtered_messages
+
+        return messages
+
     async def _prepare_multimodal_message_history(
         self, ctx: ChatContext
     ) -> List[ModelMessage]:
         """Prepare message history with multimodal support.
 
-        Limits history size to prevent token limit issues. Keeps only the most recent
-        messages to stay within reasonable token limits.
+        CRITICAL: This method now prioritizes using compressed message history from previous runs.
+        It retrieves compressed messages from the history processor's internal storage.
+        Otherwise, it falls back to rebuilding from ctx.history (text strings).
+
+        This ensures that compression benefits are preserved across multiple agent runs within
+        the same execution context.
         """
+        # Try to get compressed history from the history processor
+        # The processor stores compressed messages keyed by run_id from RunContext
+        # We need to check if we have a stored run_id from a previous run
+        # For now, we'll use a simple approach: check if processor has any stored history
+        # and use the most recent one (since we're in the same execution context)
+
+        # Access the processor instance from the history processor function
+        processor = getattr(self._history_processor, "processor", None)
+        if processor:
+            # Get all stored compressed histories (there should be at most one per run)
+            stored_keys = list(processor._last_compressed_output.keys())
+            if stored_keys:
+                # Use the most recent key (last one added)
+                latest_key = stored_keys[-1]
+                compressed_history = processor.get_compressed_history(latest_key)
+                if compressed_history:
+                    logger.info(
+                        f"Using compressed message history from processor: {len(compressed_history)} messages "
+                        f"(key: {latest_key})"
+                    )
+                    # Validate the compressed history before using it
+                    return self._validate_and_fix_message_history(compressed_history)
+
+        # Fallback: rebuild from ctx.history if no compressed history available
+        logger.debug("No compressed history found, rebuilding from ctx.history")
         history_messages = []
 
         # Limit history to prevent token bloat (max 8 messages or ~50k tokens estimated)
@@ -1909,6 +2257,9 @@ Image Analysis Notes:
             # For now, keep history as text-only to avoid token bloat
             # Images are only added to the current query
             history_messages.append(ModelResponse([TextPart(content=str(msg))]))
+
+        # Validate and fix message history to ensure tool calls/results are paired
+        history_messages = self._validate_and_fix_message_history(history_messages)
 
         return history_messages
 
@@ -1962,6 +2313,9 @@ Image Analysis Notes:
             # Create and run supervisor agent
             supervisor_agent = self._create_supervisor_agent(ctx)
 
+            # Validate message history before sending to model (single validation)
+            message_history = self._validate_and_fix_message_history(message_history)
+
             # Try to initialize MCP servers with timeout handling
             try:
                 async with supervisor_agent.run_mcp_servers():
@@ -1990,6 +2344,10 @@ Image Analysis Notes:
                     user_prompt=ctx.query,
                     message_history=message_history,
                 )
+
+            # Note: Compressed messages are now stored internally by the history processor
+            # The processor automatically stores them when it processes messages
+            # No need to manually capture here - they'll be retrieved in _prepare_multimodal_message_history
 
             return ChatAgentResponse(
                 response=resp.output,
@@ -2023,6 +2381,8 @@ Image Analysis Notes:
                 user_prompt=multimodal_content,
                 message_history=message_history,
             )
+
+            # Note: Compressed messages are stored internally by the history processor
 
             return ChatAgentResponse(
                 response=resp.output,
@@ -2094,6 +2454,9 @@ Image Analysis Notes:
             # Prepare message history (text-only for now to avoid token bloat)
             message_history = await self._prepare_multimodal_message_history(ctx)
 
+            # Validate message history before sending to model
+            message_history = self._validate_and_fix_message_history(message_history)
+
             # Create supervisor agent
             supervisor_agent = self._create_supervisor_agent(ctx)
 
@@ -2113,6 +2476,7 @@ Image Analysis Notes:
                     ):
                         yield response
                 finally:
+                    # Note: For streaming runs, compressed messages are handled by history processor
                     # Clear the reference when done
                     self._current_supervisor_run = None
 
@@ -2134,17 +2498,16 @@ Image Analysis Notes:
         try:
             # Try to initialize MCP servers with timeout handling
             try:
-                # Limit history to prevent token bloat
-                limited_history = (
-                    ctx.history[-8:] if len(ctx.history) > 8 else ctx.history
+                # Use _prepare_multimodal_message_history to get compressed history if available
+                message_history = await self._prepare_multimodal_message_history(ctx)
+                message_history = self._validate_and_fix_message_history(
+                    message_history
                 )
+
                 async with supervisor_agent.run_mcp_servers():
                     async with supervisor_agent.iter(
                         user_prompt=ctx.query,
-                        message_history=[
-                            ModelResponse([TextPart(content=msg)])
-                            for msg in limited_history
-                        ],
+                        message_history=message_history,
                         usage_limits=UsageLimits(
                             request_limit=None
                         ),  # No request limit for long-running tasks
@@ -2157,6 +2520,7 @@ Image Analysis Notes:
                             ):
                                 yield response
                         finally:
+                            # Note: For streaming runs, compressed messages are handled by history processor
                             # Clear the reference when done
                             self._current_supervisor_run = None
 
@@ -2209,16 +2573,15 @@ Image Analysis Notes:
                     )
                 logger.info("Continuing without MCP servers...")
 
-                # Fallback without MCP servers - use limited history to prevent token issues
-                limited_history = (
-                    ctx.history[-8:] if len(ctx.history) > 8 else ctx.history
+                # Fallback without MCP servers - use compressed history if available
+                message_history = await self._prepare_multimodal_message_history(ctx)
+                message_history = self._validate_and_fix_message_history(
+                    message_history
                 )
+
                 async with supervisor_agent.iter(
                     user_prompt=ctx.query,
-                    message_history=[
-                        ModelResponse([TextPart(content=msg)])
-                        for msg in limited_history
-                    ],
+                    message_history=message_history,
                     usage_limits=UsageLimits(
                         request_limit=None
                     ),  # No request limit for long-running tasks

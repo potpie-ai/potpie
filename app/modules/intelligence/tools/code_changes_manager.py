@@ -2418,13 +2418,35 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
             filename = f"diff_{timestamp}_{uuid.uuid4().hex[:8]}.json"
             filepath = os.path.join(data_dir, filename)
 
-            # Create JSON with model_patch field
+            # Get reasoning hash from reasoning manager
+            reasoning_hash = None
+            try:
+                from app.modules.intelligence.tools.reasoning_manager import (
+                    _get_reasoning_manager,
+                )
+
+                reasoning_manager = _get_reasoning_manager()
+                reasoning_hash = reasoning_manager.get_reasoning_hash()
+                # If not finalized yet, try to finalize it
+                if not reasoning_hash:
+                    reasoning_hash = reasoning_manager.finalize_and_save()
+            except Exception as e:
+                logger.warning(
+                    f"Tool show_diff_tool: Failed to get reasoning hash: {e}"
+                )
+
+            # Create JSON with model_patch and reasoning_hash fields
             diff_data = {"model_patch": combined_diff}
+            if reasoning_hash:
+                diff_data["reasoning_hash"] = reasoning_hash
 
             with open(filepath, "w", encoding="utf-8") as f:
                 json.dump(diff_data, f, indent=2, ensure_ascii=False)
 
-            logger.info(f"Tool show_diff_tool: Diff written to {filepath}")
+            logger.info(
+                f"Tool show_diff_tool: Diff written to {filepath} "
+                f"(reasoning_hash: {reasoning_hash})"
+            )
         except Exception as e:
             logger.warning(
                 f"Tool show_diff_tool: Failed to write diff to .data folder: {e}"

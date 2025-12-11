@@ -2,6 +2,10 @@ import logging
 import os
 import asyncio
 
+# Set TOKENIZERS_PARALLELISM before any tokenizer imports to prevent fork warnings
+# This must be set before sentence-transformers or any HuggingFace tokenizers are used
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 from celery import Celery
 from celery.signals import worker_process_shutdown
 from dotenv import load_dotenv
