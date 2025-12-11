@@ -2,8 +2,10 @@ import logging
 import os
 import shutil
 import traceback
+import fnmatch
 from asyncio import create_task
 from contextlib import contextmanager
+from typing import Optional
 
 from fastapi import HTTPException
 from git import Repo
@@ -25,7 +27,7 @@ from app.modules.search.search_service import SearchService
 from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.parse_webhook_helper import ParseWebhookHelper
 
-from .parsing_schema import ParsingRequest
+from .parsing_schema import ParsingRequest, ParseFilters
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +109,10 @@ class ParsingService:
                     commit_id=repo_details.commit_id,
                 )
 
+            # Apply filters to the extracted directory
+            if repo_details.filters:
+                self.apply_filters_to_directory(extracted_dir, repo_details.filters)
+
             if isinstance(repo, Repo):
                 language = self.parse_helper.detect_repo_language(extracted_dir)
             else:
@@ -117,7 +123,12 @@ class ParsingService:
                     language = self.parse_helper.detect_repo_language(extracted_dir)
 
             await self.analyze_directory(
-                extracted_dir, project_id, user_id, self.db, language, user_email
+                extracted_dir,
+                project_id,
+                user_id,
+                self.db,
+                language,
+                user_email,
             )
             message = "The project has been parsed successfully"
             return {"message": message, "id": project_id}
@@ -181,6 +192,82 @@ class ParsingService:
                 CREATE LOOKUP INDEX relationship_type_lookup IF NOT EXISTS FOR ()-[r]->() ON EACH type(r)
                 """
             session.run(rel_type_query)
+
+    def apply_filters_to_directory(self, directory: str, filters: ParseFilters):
+        """
+        Walks through the directory and removes files/folders that match the exclusion filters.
+        """
+        logger.info(f"Applying filters to directory: {directory}")
+
+        # If no filters are set, don't skip anything
+        if (
+            not filters.excluded_directories
+            and not filters.excluded_files
+            and not filters.excluded_extensions
+        ):
+            return
+
+        for root, dirs, files in os.walk(directory, topdown=True):
+            rel_root = os.path.relpath(root, directory)
+            if rel_root == ".":
+                rel_root = ""
+
+            # Filter directories in-place to prevent walking into them
+            for d in list(dirs):
+                dir_path = os.path.join(root, d)
+                rel_path = os.path.join(rel_root, d)
+
+                # Check if directory should be excluded
+                path_parts = rel_path.split(os.sep)
+                should_remove = any(
+                    excluded_dir in path_parts
+                    for excluded_dir in filters.excluded_directories
+                )
+
+                if should_remove:
+                    shutil.rmtree(dir_path)
+                    dirs.remove(d)
+                    logger.info(f"Removed excluded directory: {rel_path}")
+
+            # Filter files
+            for f in files:
+                file_path = os.path.join(root, f)
+                rel_path = os.path.join(rel_root, f)
+
+                should_remove = False
+
+                # Check directory exclusions for file's path
+                path_parts = rel_path.split(os.sep)
+                dir_parts = path_parts[:-1]
+                for excluded_dir in filters.excluded_directories:
+                    if excluded_dir in dir_parts:
+                        should_remove = True
+                        break
+
+                if not should_remove:
+                    # Check extension exclusions
+                    for ext in filters.excluded_extensions:
+                        if not ext.startswith("."):
+                            ext = "." + ext
+                        if file_path.endswith(ext):
+                            should_remove = True
+                            break
+
+                if not should_remove:
+                    # Check file pattern exclusions (glob matching)
+                    for excluded_pattern in filters.excluded_files:
+                        if fnmatch.fnmatch(
+                            rel_path, excluded_pattern
+                        ) or fnmatch.fnmatch(f, excluded_pattern):
+                            should_remove = True
+                            break
+
+                if should_remove:
+                    try:
+                        os.remove(file_path)
+                        logger.info(f"Removed excluded file: {rel_path}")
+                    except OSError as e:
+                        logger.error(f"Error removing file {file_path}: {e}")
 
     async def analyze_directory(
         self,
