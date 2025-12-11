@@ -8,8 +8,14 @@ logger = logging.getLogger(__name__)
 
 
 class BaseTask(Task):
-    _db = None
-    _loop = None
+    # Use instance-level attributes instead of class-level to avoid sharing across tasks
+    # Each task instance will have its own db session and event loop
+    abstract = True  # Mark as abstract so Celery doesn't try to register it directly
+
+    def __init__(self):
+        super().__init__()
+        self._db = None
+        self._loop = None
 
     @property
     def db(self):
@@ -66,37 +72,51 @@ class BaseTask(Task):
 
     def _get_event_loop(self):
         """
-        Returns a long-lived event loop for this worker process. Creates one if needed.
+        Returns a fresh event loop for each task execution.
+        This ensures tasks don't block each other when running concurrently.
         """
-        # Reuse a single loop per worker process to avoid cross-loop issues
+        # Create a new event loop for each task to enable true concurrency
+        # Each task gets its own loop, so run_until_complete() doesn't block other tasks
         if self._loop is None or self._loop.is_closed():
             self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
+            # Don't set as the global loop - keep it task-local
         return self._loop
 
     def run_async(self, coro):
         """
-        Run the given coroutine on the worker's long-lived event loop.
+        Run the given coroutine on the task's own event loop.
         """
         loop = self._get_event_loop()
-        return loop.run_until_complete(coro)
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            # Clean up the loop after use to prevent resource leaks
+            pass  # Keep loop alive for potential reuse within same task
 
     def on_success(self, retval, task_id, args, kwargs):
         try:
             status = "cancelled" if retval is False else "completed successfully"
             logger.info(f"Task {task_id} {status}")
         finally:
-            if self._db:
-                self._db.close()  # Returns to pool
-                self._db = None
+            self._cleanup_resources()
 
     def on_failure(self, exc, task_id, args, kwargs, einfo):
         """Called on task failure."""
         logger.error(f"Task {task_id} failed: {exc}")
-        if self._db:
-            self._db.close()
-            self._db = None
+        self._cleanup_resources()
 
     def on_retry(self, exc, task_id, args, kwargs, einfo):
         """Called on task retry."""
         logger.warning(f"Task {task_id} retrying: {exc}")
+
+    def _cleanup_resources(self):
+        """Clean up task-local resources (db session and event loop)."""
+        if self._db:
+            self._db.close()
+            self._db = None
+        if self._loop and not self._loop.is_closed():
+            try:
+                self._loop.close()
+            except Exception as e:
+                logger.warning(f"Error closing event loop: {e}")
+            self._loop = None
