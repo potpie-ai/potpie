@@ -40,14 +40,16 @@ def sanitize_redis_url(url: str) -> str:
             masked_netloc = f"***:***@{parsed.hostname}"
             if parsed.port:
                 masked_netloc += f":{parsed.port}"
-            sanitized = urlunparse((
-                parsed.scheme,
-                masked_netloc,
-                parsed.path,
-                parsed.params,
-                parsed.query,
-                parsed.fragment
-            ))
+            sanitized = urlunparse(
+                (
+                    parsed.scheme,
+                    masked_netloc,
+                    parsed.path,
+                    parsed.params,
+                    parsed.query,
+                    parsed.fragment,
+                )
+            )
             return sanitized
         return url
     except Exception:
@@ -64,7 +66,9 @@ try:
     celery_app.backend.client.ping()
     logger.info("Successfully connected to Redis")
 except Exception:
-    logger.exception("Failed to connect to Redis", redis_url=sanitize_redis_url(redis_url))
+    logger.exception(
+        "Failed to connect to Redis", redis_url=sanitize_redis_url(redis_url)
+    )
 
 
 def configure_celery(queue_prefix: str):
@@ -124,7 +128,7 @@ def setup_phoenix_tracing():
     except Exception as e:
         logger.warning(
             "Phoenix tracing initialization failed in Celery worker (non-fatal)",
-            error=str(e)
+            error=str(e),
         )
 
 

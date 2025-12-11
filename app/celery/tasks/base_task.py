@@ -43,8 +43,7 @@ class BaseTask(Task):
         try:
             yield async_session
             logger.debug(
-                "Async DB session operation completed successfully",
-                task_id=task_id
+                "Async DB session operation completed successfully", task_id=task_id
             )
         except Exception:
             logger.exception("Error during async DB operation", task_id=task_id)
@@ -55,8 +54,7 @@ class BaseTask(Task):
                 if engine is not None:
                     await engine.dispose()
                 logger.debug(
-                    "Async DB connection closed and engine disposed",
-                    task_id=task_id
+                    "Async DB connection closed and engine disposed", task_id=task_id
                 )
             except Exception:
                 logger.exception("Error during connection cleanup", task_id=task_id)

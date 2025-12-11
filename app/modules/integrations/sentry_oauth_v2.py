@@ -141,10 +141,12 @@ class SentryOAuthV2:
                 "redirect_uri": redirect_uri,
             }
 
-            logger.debug("Sentry OAuth token exchange starting",
-                        code_length=len(authorization_code),
-                        has_client_id=bool(self.client_id),
-                        has_redirect_uri=bool(redirect_uri))
+            logger.debug(
+                "Sentry OAuth token exchange starting",
+                code_length=len(authorization_code),
+                has_client_id=bool(self.client_id),
+                has_redirect_uri=bool(redirect_uri),
+            )
 
             # Make the token exchange request using httpx (as shown in Sentry docs)
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -157,13 +159,16 @@ class SentryOAuthV2:
                     },
                 )
 
-                logger.debug("Token exchange response received",
-                           status_code=response.status_code)
+                logger.debug(
+                    "Token exchange response received", status_code=response.status_code
+                )
 
                 if response.status_code != 200:
-                    logger.error("Token exchange failed",
-                               status_code=response.status_code,
-                               response_text=response.text[:200])  # Truncate
+                    logger.error(
+                        "Token exchange failed",
+                        status_code=response.status_code,
+                        response_text=response.text[:200],
+                    )  # Truncate
                     raise HTTPException(
                         status_code=response.status_code,
                         detail=f"Token exchange failed: {response.text}",

@@ -331,11 +331,13 @@ class IntegrationsService:
             # Use the redirect_uri from the request instead of hardcoded config
 
             # Debug logging for OAuth token exchange (DEBUG level only)
-            logger.debug("OAuth token exchange starting",
-                        code_length=len(code),
-                        has_client_id=bool(client_id),
-                        has_client_secret=bool(client_secret),
-                        has_redirect_uri=bool(redirect_uri))
+            logger.debug(
+                "OAuth token exchange starting",
+                code_length=len(code),
+                has_client_id=bool(client_id),
+                has_client_secret=bool(client_secret),
+                has_redirect_uri=bool(redirect_uri),
+            )
 
             if not client_id or not client_secret or not redirect_uri:
                 missing = []
@@ -362,9 +364,11 @@ class IntegrationsService:
                 "redirect_uri": redirect_uri,
             }
 
-            logger.debug("Token exchange request prepared",
-                        token_url=token_url,
-                        fields=list(token_data.keys()))
+            logger.debug(
+                "Token exchange request prepared",
+                token_url=token_url,
+                fields=list(token_data.keys()),
+            )
 
             # Make the token exchange request
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -378,9 +382,11 @@ class IntegrationsService:
                 )
 
                 # Log response details
-                logger.debug("OAuth token exchange response",
-                           status_code=response.status_code,
-                           content_length=len(response.content))
+                logger.debug(
+                    "OAuth token exchange response",
+                    status_code=response.status_code,
+                    content_length=len(response.content),
+                )
 
                 if response.status_code != 200:
                     # Try to parse error response for more details
@@ -391,21 +397,27 @@ class IntegrationsService:
                             "error_description", "No description provided"
                         )
 
-                        logger.error("OAuth token exchange failed",
-                                   status_code=response.status_code,
-                                   error_type=error_type,
-                                   error_description=error_description)
-                        
+                        logger.error(
+                            "OAuth token exchange failed",
+                            status_code=response.status_code,
+                            error_type=error_type,
+                            error_description=error_description,
+                        )
+
                         # Log helpful hints for common errors at DEBUG level
                         if error_type == "invalid_grant":
-                            logger.debug("Invalid grant error - common causes: "
-                                       "expired code, code already used, redirect URI mismatch, "
-                                       "or incorrect client credentials")
+                            logger.debug(
+                                "Invalid grant error - common causes: "
+                                "expired code, code already used, redirect URI mismatch, "
+                                "or incorrect client credentials"
+                            )
 
                     except Exception:
-                        logger.error("OAuth token exchange failed",
-                                   status_code=response.status_code,
-                                   response_text=response.text[:200])  # Truncate response
+                        logger.error(
+                            "OAuth token exchange failed",
+                            status_code=response.status_code,
+                            response_text=response.text[:200],
+                        )  # Truncate response
 
                 response.raise_for_status()
 
@@ -430,9 +442,11 @@ class IntegrationsService:
                     "organization": org_info,
                 }
 
-                logger.debug("Token exchange complete",
-                           token_type=tokens.get('token_type'),
-                           has_refresh_token=bool(tokens.get('refresh_token')))
+                logger.debug(
+                    "Token exchange complete",
+                    token_type=tokens.get("token_type"),
+                    has_refresh_token=bool(tokens.get("refresh_token")),
+                )
                 return tokens
 
         except Exception as e:
@@ -467,7 +481,9 @@ class IntegrationsService:
                 # Return the first organization (Sentry OAuth is typically scoped to one organization)
                 if organizations:
                     org = organizations[0]
-                    logger.debug("Retrieved organization info", org_slug=org.get('slug'))
+                    logger.debug(
+                        "Retrieved organization info", org_slug=org.get("slug")
+                    )
                     return {
                         "id": str(org.get("id")),
                         "slug": org.get("slug"),
@@ -550,12 +566,16 @@ class IntegrationsService:
         try:
             from .token_encryption import encrypt_token
 
-            logger.info("Processing Sentry integration",
-                       instance_name=request.instance_name,
-                       integration_type=request.integration_type)
-            logger.debug("OAuth code validation",
-                        code_length=len(request.code),
-                        has_redirect_uri=bool(request.redirect_uri))
+            logger.info(
+                "Processing Sentry integration",
+                instance_name=request.instance_name,
+                integration_type=request.integration_type,
+            )
+            logger.debug(
+                "OAuth code validation",
+                code_length=len(request.code),
+                has_redirect_uri=bool(request.redirect_uri),
+            )
 
             # Validate the authorization code format and timing
             if not request.code or len(request.code) < 20:
@@ -578,8 +598,7 @@ class IntegrationsService:
 
                 if time_diff > 600:  # 10 minutes
                     logger.warning(
-                        "Authorization code might be expired",
-                        age_seconds=time_diff
+                        "Authorization code might be expired", age_seconds=time_diff
                     )
                     raise Exception(
                         f"Authorization code may be expired (age: {time_diff} seconds)"
@@ -1039,7 +1058,9 @@ class IntegrationsService:
             self.db.commit()
             self.db.refresh(db_integration)
 
-            logger.info("Integration name successfully updated", integration_id=integration_id)
+            logger.info(
+                "Integration name successfully updated", integration_id=integration_id
+            )
 
             integration_schema = self._db_to_schema(db_integration)
             return IntegrationResponse(
@@ -1233,7 +1254,10 @@ class IntegrationsService:
             self.db.delete(db_integration)
             self.db.commit()
 
-            logger.info("Integration successfully deleted (schema)", integration_id=integration_id)
+            logger.info(
+                "Integration successfully deleted (schema)",
+                integration_id=integration_id,
+            )
             return IntegrationResponse(
                 success=True, data=integration_schema, error=None
             )

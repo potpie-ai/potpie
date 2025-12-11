@@ -112,12 +112,12 @@ def execute_agent_background(
                                 if message_id:
                                     logger.debug(
                                         "Flushed partial AI response for cancelled task",
-                                        message_id=message_id
+                                        message_id=message_id,
                                     )
                             except Exception as e:
                                 logger.warning(
                                     "Failed to flush message buffer on cancellation",
-                                    error=str(e)
+                                    error=str(e),
                                 )
                             # Continue with cancellation even if flush fails
                             redis_manager.publish_event(
@@ -304,12 +304,12 @@ def execute_regenerate_background(
                             if message_id:
                                 logger.debug(
                                     "Flushed partial AI response for cancelled regenerate",
-                                    message_id=message_id
+                                    message_id=message_id,
                                 )
                         except Exception as e:
                             logger.warning(
                                 "Failed to flush message buffer on cancellation",
-                                error=str(e)
+                                error=str(e),
                             )
                         # Continue with cancellation even if flush fails
 
@@ -380,18 +380,18 @@ def execute_regenerate_background(
         return completed
 
     except Exception as e:
-            logger.exception("Background regenerate execution failed")
+        logger.exception("Background regenerate execution failed")
 
-            # Set task status to error
-            try:
-                redis_manager.set_task_status(conversation_id, run_id, "error")
-            except Exception:
-                logger.exception("Failed to set task status to error")
+        # Set task status to error
+        try:
+            redis_manager.set_task_status(conversation_id, run_id, "error")
+        except Exception:
+            logger.exception("Failed to set task status to error")
 
-            try:
-                redis_manager.publish_event(
-                    conversation_id, run_id, "end", {"status": "error", "message": str(e)}
-                )
-            except Exception:
-                logger.exception("Failed to publish error event to Redis")
-            raise
+        try:
+            redis_manager.publish_event(
+                conversation_id, run_id, "end", {"status": "error", "message": str(e)}
+            )
+        except Exception:
+            logger.exception("Failed to publish error event to Redis")
+        raise

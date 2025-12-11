@@ -152,7 +152,9 @@ async def initiate_sentry_oauth(
     try:
         # Log the OAuth initiation details
         logger.info("=== OAuth Initiation Debug ===")
-        logger.info("OAuth parameters", redirect_uri=request.redirect_uri, state=request.state)
+        logger.info(
+            "OAuth parameters", redirect_uri=request.redirect_uri, state=request.state
+        )
 
         # Generate authorization URL. Sign the state to prevent tampering.
         signed_state = (
@@ -2012,17 +2014,21 @@ async def update_integration_schema(
         result = await integrations_service.update_integration(integration_id, request)
 
         if result.success:
-            logger.info("Successfully updated integration name", integration_id=integration_id)
+            logger.info(
+                "Successfully updated integration name", integration_id=integration_id
+            )
         else:
             logger.warning(
                 "Failed to update integration name",
                 integration_id=integration_id,
-                error=result.error
+                error=result.error,
             )
 
         return result
     except Exception as e:
-        logger.exception("Error updating integration name", integration_id=integration_id)
+        logger.exception(
+            "Error updating integration name", integration_id=integration_id
+        )
         return IntegrationResponse(
             success=False, data=None, error=f"Failed to update integration: {str(e)}"
         )
@@ -2063,17 +2069,22 @@ async def delete_integration_schema(
         result = await integrations_service.delete_integration_schema(integration_id)
 
         if result.success:
-            logger.info("Successfully deleted integration (schema)", integration_id=integration_id)
+            logger.info(
+                "Successfully deleted integration (schema)",
+                integration_id=integration_id,
+            )
         else:
             logger.warning(
                 "Failed to delete integration (schema)",
                 integration_id=integration_id,
-                error=result.error
+                error=result.error,
             )
 
         return result
     except Exception as e:
-        logger.exception("Error deleting integration (schema)", integration_id=integration_id)
+        logger.exception(
+            "Error deleting integration (schema)", integration_id=integration_id
+        )
         return IntegrationResponse(
             success=False, data=None, error=f"Failed to delete integration: {str(e)}"
         )

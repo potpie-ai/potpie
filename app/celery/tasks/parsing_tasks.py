@@ -44,8 +44,7 @@ def process_parsing(
                 end_time = time.time()
                 elapsed_time = end_time - start_time
                 logger.info(
-                    "Parsing process completed",
-                    elapsed_seconds=round(elapsed_time, 2)
+                    "Parsing process completed", elapsed_seconds=round(elapsed_time, 2)
                 )
 
             # Use BaseTask's long-lived event loop for consistency

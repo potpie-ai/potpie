@@ -45,11 +45,11 @@ _PHOENIX_INITIALIZED = False
 def check_phoenix_health(endpoint: str, timeout: float = 2.0) -> bool:
     """
     Check if Phoenix is running and reachable.
-    
+
     Args:
         endpoint: Phoenix endpoint URL (e.g., http://localhost:6006)
         timeout: Timeout in seconds for the health check
-        
+
     Returns:
         bool: True if Phoenix is running and reachable, False otherwise
     """
@@ -187,7 +187,7 @@ def initialize_phoenix_tracing(
             # Force a flush to verify connection works
             tracer_provider.force_flush(timeout_millis=1000)
             _PHOENIX_INITIALIZED = True
-            
+
             logger.info(
                 "Phoenix tracing initialized successfully. View traces at: {}",
                 endpoint,
