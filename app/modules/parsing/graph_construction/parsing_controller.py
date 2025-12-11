@@ -35,6 +35,15 @@ load_dotenv(override=True)
 
 class ParsingController:
     @staticmethod
+    def normalize_filters(f):
+        """Normalize filter dictionary by sorting all list values for consistent comparison."""
+        return {
+            "excluded_directories": sorted(f.get("excluded_directories", [])),
+            "excluded_files": sorted(f.get("excluded_files", [])),
+            "excluded_extensions": sorted(f.get("excluded_extensions", [])),
+        }
+
+    @staticmethod
     @validate_parsing_input
     async def parse_directory(
         repo_details: ParsingRequest, db: Session, user: Dict[str, Any]
@@ -195,17 +204,10 @@ class ParsingController:
                     repo_details.filters.model_dump() if repo_details.filters else {}
                 )
 
-                def normalize_filters(f):
-                    return {
-                        "excluded_directories": sorted(
-                            f.get("excluded_directories", [])
-                        ),
-                        "excluded_files": sorted(f.get("excluded_files", [])),
-                        "excluded_extensions": sorted(f.get("excluded_extensions", [])),
-                    }
-
-                normalized_current = normalize_filters(current_filters)
-                normalized_new = normalize_filters(new_filters)
+                normalized_current = ParsingController.normalize_filters(
+                    current_filters
+                )
+                normalized_new = ParsingController.normalize_filters(new_filters)
                 filters_changed = normalized_current != normalized_new
 
                 logger.info(f"[DEBUG] Project {project_id} filter comparison:")
@@ -412,16 +414,9 @@ class ParsingController:
         current_filters = project.parse_filters or {}
         new_filters = repo_details.filters.model_dump() if repo_details.filters else {}
 
-        def normalize_filters(f):
-            return {
-                "excluded_directories": sorted(f.get("excluded_directories", [])),
-                "excluded_files": sorted(f.get("excluded_files", [])),
-                "excluded_extensions": sorted(f.get("excluded_extensions", [])),
-            }
-
-        filters_match = normalize_filters(current_filters) == normalize_filters(
-            new_filters
-        )
+        filters_match = ParsingController.normalize_filters(
+            current_filters
+        ) == ParsingController.normalize_filters(new_filters)
 
         return {
             "status": "MATCH" if filters_match else "MISMATCH",

@@ -134,7 +134,6 @@ class ParsingService:
                 self.db,
                 language,
                 user_email,
-                repo_details.filters,
             )
             message = "The project has been parsed successfully"
             return {"message": message, "id": project_id}
@@ -283,7 +282,6 @@ class ParsingService:
         db,
         language: str,
         user_email: str,
-        filters: Optional[ParseFilters] = None,
     ):
         logger.info(
             f"ParsingService: Parsing project {project_id}: Analyzing directory: {extracted_dir}"
