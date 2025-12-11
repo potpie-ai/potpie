@@ -226,9 +226,7 @@ class LinearOAuth:
             logger.debug("Code: [REDACTED]")
             # Hash state for safe logging while preserving correlation
             state_hash = (
-                hashlib.sha256(state.encode()).hexdigest()[:8]
-                if state
-                else "none"
+                hashlib.sha256(state.encode()).hexdigest()[:8] if state else "none"
             )
             logger.debug(f"State: {state_hash} (hashed)")
 

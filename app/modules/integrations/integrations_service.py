@@ -224,16 +224,24 @@ class IntegrationsService:
                         if error_field or error_description:
                             sanitized_error = f"error: {error_field}"
                             if error_description:
-                                sanitized_error += f", error_description: {error_description[:200]}"
+                                sanitized_error += (
+                                    f", error_description: {error_description[:200]}"
+                                )
                         else:
                             # JSON parsed but no error fields, use truncated response text
                             response_text = response.text or ""
-                            sanitized_error = response_text[:250] if response_text else "No response body"
+                            sanitized_error = (
+                                response_text[:250]
+                                if response_text
+                                else "No response body"
+                            )
                     except Exception:
                         # Fallback to truncated response.text if JSON parsing fails
                         response_text = response.text or ""
-                        sanitized_error = response_text[:250] if response_text else "No response body"
-                    
+                        sanitized_error = (
+                            response_text[:250] if response_text else "No response body"
+                        )
+
                     # Log sanitized error at error level
                     logger.error(
                         f"Token refresh failed: {response.status_code} - {sanitized_error}"
