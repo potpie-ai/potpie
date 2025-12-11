@@ -8,7 +8,9 @@ import hashlib
 import base64
 import json
 import time
-import logging
+from app.modules.utils.logger import setup_logger
+from app.modules.integrations import hash_user_id
+
 import urllib.parse
 import jwt
 
@@ -46,7 +48,46 @@ from .integrations_schema import (
     IntegrationSaveResponse,
 )
 
+
+logger = setup_logger(__name__)
 router = APIRouter(prefix="/integrations", tags=["integrations"])
+
+
+def sanitize_headers(headers: Dict[str, str]) -> Dict[str, str]:
+    """Remove or redact sensitive header keys"""
+    sensitive_keys = {"authorization", "cookie", "set-cookie", "signature", "token"}
+    sanitized = {}
+    for key, value in headers.items():
+        key_lower = key.lower()
+        if any(sensitive in key_lower for sensitive in sensitive_keys):
+            sanitized[key] = "[REDACTED]"
+        else:
+            sanitized[key] = value
+    return sanitized
+
+
+def truncate_content(content: str, max_length: int = 200) -> str:
+    """Truncate content to max_length with ellipsis"""
+    if len(content) <= max_length:
+        return content
+    return content[:max_length] + "..."
+
+
+def get_params_summary(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Get a summary of params with keys and truncated values"""
+    return {
+        "keys": list(params.keys()),
+        "count": len(params),
+        "preview": {k: truncate_content(str(v)) for k, v in list(params.items())[:5]}
+    }
+
+
+def get_body_summary(body_text: str) -> Dict[str, Any]:
+    """Get a summary of body with length and truncated preview"""
+    return {
+        "length": len(body_text),
+        "preview": truncate_content(body_text)
+    }
 
 
 def get_sentry_oauth() -> SentryOAuthV2:
@@ -147,9 +188,10 @@ async def initiate_sentry_oauth(
     """Initiate Sentry OAuth flow"""
     try:
         # Log the OAuth initiation details
-        logging.info("=== OAuth Initiation Debug ===")
-        logging.info(f"Redirect URI: {request.redirect_uri}")
-        logging.info(f"State: {request.state}")
+        logger.info("=== OAuth Initiation Debug ===")
+        logger.info(
+            "OAuth parameters", redirect_uri=request.redirect_uri, state=request.state
+        )
 
         # Generate authorization URL. Sign the state to prevent tampering.
         signed_state = (
@@ -161,7 +203,7 @@ async def initiate_sentry_oauth(
             redirect_uri=request.redirect_uri, state=signed_state
         )
 
-        logging.info(f"Generated authorization URL: {auth_url}")
+        logger.info("Generated authorization URL for Sentry OAuth")
 
         return {
             "status": "success",
@@ -174,7 +216,7 @@ async def initiate_sentry_oauth(
             },
         }
     except Exception as e:
-        logging.error(f"OAuth initiation failed: {str(e)}")
+        logger.exception("OAuth initiation failed")
         raise HTTPException(
             status_code=500, detail=f"Failed to initiate OAuth flow: {str(e)}"
         )
@@ -282,32 +324,40 @@ async def sentry_redirect_webhook(request: Request) -> Dict[str, Any]:
     """Handle Sentry webhook redirect requests"""
     try:
         # Log the incoming request details
-        logging.info("Sentry webhook redirect received")
-        logging.info(f"Request method: {request.method}")
-        logging.info(f"Request URL: {request.url}")
-        logging.info(f"Request headers: {dict(request.headers)}")
+        logger.info("Sentry webhook redirect received")
+        logger.info("Request details", method=request.method, url=str(request.url))
+        sanitized_headers = sanitize_headers(dict(request.headers))
+        logger.debug("Request headers", headers=sanitized_headers)
 
         # Get query parameters
         query_params = dict(request.query_params)
-        logging.info(f"Query parameters: {query_params}")
+        params_summary = get_params_summary(query_params)
+        logger.info("Query parameters", params_keys=params_summary["keys"], params_count=params_summary["count"])
+        logger.debug("Query parameters", params_summary=params_summary)
 
         # Try to get request body if it exists
         try:
             body = await request.body()
             if body:
-                logging.info(f"Request body: {body.decode('utf-8')}")
+                body_text = body.decode("utf-8") if isinstance(body, bytes) else str(body)
+                body_summary = get_body_summary(body_text)
+                logger.info("Request body received", body_length=body_summary["length"])
+                logger.debug("Request body preview", body_preview=body_summary["preview"])
             else:
-                logging.info("Request body: (empty)")
+                logger.info("Request body: (empty)")
         except Exception as e:
-            logging.warning(f"Could not read request body: {str(e)}")
+            logger.warning("Could not read request body", error=str(e))
 
         # Log form data if present
         try:
             form_data = await request.form()
             if form_data:
-                logging.info(f"Form data: {dict(form_data)}")
+                form_dict = {k: str(v) for k, v in form_data.items()}
+                form_summary = get_params_summary(form_dict)
+                logger.info("Form data received", form_fields=form_summary["keys"], form_count=form_summary["count"])
+                logger.debug("Form data summary", form_summary=form_summary)
         except Exception as e:
-            logging.info(f"No form data present: {str(e)}")
+            logger.debug("No form data present", error=str(e))
 
         return {
             "status": "success",
@@ -316,7 +366,7 @@ async def sentry_redirect_webhook(request: Request) -> Dict[str, Any]:
         }
 
     except Exception as e:
-        logging.error(f"Error processing Sentry webhook redirect: {str(e)}")
+        logger.exception("Error processing Sentry webhook redirect")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to process Sentry webhook redirect: {str(e)}",
@@ -427,7 +477,7 @@ async def linear_oauth_callback(
                 return RedirectResponse(url=redirect_url)
 
             except Exception as e:
-                logging.error(f"Failed to save Linear integration: {str(e)}")
+                logger.exception("Failed to save Linear integration")
 
                 # Redirect to frontend with error
                 config = Config()
@@ -463,7 +513,7 @@ async def linear_oauth_callback(
 
             return RedirectResponse(url=redirect_url)
     except Exception as e:
-        logging.error(f"Linear OAuth callback failed: {str(e)}")
+        logger.exception("Linear OAuth callback failed")
 
         # Redirect to frontend with error
         config = Config()
@@ -547,7 +597,7 @@ async def save_linear_integration(
         result = await integrations_service.save_linear_integration(request, user_id)
         return LinearSaveResponse(success=True, data=result, error=None)
     except Exception as e:
-        logging.error(f"Error saving Linear integration: {str(e)}")
+        logger.exception("Error saving Linear integration")
         return LinearSaveResponse(
             success=False,
             data=None,
@@ -562,7 +612,7 @@ async def initiate_jira_oauth(
 ) -> Dict[str, Any]:
     """Initiate Jira OAuth flow."""
     try:
-        logging.info(
+        logger.info(
             "Initiating Jira OAuth flow with redirect_uri=%s state=%s",
             request.redirect_uri,
             request.state,
@@ -588,7 +638,7 @@ async def initiate_jira_oauth(
             },
         }
     except Exception as exc:
-        logging.error("Jira OAuth initiation failed: %s", exc)
+        logger.exception("Jira OAuth initiation failed")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to initiate Jira OAuth flow: {str(exc)}",
@@ -648,7 +698,7 @@ async def jira_oauth_callback(
                         f"{scheme}://{host}/api/v1/integrations/jira/callback"
                     )
 
-                logging.info(
+                logger.info(
                     f"Using Jira redirect_uri for token exchange: {redirect_uri}"
                 )
 
@@ -683,7 +733,7 @@ async def jira_oauth_callback(
                 return RedirectResponse(url=redirect_url)
 
             except Exception as e:
-                logging.error(f"Failed to save Jira integration: {str(e)}")
+                logger.exception("Failed to save Jira integration")
 
                 # Redirect to frontend with error
                 config = Config()
@@ -719,7 +769,7 @@ async def jira_oauth_callback(
             return RedirectResponse(url=redirect_url)
 
     except Exception as exc:
-        logging.error("Jira OAuth callback failed: %s", exc)
+        logger.exception("Jira OAuth callback failed")
         raise HTTPException(
             status_code=400, detail=f"Jira OAuth callback failed: {str(exc)}"
         )
@@ -799,7 +849,7 @@ async def get_jira_resources(
     except HTTPException:
         raise
     except Exception as exc:
-        logging.error("Error fetching Jira accessible resources: %s", exc)
+        logger.exception("Error fetching Jira accessible resources")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to fetch Jira accessible resources: {str(exc)}",
@@ -837,7 +887,7 @@ async def get_jira_projects(
     except HTTPException:
         raise
     except Exception as exc:
-        logging.error("Error fetching Jira projects: %s", exc)
+        logger.exception("Error fetching Jira projects")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to fetch Jira projects: {str(exc)}",
@@ -871,7 +921,7 @@ async def get_jira_project_details(
     except HTTPException:
         raise
     except Exception as exc:
-        logging.error("Error fetching Jira project details: %s", exc)
+        logger.exception("Error fetching Jira project details")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to fetch Jira project details: {str(exc)}",
@@ -890,7 +940,7 @@ async def save_jira_integration(
         result = await integrations_service.save_jira_integration(request, user_id)
         return JiraSaveResponse(success=True, data=result, error=None)
     except Exception as e:
-        logging.error(f"Error saving Jira integration: {str(e)}")
+        logger.exception("Error saving Jira integration")
         return JiraSaveResponse(
             success=False,
             data=None,
@@ -905,7 +955,7 @@ async def initiate_confluence_oauth(
 ) -> Dict[str, Any]:
     """Initiate Confluence OAuth flow."""
     try:
-        logging.info(
+        logger.info(
             "Initiating Confluence OAuth flow with redirect_uri=%s state=%s",
             request.redirect_uri,
             request.state,
@@ -929,7 +979,7 @@ async def initiate_confluence_oauth(
             },
         }
     except Exception as exc:
-        logging.error("Confluence OAuth initiation failed: %s", exc)
+        logger.exception("Confluence OAuth initiation failed")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to initiate Confluence OAuth flow: {str(exc)}",
@@ -1006,7 +1056,7 @@ async def confluence_oauth_callback(
                 return RedirectResponse(url=redirect_url)
 
             except Exception as save_error:
-                logging.error(f"Error saving Confluence integration: {save_error}")
+                logger.exception("Error saving Confluence integration")
                 # Redirect to frontend with error
                 config = Config()
                 frontend_url = config("FRONTEND_URL", default="http://localhost:3000")
@@ -1039,7 +1089,7 @@ async def confluence_oauth_callback(
             return RedirectResponse(url=redirect_url)
 
     except Exception as exc:
-        logging.error("Confluence OAuth callback failed: %s", exc)
+        logger.exception("Confluence OAuth callback failed")
         raise HTTPException(
             status_code=400, detail=f"Confluence OAuth callback failed: {str(exc)}"
         )
@@ -1117,8 +1167,8 @@ async def get_confluence_resources(
     except HTTPException:
         raise
     except Exception as exc:
-        logging.error(
-            f"Error fetching Confluence resources for integration {integration_id}: {exc}"
+        logger.exception(
+            f"Error fetching Confluence resources for integration {integration_id}"
         )
         raise HTTPException(
             status_code=500,
@@ -1150,8 +1200,8 @@ async def get_confluence_spaces(
     except HTTPException:
         raise
     except Exception as exc:
-        logging.error(
-            f"Error fetching Confluence spaces for integration {integration_id}: {exc}"
+        logger.exception(
+            f"Error fetching Confluence spaces for integration {integration_id}"
         )
         raise HTTPException(
             status_code=500,
@@ -1174,7 +1224,7 @@ async def save_confluence_integration(
         )
         return ConfluenceSaveResponse(success=True, data=result, error=None)
     except Exception as e:
-        logging.error(f"Error saving Confluence integration: {str(e)}")
+        logger.exception("Error saving Confluence integration")
         return ConfluenceSaveResponse(
             success=False,
             data=None,
@@ -1189,14 +1239,16 @@ async def sentry_webhook(request: Request) -> Dict[str, Any]:
 
     try:
         # Log the incoming webhook request details
-        logging.info("Sentry webhook received")
-        logging.info(f"Request method: {request.method}")
-        logging.info(f"Request URL: {request.url}")
-        logging.info(f"Request headers: {dict(request.headers)}")
+        logger.info("Sentry webhook received")
+        logger.info("Request details", method=request.method, url=str(request.url))
+        sanitized_headers = sanitize_headers(dict(request.headers))
+        logger.debug("Request headers", headers=sanitized_headers)
 
         # Get query parameters
         query_params = dict(request.query_params)
-        logging.info(f"Query parameters: {query_params}")
+        params_summary = get_params_summary(query_params)
+        logger.info("Query parameters", params_keys=params_summary["keys"], params_count=params_summary["count"])
+        logger.debug("Query parameters", params_summary=params_summary)
 
         # Try to get request body if it exists
         webhook_data = {}
@@ -1204,28 +1256,32 @@ async def sentry_webhook(request: Request) -> Dict[str, Any]:
             body = await request.body()
             if body:
                 body_text = body.decode("utf-8")
-                logging.info(f"Request body: {body_text}")
+                body_summary = get_body_summary(body_text)
+                logger.info("Request body received", body_length=body_summary["length"])
+                logger.debug("Request body preview", body_preview=body_summary["preview"])
 
                 # Try to parse as JSON
                 try:
                     webhook_data = json.loads(body_text)
                 except json.JSONDecodeError:
-                    logging.warning("Request body is not valid JSON")
+                    logger.warning("Request body is not valid JSON")
                     webhook_data = {"raw_body": body_text}
             else:
-                logging.info("Request body: (empty)")
+                logger.info("Request body: (empty)")
         except Exception as e:
-            logging.warning(f"Could not read request body: {str(e)}")
+            logger.warning("Could not read request body", error=str(e))
 
         # Log form data if present
         try:
             form_data = await request.form()
             if form_data:
                 form_dict = {k: str(v) for k, v in form_data.items()}
-                logging.info(f"Form data: {form_dict}")
+                form_summary = get_params_summary(form_dict)
+                logger.info("Form data received", form_fields=form_summary["keys"], form_count=form_summary["count"])
+                logger.debug("Form data summary", form_summary=form_summary)
                 webhook_data.update(form_dict)
         except Exception as e:
-            logging.info(f"No form data present: {str(e)}")
+            logger.debug("No form data present", error=str(e))
 
         # Extract event type from headers or payload
         event_type = (
@@ -1256,7 +1312,7 @@ async def sentry_webhook(request: Request) -> Dict[str, Any]:
                     source_ip=request.client.host if request.client else None,
                 )
 
-                logging.info(
+                logger.info(
                     f"Sentry webhook event {event_id} published for integration {integration_id}, "
                     f"type: {event_type}"
                 )
@@ -1270,9 +1326,7 @@ async def sentry_webhook(request: Request) -> Dict[str, Any]:
                     "integration_id": integration_id,
                 }
             except Exception as e:
-                logging.error(
-                    f"Failed to publish Sentry webhook to event bus: {str(e)}"
-                )
+                logger.exception("Failed to publish Sentry webhook to event bus")
                 # Continue with normal response even if event bus fails
                 return {
                     "status": "success",
@@ -1281,7 +1335,7 @@ async def sentry_webhook(request: Request) -> Dict[str, Any]:
                     "event_bus_error": str(e),
                 }
         else:
-            logging.warning("No integration_id provided in Sentry webhook request")
+            logger.warning("No integration_id provided in Sentry webhook request")
             return {
                 "status": "success",
                 "message": "Sentry webhook logged successfully (no integration_id for event bus)",
@@ -1289,7 +1343,7 @@ async def sentry_webhook(request: Request) -> Dict[str, Any]:
             }
 
     except Exception as e:
-        logging.error(f"Error processing Sentry webhook: {str(e)}")
+        logger.exception("Error processing Sentry webhook")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to process Sentry webhook: {str(e)}",
@@ -1305,8 +1359,17 @@ async def linear_webhook(
     import json
 
     try:
+        # Log the incoming webhook request details
+        logger.info("Linear webhook received")
+        logger.info("Request details", method=request.method, url=str(request.url))
+        sanitized_headers = sanitize_headers(dict(request.headers))
+        logger.debug("Request headers", headers=sanitized_headers)
+
         # Get query parameters
         query_params = dict(request.query_params)
+        params_summary = get_params_summary(query_params)
+        logger.info("Query parameters", params_keys=params_summary["keys"], params_count=params_summary["count"])
+        logger.debug("Query parameters", params_summary=params_summary)
 
         # Try to get request body if it exists
         webhook_data = {}
@@ -1314,19 +1377,27 @@ async def linear_webhook(
             body = await request.body()
             if body:
                 body_text = body.decode("utf-8")
+                body_summary = get_body_summary(body_text)
+                logger.info("Request body received", body_length=body_summary["length"])
+                logger.debug("Request body preview", body_preview=body_summary["preview"])
                 # Try to parse as JSON
                 try:
                     webhook_data = json.loads(body_text)
                 except json.JSONDecodeError:
                     webhook_data = {"raw_body": body_text}
+            else:
+                logger.info("Request body: (empty)")
         except Exception as e:
-            logging.warning(f"Could not read request body: {str(e)}")
+            logger.warning("Could not read request body", error=str(e))
 
         # Log form data if present
         try:
             form_data = await request.form()
             if form_data:
                 form_dict = {k: str(v) for k, v in form_data.items()}
+                form_summary = get_params_summary(form_dict)
+                logger.info("Form data received", form_fields=form_summary["keys"], form_count=form_summary["count"])
+                logger.debug("Form data summary", form_summary=form_summary)
                 webhook_data.update(form_dict)
         except Exception:
             pass
@@ -1391,7 +1462,7 @@ async def linear_webhook(
                     "service_result": result,
                 }
             except Exception as e:
-                logging.error(f"Event bus publishing failed: {str(e)}")
+                logger.exception("Event bus publishing failed")
 
                 # Continue with normal response even if event bus fails
                 return {
@@ -1404,7 +1475,7 @@ async def linear_webhook(
                     "service_result": result,
                 }
         else:
-            logging.warning(
+            logger.warning(
                 f"No Linear integration found for organization {organization_id}"
             )
 
@@ -1418,7 +1489,7 @@ async def linear_webhook(
             }
 
     except Exception as e:
-        logging.error(f"Error processing Linear webhook: {str(e)}")
+        logger.exception("Error processing Linear webhook")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to process Linear webhook: {str(e)}",
@@ -1430,15 +1501,13 @@ def verify_jira_webhook_jwt(
 ) -> tuple[bool, Optional[Dict[str, Any]]]:
     """Verify JWT token from Jira OAuth webhook"""
     if not authorization_header:
-        logging.warning("No Authorization header in Jira webhook request")
+        logger.warning("No Authorization header in Jira webhook request")
         return False, None
 
     # Extract token from "Bearer <token>" format
     parts = authorization_header.split()
     if len(parts) != 2 or parts[0].lower() != "bearer":
-        logging.warning(
-            "Invalid Authorization header format: expected 'Bearer <token>'"
-        )
+        logger.warning("Invalid Authorization header format: expected 'Bearer <token>'")
         return False, None
 
     token = parts[1]
@@ -1460,13 +1529,13 @@ def verify_jira_webhook_jwt(
         return True, decoded
 
     except jwt.ExpiredSignatureError:
-        logging.error("Jira webhook JWT has expired")
+        logger.error("Jira webhook JWT has expired")
         return False, None
-    except jwt.InvalidTokenError as e:
-        logging.error(f"Invalid Jira webhook JWT: {str(e)}")
+    except jwt.InvalidTokenError:
+        logger.exception("Invalid Jira webhook JWT")
         return False, None
-    except Exception as e:
-        logging.error(f"Error verifying Jira webhook JWT: {str(e)}")
+    except Exception:
+        logger.exception("Error verifying Jira webhook JWT")
         return False, None
 
 
@@ -1479,6 +1548,18 @@ async def jira_webhook(
     import json
 
     try:
+        # Log the incoming webhook request details
+        logger.info("Jira webhook received")
+        logger.info("Request details", method=request.method, url=str(request.url))
+        sanitized_headers = sanitize_headers(dict(request.headers))
+        logger.debug("Request headers", headers=sanitized_headers)
+
+        # Get query parameters
+        query_params = dict(request.query_params)
+        params_summary = get_params_summary(query_params)
+        logger.info("Query parameters", params_keys=params_summary["keys"], params_count=params_summary["count"])
+        logger.debug("Query parameters", params_summary=params_summary)
+
         # Verify JWT authentication from Jira OAuth webhook
         config = Config(".env")
         jira_client_secret = config("JIRA_CLIENT_SECRET", default="")
@@ -1490,14 +1571,14 @@ async def jira_webhook(
                 auth_header, jira_client_secret
             )
             if not is_valid:
-                logging.warning(
+                logger.warning(
                     "Jira webhook JWT verification failed - rejecting request"
                 )
                 raise HTTPException(
                     status_code=403, detail="Invalid or missing webhook authentication"
                 )
         else:
-            logging.warning(
+            logger.warning(
                 "JIRA_CLIENT_SECRET not configured - skipping JWT verification (INSECURE!)"
             )
             raise HTTPException(
@@ -1511,18 +1592,26 @@ async def jira_webhook(
             body = await request.body()
             if body:
                 body_text = body.decode("utf-8")
+                body_summary = get_body_summary(body_text)
+                logger.info("Request body received", body_length=body_summary["length"])
+                logger.debug("Request body preview", body_preview=body_summary["preview"])
                 try:
                     webhook_data = json.loads(body_text)
                 except json.JSONDecodeError:
                     webhook_data = {"raw_body": body_text}
+            else:
+                logger.info("Request body: (empty)")
         except Exception as e:
-            logging.warning(f"Could not read request body: {str(e)}")
+            logger.warning("Could not read request body", error=str(e))
 
         # Log form data if present
         try:
             form_data = await request.form()
             if form_data:
                 form_dict = {k: str(v) for k, v in form_data.items()}
+                form_summary = get_params_summary(form_dict)
+                logger.info("Form data received", form_fields=form_summary["keys"], form_count=form_summary["count"])
+                logger.debug("Form data summary", form_summary=form_summary)
                 webhook_data.update(form_dict)
         except Exception:
             pass
@@ -1595,14 +1684,14 @@ async def jira_webhook(
                                 # Verify site_id matches (composite key for uniqueness)
                                 if site_id and webhook_site_id == site_id:
                                     integration_id = integration.integration_id
-                                    logging.info(
+                                    logger.info(
                                         f"Found integration {integration_id} for webhook {webhook_id} + site {site_id}"
                                     )
                                     break
                                 elif not site_id:
                                     # Fallback: match webhook_id only if site_id unavailable (less secure)
                                     integration_id = integration.integration_id
-                                    logging.warning(
+                                    logger.warning(
                                         f"Found integration {integration_id} for webhook {webhook_id} (no site_id verification)"
                                     )
                                     break
@@ -1612,7 +1701,7 @@ async def jira_webhook(
                 finally:
                     db.close()
             except Exception as e:
-                logging.debug(f"Jira webhook ID lookup failed: {e}")
+                logger.debug("Jira webhook ID lookup failed", error=str(e))
 
         # Fallback: Try site_id lookup via service (legacy/backup method)
         if not integration_id and site_id:
@@ -1623,7 +1712,7 @@ async def jira_webhook(
                 if integration:
                     integration_id = integration.get("integration_id")
             except Exception as e:
-                logging.debug(f"Jira webhook site lookup failed: {e}")
+                logger.debug("Jira webhook site lookup failed", error=str(e))
 
         # Fallback to query param or header
         query_params = dict(request.query_params)
@@ -1658,7 +1747,7 @@ async def jira_webhook(
                     "service_result": result,
                 }
             except Exception as e:
-                logging.error(f"Failed to publish Jira webhook to event bus: {str(e)}")
+                logger.exception("Failed to publish Jira webhook to event bus")
                 return {
                     "status": "success",
                     "message": "Jira webhook logged successfully (event bus failed)",
@@ -1667,7 +1756,7 @@ async def jira_webhook(
                     "service_result": result,
                 }
 
-        logging.warning("No integration_id provided or found for Jira webhook request")
+        logger.warning("No integration_id provided or found for Jira webhook request")
         return {
             "status": "success",
             "message": "Jira webhook logged successfully (no integration_id for event bus)",
@@ -1676,7 +1765,7 @@ async def jira_webhook(
         }
 
     except Exception as e:
-        logging.error(f"Error processing Jira webhook: {str(e)}")
+        logger.exception("Error processing Jira webhook")
         raise HTTPException(
             status_code=500, detail=f"Failed to process Jira webhook: {str(e)}"
         )
@@ -1695,7 +1784,7 @@ async def save_sentry_integration(
         result = await integrations_service.save_sentry_integration(request, user_id)
         return SentrySaveResponse(success=True, data=result, error=None)
     except Exception as e:
-        logging.error(f"Error saving Sentry integration: {str(e)}")
+        logger.exception("Error saving Sentry integration")
         return SentrySaveResponse(
             success=False,
             data=None,
@@ -1716,7 +1805,7 @@ async def save_integration(
         result = await integrations_service.save_integration(request, user_id)
         return IntegrationSaveResponse(success=True, data=result, error=None)
     except Exception as e:
-        logging.error(f"Error saving integration: {str(e)}")
+        logger.exception("Error saving integration")
         return IntegrationSaveResponse(
             success=False,
             data=None,
@@ -1750,7 +1839,7 @@ async def list_connected_integrations(
             "connected_integrations": connected_integrations,
         }
     except Exception as e:
-        logging.error(f"Error listing connected integrations: {str(e)}")
+        logger.exception("Error listing connected integrations")
         raise HTTPException(
             status_code=500, detail=f"Failed to list connected integrations: {str(e)}"
         )
@@ -1793,7 +1882,7 @@ async def list_integrations(
             "integrations": integrations,
         }
     except Exception as e:
-        logging.error(f"Error listing integrations: {str(e)}")
+        logger.exception("Error listing integrations")
         raise HTTPException(
             status_code=500, detail=f"Failed to list integrations: {str(e)}"
         )
@@ -1827,7 +1916,7 @@ async def get_integration(
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error getting integration: {str(e)}")
+        logger.exception("Error getting integration")
         raise HTTPException(
             status_code=500, detail=f"Failed to get integration: {str(e)}"
         )
@@ -1865,8 +1954,8 @@ async def delete_integration(
             )
 
         # Log the deletion attempt
-        logging.info(
-            f"User {user_id} attempting to delete integration: {integration_id}"
+        logger.info(
+            f"User {hash_user_id(user_id)} attempting to delete integration: {integration_id}"
         )
 
         success = await integrations_service.delete_integration(integration_id)
@@ -1876,7 +1965,7 @@ async def delete_integration(
                 detail=f"Failed to delete integration: {integration_id}",
             )
 
-        logging.info(f"Successfully deleted integration: {integration_id}")
+        logger.info("Successfully deleted integration", integration_id=integration_id)
         return {
             "status": "success",
             "message": f"Integration deleted: {integration_id}",
@@ -1889,7 +1978,7 @@ async def delete_integration(
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error deleting integration {integration_id}: {str(e)}")
+        logger.exception("Error deleting integration", integration_id=integration_id)
         raise HTTPException(
             status_code=500, detail=f"Failed to delete integration: {str(e)}"
         )
@@ -1936,7 +2025,7 @@ async def update_integration_status(
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error updating integration status: {str(e)}")
+        logger.exception("Error updating integration status")
         raise HTTPException(
             status_code=500, detail=f"Failed to update integration status: {str(e)}"
         )
@@ -2008,22 +2097,28 @@ async def update_integration_schema(
                 )
 
         # Log the update attempt
-        logging.info(
-            f"User {user_id} attempting to update integration name: {integration_id} to '{request.name}'"
+        logger.info(
+            f"User {hash_user_id(user_id)} attempting to update integration name: {integration_id} to '{request.name}'"
         )
 
         result = await integrations_service.update_integration(integration_id, request)
 
         if result.success:
-            logging.info(f"Successfully updated integration name: {integration_id}")
+            logger.info(
+                "Successfully updated integration name", integration_id=integration_id
+            )
         else:
-            logging.warning(
-                f"Failed to update integration name: {integration_id} - {result.error}"
+            logger.warning(
+                "Failed to update integration name",
+                integration_id=integration_id,
+                error=result.error,
             )
 
         return result
     except Exception as e:
-        logging.error(f"Error updating integration name {integration_id}: {str(e)}")
+        logger.exception(
+            "Error updating integration name", integration_id=integration_id
+        )
         return IntegrationResponse(
             success=False, data=None, error=f"Failed to update integration: {str(e)}"
         )
@@ -2057,22 +2152,29 @@ async def delete_integration_schema(
                 )
 
         # Log the deletion attempt
-        logging.info(
-            f"User {user_id} attempting to delete integration (schema): {integration_id}"
+        logger.info(
+            f"User {hash_user_id(user_id)} attempting to delete integration (schema): {integration_id}"
         )
 
         result = await integrations_service.delete_integration_schema(integration_id)
 
         if result.success:
-            logging.info(f"Successfully deleted integration (schema): {integration_id}")
+            logger.info(
+                "Successfully deleted integration (schema)",
+                integration_id=integration_id,
+            )
         else:
-            logging.warning(
-                f"Failed to delete integration (schema): {integration_id} - {result.error}"
+            logger.warning(
+                "Failed to delete integration (schema)",
+                integration_id=integration_id,
+                error=result.error,
             )
 
         return result
     except Exception as e:
-        logging.error(f"Error deleting integration (schema) {integration_id}: {str(e)}")
+        logger.exception(
+            "Error deleting integration (schema)", integration_id=integration_id
+        )
         return IntegrationResponse(
             success=False, data=None, error=f"Failed to delete integration: {str(e)}"
         )
@@ -2121,7 +2223,7 @@ async def get_sentry_organizations(
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error getting Sentry organizations: {str(e)}")
+        logger.exception("Error getting Sentry organizations")
         raise HTTPException(
             status_code=500, detail=f"Failed to get Sentry organizations: {str(e)}"
         )
@@ -2154,7 +2256,7 @@ async def get_sentry_projects(
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error getting Sentry projects: {str(e)}")
+        logger.exception("Error getting Sentry projects")
         raise HTTPException(
             status_code=500, detail=f"Failed to get Sentry projects: {str(e)}"
         )
@@ -2191,7 +2293,7 @@ async def get_sentry_issues(
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error getting Sentry issues: {str(e)}")
+        logger.exception("Error getting Sentry issues")
         raise HTTPException(
             status_code=500, detail=f"Failed to get Sentry issues: {str(e)}"
         )
@@ -2227,7 +2329,7 @@ async def make_sentry_api_call(
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error making Sentry API call: {str(e)}")
+        logger.exception("Error making Sentry API call")
         raise HTTPException(
             status_code=500, detail=f"Failed to make Sentry API call: {str(e)}"
         )
@@ -2257,7 +2359,7 @@ async def refresh_sentry_token(
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error refreshing Sentry token: {str(e)}")
+        logger.exception("Error refreshing Sentry token")
         raise HTTPException(
             status_code=500, detail=f"Failed to refresh Sentry token: {str(e)}"
         )
@@ -2291,7 +2393,7 @@ async def get_sentry_token_status(
     except HTTPException:
         raise
     except Exception as e:
-        logging.error(f"Error checking Sentry token status: {str(e)}")
+        logger.exception("Error checking Sentry token status")
         return {
             "status": "error",
             "token_status": "invalid",
@@ -2366,7 +2468,7 @@ async def debug_oauth_config(
 
         return debug_info
     except Exception as e:
-        logging.error(f"Error checking OAuth config: {str(e)}")
+        logger.exception("Error checking OAuth config")
         return {
             "status": "error",
             "error": str(e),
@@ -2381,9 +2483,8 @@ async def debug_test_token_exchange(
 ) -> Dict[str, Any]:
     """Debug endpoint to test OAuth token exchange with detailed logging"""
     try:
-        logging.info("=== DEBUG TOKEN EXCHANGE TEST ===")
-        logging.info(f"Test code: {code}")
-        logging.info(f"Test redirect URI: {redirect_uri}")
+        logger.info("=== DEBUG TOKEN EXCHANGE TEST ===")
+        logger.info("Test redirect URI", redirect_uri=redirect_uri)
 
         # Call the token exchange method directly
         result = await integrations_service._exchange_code_for_tokens(
@@ -2396,7 +2497,7 @@ async def debug_test_token_exchange(
             "result": result,
         }
     except Exception as e:
-        logging.error(f"Debug token exchange failed: {str(e)}")
+        logger.exception("Debug token exchange failed")
         return {"status": "error", "error": str(e), "error_type": type(e).__name__}
 
 
