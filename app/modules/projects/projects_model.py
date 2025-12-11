@@ -9,7 +9,7 @@ from sqlalchemy import (
     Text,
     func,
 )
-from sqlalchemy.dialects.postgresql import BYTEA
+from sqlalchemy.dialects.postgresql import BYTEA, JSONB
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import relationship
 
@@ -37,10 +37,12 @@ class Project(Base):
     )
     status = Column(String(255), default="created")
 
+    parse_filters = Column(JSONB, nullable=True)
+
     __table_args__ = (
         ForeignKeyConstraint(["user_id"], ["users.uid"], ondelete="CASCADE"),
         CheckConstraint(
-            "status IN ('submitted', 'cloned', 'parsed', 'ready', 'error')",
+            "status IN ('submitted', 'cloned', 'parsed', 'inferring', 'ready', 'error')",
             name="check_status",
         ),
     )

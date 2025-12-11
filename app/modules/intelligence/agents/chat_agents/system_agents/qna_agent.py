@@ -29,7 +29,7 @@ class QnAAgent(ChatAgent):
         self.tools_provider = tools_provider
         self.prompt_provider = prompt_provider
 
-    def _build_agent(self) -> ChatAgent:
+    def _build_agent(self, ctx: ChatContext = None) -> ChatAgent:
         agent_config = AgentConfig(
             role="QNA Agent",
             goal="Answer queries of the repo in a detailed fashion",
@@ -49,6 +49,14 @@ class QnAAgent(ChatAgent):
                 )
             ],
         )
+
+        # Exclude embedding-dependent tools during INFERRING status
+        exclude_embedding_tools = ctx.is_inferring() if ctx else False
+        if exclude_embedding_tools:
+            logger.info(
+                "Project is in INFERRING status - excluding embedding-dependent tools (ask_knowledge_graph_queries, get_nodes_from_tags)"
+            )
+
         tools = self.tools_provider.get_tools(
             [
                 "get_code_from_multiple_node_ids",
@@ -82,7 +90,8 @@ class QnAAgent(ChatAgent):
                 "fetch_file",
                 "analyze_code_structure",
                 "bash_command",
-            ]
+            ],
+            exclude_embedding_tools=exclude_embedding_tools,
         )
 
         supports_pydantic = self.llm_provider.supports_pydantic("chat")
@@ -143,13 +152,14 @@ class QnAAgent(ChatAgent):
         return ctx
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
-        return await self._build_agent().run(await self._enriched_context(ctx))
+        enriched_ctx = await self._enriched_context(ctx)
+        return await self._build_agent(enriched_ctx).run(enriched_ctx)
 
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
         ctx = await self._enriched_context(ctx)
-        async for chunk in self._build_agent().run_stream(ctx):
+        async for chunk in self._build_agent(ctx).run_stream(ctx):
             yield chunk
 
 

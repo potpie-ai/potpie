@@ -51,12 +51,18 @@ class ChatContext(BaseModel):
     node_ids: Optional[List[str]] = None
     additional_context: str = ""
     query: str
+    # Project parsing status - used to conditionally enable/disable tools
+    project_status: Optional[str] = None
     # Multimodal support - images attached to the current message
     image_attachments: Optional[Dict[str, Dict[str, Union[str, int]]]] = (
         None  # attachment_id -> {base64, mime_type, file_size, etc}
     )
     # Context images from recent conversation history
     context_images: Optional[Dict[str, Dict[str, Union[str, int]]]] = None
+
+    def is_inferring(self) -> bool:
+        """Check if the project is still in INFERRING state (AI enrichment in progress)"""
+        return self.project_status == "inferring"
 
     def has_images(self) -> bool:
         """Check if this context contains any images"""

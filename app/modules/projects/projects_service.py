@@ -64,6 +64,7 @@ class ProjectService:
         project_id: str,
         commit_id: str = None,
         repo_path: str = None,
+        filters: dict = None,
     ):
         # Check if a project with this ID already exists
         existing_project = (
@@ -89,6 +90,8 @@ class ProjectService:
             existing_project.commit_id = commit_id
             existing_project.status = ProjectStatusEnum.SUBMITTED.value
             existing_project.updated_at = datetime.utcnow()
+            if filters:
+                existing_project.parse_filters = filters
             try:
                 self.db.commit()
                 self.db.refresh(existing_project)
@@ -109,6 +112,7 @@ class ProjectService:
             repo_path=repo_path,
             commit_id=commit_id,
             status=ProjectStatusEnum.SUBMITTED.value,
+            parse_filters=filters,
         )
         try:
             project = ProjectService.create_project(self.db, project)

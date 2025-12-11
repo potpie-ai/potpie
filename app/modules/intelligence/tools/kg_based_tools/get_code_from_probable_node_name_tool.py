@@ -150,7 +150,7 @@ class GetCodeFromProbableNodeNameTool:
     def _get_node_data(self, project_id: str, node_id: str) -> Dict[str, Any]:
         query = """
         MATCH (n:NODE {node_id: $node_id, repoId: $project_id})
-        RETURN n.file_path AS file_path, n.start_line AS start_line, n.end_line AS end_line, n.text as code, n.docstring as docstring
+        RETURN n.file_path AS file_path, n.start_line AS start_line, n.end_line AS end_line, n.text as code, COALESCE(n.docstring, substring(n.text, 0, 500)) as docstring
         """
         with self.neo4j_driver.session() as session:
             result = session.run(query, node_id=node_id, project_id=project_id)

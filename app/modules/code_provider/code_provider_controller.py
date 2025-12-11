@@ -1,6 +1,6 @@
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from typing import Dict, Any
+from typing import Dict, Any, List
 import os
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
@@ -141,6 +141,28 @@ class CodeProviderController:
                 status_code=404,
                 detail=f"Repository {repo_name} not found or error fetching branches: {str(e)}",
             )
+
+    async def get_repo_structure(
+        self, repo_name: str, branch_name: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Get repository structure for a specific branch.
+        """
+        provider_type = os.getenv("CODE_PROVIDER", "github").lower()
+
+        if provider_type == "github":
+            github_service = GithubService(self.db)
+            return await github_service.get_repo_structure_json(repo_name, branch_name)
+
+        try:
+            provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
+            # Use the provider to get repository structure
+            structure = provider.get_repository_structure(
+                repo_name=repo_name, path="", ref=branch_name, max_depth=4
+            )
+            return structure
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
     async def get_user_repos(self, user: Dict[str, Any]) -> Dict[str, Any]:
         """

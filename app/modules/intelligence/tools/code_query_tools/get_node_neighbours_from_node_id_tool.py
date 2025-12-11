@@ -95,7 +95,7 @@ class GetNodeNeighboursFromNodeIdTool:
             WHERE neighbor.repoId = $project_id
             RETURN DISTINCT neighbor.node_id AS node_id,
                    neighbor.name AS name,
-                   neighbor.docstring AS docstring
+                   COALESCE(neighbor.docstring, substring(neighbor.text, 0, 200)) AS docstring
         }
         RETURN COLLECT({
             node_id: node_id,

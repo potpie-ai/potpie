@@ -9,6 +9,7 @@ from app.modules.code_provider.base.code_provider_interface import (
     AuthMethod,
     ICodeProvider,
 )
+from app.modules.parsing.utils.file_utils import FileUtils
 
 logger = logging.getLogger(__name__)
 
@@ -107,27 +108,7 @@ class LocalProvider(ICodeProvider):
         Returns:
             True if file should be included
         """
-        # Exclude image/media files
-        exclude_extensions = {
-            "png",
-            "jpg",
-            "jpeg",
-            "gif",
-            "bmp",
-            "tiff",
-            "webp",
-            "ico",
-            "svg",
-            "mp4",
-            "avi",
-            "mov",
-            "wmv",
-            "flv",
-            "ipynb",
-        }
-
-        ext = os.path.splitext(file_path)[1].lstrip(".").lower()
-        return ext not in exclude_extensions
+        return FileUtils.is_valid_file_name(os.path.basename(file_path))
 
     # ============ Repository Operations ============
 
@@ -299,8 +280,8 @@ class LocalProvider(ICodeProvider):
             return []
 
         for entry in sorted(entries):
-            # Skip .git directory only
-            if entry == ".git":
+            # Skip excluded files/directories
+            if FileUtils.is_excluded_file_name(entry):
                 continue
 
             entry_path = os.path.join(dir_path, entry)

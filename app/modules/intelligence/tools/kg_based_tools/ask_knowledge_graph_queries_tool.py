@@ -60,21 +60,34 @@ class KnowledgeGraphQueryTool:
         inference_service = InferenceService(self.sql_db, "dummy")
 
         async def process_query(query_request: QueryRequest) -> List[QueryResponse]:
-            # Call the query_vector_index method directly from InferenceService
-            results = inference_service.query_vector_index(
-                query_request.project_id, query_request.query, query_request.node_ids
-            )
-            return [
-                QueryResponse(
-                    node_id=result.get("node_id"),
-                    docstring=result.get("docstring"),
-                    file_path=result.get("file_path"),
-                    start_line=result.get("start_line") or 0,
-                    end_line=result.get("end_line") or 0,
-                    similarity=result.get("similarity"),
+            try:
+                # Call the query_vector_index method directly from InferenceService
+                results = inference_service.query_vector_index(
+                    query_request.project_id,
+                    query_request.query,
+                    query_request.node_ids,
                 )
-                for result in results
-            ]
+                return [
+                    QueryResponse(
+                        node_id=result.get("node_id"),
+                        docstring=result.get("docstring"),
+                        file_path=result.get("file_path"),
+                        start_line=result.get("start_line") or 0,
+                        end_line=result.get("end_line") or 0,
+                        similarity=result.get("similarity"),
+                    )
+                    for result in results
+                ]
+            except Exception as e:
+                # Vector search may fail during INFERRING status (embeddings not ready)
+                # Return empty results gracefully instead of failing
+                import logging
+
+                logging.warning(
+                    f"Vector search failed for project {query_request.project_id} "
+                    f"(likely during INFERRING): {e}"
+                )
+                return []
 
         tasks = [process_query(query) for query in queries]
         results = await asyncio.gather(*tasks)
