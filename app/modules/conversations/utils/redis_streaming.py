@@ -3,9 +3,9 @@ from typing import Generator, Optional
 import json
 from datetime import datetime
 from app.core.config_provider import ConfigProvider
-import logging
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class RedisStreamManager:
