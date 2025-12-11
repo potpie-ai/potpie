@@ -42,7 +42,7 @@ class Project(Base):
     __table_args__ = (
         ForeignKeyConstraint(["user_id"], ["users.uid"], ondelete="CASCADE"),
         CheckConstraint(
-            "status IN ('submitted', 'cloned', 'parsed', 'ready', 'error')",
+            "status IN ('submitted', 'cloned', 'parsed', 'inferring', 'ready', 'error')",
             name="check_status",
         ),
     )

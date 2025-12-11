@@ -5,7 +5,6 @@ import traceback
 import fnmatch
 from asyncio import create_task
 from contextlib import contextmanager
-from typing import Optional
 
 # Apply encoding patch BEFORE importing blar_graph
 from app.modules.parsing.utils.encoding_patch import apply_encoding_patch
@@ -334,12 +333,10 @@ class ParsingService:
                 )
 
                 # Generate docstrings using InferenceService
+                # Note: run_inference now handles status transitions (INFERRING -> READY/ERROR)
                 await self.inference_service.run_inference(project_id)
                 logger.info(f"DEBUGNEO4J: After inference project {project_id}")
                 self.inference_service.log_graph_stats(project_id)
-                await self.project_service.update_project_status(
-                    project_id, ProjectStatusEnum.READY
-                )
                 create_task(
                     EmailHelper().send_email(user_email, repo_name, branch_name)
                 )
@@ -378,12 +375,10 @@ class ParsingService:
                     project_id, ProjectStatusEnum.PARSED
                 )
                 # Generate docstrings using InferenceService
+                # Note: run_inference now handles status transitions (INFERRING -> READY/ERROR)
                 await self.inference_service.run_inference(project_id)
                 logger.info(f"DEBUGNEO4J: After inference project {project_id}")
                 self.inference_service.log_graph_stats(project_id)
-                await self.project_service.update_project_status(
-                    project_id, ProjectStatusEnum.READY
-                )
                 create_task(
                     EmailHelper().send_email(user_email, repo_name, branch_name)
                 )

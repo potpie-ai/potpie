@@ -8,6 +8,7 @@ class ProjectStatusEnum(str, Enum):
     CLONED = "cloned"
     PARSED = "parsed"
     PROCESSING = "processing"
+    INFERRING = "inferring"
     READY = "ready"
     ERROR = "error"
 

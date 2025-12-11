@@ -23,6 +23,7 @@ from app.modules.parsing.utils.content_hash import (
     generate_content_hash,
     is_content_cacheable,
 )
+from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
 
@@ -290,7 +291,7 @@ class InferenceService:
             # Combine multiple chunk descriptions intelligently
             consolidated_text = f"This is a large code component split across {len(all_docstrings)} sections: "
             consolidated_text += " | ".join(
-                [f"Section {i+1}: {doc}" for i, doc in enumerate(all_docstrings)]
+                [f"Section {i + 1}: {doc}" for i, doc in enumerate(all_docstrings)]
             )
 
         # Create single consolidated docstring for parent node
@@ -1091,13 +1092,31 @@ class InferenceService:
             )
 
     async def run_inference(self, repo_id: str):
-        docstrings = await self.generate_docstrings(repo_id)
-        logger.info(
-            f"DEBUGNEO4J: After generate docstrings, Repo ID: {repo_id}, Docstrings: {len(docstrings)}"
-        )
-        self.log_graph_stats(repo_id)
+        try:
+            # Set status to INFERRING at the beginning
+            await self.project_manager.update_project_status(
+                repo_id, ProjectStatusEnum.INFERRING
+            )
 
-        self.create_vector_index()
+            docstrings = await self.generate_docstrings(repo_id)
+            logger.info(
+                f"DEBUGNEO4J: After generate docstrings, Repo ID: {repo_id}, Docstrings: {len(docstrings)}"
+            )
+            self.log_graph_stats(repo_id)
+
+            self.create_vector_index()
+
+            # Set status to READY after successful completion
+            await self.project_manager.update_project_status(
+                repo_id, ProjectStatusEnum.READY
+            )
+        except Exception as e:
+            logger.error(f"Inference failed for project {repo_id}: {e}")
+            # Set status to ERROR on failure
+            await self.project_manager.update_project_status(
+                repo_id, ProjectStatusEnum.ERROR
+            )
+            raise
 
     def query_vector_index(
         self,
