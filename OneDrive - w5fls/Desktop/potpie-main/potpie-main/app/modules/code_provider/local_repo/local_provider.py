@@ -251,7 +251,7 @@ class LocalProvider(ICodeProvider):
                 "children": [...]  # For directories
             }]
         """
-        repo = self._get_repo(repo_name)
+        # repo = self._get_repo(repo_name)
         repo_path = os.path.abspath(
             os.path.expanduser(repo_name or self.default_repo_path)
         )
@@ -534,15 +534,17 @@ class LocalProvider(ICodeProvider):
 
     # ============ Pull Request Operations ============
 
+    PR_NOT_SUPPORTED_MSG = "LocalProvider does not support pull requests"
+
     def list_pull_requests(
         self, repo_name: str, state: str = "open", limit: int = 10
     ) -> List[Dict[str, Any]]:
-        raise NotImplementedError("LocalProvider does not support pull requests")
+        raise NotImplementedError(self.PR_NOT_SUPPORTED_MSG)
 
     def get_pull_request(
         self, repo_name: str, pr_number: int, include_diff: bool = False
     ) -> Dict[str, Any]:
-        raise NotImplementedError("LocalProvider does not support pull requests")
+        raise NotImplementedError(self.PR_NOT_SUPPORTED_MSG)
 
     def create_pull_request(
         self,
@@ -554,7 +556,7 @@ class LocalProvider(ICodeProvider):
         reviewers: Optional[List[str]] = None,
         labels: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        raise NotImplementedError("LocalProvider does not support pull requests")
+        raise NotImplementedError(self.PR_NOT_SUPPORTED_MSG)
 
     def add_pull_request_comment(
         self,

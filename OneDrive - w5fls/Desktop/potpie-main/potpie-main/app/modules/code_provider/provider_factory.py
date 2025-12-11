@@ -17,6 +17,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+GITHUB_API_BASE_URL = "https://api.github.com"
+
 
 class ProviderType(str, Enum):
     GITHUB = "github"
@@ -85,7 +87,7 @@ class CodeProviderFactory:
 
         # Create provider instance
         if provider_type == ProviderType.GITHUB:
-            base_url = base_url or "https://api.github.com"
+            base_url = base_url or GITHUB_API_BASE_URL
             provider = GitHubProvider(base_url=base_url)
 
         elif provider_type == ProviderType.GITBUCKET:
@@ -102,12 +104,10 @@ class CodeProviderFactory:
 
         elif provider_type == ProviderType.GITLAB:
             base_url = base_url or "https://gitlab.com"
-            # provider = GitLabProvider(base_url=base_url)
             raise NotImplementedError("GitLab provider not yet implemented")
 
         elif provider_type == ProviderType.BITBUCKET:
             base_url = base_url or "https://api.bitbucket.org/2.0"
-            # provider = BitbucketProvider(base_url=base_url)
             raise NotImplementedError("Bitbucket provider not yet implemented")
 
         elif provider_type == ProviderType.LOCAL:
@@ -244,11 +244,6 @@ class CodeProviderFactory:
         return provider
 
     @staticmethod
-    def get_default_provider() -> ICodeProvider:
-        """Get default provider configured via environment variables."""
-        return CodeProviderFactory.create_provider()
-
-    @staticmethod
     def create_provider_with_fallback(repo_name: str) -> ICodeProvider:
         """
         Create provider with comprehensive authentication fallback strategy.
@@ -276,115 +271,114 @@ class CodeProviderFactory:
         # Handle local repositories without authentication
         local_repo_path = CodeProviderFactory._resolve_local_repo_path(repo_name)
         if local_repo_path:
-            from app.modules.code_provider.local_repo.local_provider import (
-                LocalProvider,
-            )
-
-            logger.debug(
-                f"Using LocalProvider (fallback) for repository path: {local_repo_path}"
-            )
-            return LocalProvider(default_repo_path=local_repo_path)
+            return CodeProviderFactory._create_local_provider_fallback(local_repo_path)
 
         provider_type = os.getenv("CODE_PROVIDER", "github").lower()
 
-        # For GitHub, validate that repo_name looks like a valid GitHub repo name
-        # GitHub repos must be in "owner/repo" format
+        # Validate GitHub repo name format
         if provider_type == "github" and "/" not in repo_name:
-            logger.error(
-                f"Invalid GitHub repository name: '{repo_name}'. "
-                f"GitHub repos must be in 'owner/repo' format. "
-                f"If this is a local repository, ensure repo_path is set in the database."
-            )
-            raise ValueError(
-                f"Invalid repository name '{repo_name}'. "
-                f"GitHub repos must be in 'owner/repo' format (e.g., 'facebook/react'). "
-                f"For local repositories, use the full filesystem path."
-            )
+            CodeProviderFactory._validate_github_repo_name(repo_name)
 
-        # Check if GitHub App is configured (only relevant for GitHub provider)
-        app_id = os.getenv("GITHUB_APP_ID")
-        private_key = (
-            config_provider.get_github_key()
-            if provider_type == ProviderType.GITHUB
-            else None
-        )
-        is_github_app_configured = bool(app_id and private_key)
-
-        # For GitHub with App configured: Try GitHub App first, then PAT
-        if provider_type == ProviderType.GITHUB and is_github_app_configured:
-            logger.info(
-                f"GitHub App is configured, trying App auth first for {repo_name}"
-            )
+        # 1. Try GitHub App
+        if provider_type == ProviderType.GITHUB and CodeProviderFactory._is_github_app_configured():
             try:
+                logger.info(f"GitHub App is configured, trying App auth first for {repo_name}")
                 return CodeProviderFactory.create_github_app_provider(repo_name)
             except Exception as e:
                 logger.warning(
                     f"GitHub App authentication failed for {repo_name}: {e}, falling back to PAT"
                 )
-                # Continue to PAT fallback below
 
-        # For GitHub: Try GH_TOKEN_LIST first (where GitHub PATs are stored)
-        # For other providers: Try CODE_PROVIDER_TOKEN first
+        # 2. Try GH_TOKEN_LIST (GitHub only)
         if provider_type == ProviderType.GITHUB:
-            # For GitHub, prioritize GH_TOKEN_LIST over CODE_PROVIDER_TOKEN
-            token_list_str = os.getenv("GH_TOKEN_LIST", "")
+            provider = CodeProviderFactory._try_gh_token_list_auth()
+            if provider:
+                return provider
 
-            # Debug: Log the raw token list string
-            if token_list_str:
-                token_repr = repr(token_list_str)
-                logger.debug("Raw GH_TOKEN_LIST from environment:")
-                logger.debug(f"  - Length: {len(token_list_str)}")
-                logger.debug(f"  - Has newlines: {chr(10) in token_list_str}")
-                logger.debug(f"  - Has carriage returns: {chr(13) in token_list_str}")
-                logger.debug(f"  - Repr: {token_repr[:50]}...")
-
-            if token_list_str:
-                import random
-
-                tokens = [t.strip() for t in token_list_str.split(",") if t.strip()]
-                logger.debug(f"Parsed {len(tokens)} token(s) from GH_TOKEN_LIST")
-                if tokens:
-                    logger.info(
-                        f"Using GH_TOKEN_LIST for authentication ({len(tokens)} token(s) available)"
-                    )
-                    # GH_TOKEN_LIST is specifically for GitHub.com, not GitBucket or other providers
-                    # Always use GitHub's API endpoint when using GH_TOKEN_LIST
-                    base_url = "https://api.github.com"
-                    provider = GitHubProvider(base_url=base_url)
-                    token = random.choice(tokens)
-
-                    provider.authenticate(
-                        {"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN
-                    )
-                    return provider
-
-        # Try CODE_PROVIDER_TOKEN (for non-GitHub providers, or as fallback for GitHub)
-        token = os.getenv("CODE_PROVIDER_TOKEN")
-        if token:
-            logger.info("Using CODE_PROVIDER_TOKEN for authentication")
-            provider = CodeProviderFactory.create_provider()
-            provider.authenticate({"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN)
+        # 3. Try CODE_PROVIDER_TOKEN (Universal)
+        provider = CodeProviderFactory._try_code_provider_token_auth()
+        if provider:
             return provider
 
-        # If we get here and it's GitHub without App configured, try unauthenticated access
+        # 4. Try Unauthenticated (GitHub only)
         if provider_type == ProviderType.GITHUB:
-            logger.info(
-                f"No PAT configured, trying unauthenticated access for {repo_name}"
-            )
-            try:
-                # Use GitHub.com API for GitHub provider (not GitBucket or other configured base URLs)
-                base_url = "https://api.github.com"
-                provider = GitHubProvider(base_url=base_url)
-                provider.set_unauthenticated_client()
+            provider = CodeProviderFactory._try_unauthenticated_github(repo_name)
+            if provider:
                 return provider
-            except Exception as e:
-                logger.warning(f"Failed to create unauthenticated provider: {e}")
 
-        # If we get here, we have no auth method
+        # No auth method available
         raise ValueError(
             "No authentication method available. "
             "Please configure CODE_PROVIDER_TOKEN, GH_TOKEN_LIST, or GitHub App credentials."
         )
+
+    @staticmethod
+    def _create_local_provider_fallback(local_repo_path: str) -> ICodeProvider:
+        from app.modules.code_provider.local_repo.local_provider import LocalProvider
+        logger.debug(f"Using LocalProvider (fallback) for repository path: {local_repo_path}")
+        return LocalProvider(default_repo_path=local_repo_path)
+
+    @staticmethod
+    def _validate_github_repo_name(repo_name: str) -> None:
+        logger.error(
+            f"Invalid GitHub repository name: '{repo_name}'. "
+            f"GitHub repos must be in 'owner/repo' format. "
+            f"If this is a local repository, ensure repo_path is set in the database."
+        )
+        raise ValueError(
+            f"Invalid repository name '{repo_name}'. "
+            f"GitHub repos must be in 'owner/repo' format (e.g., 'facebook/react'). "
+            f"For local repositories, use the full filesystem path."
+        )
+
+    @staticmethod
+    def _is_github_app_configured() -> bool:
+        app_id = os.getenv("GITHUB_APP_ID")
+        private_key = config_provider.get_github_key()
+        return bool(app_id and private_key)
+
+    @staticmethod
+    def _try_gh_token_list_auth() -> Optional[ICodeProvider]:
+        token_list_str = os.getenv("GH_TOKEN_LIST", "")
+        if not token_list_str:
+            return None
+
+        # Debug logging omitted for brevity but logic preserved
+        import random
+        tokens = [t.strip() for t in token_list_str.split(",") if t.strip()]
+        
+        if not tokens:
+            return None
+            
+        logger.info(f"Using GH_TOKEN_LIST for authentication ({len(tokens)} tokens available)")
+        base_url = "https://api.github.com"
+        provider = GitHubProvider(base_url=base_url)
+        token = random.choice(tokens)
+        provider.authenticate({"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN)
+        return provider
+
+    @staticmethod
+    def _try_code_provider_token_auth() -> Optional[ICodeProvider]:
+        token = os.getenv("CODE_PROVIDER_TOKEN")
+        if not token:
+            return None
+            
+        logger.info("Using CODE_PROVIDER_TOKEN for authentication")
+        provider = CodeProviderFactory.create_provider()
+        provider.authenticate({"token": token}, AuthMethod.PERSONAL_ACCESS_TOKEN)
+        return provider
+    
+    @staticmethod
+    def _try_unauthenticated_github(repo_name: str) -> Optional[ICodeProvider]:
+        logger.info(f"No PAT configured, trying unauthenticated access for {repo_name}")
+        try:
+            base_url = "https://api.github.com"
+            provider = GitHubProvider(base_url=base_url)
+            provider.set_unauthenticated_client()
+            return provider
+        except Exception as e:
+            logger.warning(f"Failed to create unauthenticated provider: {e}")
+            return None
 
     @staticmethod
     def _resolve_local_repo_path(repo_name: Optional[str]) -> Optional[str]:
@@ -457,3 +451,4 @@ def has_code_provider_credentials() -> bool:
         return True
 
     return False
+
