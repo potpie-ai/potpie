@@ -97,6 +97,13 @@ from .code_changes_manager import create_code_changes_management_tools
 
 
 class ToolService:
+    # Tools that depend on embeddings/docstrings and should be disabled during INFERRING status
+    # These tools require AI-inferenced content (embeddings, tags) that doesn't exist during inference
+    EMBEDDING_DEPENDENT_TOOLS = {
+        "ask_knowledge_graph_queries",  # Uses vector search which requires embeddings
+        "get_nodes_from_tags",  # Uses AI-generated tags which may not exist yet
+    }
+
     def __init__(self, db: Session, user_id: str):
         self.db = db
         self.user_id = user_id
@@ -123,10 +130,21 @@ class ToolService:
         self.provider_service = ProviderService.create(db, user_id)
         self.tools = self._initialize_tools()
 
-    def get_tools(self, tool_names: List[str]) -> List[StructuredTool]:
-        """get tools if exists"""
+    def get_tools(
+        self, tool_names: List[str], exclude_embedding_tools: bool = False
+    ) -> List[StructuredTool]:
+        """Get tools if they exist.
+
+        Args:
+            tool_names: List of tool names to retrieve
+            exclude_embedding_tools: If True, excludes tools that depend on embeddings/AI-generated content.
+                                    Use this when project is in INFERRING status.
+        """
         tools = []
         for tool_name in tool_names:
+            # Skip embedding-dependent tools if requested (during INFERRING status)
+            if exclude_embedding_tools and tool_name in self.EMBEDDING_DEPENDENT_TOOLS:
+                continue
             if self.tools.get(tool_name) is not None:
                 tools.append(self.tools[tool_name])
         return tools
@@ -168,11 +186,21 @@ class ToolService:
             "link_jira_issues": link_jira_issues_tool(self.db, self.user_id),
             "get_confluence_spaces": get_confluence_spaces_tool(self.db, self.user_id),
             "get_confluence_page": get_confluence_page_tool(self.db, self.user_id),
-            "search_confluence_pages": search_confluence_pages_tool(self.db, self.user_id),
-            "get_confluence_space_pages": get_confluence_space_pages_tool(self.db, self.user_id),
-            "create_confluence_page": create_confluence_page_tool(self.db, self.user_id),
-            "update_confluence_page": update_confluence_page_tool(self.db, self.user_id),
-            "add_confluence_comment": add_confluence_comment_tool(self.db, self.user_id),
+            "search_confluence_pages": search_confluence_pages_tool(
+                self.db, self.user_id
+            ),
+            "get_confluence_space_pages": get_confluence_space_pages_tool(
+                self.db, self.user_id
+            ),
+            "create_confluence_page": create_confluence_page_tool(
+                self.db, self.user_id
+            ),
+            "update_confluence_page": update_confluence_page_tool(
+                self.db, self.user_id
+            ),
+            "add_confluence_comment": add_confluence_comment_tool(
+                self.db, self.user_id
+            ),
             "intelligent_code_graph": get_intelligent_code_graph_tool(
                 self.db, self.provider_service, self.user_id
             ),

@@ -149,7 +149,6 @@ class ConversationService:
     async def check_conversation_access(
         self, conversation_id: str, user_email: str, firebase_user_id: str = None
     ) -> str:
-
         if not user_email:
             return ConversationAccessType.WRITE
 
@@ -662,6 +661,12 @@ class ConversationService:
                 project_ids=[project_id]
             )
 
+            # Get project status to conditionally enable/disable tools
+            project_info = await self.project_service.get_project_from_db_by_id(
+                project_id
+            )
+            project_status = project_info.get("status") if project_info else None
+
             # Prepare multimodal context - use current message attachments if available
             image_attachments = None
             if attachment_ids:
@@ -684,7 +689,6 @@ class ConversationService:
                 )
 
             if type == "CUSTOM_AGENT":
-
                 res = (
                     await self.agent_service.custom_agent_service.execute_agent_runtime(
                         user_id,
@@ -695,6 +699,7 @@ class ConversationService:
                             history=validated_history[-12:],
                             node_ids=[node.node_id for node in node_ids],
                             query=query,
+                            project_status=project_status,
                         ),
                     )
                 )
@@ -726,6 +731,7 @@ class ConversationService:
                     history=validated_history[-8:],
                     node_ids=nodes,
                     query=query,
+                    project_status=project_status,
                     image_attachments=image_attachments,
                     context_images=context_images,
                 )
@@ -925,7 +931,6 @@ class ConversationService:
     async def get_conversation_info(
         self, conversation_id: str, user_id: str
     ) -> ConversationInfoResponse:
-
         try:
             print(
                 "[conversation_service] Getting info for conversation:", conversation_id
@@ -1001,7 +1006,6 @@ class ConversationService:
     async def get_conversation_messages(
         self, conversation_id: str, start: int, limit: int, user_id: str
     ) -> List[MessageResponse]:
-
         try:
             access_level = await self.check_conversation_access(
                 conversation_id, self.user_email, user_id
