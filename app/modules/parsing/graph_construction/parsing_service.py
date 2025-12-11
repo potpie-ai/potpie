@@ -123,7 +123,7 @@ class ParsingService:
                 self.db,
                 language,
                 user_email,
-                repo_details,
+                repo_details.inference,
             )
             message = "The project has been parsed successfully"
             return {"message": message, "id": project_id}
@@ -196,7 +196,7 @@ class ParsingService:
         db,
         language: str,
         user_email: str,
-        repo_details: ParsingRequest,
+        inference: bool,
     ):
         logger.info(
             f"ParsingService: Parsing project {project_id}: Analyzing directory: {extracted_dir}"
@@ -218,21 +218,32 @@ class ParsingService:
             logger.error(f"Project with ID {project_id} not found.")
             raise HTTPException(status_code=404, detail="Project not found.")
 
-        if language != "other":
-            try:
-                neo4j_config = config_provider.get_neo4j_config()
-                service = CodeGraphService(
-                    neo4j_config["uri"],
-                    neo4j_config["username"],
-                    neo4j_config["password"],
-                    db,
+        if language == "other":
+            await self.project_service.update_project_status(
+                project_id, ProjectStatusEnum.ERROR
+            )
+            await ParseWebhookHelper().send_slack_notification(project_id, "Other")
+            logger.info(f"DEBUGNEO4J: After update project status {project_id}")
+            self.inference_service.log_graph_stats(project_id)
+            raise ParsingFailedError(
+                "Repository doesn't consist of a language currently supported."
+            )
+
+        try:
+            neo4j_config = config_provider.get_neo4j_config()
+            with CodeGraphService(
+                neo4j_config["uri"],
+                neo4j_config["username"],
+                neo4j_config["password"],
+                db,
+            ) as codegraph_service:
+                codegraph_service.create_and_store_graph(
+                    extracted_dir, project_id, user_id
                 )
-
-                service.create_and_store_graph(extracted_dir, project_id, user_id)
-
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.PARSED
                 )
+            if inference:
                 # Generate docstrings using InferenceService
                 await self.inference_service.run_inference(project_id)
                 logger.info(f"DEBUGNEO4J: After inference project {project_id}")
@@ -243,22 +254,9 @@ class ParsingService:
                 create_task(
                     EmailHelper().send_email(user_email, repo_name, branch_name)
                 )
-                logger.info(f"DEBUGNEO4J: After update project status {project_id}")
-                self.inference_service.log_graph_stats(project_id)
-            finally:
-                service.close()
-                logger.info(f"DEBUGNEO4J: After close service {project_id}")
-                self.inference_service.log_graph_stats(project_id)
-        else:
-            await self.project_service.update_project_status(
-                project_id, ProjectStatusEnum.ERROR
-            )
-            await ParseWebhookHelper().send_slack_notification(project_id, "Other")
-            logger.info(f"DEBUGNEO4J: After update project status {project_id}")
+        finally:
+            logger.info(f"DEBUGNEO4J: After close service {project_id}")
             self.inference_service.log_graph_stats(project_id)
-            raise ParsingFailedError(
-                "Repository doesn't consist of a language currently supported."
-            )
 
     async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
         await self.search_service.clone_search_indices(old_repo_id, new_repo_id)

@@ -15,6 +15,13 @@ class CodeGraphService:
         self.driver = GraphDatabase.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
         self.db = db
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+        return False
+
     @staticmethod
     def generate_node_id(path: str, user_id: str):
         # Concatenate path and signature
