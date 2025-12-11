@@ -14,7 +14,7 @@ from grep_ast import filename_to_lang
 from pygments.lexers import guess_lexer_for_filename
 from pygments.token import Token
 from pygments.util import ClassNotFound
-from tree_sitter_languages import get_language, get_parser
+from tree_sitter_language_pack import get_language, get_parser
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_service import ProjectService
