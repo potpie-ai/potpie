@@ -388,9 +388,13 @@ def execute_regenerate_background(
         except Exception:
             logger.exception("Failed to set task status to error")
 
+        # Ensure end event is always published
         try:
             redis_manager.publish_event(
-                conversation_id, run_id, "end", {"status": "error", "message": str(e)}
+                conversation_id,
+                run_id,
+                "end",
+                {"status": "error", "message": str(e)},
             )
         except Exception:
             logger.exception("Failed to publish error event to Redis")

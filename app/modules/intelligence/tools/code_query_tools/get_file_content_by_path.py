@@ -192,7 +192,7 @@ class FetchFileTool:
                 "content": content,
             }
         except Exception as e:
-            logger.exception(f"Failed to fetch file content for {file_path}: {str(e)}")
+            logger.exception(f"Failed to fetch file content for {file_path}")
             return {"success": False, "error": str(e), "content": None}
 
     async def _arun(

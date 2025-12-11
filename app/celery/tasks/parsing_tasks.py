@@ -49,7 +49,6 @@ def process_parsing(
 
             # Use BaseTask's long-lived event loop for consistency
             self.run_async(run_parsing())
-            logger.info("Parsing process completed successfully")
         except Exception:
             logger.exception("Error during parsing")
             raise

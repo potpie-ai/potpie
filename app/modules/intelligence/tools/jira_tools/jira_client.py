@@ -298,11 +298,32 @@ class JiraClient:
             response.raise_for_status()
             results = response.json()
 
-            logger.info(f"JQL query result: {results}")
-
             issues = results.get("issues", [])
             is_last = results.get("isLast", True)
             next_token = results.get("nextPageToken")
+            total_count = results.get("total", len(issues))
+            issues_returned = len(issues)
+
+            # Extract sanitized issue keys (limit to first 10 for logging)
+            issue_keys = [issue.get("key", "unknown") for issue in issues[:10]]
+            if issues_returned > 10:
+                issue_keys.append(f"... and {issues_returned - 10} more")
+
+            # Log concise summary at info level
+            pagination_info = {
+                "max_results": max_results,
+                "is_last": is_last,
+                "has_next_page": bool(next_token),
+            }
+            logger.info(
+                f"JQL search completed - query: '{jql}', "
+                f"total_matching: {total_count}, returned: {issues_returned}, "
+                f"pagination: {pagination_info}, "
+                f"issue_keys: {issue_keys}"
+            )
+
+            # Log full payload only at debug level to avoid PII exposure and log bloat
+            logger.debug(f"Full JQL search response: {results}")
 
             # Convert issues to dict format
             converted_issues = []

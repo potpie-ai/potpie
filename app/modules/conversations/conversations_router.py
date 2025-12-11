@@ -300,10 +300,10 @@ class ConversationAPI:
             if node_ids:
                 try:
                     parsed_node_ids = json.loads(node_ids)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as err:
                     raise HTTPException(
                         status_code=400, detail="Invalid node_ids format"
-                    )
+                    ) from err
 
             # Create message request
             message = MessageRequest(

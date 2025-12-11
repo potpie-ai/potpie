@@ -215,9 +215,34 @@ class IntegrationsService:
                 response = await client.post(token_url, data=refresh_data)
 
                 if response.status_code != 200:
+                    # Safely parse response to extract structured error fields
+                    sanitized_error = None
+                    try:
+                        error_data = response.json()
+                        error_field = error_data.get("error", "")
+                        error_description = error_data.get("error_description", "")
+                        if error_field or error_description:
+                            sanitized_error = f"error: {error_field}"
+                            if error_description:
+                                sanitized_error += f", error_description: {error_description[:200]}"
+                        else:
+                            # JSON parsed but no error fields, use truncated response text
+                            response_text = response.text or ""
+                            sanitized_error = response_text[:250] if response_text else "No response body"
+                    except Exception:
+                        # Fallback to truncated response.text if JSON parsing fails
+                        response_text = response.text or ""
+                        sanitized_error = response_text[:250] if response_text else "No response body"
+                    
+                    # Log sanitized error at error level
                     logger.error(
-                        f"Token refresh failed: {response.status_code} - {response.text}"
+                        f"Token refresh failed: {response.status_code} - {sanitized_error}"
                     )
+                    # Log full response body at debug level for detailed troubleshooting
+                    logger.debug(
+                        f"Token refresh full response: status={response.status_code}, body={response.text}"
+                    )
+                    # Raise exception with minimal message
                     raise Exception(f"Token refresh failed: {response.status_code}")
 
                 token_response = response.json()

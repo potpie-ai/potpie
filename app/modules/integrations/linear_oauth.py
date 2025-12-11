@@ -8,6 +8,7 @@ from starlette.config import Config
 import httpx
 import urllib.parse
 import time
+import hashlib
 from app.modules.utils.logger import setup_logger
 from app.modules.integrations import hash_user_id
 
@@ -223,7 +224,13 @@ class LinearOAuth:
                 f"Linear OAuth callback received for user {hash_user_id(user_id)}"
             )
             logger.debug("Code: [REDACTED]")
-            logger.debug(f"State: {state}")
+            # Hash state for safe logging while preserving correlation
+            state_hash = (
+                hashlib.sha256(state.encode()).hexdigest()[:8]
+                if state
+                else "none"
+            )
+            logger.debug(f"State: {state_hash} (hashed)")
 
             return {
                 "status": "success",

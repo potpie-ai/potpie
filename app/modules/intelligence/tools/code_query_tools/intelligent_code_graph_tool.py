@@ -195,7 +195,7 @@ class IntelligentCodeGraphTool:
                 }
             }
         except Exception as e:
-            logger.exception(f"Error in intelligent code graph tool: {str(e)}")
+            logger.exception("Error in intelligent code graph tool")
             return {"error": f"An unexpected error occurred: {str(e)}"}
 
     async def _process_node_recursively_async(

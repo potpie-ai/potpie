@@ -390,13 +390,26 @@ class CustomAgentService:
             )
 
             return self.persist_agent(user_id, agent_data, enhanced_tasks)
-        except SQLAlchemyError:
+        except HTTPException:
+            # Preserve intentionally raised HTTP errors (e.g., invalid tool IDs).
+            raise
+        except SQLAlchemyError as err:
             self.db.rollback()
-            logger.exception("Database error while creating agent", user_id=user_id)
-            raise HTTPException(status_code=500, detail="Failed to create agent")
-        except Exception:
-            logger.exception("Error creating agent", user_id=user_id)
-            raise HTTPException(status_code=500, detail="Failed to create agent")
+            logger.exception(
+                "Database error while creating agent",
+                user_id=user_id,
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to create agent",
+            ) from err
+        except Exception as err:
+            self.db.rollback()
+            logger.exception("Unexpected error while creating agent", user_id=user_id)
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to create agent",
+            ) from err
 
     def persist_agent(self, user_id, agent_data, tasks):
         agent_id = str(uuid4())
@@ -667,11 +680,16 @@ class CustomAgentService:
         try:
             return runtime_agent.run_stream(ctx)
 
-        except Exception:
+        except HTTPException:
+            # Preserve intentionally raised HTTP errors from downstream code.
+            raise
+        except Exception as err:
             logger.exception(
                 "Error executing agent", agent_id=ctx.curr_agent_id, user_id=user_id
             )
-            raise HTTPException(status_code=500, detail="Failed to execute agent")
+            raise HTTPException(
+                status_code=500, detail="Failed to execute agent"
+            ) from err
 
     async def create_agent_plan(
         self, user_id: str, prompt: str, tools: List[str]
@@ -766,15 +784,15 @@ class CustomAgentService:
 
             return self.persist_agent(user_id, agent_data, agent_data.tasks)
 
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as err:
             logger.exception("JSON parsing error", user_id=user_id)
-            raise ValueError("Failed to parse agent plan")
+            raise ValueError("Failed to parse agent plan") from err
         except ValueError:
             logger.exception("Validation error", user_id=user_id)
             raise
-        except Exception:
+        except Exception as err:
             logger.exception("Error creating agent from prompt", user_id=user_id)
-            raise ValueError("Failed to create agent from prompt")
+            raise ValueError("Failed to create agent from prompt") from err
 
     async def enhance_task_descriptions(
         self,

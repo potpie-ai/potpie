@@ -53,6 +53,43 @@ logger = setup_logger(__name__)
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
 
+def sanitize_headers(headers: Dict[str, str]) -> Dict[str, str]:
+    """Remove or redact sensitive header keys"""
+    sensitive_keys = {"authorization", "cookie", "set-cookie", "signature", "token"}
+    sanitized = {}
+    for key, value in headers.items():
+        key_lower = key.lower()
+        if any(sensitive in key_lower for sensitive in sensitive_keys):
+            sanitized[key] = "[REDACTED]"
+        else:
+            sanitized[key] = value
+    return sanitized
+
+
+def truncate_content(content: str, max_length: int = 200) -> str:
+    """Truncate content to max_length with ellipsis"""
+    if len(content) <= max_length:
+        return content
+    return content[:max_length] + "..."
+
+
+def get_params_summary(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Get a summary of params with keys and truncated values"""
+    return {
+        "keys": list(params.keys()),
+        "count": len(params),
+        "preview": {k: truncate_content(str(v)) for k, v in list(params.items())[:5]}
+    }
+
+
+def get_body_summary(body_text: str) -> Dict[str, Any]:
+    """Get a summary of body with length and truncated preview"""
+    return {
+        "length": len(body_text),
+        "preview": truncate_content(body_text)
+    }
+
+
 def get_sentry_oauth() -> SentryOAuthV2:
     """Dependency to get Sentry OAuth integration instance"""
     config = Config()
@@ -289,17 +326,23 @@ async def sentry_redirect_webhook(request: Request) -> Dict[str, Any]:
         # Log the incoming request details
         logger.info("Sentry webhook redirect received")
         logger.info("Request details", method=request.method, url=str(request.url))
-        logger.debug("Request headers", headers=dict(request.headers))
+        sanitized_headers = sanitize_headers(dict(request.headers))
+        logger.debug("Request headers", headers=sanitized_headers)
 
         # Get query parameters
         query_params = dict(request.query_params)
-        logger.info("Query parameters", params=query_params)
+        params_summary = get_params_summary(query_params)
+        logger.info("Query parameters", params_keys=params_summary["keys"], params_count=params_summary["count"])
+        logger.debug("Query parameters", params_summary=params_summary)
 
         # Try to get request body if it exists
         try:
             body = await request.body()
             if body:
-                logger.debug("Request body received", body_length=len(body))
+                body_text = body.decode("utf-8") if isinstance(body, bytes) else str(body)
+                body_summary = get_body_summary(body_text)
+                logger.info("Request body received", body_length=body_summary["length"])
+                logger.debug("Request body preview", body_preview=body_summary["preview"])
             else:
                 logger.info("Request body: (empty)")
         except Exception as e:
@@ -309,7 +352,10 @@ async def sentry_redirect_webhook(request: Request) -> Dict[str, Any]:
         try:
             form_data = await request.form()
             if form_data:
-                logger.debug("Form data received", fields=list(form_data.keys()))
+                form_dict = {k: str(v) for k, v in form_data.items()}
+                form_summary = get_params_summary(form_dict)
+                logger.info("Form data received", form_fields=form_summary["keys"], form_count=form_summary["count"])
+                logger.debug("Form data summary", form_summary=form_summary)
         except Exception as e:
             logger.debug("No form data present", error=str(e))
 
@@ -1195,11 +1241,14 @@ async def sentry_webhook(request: Request) -> Dict[str, Any]:
         # Log the incoming webhook request details
         logger.info("Sentry webhook received")
         logger.info("Request details", method=request.method, url=str(request.url))
-        logger.debug("Request headers", headers=dict(request.headers))
+        sanitized_headers = sanitize_headers(dict(request.headers))
+        logger.debug("Request headers", headers=sanitized_headers)
 
         # Get query parameters
         query_params = dict(request.query_params)
-        logger.info("Query parameters", params=query_params)
+        params_summary = get_params_summary(query_params)
+        logger.info("Query parameters", params_keys=params_summary["keys"], params_count=params_summary["count"])
+        logger.debug("Query parameters", params_summary=params_summary)
 
         # Try to get request body if it exists
         webhook_data = {}
@@ -1207,7 +1256,9 @@ async def sentry_webhook(request: Request) -> Dict[str, Any]:
             body = await request.body()
             if body:
                 body_text = body.decode("utf-8")
-                logger.debug("Request body received", body_length=len(body_text))
+                body_summary = get_body_summary(body_text)
+                logger.info("Request body received", body_length=body_summary["length"])
+                logger.debug("Request body preview", body_preview=body_summary["preview"])
 
                 # Try to parse as JSON
                 try:
@@ -1225,7 +1276,9 @@ async def sentry_webhook(request: Request) -> Dict[str, Any]:
             form_data = await request.form()
             if form_data:
                 form_dict = {k: str(v) for k, v in form_data.items()}
-                logger.debug("Form data received", fields=list(form_dict.keys()))
+                form_summary = get_params_summary(form_dict)
+                logger.info("Form data received", form_fields=form_summary["keys"], form_count=form_summary["count"])
+                logger.debug("Form data summary", form_summary=form_summary)
                 webhook_data.update(form_dict)
         except Exception as e:
             logger.debug("No form data present", error=str(e))
@@ -1306,8 +1359,17 @@ async def linear_webhook(
     import json
 
     try:
+        # Log the incoming webhook request details
+        logger.info("Linear webhook received")
+        logger.info("Request details", method=request.method, url=str(request.url))
+        sanitized_headers = sanitize_headers(dict(request.headers))
+        logger.debug("Request headers", headers=sanitized_headers)
+
         # Get query parameters
         query_params = dict(request.query_params)
+        params_summary = get_params_summary(query_params)
+        logger.info("Query parameters", params_keys=params_summary["keys"], params_count=params_summary["count"])
+        logger.debug("Query parameters", params_summary=params_summary)
 
         # Try to get request body if it exists
         webhook_data = {}
@@ -1315,11 +1377,16 @@ async def linear_webhook(
             body = await request.body()
             if body:
                 body_text = body.decode("utf-8")
+                body_summary = get_body_summary(body_text)
+                logger.info("Request body received", body_length=body_summary["length"])
+                logger.debug("Request body preview", body_preview=body_summary["preview"])
                 # Try to parse as JSON
                 try:
                     webhook_data = json.loads(body_text)
                 except json.JSONDecodeError:
                     webhook_data = {"raw_body": body_text}
+            else:
+                logger.info("Request body: (empty)")
         except Exception as e:
             logger.warning("Could not read request body", error=str(e))
 
@@ -1328,6 +1395,9 @@ async def linear_webhook(
             form_data = await request.form()
             if form_data:
                 form_dict = {k: str(v) for k, v in form_data.items()}
+                form_summary = get_params_summary(form_dict)
+                logger.info("Form data received", form_fields=form_summary["keys"], form_count=form_summary["count"])
+                logger.debug("Form data summary", form_summary=form_summary)
                 webhook_data.update(form_dict)
         except Exception:
             pass
@@ -1478,6 +1548,18 @@ async def jira_webhook(
     import json
 
     try:
+        # Log the incoming webhook request details
+        logger.info("Jira webhook received")
+        logger.info("Request details", method=request.method, url=str(request.url))
+        sanitized_headers = sanitize_headers(dict(request.headers))
+        logger.debug("Request headers", headers=sanitized_headers)
+
+        # Get query parameters
+        query_params = dict(request.query_params)
+        params_summary = get_params_summary(query_params)
+        logger.info("Query parameters", params_keys=params_summary["keys"], params_count=params_summary["count"])
+        logger.debug("Query parameters", params_summary=params_summary)
+
         # Verify JWT authentication from Jira OAuth webhook
         config = Config(".env")
         jira_client_secret = config("JIRA_CLIENT_SECRET", default="")
@@ -1510,10 +1592,15 @@ async def jira_webhook(
             body = await request.body()
             if body:
                 body_text = body.decode("utf-8")
+                body_summary = get_body_summary(body_text)
+                logger.info("Request body received", body_length=body_summary["length"])
+                logger.debug("Request body preview", body_preview=body_summary["preview"])
                 try:
                     webhook_data = json.loads(body_text)
                 except json.JSONDecodeError:
                     webhook_data = {"raw_body": body_text}
+            else:
+                logger.info("Request body: (empty)")
         except Exception as e:
             logger.warning("Could not read request body", error=str(e))
 
@@ -1522,6 +1609,9 @@ async def jira_webhook(
             form_data = await request.form()
             if form_data:
                 form_dict = {k: str(v) for k, v in form_data.items()}
+                form_summary = get_params_summary(form_dict)
+                logger.info("Form data received", form_fields=form_summary["keys"], form_count=form_summary["count"])
+                logger.debug("Form data summary", form_summary=form_summary)
                 webhook_data.update(form_dict)
         except Exception:
             pass
