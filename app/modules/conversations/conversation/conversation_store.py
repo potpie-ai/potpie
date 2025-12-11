@@ -78,7 +78,8 @@ class ConversationStore(BaseStore):
         try:
             # Build the base query using the async `select` statement
             stmt = (
-                select(Conversation).where(Conversation.user_id == user_id)
+                select(Conversation)
+                .where(Conversation.user_id == user_id)
                 # Eagerly load the 'projects' relationship using selectinload
                 .options(selectinload(Conversation.projects))
             )

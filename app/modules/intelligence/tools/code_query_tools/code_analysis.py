@@ -12,7 +12,7 @@ from grep_ast import filename_to_lang
 from pygments.lexers import guess_lexer_for_filename
 from pygments.token import Token
 from pygments.util import ClassNotFound
-from tree_sitter_languages import get_language, get_parser
+from tree_sitter_language_pack import get_language, get_parser
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_service import ProjectService
@@ -414,8 +414,7 @@ class UniversalCodeAnalyzer:
 
 class UniversalAnalyzeCodeTool:
     name: str = "analyze_code_structure_universal"
-    description: str = (
-        """Universal code structure analyzer that works with multiple programming languages using Tree-sitter.
+    description: str = """Universal code structure analyzer that works with multiple programming languages using Tree-sitter.
         Supports Python, JavaScript, TypeScript, Java, C++, C, Rust, Go, PHP, Ruby, and more.
 
         Extracts detailed information about:
@@ -434,7 +433,6 @@ class UniversalAnalyzeCodeTool:
 
         Returns a structured analysis of the code with all extractable elements.
         """
-    )
     args_schema: Type[BaseModel] = UniversalAnalyzeCodeToolInput
 
     def __init__(self, sql_db: Session, user_id: str):

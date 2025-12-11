@@ -11,7 +11,6 @@ router = APIRouter()
 
 
 class UserAPI:
-
     @router.get("/user/{user_id}/public-profile", response_model=UserProfileResponse)
     async def fetch_user_profile_pic(
         user_id: str,

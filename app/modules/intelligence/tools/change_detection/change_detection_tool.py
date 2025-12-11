@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 from fastapi import HTTPException
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
-from tree_sitter_languages import get_parser
+from tree_sitter_language_pack import get_parser
 import pathspec
 
 from app.core.database import get_db
@@ -573,7 +573,6 @@ class ChangeDetectionTool:
 
                 # GitBucket workaround: Use commits API to get diff
                 if provider_type == "gitbucket":
-
                     logging.info(
                         "[CHANGE_DETECTION] Using commits API for GitBucket diff"
                     )

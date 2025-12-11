@@ -93,7 +93,6 @@ class PromptController:
         db: Session,
         user: dict,
     ) -> str:
-
         messages = (
             db.query(Message)
             .filter_by(conversation_id=request_body.conversation_id)
