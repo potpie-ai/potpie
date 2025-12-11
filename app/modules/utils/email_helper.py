@@ -52,6 +52,28 @@ Co-Founder, Potpie 🥧</p>
 
 
 def is_valid_email(email: str) -> bool:
-    """Simple regex-based email validation."""
-    pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-    return re.match(pattern, email) is not None
+    """Simple regex-based email validation.
+
+    Validates email format ensuring:
+    - Local part (before @) doesn't start or end with a dot
+    - Domain part doesn't contain consecutive dots
+    - Proper email structure with @ symbol and valid TLD
+    """
+    if email is None:
+        return False
+
+    # Regex pattern that:
+    # - Ensures local part doesn't start/end with dot: (?![.])[a-zA-Z0-9._%+-]+(?<![.])
+    # - Ensures domain doesn't have consecutive dots: checked via negative lookahead
+    # - Requires proper TLD of at least 2 characters
+    pattern = r"^(?![.])[a-zA-Z0-9._%+-]+(?<![.])@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+
+    if not re.match(pattern, email):
+        return False
+
+    # Additional check: domain part should not contain consecutive dots
+    domain = email.split('@')[1] if '@' in email else ''
+    if '..' in domain:
+        return False
+
+    return True
