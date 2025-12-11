@@ -29,21 +29,21 @@ from app.modules.search.search_service import SearchService
 logger = logging.getLogger(__name__)
 
 # Global singleton for SentenceTransformer to avoid reloading
-_embedding_model = None
+_EMBEDDING_MODEL = None
 
 
 def get_embedding_model():
     """Get the singleton SentenceTransformer model, loading it only once"""
-    global _embedding_model
-    if _embedding_model is None:
+    global _EMBEDDING_MODEL
+    if _EMBEDDING_MODEL is None:
         logger.info("Loading SentenceTransformer model (first time only)")
-        _embedding_model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+        _EMBEDDING_MODEL = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
         logger.info("SentenceTransformer model loaded successfully")
-    return _embedding_model
+    return _EMBEDDING_MODEL
 
 
 class InferenceService:
-    def __init__(self, db: Session, user_id: Optional[str] = "dummy"):
+    def __init__(self, db: Session, user_id: str = "dummy"):
         neo4j_config = config_provider.get_neo4j_config()
         self.driver = GraphDatabase.driver(
             neo4j_config["uri"],
@@ -290,7 +290,7 @@ class InferenceService:
             # Combine multiple chunk descriptions intelligently
             consolidated_text = f"This is a large code component split across {len(all_docstrings)} sections: "
             consolidated_text += " | ".join(
-                [f"Section {i+1}: {doc}" for i, doc in enumerate(all_docstrings)]
+                [f"Section {i + 1}: {doc}" for i, doc in enumerate(all_docstrings)]
             )
 
         # Create single consolidated docstring for parent node

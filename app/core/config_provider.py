@@ -1,12 +1,12 @@
 import os
-from typing import List, Optional, Any
+from typing import Any, List, Optional
 
 from dotenv import load_dotenv
 
 from .storage_strategies import (
-    S3StorageStrategy,
-    GCSStorageStrategy,
     AzureStorageStrategy,
+    GCSStorageStrategy,
+    S3StorageStrategy,
 )
 
 load_dotenv()
@@ -19,9 +19,9 @@ class MediaServiceConfigError(Exception):
 class ConfigProvider:
     def __init__(self):
         self.neo4j_config = {
-            "uri": os.getenv("NEO4J_URI"),
-            "username": os.getenv("NEO4J_USERNAME"),
-            "password": os.getenv("NEO4J_PASSWORD"),
+            "uri": os.environ["NEO4J_URI"],
+            "username": os.environ["NEO4J_USERNAME"],
+            "password": os.environ["NEO4J_PASSWORD"],
         }
         self.github_key = os.getenv("GITHUB_PRIVATE_KEY")
         self.is_development_mode = os.getenv("isDevelopmentMode", "disabled")

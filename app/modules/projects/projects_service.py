@@ -3,7 +3,7 @@ from datetime import datetime
 
 from fastapi import HTTPException
 from sqlalchemy import String, cast
-from sqlalchemy.exc import SQLAlchemyError, IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.modules.projects.projects_model import Project
@@ -155,7 +155,7 @@ class ProjectService:
             project_list.append(project_dict)
         return project_list
 
-    async def update_project_status(self, project_id: int, status: ProjectStatusEnum):
+    async def update_project_status(self, project_id: str, status: ProjectStatusEnum):
         try:
             ProjectService.update_project(self.db, project_id, status=status.value)
             logger.info(
@@ -264,7 +264,7 @@ class ProjectService:
         )
         return project
 
-    async def get_project_from_db_by_id(self, project_id: int):
+    async def get_project_from_db_by_id(self, project_id: str):
         project = ProjectService.get_project_by_id(self.db, project_id)
         if project:
             return {
@@ -279,7 +279,7 @@ class ProjectService:
         else:
             return None
 
-    def get_project_from_db_by_id_sync(self, project_id: int):
+    def get_project_from_db_by_id_sync(self, project_id: str):
         project = self.db.query(Project).filter(Project.id == project_id).first()
         if project:
             return {
@@ -294,7 +294,7 @@ class ProjectService:
         else:
             return None
 
-    async def get_project_repo_details_from_db(self, project_id: int, user_id: str):
+    async def get_project_repo_details_from_db(self, project_id: str, user_id: str):
         project = (
             self.db.query(Project)
             .filter(Project.id == project_id, Project.user_id == user_id)
@@ -312,7 +312,7 @@ class ProjectService:
         else:
             return None
 
-    async def get_repo_and_branch_name(self, project_id: int):
+    async def get_repo_and_branch_name(self, project_id: str):
         project = ProjectService.get_project_by_id(self.db, project_id)
         if project:
             return (
@@ -325,7 +325,7 @@ class ProjectService:
             return None
 
     async def get_project_from_db_by_id_and_user_id(
-        self, project_id: int, user_id: str
+        self, project_id: str, user_id: str
     ):
         project = (
             self.db.query(Project)
@@ -341,7 +341,7 @@ class ProjectService:
         else:
             return None
 
-    def get_project_by_id(db: Session, project_id: int):
+    def get_project_by_id(db: Session, project_id: str):
         return db.query(Project).filter(Project.id == project_id).first()
 
     def get_projects_by_user_id(db: Session, user_id: str):
@@ -364,7 +364,7 @@ class ProjectService:
             logger.exception(f"Error creating project {project.id}")
             raise
 
-    def update_project(db: Session, project_id: int, **kwargs):
+    def update_project(db: Session, project_id: str, **kwargs):
         project = db.query(Project).filter(Project.id == project_id).first()
 
         if project is None:
