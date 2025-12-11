@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Dict, Optional, Any
+from typing import Dict, List, Optional, Any
 
 from pydantic import BaseModel, Field
 
@@ -28,6 +28,7 @@ class AttachmentUploadResponse(BaseModel):
     file_name: str
     mime_type: str
     file_size: int
+    token_count: Optional[int] = None  # Token count for documents (None for images)
     message: str = "Attachment uploaded successfully"
 
 
@@ -39,3 +40,18 @@ class AttachmentAccessResponse(BaseModel):
 class MediaUploadError(BaseModel):
     error: str
     details: Optional[str] = None
+
+
+class SupportedFormatInfo(BaseModel):
+    mime_types: List[str]
+    extensions: List[str]
+    max_size_bytes: int
+    description: str
+
+
+class SupportedFormatsResponse(BaseModel):
+    images: SupportedFormatInfo
+    documents: SupportedFormatInfo
+    spreadsheets: SupportedFormatInfo
+    code_files: SupportedFormatInfo
+    max_file_size_bytes: int = 10 * 1024 * 1024  # 10MB
