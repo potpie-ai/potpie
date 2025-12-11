@@ -13,9 +13,8 @@
   - **Schema**:
     ```json
     {
-      "repo_name": "string",      // Name of the repository (optional if repo_path is provided)
-      "repo_path": "string",      // Local path to the repository (optional if repo_name is provided)
-      "branch_name": "string"     // Name of the branch to parse
+      "repository_identifier": "string", // Name of the repository (owner/repo) or local path
+      "branch_name": "string"            // Name of the branch to parse
     }
     ```
 - **Response**:
@@ -32,7 +31,7 @@
 - **Example Request**:
     ```json
     {
-      "repo_name": "user/repo",
+      "repository_identifier": "user/repo",
       "branch_name": "main"
     }
     ```

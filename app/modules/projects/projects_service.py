@@ -59,11 +59,11 @@ class ProjectService:
     async def register_project(
         self,
         repo_name: str,
-        branch_name: str,
+        branch_name: str | None,
         user_id: str,
         project_id: str,
-        commit_id: str = None,
-        repo_path: str = None,
+        commit_id: str | None = None,
+        repo_path: str | None = None,
     ):
         # Check if a project with this ID already exists
         existing_project = (
@@ -123,7 +123,7 @@ class ProjectService:
     async def duplicate_project(
         self,
         repo_name: str,
-        branch_name: str,
+        branch_name: str | None,
         user_id: str,
         project_id: str,
         properties,
@@ -155,7 +155,7 @@ class ProjectService:
             project_list.append(project_dict)
         return project_list
 
-    async def update_project_status(self, project_id: int, status: ProjectStatusEnum):
+    async def update_project_status(self, project_id: str, status: ProjectStatusEnum):
         try:
             ProjectService.update_project(self.db, project_id, status=status.value)
             logger.info(
@@ -169,7 +169,7 @@ class ProjectService:
     async def get_project_from_db(
         self,
         repo_name: str,
-        branch_name: str,
+        branch_name: str | None,
         user_id: str,
         repo_path: str | None = None,
         commit_id: str | None = None,
@@ -224,7 +224,7 @@ class ProjectService:
     async def get_global_project_from_db(
         self,
         repo_name: str,
-        branch_name: str,
+        branch_name: str | None,
         repo_path: str | None = None,
         commit_id: str | None = None,
     ):

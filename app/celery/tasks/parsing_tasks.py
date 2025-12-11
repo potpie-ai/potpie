@@ -1,9 +1,9 @@
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from app.celery.celery_app import celery_app
 from app.celery.tasks.base_task import BaseTask
-from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
+from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ def process_parsing(
     self,
     repo_details: Dict[str, Any],
     user_id: str,
-    user_email: str,
+    user_email: Optional[str],
     project_id: str,
     cleanup_graph: bool = True,
 ) -> None:
@@ -32,7 +32,7 @@ def process_parsing(
             start_time = time.time()
 
             await parsing_service.parse_directory(
-                ParsingRequest(**repo_details),
+                RepoDetails(**repo_details),
                 user_id,
                 user_email,
                 project_id,

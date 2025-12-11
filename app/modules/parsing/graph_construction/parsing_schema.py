@@ -4,15 +4,9 @@ from pydantic import BaseModel, Field
 
 
 class ParsingRequest(BaseModel):
-    repo_name: Optional[str] = Field(default=None)
-    repo_path: Optional[str] = Field(default=None)
+    repository_identifier: str
     branch_name: Optional[str] = Field(default=None)
     commit_id: Optional[str] = Field(default=None)
-
-    def __init__(self, **data):
-        super().__init__(**data)
-        if not self.repo_name and not self.repo_path:
-            raise ValueError("Either repo_name or repo_path must be provided.")
 
 
 class ParsingResponse(BaseModel):
@@ -22,7 +16,9 @@ class ParsingResponse(BaseModel):
 
 
 class RepoDetails(BaseModel):
+    repository_identifier: str
     repo_name: str
-    branch_name: str
+    branch_name: Optional[str] = None
     repo_path: Optional[str] = None
     commit_id: Optional[str] = None
+    is_local: bool = False
