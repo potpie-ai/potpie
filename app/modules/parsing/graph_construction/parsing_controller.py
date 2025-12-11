@@ -2,11 +2,11 @@ import asyncio
 import logging
 import os
 from asyncio import create_task
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
 from fastapi import HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from sqlalchemy import select, or_
 from uuid6 import uuid7
 
@@ -14,11 +14,9 @@ from app.celery.tasks.parsing_tasks import process_parsing
 from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
-from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
+from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest, RepoDetails
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
-from app.modules.parsing.graph_construction.parsing_validator import (
-    validate_parsing_input,
-)
+from app.modules.parsing.graph_construction.repo_resolver import RepoResolver
 from app.modules.parsing.utils.repo_name_normalizer import normalize_repo_name
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
@@ -35,9 +33,8 @@ load_dotenv(override=True)
 
 class ParsingController:
     @staticmethod
-    @validate_parsing_input
     async def parse_directory(
-        repo_details: ParsingRequest, db: AsyncSession, user: Dict[str, Any]
+        parsing_request: ParsingRequest, db: Session, user: Dict[str, Any]
     ):
         if "email" not in user:
             user_email = None
@@ -49,37 +46,13 @@ class ParsingController:
         parse_helper = ParseHelper(db)
         parsing_service = ParsingService(db, user_id)
 
-        # Auto-detect if repo_name is actually a filesystem path
-        if repo_details.repo_name and not repo_details.repo_path:
-            is_path = (
-                os.path.isabs(repo_details.repo_name)
-                or repo_details.repo_name.startswith(("~", "./", "../"))
-                or os.path.isdir(os.path.expanduser(repo_details.repo_name))
-            )
-            if is_path:
-                # Move from repo_name to repo_path
-                repo_details.repo_path = repo_details.repo_name
-                repo_details.repo_name = repo_details.repo_path.split("/")[-1]
-                logger.info(
-                    f"Auto-detected filesystem path: repo_path={repo_details.repo_path}, repo_name={repo_details.repo_name}"
-                )
-
-        if config_provider.get_is_development_mode():
-            # In dev mode: if both repo_path and repo_name are provided, prioritize repo_path (local)
-            if repo_details.repo_path and repo_details.repo_name:
-                repo_details.repo_name = None
-            # Otherwise keep whichever one is provided as-is
-        else:
-            # In non-dev mode: if repo_name is None but repo_path exists, extract repo_name from repo_path
-            if not repo_details.repo_name and repo_details.repo_path:
-                repo_details.repo_name = repo_details.repo_path.split("/")[-1]
-
-        # For later use in the code
-        repo_name = repo_details.repo_name or (
-            repo_details.repo_path.split("/")[-1] if repo_details.repo_path else None
+        repo_details = RepoResolver.resolve(
+            parsing_request.repository_identifier,
+            parsing_request.branch_name,
+            parsing_request.commit_id,
         )
-        repo_path = repo_details.repo_path
-        if repo_path:
+
+        if repo_details.is_local:
             if os.getenv("isDevelopmentMode") != "enabled":
                 raise HTTPException(
                     status_code=400,
@@ -95,6 +68,11 @@ class ParsingController:
                     project_manager,
                     db,
                 )
+        elif user_id == os.getenv("defaultUsername"):
+            raise HTTPException(
+                status_code=403,
+                detail="Cannot parse remote repository without auth token",
+            )
 
         demo_repos = [
             "Portkey-AI/gateway",
@@ -108,9 +86,9 @@ class ParsingController:
 
         try:
             # Normalize repository name for consistent database lookups
-            normalized_repo_name = normalize_repo_name(repo_name)
+            normalized_repo_name = normalize_repo_name(repo_details.repo_name)
             logger.info(
-                f"Original repo_name: {repo_name}, Normalized: {normalized_repo_name}"
+                f"Original repo_name: {repo_details.repo_name}, Normalized: {normalized_repo_name}"
             )
 
             project = await project_manager.get_project_from_db(
@@ -133,7 +111,7 @@ class ParsingController:
 
                 if existing_project:
                     await project_manager.duplicate_project(
-                        repo_name,
+                        repo_details.repo_name,
                         repo_details.branch_name,
                         user_id,
                         new_project_id,
@@ -145,7 +123,7 @@ class ParsingController:
                     )
 
                     old_project_id = await project_manager.get_demo_project_id(
-                        repo_name
+                        repo_details.repo_name
                     )
 
                     asyncio.create_task(
@@ -164,7 +142,7 @@ class ParsingController:
                     )
                     create_task(
                         EmailHelper().send_email(
-                            user_email, repo_name, repo_details.branch_name
+                            user_email, repo_details.repo_name, repo_details.branch_name
                         )
                     )
 
@@ -189,7 +167,8 @@ class ParsingController:
                     project_id, requested_commit_id=repo_details.commit_id
                 )
 
-                if not is_latest or project.status != ProjectStatusEnum.READY.value:
+                # Check if reparse is needed
+                if not is_latest or str(getattr(project, 'status', '')) != ProjectStatusEnum.READY.value:
                     cleanup_graph = True
                     logger.info(
                         f"Submitting parsing task for existing project {project_id}"
@@ -238,12 +217,12 @@ class ParsingController:
 
     @staticmethod
     async def handle_new_project(
-        repo_details: ParsingRequest,
+        repo_details: RepoDetails,
         user_id: str,
-        user_email: str,
+        user_email: Optional[str],
         new_project_id: str,
         project_manager: ProjectService,
-        db: AsyncSession,
+        db: Session,
     ):
         response = {
             "project_id": new_project_id,
@@ -251,7 +230,7 @@ class ParsingController:
         }
 
         logger.info(f"Submitting parsing task for new project {new_project_id}")
-        repo_name = repo_details.repo_name or repo_details.repo_path.split("/")[-1]
+        repo_name = repo_details.repo_name
         await project_manager.register_project(
             repo_name,
             repo_details.branch_name,
@@ -287,7 +266,7 @@ class ParsingController:
 
     @staticmethod
     async def fetch_parsing_status(
-        project_id: str, db: AsyncSession, user: Dict[str, Any]
+        project_id: str, db: Session, user: Dict[str, Any]
     ):
         try:
             project_query = (

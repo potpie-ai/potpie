@@ -67,8 +67,8 @@ class ParseHelper:
         auth = None
         repo = None
 
-        if repo_details.repo_path:
-            if not os.path.exists(repo_details.repo_path):
+        if repo_details.is_local:
+            if not repo_details.repo_path or not os.path.exists(repo_details.repo_path):
                 raise HTTPException(
                     status_code=400,
                     detail="Local repository does not exist on the given path",
@@ -1213,7 +1213,7 @@ class ParseHelper:
         return metadata
 
     async def check_commit_status(
-        self, project_id: str, requested_commit_id: str = None
+        self, project_id: str, requested_commit_id: Optional[str] = None
     ) -> bool:
         """
         Check if the current commit ID of the project matches the latest commit ID from the repository.

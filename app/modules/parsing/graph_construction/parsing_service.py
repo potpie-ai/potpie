@@ -4,6 +4,7 @@ import shutil
 import traceback
 from asyncio import create_task
 from contextlib import contextmanager
+from typing import Optional
 
 from fastapi import HTTPException
 from git import Repo
@@ -25,7 +26,7 @@ from app.modules.search.search_service import SearchService
 from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.parse_webhook_helper import ParseWebhookHelper
 
-from .parsing_schema import ParsingRequest
+from .parsing_schema import RepoDetails
 
 logger = logging.getLogger(__name__)
 
@@ -52,10 +53,10 @@ class ParsingService:
 
     async def parse_directory(
         self,
-        repo_details: ParsingRequest,
+        repo_details: RepoDetails,
         user_id: str,
-        user_email: str,
-        project_id: int,
+        user_email: Optional[str],
+        project_id: str,
         cleanup_graph: bool = True,
     ):
         project_manager = ProjectService(self.db)
