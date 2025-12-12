@@ -151,9 +151,16 @@ class RepoManager(IRepoManager):
         path.parent.mkdir(parents=True, exist_ok=True)
 
         temp_path = path.with_suffix(path.suffix + ".tmp")
-        with temp_path.open("w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2, sort_keys=True)
-        os.replace(temp_path, path)
+        
+        # Ensure parent exists for the lock file
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lock_file_path = path.parent / ".lock"
+
+        # Use portalocker to prevent concurrent writes causing corruption
+        with portalocker.Lock(lock_file_path, timeout=10):
+            with temp_path.open("w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=2, sort_keys=True)
+            os.replace(temp_path, path)
 
     def _delete_metadata_entry(
         self,
@@ -312,19 +319,7 @@ class RepoManager(IRepoManager):
             "metadata": metadata or {},
         }
 
-        # Ensure the repository parent directory exists
-        repo_dir = self._metadata_path(
-            repo_name=repo_name, branch=branch, commit_id=commit_id
-        ).parent
-        os.makedirs(repo_dir, exist_ok=True)
-        
-        lock_file_path = repo_dir / ".lock"
-
-        # Use portalocker for cross-platform file locking
-        # Prevent concurrent registrations for the same repo key
-        # if another process is currently registering it.
-        with portalocker.Lock(lock_file_path, timeout=10) as locked_file:
-            self._write_metadata_entry(repo_name, branch, commit_id, data)
+        self._write_metadata_entry(repo_name, branch, commit_id, data)
         repo_key = self._get_repo_key(repo_name, branch, commit_id, user_id)
         logger.info("Registered repo %s at %s", repo_key, local_path)
         return repo_key
