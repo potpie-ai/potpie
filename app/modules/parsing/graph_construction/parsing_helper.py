@@ -443,7 +443,7 @@ class ParseHelper:
                             member_path = os.path.join(path, member.name)
                             if not is_within_directory(path, member_path):
                                 raise ParsingFailedError(f"Attempted Path Traversal in Tar File: {member.name}")
-                        tar.extractall(path, members, numeric_owner=numeric_owner)
+                            tar.extract(member, path, numeric_owner=numeric_owner)
 
                     safe_extract(tar, path=temp_dir)
                     logger.info(
