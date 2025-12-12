@@ -79,8 +79,12 @@ class AuthService:
                     f"DEBUG: Verifying Firebase token: {credential.credentials[:20]}..."
                 )
                 decoded_token = auth.verify_id_token(credential.credentials)
+                # Firebase tokens use 'uid', but our code expects 'user_id'
+                # Map 'uid' to 'user_id' for consistency
+                if "uid" in decoded_token and "user_id" not in decoded_token:
+                    decoded_token["user_id"] = decoded_token["uid"]
                 logging.info(
-                    f"DEBUG: Successfully verified token for user: {decoded_token.get('user_id', 'unknown')}"
+                    f"DEBUG: Successfully verified token for user: {decoded_token.get('user_id', decoded_token.get('uid', 'unknown'))}"
                 )
                 logging.info(
                     f"DEBUG: Token email: {decoded_token.get('email', 'unknown')}"

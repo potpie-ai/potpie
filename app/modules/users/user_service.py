@@ -1,7 +1,7 @@
 import asyncio
 import os
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from firebase_admin import auth
 from sqlalchemy.exc import SQLAlchemyError
@@ -135,7 +135,7 @@ class UserService:
             logger.error(f"DEBUG: Error fetching user ID by email {email}: {e}")
             return None
 
-    async def get_user_by_email(self, email: str) -> User:
+    def get_user_by_email(self, email: str) -> Optional[User]:
         """
         Get a user by their email address.
         Returns the full User object or None if not found.

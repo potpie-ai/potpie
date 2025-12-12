@@ -44,8 +44,16 @@ class FirebaseSetup:
             # Use the decoded or directly loaded JSON to initialize Firebase credentials.
             cred = credentials.Certificate(service_account_json)
 
-            # Initialize the Firebase app with the credentials.
-            firebase_admin.initialize_app(cred)
+            # Check if Firebase is already initialized
+            try:
+                firebase_admin.get_app()
+                logging.info(
+                    "Firebase Admin already initialized, skipping re-initialization"
+                )
+            except ValueError:
+                # Initialize the Firebase app with the credentials.
+                firebase_admin.initialize_app(cred)
+                logging.info("Firebase Admin initialized successfully")
 
         except Exception:
             logger.exception("Error loading Firebase service account credentials")

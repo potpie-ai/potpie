@@ -1127,6 +1127,15 @@ wheels = [
 ]
 
 [[package]]
+name = "email-inspector"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c2/46/4ef4a356008938813db39837d7e0d06a4abcad9788d3df02a7074ede99b8/email_inspector-0.1.4.tar.gz", hash = "sha256:f89a391ccf49dcd7091bb20580cafc8566b9cd96d6c1805657d2ebcd4efcdeb9", size = 92589, upload-time = "2025-10-07T14:29:38.469Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/de/eb/64eb975a3d104358bdffd6e2d103510cffe6edb34309afc073242da23767/email_inspector-0.1.4-py3-none-any.whl", hash = "sha256:71d1f9d5e046eb972d2d80f762c7cb573aff5913732c5ce9352e4eefd01fc6d0", size = 95202, upload-time = "2025-10-07T14:29:36.84Z" },
+]
+
+[[package]]
 name = "email-validator"
 version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4080,6 +4089,7 @@ dependencies = [
     { name = "celery" },
     { name = "chardet" },
     { name = "cryptography" },
+    { name = "email-inspector" },
     { name = "fastapi" },
     { name = "firebase-admin" },
     { name = "firecrawl-py" },
@@ -4171,6 +4181,7 @@ requires-dist = [
     { name = "celery", specifier = ">=5.5.3" },
     { name = "chardet", specifier = ">=5.2.0" },
     { name = "cryptography", specifier = ">=46.0.3" },
+    { name = "email-inspector", specifier = ">=0.1.4" },
     { name = "fastapi", specifier = ">=0.121.0" },
     { name = "firebase-admin", specifier = ">=7.1.0" },
     { name = "firecrawl-py", specifier = ">=4.6.0" },

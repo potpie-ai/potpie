@@ -181,9 +181,128 @@ class GithubService:
 
         return encoding
 
+    def _get_github_token_from_provider(self, uid: str) -> Optional[str]:
+        """Get GitHub token from new multi-provider system for given UID."""
+        try:
+            from app.modules.auth.auth_provider_model import UserAuthProvider
+
+            github_provider = (
+                self.db.query(UserAuthProvider)
+                .filter(
+                    UserAuthProvider.user_id == uid,
+                    UserAuthProvider.provider_type == "firebase_github",
+                )
+                .first()
+            )
+            if github_provider and github_provider.access_token:
+                logger.info(f"Found GitHub token in UserAuthProvider for user {uid}")
+                return github_provider.access_token
+            elif github_provider:
+                logger.warning(
+                    f"GitHub provider exists for user {uid} but has no access_token"
+                )
+        except Exception as e:
+            logger.warning(f"Error checking UserAuthProvider: {str(e)}")
+        return None
+
+    def _get_github_token_from_legacy_provider_info(
+        self, user: User, uid: str
+    ) -> Optional[str]:
+        """Get GitHub token from legacy provider_info system."""
+        if user.provider_info is not None and isinstance(user.provider_info, dict):
+            access_token = user.provider_info.get("access_token")
+            if access_token:
+                logger.debug(f"Found GitHub token in provider_info for user {uid}")
+                return access_token
+        return None
+
+    def _copy_github_provider_to_user(
+        self, uid: str, github_provider: any, other_user_uid: str
+    ) -> Optional[str]:
+        """Copy GitHub provider from another user to current user."""
+        try:
+            from app.modules.auth.auth_schema import AuthProviderCreate
+            from app.modules.auth.unified_auth_service import UnifiedAuthService
+
+            unified_auth = UnifiedAuthService(self.db)
+            provider_create = AuthProviderCreate(
+                provider_type="firebase_github",
+                provider_uid=github_provider.provider_uid,
+                provider_data=github_provider.provider_data,
+                access_token=github_provider.access_token,
+                refresh_token=github_provider.refresh_token,
+                token_expires_at=github_provider.token_expires_at,
+                is_primary=False,  # Don't make it primary automatically
+            )
+            unified_auth.add_provider(uid, provider_create)
+            logger.info(f"Copied GitHub provider from {other_user_uid} to {uid}")
+            return github_provider.access_token
+        except Exception as e:
+            logger.warning(f"Failed to copy GitHub provider: {str(e)}")
+            # Still return the token even if copying failed
+            return github_provider.access_token
+
+    def _get_github_token_from_other_users(self, user: User, uid: str) -> Optional[str]:
+        """Check other users with same email for GitHub token."""
+        if not user.email:
+            return None
+
+        try:
+            from app.modules.auth.auth_provider_model import UserAuthProvider
+
+            # Find all users with the same email
+            users_with_same_email = (
+                self.db.query(User).filter(User.email == user.email).all()
+            )
+
+            for other_user in users_with_same_email:
+                if other_user.uid == uid:
+                    continue  # Skip current user
+
+                # Check if this other user has GitHub provider
+                github_provider = (
+                    self.db.query(UserAuthProvider)
+                    .filter(
+                        UserAuthProvider.user_id == other_user.uid,
+                        UserAuthProvider.provider_type == "firebase_github",
+                    )
+                    .first()
+                )
+                if github_provider and github_provider.access_token:
+                    logger.info(
+                        f"Found GitHub token for user {other_user.uid} "
+                        f"(same email as {uid}). Using it."
+                    )
+                    return self._copy_github_provider_to_user(
+                        uid, github_provider, other_user.uid
+                    )
+
+                # Also check legacy provider_info for other users
+                if other_user.provider_info and isinstance(
+                    other_user.provider_info, dict
+                ):
+                    other_access_token = other_user.provider_info.get("access_token")
+                    if other_access_token:
+                        logger.info(
+                            f"Found GitHub token in provider_info for user "
+                            f"{other_user.uid} (same email as {uid}). Using it."
+                        )
+                        return other_access_token
+        except Exception as e:
+            logger.debug(f"Error checking other users with same email: {str(e)}")
+
+        return None
+
     def get_github_oauth_token(self, uid: str) -> Optional[str]:
         """
-        Get user's GitHub OAuth token from provider_info.
+        Get user's GitHub OAuth token.
+
+        Checks both:
+        1. New multi-provider system (UserAuthProvider table) - by UID
+        2. Legacy system (user.provider_info.access_token)
+
+        Also checks if user has multiple accounts linked by email:
+        3. If no GitHub found for current UID, check if there's another user with same email that has GitHub
 
         Returns:
             OAuth token if available, None otherwise
@@ -195,23 +314,26 @@ class GithubService:
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
-        # Safely access provider_info and access_token
-        if user.provider_info is None:
-            logger.warning(f"User {uid} has no provider_info")
-            return None
+        # First, try the new multi-provider system for this UID
+        token = self._get_github_token_from_provider(uid)
+        if token:
+            return token
 
-        if not isinstance(user.provider_info, dict):
-            logger.warning(
-                f"User {uid} provider_info is not a dict: {type(user.provider_info)}"
-            )
-            return None
+        # Fallback to legacy provider_info system for this UID
+        token = self._get_github_token_from_legacy_provider_info(user, uid)
+        if token:
+            return token
 
-        access_token = user.provider_info.get("access_token")
-        if not access_token:
-            logger.warning(f"User {uid} has no access_token in provider_info")
-            return None
+        # If no GitHub found for current UID, check if there's another user with same email that has GitHub
+        token = self._get_github_token_from_other_users(user, uid)
+        if token:
+            return token
 
-        return access_token
+        logger.warning(
+            f"User {uid} (email: {user.email}) has no GitHub token in any system. "
+            "User needs to link GitHub account."
+        )
+        return None
 
     def _parse_link_header(self, link_header: str) -> Dict[str, str]:
         """Parse GitHub Link header to extract pagination URLs."""
@@ -244,15 +366,40 @@ class GithubService:
                 raise HTTPException(status_code=404, detail="User not found")
 
             firebase_uid = user.uid
-            github_username = user.provider_username
 
-            if not github_username:
-                raise HTTPException(
-                    status_code=400, detail="GitHub username not found for this user"
-                )
-
-            # Try to get user's OAuth token first
+            # Try to get user's OAuth token first (checks both legacy and new system)
             github_oauth_token = self.get_github_oauth_token(firebase_uid)
+
+            # Also get GitHub provider to extract username
+            github_provider = None
+            github_username = user.provider_username  # Default to legacy field
+
+            # Try to get GitHub username from UserAuthProvider if available
+            if not github_username:
+                try:
+                    from app.modules.auth.auth_provider_model import UserAuthProvider
+
+                    github_provider = (
+                        self.db.query(UserAuthProvider)
+                        .filter(
+                            UserAuthProvider.user_id == firebase_uid,
+                            UserAuthProvider.provider_type == "firebase_github",
+                        )
+                        .first()
+                    )
+                    if github_provider:
+                        # Try to extract username from provider_data
+                        if github_provider.provider_data:
+                            github_username = (
+                                github_provider.provider_data.get("login")
+                                or github_provider.provider_data.get("screenName")
+                                or github_provider.provider_data.get("username")
+                                or github_provider.provider_uid
+                            )
+                        else:
+                            github_username = github_provider.provider_uid
+                except Exception as e:
+                    logger.debug(f"Error getting GitHub provider: {str(e)}")
 
             # Fall back to system tokens if user OAuth token not available
             if not github_oauth_token:
@@ -273,16 +420,24 @@ class GithubService:
                     if github_oauth_token:
                         logger.info("Using CODE_PROVIDER_TOKEN as fallback")
 
-                # If still no token, raise error
+                # If still no token, return empty repos instead of error
+                # This allows users without GitHub linked to still use the app
                 if not github_oauth_token:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="No GitHub authentication available (user OAuth token, GH_TOKEN_LIST, or CODE_PROVIDER_TOKEN)",
+                    logger.info(
+                        f"User {firebase_uid} has no GitHub token. Returning empty repositories list."
                     )
+                    return {"repositories": []}
 
+            # Create GitHub client
             user_github = Github(github_oauth_token)
+            github_user_obj = user_github.get_user()
 
-            user_orgs = user_github.get_user().get_orgs()
+            # If we still don't have username, use the one from API
+            if not github_username:
+                github_username = github_user_obj.login
+                logger.info(f"Fetched GitHub username from API: {github_username}")
+
+            user_orgs = github_user_obj.get_orgs()
             org_logins = [org.login.lower() for org in user_orgs]
 
             private_key = (
@@ -304,6 +459,8 @@ class GithubService:
             }
 
             ssl_context = ssl.create_default_context(cafile=certifi.where())
+            # Explicitly set minimum TLS version for security
+            ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
             connector = aiohttp.TCPConnector(
                 ssl=ssl_context,
                 ttl_dns_cache=300,
@@ -404,11 +561,17 @@ class GithubService:
                     account_login = account["login"].lower()
                     account_type = account["type"]
 
-                    if (
-                        account_type == "User"
-                        and account_login == github_username.lower()
-                    ):
-                        user_installations.append(installation)
+                    if account_type == "User":
+                        # If we have a username, match it
+                        if github_username and account_login == github_username.lower():
+                            user_installations.append(installation)
+                        elif not github_username:
+                            # If no username but we have a token, try to match by checking if the token belongs to this account
+                            # This is a fallback - ideally we should always have a username
+                            logger.warning(
+                                f"No GitHub username available for filtering installations. Skipping user installation {account_login}."
+                            )
+                            # Don't include installations if we can't verify ownership
                     elif account_type == "Organization" and account_login in org_logins:
                         user_installations.append(installation)
 
