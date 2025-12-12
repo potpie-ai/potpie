@@ -128,7 +128,7 @@ class ParseHelper:
                     return True
                 except (UnicodeDecodeError, UnicodeError):
                     continue
-                except Exception:
+                except (OSError, IOError):
                     # Handle other errors (permissions, file not found, etc.)
                     return False
 
@@ -362,7 +362,7 @@ class ParseHelper:
                         "ParsingHelper: Archive download failed with 401 for GitBucket private repo, "
                         "falling back to git clone"
                     )
-                    return await self._clone_repository_with_auth(
+                    return self._clone_repository_with_auth(
                         repo, branch, target_dir, user_id
                     )
 
@@ -484,38 +484,80 @@ class ParseHelper:
 
         return final_dir
 
-    async def _clone_repository_with_auth(self, repo, branch, target_dir, user_id):
+    def _build_clone_url(self, repo, username, password):
+        """Build authenticated clone URL for GitBucket."""
+        base_url = os.getenv("CODE_PROVIDER_BASE_URL", "http://localhost:8080")
+        if base_url.endswith("/api/v3"):
+            base_url = base_url[:-7]
+
+        parsed = urlparse(base_url)
+        base_path = parsed.path.rstrip("/")
+        repo_path = f"{base_path}/{repo.full_name}.git" if base_path else f"/{repo.full_name}.git"
+
+        clone_url = urlunparse((
+            parsed.scheme,
+            f"{username}:{password}@{parsed.netloc}",
+            repo_path,
+            "", "", ""
+        ))
+        
+        safe_url = urlunparse((parsed.scheme, parsed.netloc, repo_path, "", "", ""))
+        return clone_url, safe_url
+
+    def _copy_text_files(self, temp_clone_dir, final_dir):
+        """Copy only text files from temp clone to final directory."""
+        os.makedirs(final_dir, exist_ok=True)
+        text_files_count = 0
+
+        for root, dirs, files in os.walk(temp_clone_dir):
+            # Skip .git and hidden directories
+            if ".git" in root.split(os.sep) or any(part.startswith(".") for part in root.split(os.sep)):
+                continue
+
+            for file in files:
+                if file.startswith("."):
+                    continue
+
+                file_path = os.path.join(root, file)
+                if self.is_text_file(file_path):
+                    try:
+                        relative_path = os.path.relpath(file_path, temp_clone_dir)
+                        dest_path = os.path.join(final_dir, relative_path)
+                        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                        shutil.copy2(file_path, dest_path)
+                        text_files_count += 1
+                    except OSError as e:
+                        logger.error(f"ParsingHelper: Error copying file {file_path}: {e}")
+
+        logger.info(f"ParsingHelper: Copied {text_files_count} text files from git clone to final directory")
+        return text_files_count
+
+    def _cleanup_temp_dir(self, temp_dir):
+        """Clean up temporary directory."""
+        if os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir)
+                logger.info(f"ParsingHelper: Cleaned up temporary directory: {temp_dir}")
+            except Exception as e:
+                logger.warning(f"ParsingHelper: Failed to clean up temp directory: {e}")
+
+    def _clone_repository_with_auth(self, repo, branch, target_dir, user_id):
         """
         Clone repository using git with authentication.
         Fallback method when archive download fails for private repos.
-
-        Requires GITBUCKET_USERNAME and GITBUCKET_PASSWORD environment variables.
-
-        This method clones to a temporary directory, filters text files using is_text_file(),
-        and copies only text files to the final directory to prevent binary file parsing errors.
         """
-        repo_name = (
-            repo.working_tree_dir
-            if isinstance(repo, Repo)
-            else getattr(repo, "full_name", "unknown")
-        )
-
-        logger.info(
-            f"ParsingHelper: Cloning repository '{repo_name}' branch '{branch}' using git"
-        )
+        repo_name = repo.working_tree_dir if isinstance(repo, Repo) else getattr(repo, "full_name", "unknown")
+        logger.info(f"ParsingHelper: Cloning repository '{repo_name}' branch '{branch}' using git")
 
         final_dir = os.path.join(
             target_dir,
             f"{repo.full_name.replace('/', '-').replace('.', '-')}-{branch.replace('/', '-').replace('.', '-')}-{user_id}",
         )
-
-        # Create temporary clone directory
         temp_clone_dir = os.path.join(target_dir, f"{uuid.uuid4()}_temp_clone")
 
-        # Get credentials from environment variables
+        # Get credentials
         username = os.getenv("GITBUCKET_USERNAME")
         password = os.getenv("GITBUCKET_PASSWORD")
-
         if not username or not password:
             error_msg = (
                 "GITBUCKET_USERNAME and GITBUCKET_PASSWORD environment variables "
@@ -524,123 +566,31 @@ class ParseHelper:
             logger.error(f"ParsingHelper: {error_msg}")
             raise ParsingFailedError(error_msg)
 
-        # Construct GitBucket clone URL with embedded credentials
-        # Format: http://username:password@hostname/path/owner/repo.git
-        base_url = os.getenv("CODE_PROVIDER_BASE_URL", "http://localhost:8080")
-        if base_url.endswith("/api/v3"):
-            base_url = base_url[:-7]  # Remove '/api/v3'
-
-        parsed = urlparse(base_url)
-        # Preserve the path component from base URL (e.g., /gitbucket)
-        base_path = parsed.path.rstrip("/")  # Remove trailing slash if present
-        repo_path = (
-            f"{base_path}/{repo.full_name}.git"
-            if base_path
-            else f"/{repo.full_name}.git"
-        )
-
-        clone_url_with_auth = urlunparse(
-            (
-                parsed.scheme,
-                f"{username}:{password}@{parsed.netloc}",
-                repo_path,
-                "",
-                "",
-                "",
-            )
-        )
-
-        # Log URL without credentials for security
-        safe_url = urlunparse((parsed.scheme, parsed.netloc, repo_path, "", "", ""))
+        # Build clone URL
+        clone_url_with_auth, safe_url = self._build_clone_url(repo, username, password)
         logger.info(f"ParsingHelper: Cloning from {safe_url}")
 
         try:
-            # Clone the repository to temporary directory with shallow clone for faster download
-            repo_obj = Repo.clone_from(
-                clone_url_with_auth, temp_clone_dir, branch=branch, depth=1
-            )
-            logger.info(
-                f"ParsingHelper: Successfully cloned repository to temporary directory: {temp_clone_dir}"
-            )
+            # Clone repository
+            Repo.clone_from(clone_url_with_auth, temp_clone_dir, branch=branch, depth=1)
+            logger.info(f"ParsingHelper: Successfully cloned repository to temporary directory: {temp_clone_dir}")
 
-            # Filter and copy only text files to final directory
-            logger.info(
-                f"ParsingHelper: Filtering text files from clone to {final_dir}"
-            )
-            os.makedirs(final_dir, exist_ok=True)
+            # Copy text files
+            logger.info(f"ParsingHelper: Filtering text files from clone to {final_dir}")
+            self._copy_text_files(temp_clone_dir, final_dir)
 
-            text_files_count = 0
-            for root, dirs, files in os.walk(temp_clone_dir):
-                # Skip .git directory
-                if ".git" in root.split(os.sep):
-                    continue
-
-                # Skip hidden directories
-                if any(part.startswith(".") for part in root.split(os.sep)):
-                    continue
-
-                for file in files:
-                    # Skip hidden files
-                    if file.startswith("."):
-                        continue
-
-                    file_path = os.path.join(root, file)
-
-                    # Filter using is_text_file check
-                    if self.is_text_file(file_path):
-                        try:
-                            # Calculate relative path from clone root
-                            relative_path = os.path.relpath(file_path, temp_clone_dir)
-                            dest_path = os.path.join(final_dir, relative_path)
-
-                            # Create destination directory structure
-                            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-
-                            # Copy text file to final directory
-                            shutil.copy2(file_path, dest_path)
-                            text_files_count += 1
-                        except (shutil.Error, OSError) as e:
-                            logger.error(
-                                f"ParsingHelper: Error copying file {file_path}: {e}"
-                            )
-
-            logger.info(
-                f"ParsingHelper: Copied {text_files_count} text files from git clone to final directory"
-            )
-
-            # Clean up temporary clone directory
-            try:
-                shutil.rmtree(temp_clone_dir)
-                logger.info(
-                    f"ParsingHelper: Cleaned up temporary clone directory: {temp_clone_dir}"
-                )
-            except Exception as e:
-                logger.warning(
-                    f"ParsingHelper: Failed to clean up temp clone directory: {e}"
-                )
-
+            # Cleanup
+            self._cleanup_temp_dir(temp_clone_dir)
             return final_dir
 
         except GitCommandError as e:
             logger.error(f"ParsingHelper: Git clone failed: {e}")
-            # Clean up temp directory on error
-            if os.path.exists(temp_clone_dir):
-                try:
-                    shutil.rmtree(temp_clone_dir)
-                except Exception:
-                    pass
+            self._cleanup_temp_dir(temp_clone_dir)
             raise ParsingFailedError(f"Failed to clone repository: {e}") from e
         except Exception as e:
             logger.error(f"ParsingHelper: Unexpected error during git clone: {e}")
-            # Clean up temp directory on error
-            if os.path.exists(temp_clone_dir):
-                try:
-                    shutil.rmtree(temp_clone_dir)
-                except Exception:
-                    pass
-            raise ParsingFailedError(
-                f"Unexpected error during repository clone: {e}"
-            ) from e
+            self._cleanup_temp_dir(temp_clone_dir)
+            raise ParsingFailedError(f"Unexpected error during repository clone: {e}") from e
 
     @staticmethod
     def detect_repo_language(repo_dir):
@@ -685,10 +635,8 @@ class ParseHelper:
                             with open(file_path, "r", encoding=encoding) as f:
                                 content = f.read()
                                 break
-                        except (UnicodeDecodeError, UnicodeError):
+                        except (UnicodeDecodeError, UnicodeError, OSError, IOError):
                             continue
-                        except Exception:
-                            break
 
                     if content is not None:
                         try:
@@ -871,7 +819,7 @@ class ParseHelper:
         # Copy repo to .repos if repo manager is enabled
         if self.repo_manager and extracted_dir and os.path.exists(extracted_dir):
             try:
-                await self._copy_repo_to_repo_manager(
+                self._copy_repo_to_repo_manager(
                     full_name,  # Use resolved full_name
                     extracted_dir,
                     branch,
@@ -886,7 +834,7 @@ class ParseHelper:
 
         return extracted_dir, project_id
 
-    async def _copy_repo_to_repo_manager(
+    def _copy_repo_to_repo_manager(
         self,
         repo_name: str,
         extracted_dir: str,
@@ -1006,21 +954,57 @@ class ParseHelper:
 
         return base_repo
 
-    def _create_worktree(
-        self, base_repo: Repo, ref: str, is_commit: bool, extracted_dir: str
-    ) -> Path:
-        """
-        Create a git worktree for the given ref.
+    def _remove_existing_worktree(self, base_repo: Repo, worktree_path: Path):
+        """Remove existing worktree if it exists."""
+        from git import GitCommandError
+        
+        if worktree_path.exists():
+            try:
+                logger.info(f"Removing existing worktree at {worktree_path}")
+                base_repo.git.worktree("remove", str(worktree_path), force=True)
+            except GitCommandError:
+                shutil.rmtree(worktree_path, ignore_errors=True)
 
-        Args:
-            base_repo: Base git repository
-            ref: Branch name or commit SHA
-            is_commit: Whether ref is a commit SHA
-            extracted_dir: Path to extracted repository (to copy files from)
+    def _copy_files_to_worktree(self, extracted_dir: str, worktree_path: Path):
+        """Copy files from extracted_dir to worktree."""
+        for item in os.listdir(extracted_dir):
+            if item == ".git":
+                continue
+            src = os.path.join(extracted_dir, item)
+            dst = worktree_path / item
+            if os.path.isdir(src):
+                if dst.exists():
+                    shutil.rmtree(dst)
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
 
-        Returns:
-            Path to the worktree
-        """
+    def _create_worktree_for_commit(self, base_repo: Repo, worktree_path: Path, ref: str):
+        """Create worktree for a specific commit."""
+        base_repo.git.worktree("add", str(worktree_path), ref, "--detach")
+
+    def _create_worktree_for_branch(self, base_repo: Repo, worktree_path: Path, ref: str, extracted_dir: str):
+        """Create worktree for a branch."""
+        from git import GitCommandError
+        
+        try:
+            base_repo.git.worktree("add", str(worktree_path), ref)
+        except GitCommandError:
+            # Branch doesn't exist, create from extracted_dir
+            worktree_path.mkdir(parents=True, exist_ok=True)
+            self._copy_files_to_worktree(extracted_dir, worktree_path)
+            
+            worktree_repo = Repo.init(worktree_path)
+            worktree_repo.git.add(A=True)
+            try:
+                worktree_repo.index.commit(f"Initial commit for {ref}")
+            except Exception:
+                pass
+            
+            logger.info(f"Created worktree directory at {worktree_path} with copied files")
+
+    def _create_worktree(self, base_repo: Repo, ref: str, is_commit: bool, extracted_dir: str) -> Path:
+        """Create a git worktree for the given ref."""
         from git import GitCommandError
 
         # Generate worktree path
@@ -1029,75 +1013,23 @@ class ParseHelper:
         worktree_name = ref.replace("/", "_").replace("\\", "_")
         worktree_path = worktrees_dir / worktree_name
 
-        # Remove existing worktree if it exists
-        if worktree_path.exists():
-            try:
-                logger.info(f"Removing existing worktree at {worktree_path}")
-                base_repo.git.worktree("remove", str(worktree_path), force=True)
-            except GitCommandError:
-                # Worktree might not be registered, just remove directory
-                shutil.rmtree(worktree_path, ignore_errors=True)
+        # Remove existing worktree
+        self._remove_existing_worktree(base_repo, worktree_path)
 
         # Create worktree directory
         worktrees_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            # Try to create worktree from existing ref
             if is_commit:
-                # For commits, use detached HEAD
-                base_repo.git.worktree("add", str(worktree_path), ref, "--detach")
+                self._create_worktree_for_commit(base_repo, worktree_path, ref)
             else:
-                # For branches, try to checkout branch
-                try:
-                    base_repo.git.worktree("add", str(worktree_path), ref)
-                except GitCommandError:
-                    # Branch might not exist, create it from extracted_dir
-                    # First, ensure the ref exists in the base repo
-                    # Copy files from extracted_dir to worktree and commit
-                    worktree_path.mkdir(parents=True, exist_ok=True)
-                    # Copy files
-                    for item in os.listdir(extracted_dir):
-                        if item == ".git":
-                            continue
-                        src = os.path.join(extracted_dir, item)
-                        dst = worktree_path / item
-                        if os.path.isdir(src):
-                            shutil.copytree(src, dst, dirs_exist_ok=True)
-                        else:
-                            shutil.copy2(src, dst)
-
-                    # Initialize worktree as new repo and add as worktree
-                    worktree_repo = Repo.init(worktree_path)
-                    worktree_repo.git.add(A=True)
-                    try:
-                        worktree_repo.index.commit(f"Initial commit for {ref}")
-                    except Exception:
-                        pass
-
-                    # Add remote reference in base repo if needed
-                    # For now, we'll just use the worktree directly
-                    logger.info(
-                        f"Created worktree directory at {worktree_path} with copied files"
-                    )
+                self._create_worktree_for_branch(base_repo, worktree_path, ref, extracted_dir)
         except GitCommandError as e:
             logger.warning(f"Could not create worktree using git command: {e}")
             # Fallback: create directory and copy files
             if not worktree_path.exists():
                 worktree_path.mkdir(parents=True, exist_ok=True)
-
-            # Copy files from extracted_dir
-            for item in os.listdir(extracted_dir):
-                if item == ".git":
-                    continue
-                src = os.path.join(extracted_dir, item)
-                dst = worktree_path / item
-                if os.path.isdir(src):
-                    if dst.exists():
-                        shutil.rmtree(dst)
-                    shutil.copytree(src, dst)
-                else:
-                    shutil.copy2(src, dst)
-
+            self._copy_files_to_worktree(extracted_dir, worktree_path)
             logger.info(f"Created worktree at {worktree_path} by copying files")
 
         return worktree_path
