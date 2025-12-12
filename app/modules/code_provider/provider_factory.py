@@ -1,5 +1,4 @@
 import os
-import logging
 from typing import Optional, Dict, Any
 from enum import Enum
 
@@ -9,13 +8,14 @@ from app.modules.code_provider.base.code_provider_interface import (
 )
 from app.modules.code_provider.github.github_provider import GitHubProvider
 from app.core.config_provider import config_provider
+from app.modules.utils.logger import setup_logger
 
 try:
     from github.GithubException import GithubException
 except ImportError:
     GithubException = None
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class ProviderType(str, Enum):

@@ -2,9 +2,9 @@ from celery import Task
 from app.celery.celery_app import celery_app
 from app.core.database import get_db
 from app.modules.parsing.services.cache_cleanup_service import CacheCleanupService
-import logging
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 @celery_app.task(bind=True, name="cache_cleanup.cleanup_expired")

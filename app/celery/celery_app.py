@@ -1,13 +1,19 @@
-import logging
 import os
+from urllib.parse import urlparse, urlunparse
 
 from celery import Celery
 from dotenv import load_dotenv
 
 from app.core.models import *  # noqa #This will import and initialize all models
+from app.modules.utils.logger import configure_logging, setup_logger
 
 # Load environment variables from a .env file if present
 load_dotenv()
+
+# Configure logging
+configure_logging()
+logger = setup_logger(__name__)
+
 # Redis configuration
 redishost = os.getenv("REDISHOST", "localhost")
 redisport = int(os.getenv("REDISPORT", 6379))
@@ -21,20 +27,48 @@ if redisuser and redispassword:
 else:
     redis_url = f"redis://{redishost}:{redisport}/0"
 
+
+def sanitize_redis_url(url: str) -> str:
+    """
+    Sanitize Redis URL by masking credentials for safe logging.
+    Returns URL with masked credentials (e.g., redis://***:***@host:port/0)
+    """
+    try:
+        parsed = urlparse(url)
+        if parsed.username or parsed.password:
+            # Mask username and password
+            masked_netloc = f"***:***@{parsed.hostname}"
+            if parsed.port:
+                masked_netloc += f":{parsed.port}"
+            sanitized = urlunparse(
+                (
+                    parsed.scheme,
+                    masked_netloc,
+                    parsed.path,
+                    parsed.params,
+                    parsed.query,
+                    parsed.fragment,
+                )
+            )
+            return sanitized
+        return url
+    except Exception:
+        # If parsing fails, return a safe fallback
+        return "redis://***:***@***:***/0"
+
+
 # Initialize the Celery app
 celery_app = Celery("KnowledgeGraph", broker=redis_url, backend=redis_url)
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 # Add logging for Redis connection
-logger.info(f"Connecting to Redis at: {redis_url}")
+logger.info("Connecting to Redis", redis_url=sanitize_redis_url(redis_url))
 try:
     celery_app.backend.client.ping()
     logger.info("Successfully connected to Redis")
-except Exception as e:
-    logger.error(f"Failed to connect to Redis: {str(e)}")
+except Exception:
+    logger.exception(
+        "Failed to connect to Redis", redis_url=sanitize_redis_url(redis_url)
+    )
 
 
 def configure_celery(queue_prefix: str):
@@ -44,6 +78,8 @@ def configure_celery(queue_prefix: str):
         result_serializer="json",
         timezone="UTC",
         enable_utc=True,
+        # Disable Celery's default logging hijacking so our intercept handler works
+        worker_hijack_root_logger=False,
         task_routes={
             "app.celery.tasks.parsing_tasks.process_parsing": {
                 "queue": f"{queue_prefix}_process_repository"
@@ -91,7 +127,8 @@ def setup_phoenix_tracing():
         initialize_phoenix_tracing()
     except Exception as e:
         logger.warning(
-            f"Phoenix tracing initialization failed in Celery worker (non-fatal): {e}"
+            "Phoenix tracing initialization failed in Celery worker (non-fatal)",
+            error=str(e),
         )
 
 

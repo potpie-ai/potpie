@@ -3,7 +3,9 @@
 Allows agents to add comments to Confluence pages.
 """
 
-import logging
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 import asyncio
 from typing import Any, Dict, Optional
 from langchain_core.tools import StructuredTool
@@ -152,7 +154,7 @@ class AddConfluenceCommentTool:
                 await client.close()
 
         except Exception as e:
-            logging.error(f"Error adding Confluence comment: {str(e)}")
+            logger.error(f"Error adding Confluence comment: {str(e)}")
             return {"success": False, "error": str(e)}
 
     def run(
