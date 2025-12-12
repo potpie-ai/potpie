@@ -57,13 +57,23 @@ class AuthService:
         logging.info(f"DEBUG: Credential provided: {credential is not None}")
 
         # Check if the application is in debug mode
-        if os.getenv("isDevelopmentMode") == "enabled" and credential is None:
-            request.state.user = {"user_id": os.getenv("defaultUsername")}
-            logging.info("DEBUG: Development mode enabled. Using Mock Authentication.")
-            return {
-                "user_id": os.getenv("defaultUsername"),
-                "email": "defaultuser@potpie.ai",
-            }
+        # Check if the application is in debug mode
+        # SECURITY FIX: Require an explicit second flag to enable mock auth.
+        # This prevents accidental "isDevelopmentMode=enabled" in production from becoming a backdoor.
+        is_dev = os.getenv("isDevelopmentMode") == "enabled"
+        allow_mock = os.getenv("ALLOW_MOCK_AUTH") == "true"
+
+        if is_dev and credential is None:
+            if allow_mock:
+                request.state.user = {"user_id": os.getenv("defaultUsername")}
+                logging.warning("⚠️  Mock Authentication ENABLED. This should NOT be visible in production.")
+                return {
+                    "user_id": os.getenv("defaultUsername"),
+                    "email": "defaultuser@potpie.ai",
+                }
+            else:
+                logging.error("⛔ Mock Auth blocked: 'isDevelopmentMode' is on, but 'ALLOW_MOCK_AUTH' is missing.")
+                # Fall through to standard auth failure below
         else:
             if credential is None:
                 logging.error(
