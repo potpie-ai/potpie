@@ -41,6 +41,7 @@ dependencies = [
     "langgraph>=1.0.2",
     "langsmith>=0.4.41",
     "litellm>=1.80",
+    "loguru>=0.7.3",
     "neo4j>=5.28.2",
     "networkx>=3.4.2",
     "newrelic>=11.1.0",
