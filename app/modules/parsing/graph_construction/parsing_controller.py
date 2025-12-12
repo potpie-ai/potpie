@@ -115,7 +115,8 @@ class ParsingController:
                 existing_project = await project_manager.get_global_project_from_db(
                     resolved_repo.repo_name,
                     resolved_repo.branch_name,
-                    resolved_repo.commit_id,
+                    commit_id=resolved_repo.commit_id,
+                    repo_path=resolved_repo.repo_path,
                 )
 
                 new_project_id = str(uuid7())

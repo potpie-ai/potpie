@@ -55,13 +55,8 @@ class RepositoryResolver:
         if identifier.startswith(("~", "./", "../", ".\\")):
             return True
         
-        # Check if it's actually a directory that exists
-        expanded_path = os.path.expanduser(identifier)
-        if os.path.isdir(expanded_path):
-            return True
-        
-        # Windows-style paths (e.g., C:\path)
-        if len(identifier) > 1 and identifier[1] == ':':
+        # Windows-style absolute paths (e.g., C:\path or C:/path)
+        if len(identifier) >= 3 and identifier[1] == ":" and identifier[2] in ("\\", "/"):
             return True
         
         return False

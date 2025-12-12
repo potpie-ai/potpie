@@ -5,7 +5,7 @@ import tarfile
 import uuid
 from pathlib import Path
 from typing import Any, Optional, Tuple
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import quote, urlparse, urlunparse
 
 import requests
 import requests.auth
@@ -492,9 +492,10 @@ class ParseHelper:
         base_path = parsed.path.rstrip("/")
         repo_path = f"{base_path}/{repo.full_name}.git" if base_path else f"/{repo.full_name}.git"
 
+        userinfo = f"{quote(username, safe='')}:{quote(password, safe='')}"
         clone_url = urlunparse((
             parsed.scheme,
-            f"{username}:{password}@{parsed.netloc}",
+            f"{userinfo}@{parsed.netloc}",
             repo_path,
             "", "", ""
         ))
