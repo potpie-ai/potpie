@@ -53,16 +53,16 @@ def handle_exception(tool_func):
             try:
                 return await tool_func(*args, **kwargs)
             except Exception as e:
-                logger.error(f"Exception in async tool function: {e}")
-                return f"Tool execution error: {str(e)}"
+                logger.exception("Exception in async tool function", tool_name=tool_func.__name__)
+                return f"Tool execution error: {e!s}"
     else:
         @functools.wraps(tool_func)
         def wrapper(*args, **kwargs):
             try:
                 return tool_func(*args, **kwargs)
             except Exception as e:
-                logger.error(f"Exception in sync tool function: {e}")
-                return f"Tool execution error: {str(e)}"
+                logger.exception("Exception in sync tool function", tool_name=tool_func.__name__)
+                return f"Tool execution error: {e!s}"
 
     return wrapper
 
