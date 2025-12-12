@@ -1,12 +1,12 @@
-import logging
 from typing import Any, Dict
 
 from app.celery.celery_app import celery_app
 from app.celery.tasks.base_task import BaseTask
 from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
+from app.modules.utils.logger import setup_logger, log_context
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 @celery_app.task(
@@ -27,36 +27,37 @@ def process_parsing(
     
     Note: repo_details now contains resolved RepoDetails dict (not ParsingRequest).
     """
-    logger.info(f"Task received: Starting parsing process for project {project_id}")
-    try:
-        parsing_service = ParsingService(self.db, user_id)
+    # Set up logging context with domain IDs
+    with log_context(project_id=project_id, user_id=user_id):
+        logger.info("Task received: Starting parsing process")
+        try:
+            parsing_service = ParsingService(self.db, user_id)
 
-        async def run_parsing():
-            import time
+            async def run_parsing():
+                import time
 
-            start_time = time.time()
+                start_time = time.time()
 
-            # Convert dict to RepoDetails object
-            await parsing_service.parse_directory(
-                RepoDetails(**repo_details),
-                user_id,
-                user_email,
-                project_id,
-                cleanup_graph,
-            )
+                # Convert dict to RepoDetails object
+                await parsing_service.parse_directory(
+                    RepoDetails(**repo_details),
+                    user_id,
+                    user_email,
+                    project_id,
+                    cleanup_graph,
+                )
 
-            end_time = time.time()
-            elapsed_time = end_time - start_time
-            logger.info(
-                f"Parsing process took {elapsed_time:.2f} seconds for project {project_id}"
-            )
+                end_time = time.time()
+                elapsed_time = end_time - start_time
+                logger.info(
+                    "Parsing process completed", elapsed_seconds=round(elapsed_time, 2)
+                )
 
-        # Use BaseTask's long-lived event loop for consistency
-        self.run_async(run_parsing())
-        logger.info(f"Parsing process completed for project {project_id}")
-    except Exception as e:
-        logger.error(f"Error during parsing for project {project_id}: {str(e)}")
-        raise
+            # Use BaseTask's long-lived event loop for consistency
+            self.run_async(run_parsing())
+        except Exception:
+            logger.exception("Error during parsing")
+            raise
 
 
 logger.info("Parsing tasks module loaded")

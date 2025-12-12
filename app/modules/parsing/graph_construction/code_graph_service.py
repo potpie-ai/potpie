@@ -1,5 +1,4 @@
 import hashlib
-import logging
 import time
 from typing import Dict, Optional
 
@@ -8,6 +7,9 @@ from sqlalchemy.orm import Session
 
 from app.modules.parsing.graph_construction.parsing_repomap import RepoMap
 from app.modules.search.search_service import SearchService
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class CodeGraphService:
@@ -46,7 +48,7 @@ class CodeGraphService:
         with self.driver.session() as session:
             start_time = time.time()
             node_count = nx_graph.number_of_nodes()
-            logging.info(f"Creating {node_count} nodes")
+            logger.info(f"Creating {node_count} nodes")
 
             # Create specialized index for relationship queries
             session.run(
@@ -107,7 +109,7 @@ class CodeGraphService:
                 )
 
             relationship_count = nx_graph.number_of_edges()
-            logging.info(f"Creating {relationship_count} relationships")
+            logger.info(f"Creating {relationship_count} relationships")
 
             # Pre-calculate common relationship types to avoid dynamic relationship creation
             rel_types = set()
@@ -126,7 +128,7 @@ class CodeGraphService:
                     if d.get("type", "REFERENCES") == rel_type
                 ]
 
-                logging.info(
+                logger.info(
                     f"Creating {len(type_edges)} relationships of type {rel_type}"
                 )
 
@@ -157,7 +159,7 @@ class CodeGraphService:
                     session.run(query, edges=edges_to_create)
 
             end_time = time.time()
-            logging.info(
+            logger.info(
                 f"Time taken to create graph and search index: {end_time - start_time:.2f} seconds"
             )
 
@@ -212,24 +214,24 @@ class SimpleIO:
                 with open(fname, "r", encoding=encoding) as f:
                     content = f.read()
                     if encoding != "utf-8":
-                        logging.info(f"Read {fname} using {encoding} encoding")
+                        logger.info(f"Read {fname} using {encoding} encoding")
                     return content
             except (UnicodeDecodeError, UnicodeError):
                 continue
-            except Exception as e:
-                logging.error(f"Error reading {fname}: {e}")
+            except Exception:
+                logger.exception(f"Error reading {fname}")
                 return ""
 
-        logging.warning(
+        logger.warning(
             f"Could not read {fname} with any supported encoding. Skipping this file."
         )
         return ""
 
     def tool_error(self, message):
-        logging.error(f"Error: {message}")
+        logger.error(f"Error: {message}")
 
     def tool_output(self, message):
-        logging.info(message)
+        logger.info(message)
 
 
 class SimpleTokenCounter:
