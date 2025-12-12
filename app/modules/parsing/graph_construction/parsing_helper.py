@@ -126,11 +126,8 @@ class ParseHelper:
                         # Read first 8KB to detect encoding
                         f.read(8192)
                     return True
-                except (UnicodeDecodeError, UnicodeError):
+                except (UnicodeDecodeError, UnicodeError, OSError):
                     continue
-                except (OSError, IOError):
-                    # Handle other errors (permissions, file not found, etc.)
-                    return False
 
             # If all encodings fail, likely a binary file
             return False
@@ -456,7 +453,7 @@ class ParseHelper:
                                     )
                                     shutil.copy2(file_path, dest_path)
                                     text_files_count += 1
-                                except (shutil.Error, OSError):
+                                except OSError:
                                     logger.exception(
                                         "ParsingHelper: Error copying file",
                                         file_path=file_path,
@@ -505,14 +502,30 @@ class ParseHelper:
         safe_url = urlunparse((parsed.scheme, parsed.netloc, repo_path, "", "", ""))
         return clone_url, safe_url
 
+    def _should_skip_directory(self, root):
+        """Check if directory should be skipped."""
+        parts = root.split(os.sep)
+        return ".git" in parts or any(part.startswith(".") for part in parts)
+
+    def _copy_single_text_file(self, file_path, temp_clone_dir, final_dir):
+        """Copy a single text file to destination."""
+        try:
+            relative_path = os.path.relpath(file_path, temp_clone_dir)
+            dest_path = os.path.join(final_dir, relative_path)
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+            shutil.copy2(file_path, dest_path)
+            return True
+        except OSError as e:
+            logger.error(f"ParsingHelper: Error copying file {file_path}: {e}")
+            return False
+
     def _copy_text_files(self, temp_clone_dir, final_dir):
         """Copy only text files from temp clone to final directory."""
         os.makedirs(final_dir, exist_ok=True)
         text_files_count = 0
 
         for root, dirs, files in os.walk(temp_clone_dir):
-            # Skip .git and hidden directories
-            if ".git" in root.split(os.sep) or any(part.startswith(".") for part in root.split(os.sep)):
+            if self._should_skip_directory(root):
                 continue
 
             for file in files:
@@ -521,14 +534,8 @@ class ParseHelper:
 
                 file_path = os.path.join(root, file)
                 if self.is_text_file(file_path):
-                    try:
-                        relative_path = os.path.relpath(file_path, temp_clone_dir)
-                        dest_path = os.path.join(final_dir, relative_path)
-                        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                        shutil.copy2(file_path, dest_path)
+                    if self._copy_single_text_file(file_path, temp_clone_dir, final_dir):
                         text_files_count += 1
-                    except OSError as e:
-                        logger.error(f"ParsingHelper: Error copying file {file_path}: {e}")
 
         logger.info(f"ParsingHelper: Copied {text_files_count} text files from git clone to final directory")
         return text_files_count
@@ -636,7 +643,7 @@ class ParseHelper:
                             with open(file_path, "r", encoding=encoding) as f:
                                 content = f.read()
                                 break
-                        except (UnicodeDecodeError, UnicodeError, OSError, IOError):
+                        except (UnicodeDecodeError, UnicodeError, OSError):
                             continue
 
                     if content is not None:
