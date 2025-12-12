@@ -47,13 +47,22 @@ logger = setup_logger(__name__)
 
 
 def handle_exception(tool_func):
-    @functools.wraps(tool_func)
-    def wrapper(*args, **kwargs):
-        try:
-            return tool_func(*args, **kwargs)
-        except Exception as e:
-            logger.error(f"Exception in tool function: {e}")
-            return "An internal error occurred. Please try again later."
+    if inspect.iscoroutinefunction(tool_func):
+        @functools.wraps(tool_func)
+        async def wrapper(*args, **kwargs):
+            try:
+                return await tool_func(*args, **kwargs)
+            except Exception as e:
+                logger.error(f"Exception in async tool function: {e}")
+                return f"Tool execution error: {str(e)}"
+    else:
+        @functools.wraps(tool_func)
+        def wrapper(*args, **kwargs):
+            try:
+                return tool_func(*args, **kwargs)
+            except Exception as e:
+                logger.error(f"Exception in sync tool function: {e}")
+                return f"Tool execution error: {str(e)}"
 
     return wrapper
 
