@@ -24,7 +24,7 @@ from app.modules.search.search_service import SearchService
 from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.parse_webhook_helper import ParseWebhookHelper
 
-from .parsing_schema import ParsingRequest
+from .parsing_schema import RepoDetails
 
 logger = setup_logger(__name__)
 
@@ -47,135 +47,108 @@ class ParsingService:
         finally:
             os.chdir(old_dir)
 
+    def _cleanup_graph_if_needed(self, project_id, user_id, cleanup_graph):
+        """Clean up existing graph if requested."""
+        if not cleanup_graph:
+            return
+            
+        neo4j_config = config_provider.get_neo4j_config()
+        try:
+            code_graph_service = CodeGraphService(
+                neo4j_config["uri"],
+                neo4j_config["username"],
+                neo4j_config["password"],
+                self.db,
+            )
+            code_graph_service.cleanup_graph(project_id)
+        except Exception:
+            logger.exception("Error in cleanup_graph", project_id=project_id, user_id=user_id)
+            raise HTTPException(status_code=500, detail="Internal server error")
+
+    async def _setup_project(self, repo, repo_details, auth, user_id, project_id):
+        """Setup project directory based on environment mode."""
+        if config_provider.get_is_development_mode():
+            return await self.parse_helper.setup_project_directory(
+                repo, repo_details.branch_name, auth, repo_details,
+                user_id, project_id, commit_id=repo_details.commit_id
+            )
+        else:
+            return await self.parse_helper.setup_project_directory(
+                repo, repo_details.branch_name, auth, repo,
+                user_id, project_id, commit_id=repo_details.commit_id
+            )
+
+    def _detect_language(self, repo, extracted_dir):
+        """Detect repository language."""
+        if isinstance(repo, Repo):
+            return self.parse_helper.detect_repo_language(extracted_dir)
+        
+        languages = repo.get_languages()
+        if languages:
+            return max(languages, key=languages.get).lower()
+        return self.parse_helper.detect_repo_language(extracted_dir)
+
+    async def _handle_parsing_error(self, e, project_id, project_manager):
+        """Handle parsing service errors."""
+        message = str(f"{project_id} Failed during parsing: " + str(e))
+        await project_manager.update_project_status(project_id, ProjectStatusEnum.ERROR)
+        await ParseWebhookHelper().send_slack_notification(project_id, message)
+        raise HTTPException(status_code=500, detail=message)
+
+    async def _handle_unexpected_error(self, e, project_id, user_id, project_manager):
+        """Handle unexpected errors during parsing."""
+        tb_str = "".join(traceback.format_exception(None, e, e.__traceback__))
+        logger.exception("Error during parsing", project_id=project_id, user_id=user_id)
+        logger.error(f"Full traceback:\n{tb_str}", project_id=project_id, user_id=user_id)
+        
+        self.db.rollback()
+        try:
+            await project_manager.update_project_status(project_id, ProjectStatusEnum.ERROR)
+        except Exception:
+            logger.exception("Failed to update project status after error", project_id=project_id, user_id=user_id)
+        
+        await ParseWebhookHelper().send_slack_notification(project_id, str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error. Please contact support with project ID: {project_id}",
+        )
+
+    def _cleanup_extracted_dir(self, extracted_dir):
+        """Clean up extracted directory if it's in the project path."""
+        if (extracted_dir and isinstance(extracted_dir, str) and 
+            os.path.exists(extracted_dir) and 
+            extracted_dir.startswith(os.getenv("PROJECT_PATH"))):
+            shutil.rmtree(extracted_dir, ignore_errors=True)
+
     async def parse_directory(
         self,
-        repo_details: ParsingRequest,
+        repo_details: RepoDetails,
         user_id: str,
         user_email: str,
         project_id: int,
         cleanup_graph: bool = True,
     ):
-        # Set up logging context with domain IDs
+        """Parse a repository directory."""
         with log_context(project_id=str(project_id), user_id=user_id):
             project_manager = ProjectService(self.db)
             extracted_dir = None
             try:
-                if cleanup_graph:
-                    neo4j_config = config_provider.get_neo4j_config()
-
-                    try:
-                        code_graph_service = CodeGraphService(
-                            neo4j_config["uri"],
-                            neo4j_config["username"],
-                            neo4j_config["password"],
-                            self.db,
-                        )
-
-                        code_graph_service.cleanup_graph(project_id)
-                    except Exception:
-                        logger.exception(
-                            "Error in cleanup_graph",
-                            project_id=project_id,
-                            user_id=user_id,
-                        )
-                        raise HTTPException(
-                            status_code=500, detail="Internal server error"
-                        )
-
-                repo, owner, auth = await self.parse_helper.clone_or_copy_repository(
-                    repo_details, user_id
-                )
-                if config_provider.get_is_development_mode():
-                    (
-                        extracted_dir,
-                        project_id,
-                    ) = await self.parse_helper.setup_project_directory(
-                        repo,
-                        repo_details.branch_name,
-                        auth,
-                        repo_details,
-                        user_id,
-                        project_id,
-                        commit_id=repo_details.commit_id,
-                    )
-                else:
-                    (
-                        extracted_dir,
-                        project_id,
-                    ) = await self.parse_helper.setup_project_directory(
-                        repo,
-                        repo_details.branch_name,
-                        auth,
-                        repo,
-                        user_id,
-                        project_id,
-                        commit_id=repo_details.commit_id,
-                    )
-
-                if isinstance(repo, Repo):
-                    language = self.parse_helper.detect_repo_language(extracted_dir)
-                else:
-                    languages = repo.get_languages()
-                    if languages:
-                        language = max(languages, key=languages.get).lower()
-                    else:
-                        language = self.parse_helper.detect_repo_language(extracted_dir)
-
-                await self.analyze_directory(
-                    extracted_dir, project_id, user_id, self.db, language, user_email
-                )
-                message = "The project has been parsed successfully"
-                return {"message": message, "id": project_id}
+                self._cleanup_graph_if_needed(project_id, user_id, cleanup_graph)
+                
+                repo, _, auth = await self.parse_helper.clone_or_copy_repository(repo_details, user_id)
+                extracted_dir, project_id = await self._setup_project(repo, repo_details, auth, user_id, project_id)
+                
+                language = self._detect_language(repo, extracted_dir)
+                
+                await self.analyze_directory(extracted_dir, project_id, user_id, self.db, language, user_email)
+                return {"message": "The project has been parsed successfully", "id": project_id}
 
             except ParsingServiceError as e:
-                message = str(f"{project_id} Failed during parsing: " + str(e))
-                await project_manager.update_project_status(
-                    project_id, ProjectStatusEnum.ERROR
-                )
-                await ParseWebhookHelper().send_slack_notification(project_id, message)
-                raise HTTPException(status_code=500, detail=message)
-
+                await self._handle_parsing_error(e, project_id, project_manager)
             except Exception as e:
-                # Log the full traceback server-side for debugging
-                tb_str = "".join(traceback.format_exception(None, e, e.__traceback__))
-                logger.exception(
-                    "Error during parsing",
-                    project_id=project_id,
-                    user_id=user_id,
-                )
-                # Log the formatted traceback string explicitly for detailed debugging
-                logger.error(
-                    f"Full traceback:\n{tb_str}",
-                    project_id=project_id,
-                    user_id=user_id,
-                )
-                # Rollback the database session to clear any pending transactions
-                self.db.rollback()
-                try:
-                    await project_manager.update_project_status(
-                        project_id, ProjectStatusEnum.ERROR
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to update project status after error",
-                        project_id=project_id,
-                        user_id=user_id,
-                    )
-                await ParseWebhookHelper().send_slack_notification(project_id, str(e))
-                # Raise generic error with correlation ID for client
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Internal server error. Please contact support with project ID: {project_id}",
-                )
-
+                await self._handle_unexpected_error(e, project_id, user_id, project_manager)
             finally:
-                if (
-                    extracted_dir
-                    and isinstance(extracted_dir, str)
-                    and os.path.exists(extracted_dir)
-                    and extracted_dir.startswith(os.getenv("PROJECT_PATH"))
-                ):
-                    shutil.rmtree(extracted_dir, ignore_errors=True)
+                self._cleanup_extracted_dir(extracted_dir)
 
     def create_neo4j_indices(self, graph_manager):
         # Create existing indices from blar_graph

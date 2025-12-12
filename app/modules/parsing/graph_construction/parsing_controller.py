@@ -18,7 +18,7 @@ from app.modules.parsing.graph_construction.parsing_service import ParsingServic
 from app.modules.parsing.graph_construction.parsing_validator import (
     validate_parsing_input,
 )
-from app.modules.parsing.utils.repo_name_normalizer import normalize_repo_name
+from app.modules.parsing.graph_construction.repository_resolver import RepositoryResolver
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.utils.email_helper import EmailHelper
@@ -49,37 +49,31 @@ class ParsingController:
         parse_helper = ParseHelper(db)
         parsing_service = ParsingService(db, user_id)
 
-        # Auto-detect if repo_name is actually a filesystem path
-        if repo_details.repo_name and not repo_details.repo_path:
-            is_path = (
-                os.path.isabs(repo_details.repo_name)
-                or repo_details.repo_name.startswith(("~", "./", "../"))
-                or os.path.isdir(os.path.expanduser(repo_details.repo_name))
+        # ===== NEW: Early resolution using RepositoryResolver =====
+        # Resolve the repository identifier into a complete RepoDetails object
+        # This centralizes all path detection, validation, and normalization
+        try:
+            resolved_repo = RepositoryResolver.resolve(
+                repository=repo_details.repository,
+                branch_name=repo_details.branch_name,
+                commit_id=repo_details.commit_id,
             )
-            if is_path:
-                # Move from repo_name to repo_path
-                repo_details.repo_path = repo_details.repo_name
-                repo_details.repo_name = repo_details.repo_path.split("/")[-1]
-                logger.info(
-                    f"Auto-detected filesystem path: repo_path={repo_details.repo_path}, repo_name={repo_details.repo_name}"
-                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to resolve repository identifier: {e}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid repository identifier: {str(e)}"
+            )
 
-        if config_provider.get_is_development_mode():
-            # In dev mode: if both repo_path and repo_name are provided, prioritize repo_path (local)
-            if repo_details.repo_path and repo_details.repo_name:
-                repo_details.repo_name = None
-            # Otherwise keep whichever one is provided as-is
-        else:
-            # In non-dev mode: if repo_name is None but repo_path exists, extract repo_name from repo_path
-            if not repo_details.repo_name and repo_details.repo_path:
-                repo_details.repo_name = repo_details.repo_path.split("/")[-1]
-
-        # For later use in the code
-        repo_name = repo_details.repo_name or (
-            repo_details.repo_path.split("/")[-1] if repo_details.repo_path else None
+        logger.info(
+            f"Resolved repository: name={resolved_repo.repo_name}, "
+            f"is_local={resolved_repo.is_local}, path={resolved_repo.repo_path}"
         )
-        repo_path = repo_details.repo_path
-        if repo_path:
+
+        # Check if this is a local repository
+        if resolved_repo.is_local:
             if os.getenv("isDevelopmentMode") != "enabled":
                 raise HTTPException(
                     status_code=400,
@@ -88,7 +82,7 @@ class ParsingController:
             else:
                 new_project_id = str(uuid7())
                 return await ParsingController.handle_new_project(
-                    repo_details,
+                    resolved_repo,
                     user_id,
                     user_email,
                     new_project_id,
@@ -107,34 +101,30 @@ class ParsingController:
         ]
 
         try:
-            # Normalize repository name for consistent database lookups
-            normalized_repo_name = normalize_repo_name(repo_name)
-            logger.info(
-                f"Original repo_name: {repo_name}, Normalized: {normalized_repo_name}"
-            )
-
+            # Use resolved repository details
             project = await project_manager.get_project_from_db(
-                normalized_repo_name,
-                repo_details.branch_name,
+                resolved_repo.repo_name,
+                resolved_repo.branch_name,
                 user_id,
-                repo_path=repo_details.repo_path,
-                commit_id=repo_details.commit_id,
+                repo_path=resolved_repo.repo_path,
+                commit_id=resolved_repo.commit_id,
             )
 
             # First check if this is a demo project that hasn't been accessed by this user yet
-            if not project and repo_details.repo_name in demo_repos:
+            if not project and resolved_repo.repository in demo_repos:
                 existing_project = await project_manager.get_global_project_from_db(
-                    normalized_repo_name,
-                    repo_details.branch_name,
-                    repo_details.commit_id,
+                    resolved_repo.repo_name,
+                    resolved_repo.branch_name,
+                    commit_id=resolved_repo.commit_id,
+                    repo_path=resolved_repo.repo_path,
                 )
 
                 new_project_id = str(uuid7())
 
                 if existing_project:
                     await project_manager.duplicate_project(
-                        repo_name,
-                        repo_details.branch_name,
+                        resolved_repo.repo_name,
+                        resolved_repo.branch_name,
                         user_id,
                         new_project_id,
                         existing_project.properties,
@@ -145,7 +135,7 @@ class ParsingController:
                     )
 
                     old_project_id = await project_manager.get_demo_project_id(
-                        repo_name
+                        resolved_repo.repo_name
                     )
 
                     asyncio.create_task(
@@ -164,7 +154,7 @@ class ParsingController:
                     )
                     create_task(
                         EmailHelper().send_email(
-                            user_email, repo_name, repo_details.branch_name
+                            user_email, resolved_repo.repo_name, resolved_repo.branch_name
                         )
                     )
 
@@ -174,7 +164,7 @@ class ParsingController:
                     }
                 else:
                     return await ParsingController.handle_new_project(
-                        repo_details,
+                        resolved_repo,
                         user_id,
                         user_email,
                         new_project_id,
@@ -186,7 +176,7 @@ class ParsingController:
             if project:
                 project_id = project.id
                 is_latest = await parse_helper.check_commit_status(
-                    project_id, requested_commit_id=repo_details.commit_id
+                    project_id, requested_commit_id=resolved_repo.commit_id
                 )
 
                 if not is_latest or project.status != ProjectStatusEnum.READY.value:
@@ -195,7 +185,7 @@ class ParsingController:
                         f"Submitting parsing task for existing project {project_id}"
                     )
                     process_parsing.delay(
-                        repo_details.model_dump(),
+                        resolved_repo.model_dump(),
                         user_id,
                         user_email,
                         project_id,
@@ -209,8 +199,8 @@ class ParsingController:
                         user_id,
                         "parsed_repo_event",
                         {
-                            "repo_name": repo_details.repo_name,
-                            "branch": repo_details.branch_name,
+                            "repo_name": resolved_repo.repo_name,
+                            "branch": resolved_repo.branch_name,
                             "project_id": project_id,
                         },
                     )
@@ -224,7 +214,7 @@ class ParsingController:
                 # Handle new non-demo projects
                 new_project_id = str(uuid7())
                 return await ParsingController.handle_new_project(
-                    repo_details,
+                    resolved_repo,
                     user_id,
                     user_email,
                     new_project_id,
@@ -238,7 +228,7 @@ class ParsingController:
 
     @staticmethod
     async def handle_new_project(
-        repo_details: ParsingRequest,
+        repo_details,  # Now accepts RepoDetails instead of ParsingRequest
         user_id: str,
         user_email: str,
         new_project_id: str,
@@ -251,9 +241,8 @@ class ParsingController:
         }
 
         logger.info(f"Submitting parsing task for new project {new_project_id}")
-        repo_name = repo_details.repo_name or repo_details.repo_path.split("/")[-1]
         await project_manager.register_project(
-            repo_name,
+            repo_details.repo_name,
             repo_details.branch_name,
             user_id,
             new_project_id,
