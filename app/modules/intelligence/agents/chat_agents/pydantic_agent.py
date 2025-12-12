@@ -47,15 +47,27 @@ logger = setup_logger(__name__)
 
 
 def handle_exception(tool_func):
-    @functools.wraps(tool_func)
-    def wrapper(*args, **kwargs):
-        try:
-            return tool_func(*args, **kwargs)
-        except Exception as e:
-            logger.error(f"Exception in tool function: {e}")
-            return "An internal error occurred. Please try again later."
+    if inspect.iscoroutinefunction(tool_func):
+        @functools.wraps(tool_func)
+        async def async_wrapper(*args, **kwargs):
+            try:
+                return await tool_func(*args, **kwargs)
+            except Exception as e:
+                # Log full stack trace for debugging
+                logger.exception("Exception in async tool function")
+                return f"Tool execution error: {e!s}"
+        return async_wrapper
+    else:
+        @functools.wraps(tool_func)
+        def sync_wrapper(*args, **kwargs):
+            try:
+                return tool_func(*args, **kwargs)
+            except Exception as e:
+                # Log full stack trace for debugging
+                logger.exception("Exception in sync tool function")
+                return f"Tool execution error: {e!s}"
 
-    return wrapper
+        return sync_wrapper
 
 
 class PydanticRagAgent(ChatAgent):
