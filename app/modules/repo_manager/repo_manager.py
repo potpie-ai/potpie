@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import shutil
+import portalocker
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -311,7 +312,19 @@ class RepoManager(IRepoManager):
             "metadata": metadata or {},
         }
 
-        self._write_metadata_entry(repo_name, branch, commit_id, data)
+        # Ensure the repository parent directory exists
+        repo_dir = self._metadata_path(
+            repo_name=repo_name, branch=branch, commit_id=commit_id
+        ).parent
+        os.makedirs(repo_dir, exist_ok=True)
+        
+        lock_file_path = repo_dir / ".lock"
+
+        # Use portalocker for cross-platform file locking
+        # Prevent concurrent registrations for the same repo key
+        # if another process is currently registering it.
+        with portalocker.Lock(lock_file_path, timeout=10) as locked_file:
+            self._write_metadata_entry(repo_name, branch, commit_id, data)
         repo_key = self._get_repo_key(repo_name, branch, commit_id, user_id)
         logger.info("Registered repo %s at %s", repo_key, local_path)
         return repo_key
