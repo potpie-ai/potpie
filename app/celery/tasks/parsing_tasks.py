@@ -3,7 +3,7 @@ from typing import Any, Dict
 
 from app.celery.celery_app import celery_app
 from app.celery.tasks.base_task import BaseTask
-from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
+from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
 
 logger = logging.getLogger(__name__)
@@ -22,6 +22,11 @@ def process_parsing(
     project_id: str,
     cleanup_graph: bool = True,
 ) -> None:
+    """
+    Process parsing task for a repository.
+    
+    Note: repo_details now contains resolved RepoDetails dict (not ParsingRequest).
+    """
     logger.info(f"Task received: Starting parsing process for project {project_id}")
     try:
         parsing_service = ParsingService(self.db, user_id)
@@ -31,8 +36,9 @@ def process_parsing(
 
             start_time = time.time()
 
+            # Convert dict to RepoDetails object
             await parsing_service.parse_directory(
-                ParsingRequest(**repo_details),
+                RepoDetails(**repo_details),
                 user_id,
                 user_email,
                 project_id,

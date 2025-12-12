@@ -5,19 +5,21 @@ from fastapi import HTTPException
 
 
 def validate_parsing_input(func):
+    """
+    Validator for parsing input. Note: Most validation is now handled by
+    RepositoryResolver. This validator now only handles auth-related checks.
+    """
     @wraps(func)
     async def wrapper(*args, **kwargs):
         # Extract the required arguments from *args or **kwargs
         repo_details = kwargs.get("repo_details")
-        user_id = kwargs.get("user_id")
+        user = kwargs.get("user")
 
-        if repo_details and user_id:
-            if os.getenv("isDevelopmentMode") != "enabled" and repo_details.repo_path:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Development mode is not enabled, cannot parse local repository.",
-                )
-            if user_id == os.getenv("defaultUsername") and repo_details.repo_name:
+        if repo_details and user:
+            user_id = user.get("user_id") if isinstance(user, dict) else getattr(user, "user_id", None)
+            
+            # Check if user is trying to parse remote repository without proper auth
+            if user_id == os.getenv("defaultUsername"):
                 raise HTTPException(
                     status_code=403,
                     detail="Cannot parse remote repository without auth token",

@@ -25,7 +25,7 @@ from app.modules.search.search_service import SearchService
 from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.parse_webhook_helper import ParseWebhookHelper
 
-from .parsing_schema import ParsingRequest
+from .parsing_schema import RepoDetails
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +52,22 @@ class ParsingService:
 
     async def parse_directory(
         self,
-        repo_details: ParsingRequest,
+        repo_details: RepoDetails,
         user_id: str,
         user_email: str,
         project_id: int,
         cleanup_graph: bool = True,
     ):
+        """
+        Parse a repository directory.
+        
+        Args:
+            repo_details: Resolved RepoDetails object with normalized repository information
+            user_id: User ID
+            user_email: User email for notifications
+            project_id: Project ID
+            cleanup_graph: Whether to cleanup existing graph data
+        """
         project_manager = ProjectService(self.db)
         extracted_dir = None
         try:

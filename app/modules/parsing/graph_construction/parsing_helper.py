@@ -63,33 +63,34 @@ class ParseHelper:
     async def clone_or_copy_repository(
         self, repo_details: RepoDetails, user_id: str
     ) -> Tuple[Any, str, Any]:
+        """
+        Clone or access a repository based on resolved RepoDetails.
+        
+        Now simplified since repo_details is pre-resolved and validated by RepositoryResolver.
+        """
         owner = None
         auth = None
         repo = None
 
-        if repo_details.repo_path:
-            if not os.path.exists(repo_details.repo_path):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Local repository does not exist on the given path",
-                )
+        # Use the is_local flag from resolved RepoDetails
+        if repo_details.is_local:
+            # Local repository - repo_path is guaranteed to exist and be valid
             repo = Repo(repo_details.repo_path)
             logger.info(
-                f"ParsingHelper: clone_or_copy_repository created local Repo object for path: {repo_details.repo_path}"
+                f"ParsingHelper: Using local repository at path: {repo_details.repo_path}"
             )
         else:
+            # Remote repository - fetch from code provider
             try:
                 github, repo = self.github_service.get_repo(repo_details.repo_name)
                 owner = repo.owner.login
 
                 # Extract auth from the Github client
-                # The auth is stored in the _Github__requester.auth attribute
                 if hasattr(github, "_Github__requester") and hasattr(
                     github._Github__requester, "auth"
                 ):
                     auth = github._Github__requester.auth
                 elif hasattr(github, "get_app_auth"):
-                    # Fallback for older method
                     auth = github.get_app_auth()
                 else:
                     logger.warning(
@@ -752,64 +753,44 @@ class ParseHelper:
         auth,
         repo_details,
         user_id,
-        project_id=None,  # Change type to str
+        project_id=None,
         commit_id=None,
     ):
-        # Check if this is a local repository by examining the repo object
-        # In development mode: repo is Repo object, repo_details is ParsingRequest
-        # In non-development mode: both repo and repo_details can be Repo objects
+        """
+        Setup project directory with simplified logic using resolved RepoDetails.
+        
+        Now uses the is_local flag and pre-validated paths from RepositoryResolver.
+        """
         logger.info(
             f"ParsingHelper: setup_project_directory called with repo type: {type(repo).__name__}, "
             f"repo_details type: {type(repo_details).__name__}"
         )
 
-        if isinstance(repo, Repo):
-            # Local repository - use full path from Repo object
-            repo_path = repo.working_tree_dir
-            full_name = repo_path.split("/")[
-                -1
-            ]  # Extract just the directory name for display
-            logger.info(
-                f"ParsingHelper: Detected local repository at {repo_path} with name {full_name}"
-            )
-        elif isinstance(repo_details, Repo):
-            # Alternative: repo_details is the Repo object (non-dev mode)
-            repo_path = repo_details.working_tree_dir
-            full_name = repo_path.split("/")[-1]
-            logger.info(
-                f"ParsingHelper: Detected local repository at {repo_path} with name {full_name}"
-            )
-        else:
-            # Remote repository - get name from repo_details (ParsingRequest)
-            repo_path = None
-            if hasattr(repo_details, "repo_name"):
-                full_name = repo_details.repo_name
-            else:
-                full_name = repo.full_name if hasattr(repo, "full_name") else None
-            logger.info(f"ParsingHelper: Detected remote repository {full_name}")
-
-        if full_name is None:
-            full_name = repo_path.split("/")[-1] if repo_path else "unknown"
-
-        # Normalize repository name for consistent database lookups
-        normalized_full_name = normalize_repo_name(full_name)
+        # Use resolved RepoDetails fields directly
+        repo_path = repo_details.repo_path  # None for remote, absolute path for local
+        full_name = repo_details.repo_name  # Already normalized
+        
         logger.info(
-            f"ParsingHelper: Original full_name: {full_name}, Normalized: {normalized_full_name}, repo_path: {repo_path}"
+            f"ParsingHelper: Using resolved details - name={full_name}, "
+            f"is_local={repo_details.is_local}, repo_path={repo_path}"
         )
 
+        # Check if project already exists
         project = await self.project_manager.get_project_from_db(
-            normalized_full_name, branch, user_id, repo_path, commit_id
+            full_name, branch, user_id, repo_path, commit_id
         )
         if not project:
             project_id = await self.project_manager.register_project(
-                normalized_full_name,
+                full_name,
                 branch,
                 user_id,
                 project_id,
                 commit_id=commit_id,
-                repo_path=repo_path,  # Pass repo_path when registering
+                repo_path=repo_path,
             )
-        if repo_path is not None:
+        
+        # Handle local repository - return path directly
+        if repo_details.is_local:
             # Local repository detected - return the path directly without downloading tarball
             logger.info(f"ParsingHelper: Using local repository at {repo_path}")
             return repo_path, project_id
@@ -891,7 +872,7 @@ class ParseHelper:
         if self.repo_manager and extracted_dir and os.path.exists(extracted_dir):
             try:
                 await self._copy_repo_to_repo_manager(
-                    normalized_full_name,
+                    full_name,  # Use resolved full_name
                     extracted_dir,
                     branch,
                     latest_commit_sha,
