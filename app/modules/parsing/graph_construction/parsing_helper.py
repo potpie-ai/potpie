@@ -60,6 +60,16 @@ class ParseHelper:
                 total_size += os.path.getsize(fp)
         return total_size
 
+    @staticmethod
+    def _validate_url(url: str):
+        """Validate URL scheme to prevent basic SSRF."""
+        if not url or not isinstance(url, str):
+            raise ValueError("Invalid URL")
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError(f"Invalid URL scheme: {parsed.scheme}. Only http/https allowed.")
+        return True
+
     async def clone_or_copy_repository(
         self, repo_details: RepoDetails, user_id: str
     ) -> Tuple[Any, str, Any]:
@@ -249,6 +259,7 @@ class ParseHelper:
                         # Use the requester's session which has authentication already configured
                         if hasattr(requester, "_Requester__session"):
                             session = requester._Requester__session
+                            self._validate_url(tarball_url)
                             response = session.get(tarball_url, stream=True, timeout=30)
 
                             # If we get 401, the session auth might not be working, fall back to manual token
@@ -310,6 +321,7 @@ class ParseHelper:
                         "ParsingHelper: Attempting archive download with token header"
                     )
 
+                    self._validate_url(tarball_url)
                     response = requests.get(
                         tarball_url, stream=True, headers=headers, timeout=30
                     )
@@ -326,6 +338,7 @@ class ParseHelper:
                         if hasattr(repo, "owner") and hasattr(repo.owner, "login"):
                             username = repo.owner.login
                             basic_auth = requests.auth.HTTPBasicAuth(username, token)
+                            self._validate_url(tarball_url)
                             response = requests.get(
                                 tarball_url, stream=True, auth=basic_auth, timeout=30
                             )
@@ -337,6 +350,7 @@ class ParseHelper:
                 headers = {}
                 if auth:
                     headers = {"Authorization": f"token {auth.token}"}
+                self._validate_url(tarball_url)
                 response = requests.get(
                     tarball_url, stream=True, headers=headers, timeout=30
                 )
@@ -416,7 +430,22 @@ class ParseHelper:
 
                     temp_dir = os.path.join(final_dir, "temp_extract")
                     os.makedirs(temp_dir, exist_ok=True)
-                    tar.extractall(path=temp_dir)
+                    
+                    # Safe extraction (Zip Slip protection)
+                    def is_within_directory(directory, target):
+                        abs_directory = os.path.abspath(directory)
+                        abs_target = os.path.abspath(target)
+                        prefix = os.path.commonprefix([abs_directory, abs_target])
+                        return prefix == abs_directory
+
+                    def safe_extract(tar, path=".", members=None, *, numeric_owner=False):
+                        for member in tar.getmembers():
+                            member_path = os.path.join(path, member.name)
+                            if not is_within_directory(path, member_path):
+                                raise ParsingFailedError(f"Attempted Path Traversal in Tar File: {member.name}")
+                        tar.extractall(path, members, numeric_owner=numeric_owner)
+
+                    safe_extract(tar, path=temp_dir)
                     logger.info(
                         f"ParsingHelper: Extracted tarball contents to {temp_dir}"
                     )
