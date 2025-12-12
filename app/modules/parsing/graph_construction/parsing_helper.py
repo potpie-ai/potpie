@@ -126,7 +126,7 @@ class ParseHelper:
                         # Read first 8KB to detect encoding
                         f.read(8192)
                     return True
-                except (UnicodeDecodeError, UnicodeError, OSError):
+                except (UnicodeError, OSError):
                     continue
 
             # If all encodings fail, likely a binary file
@@ -643,7 +643,7 @@ class ParseHelper:
                             with open(file_path, "r", encoding=encoding) as f:
                                 content = f.read()
                                 break
-                        except (UnicodeDecodeError, UnicodeError, OSError):
+                        except (UnicodeError, OSError):
                             continue
 
                     if content is not None:

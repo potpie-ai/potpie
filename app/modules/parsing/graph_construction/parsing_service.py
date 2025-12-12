@@ -47,7 +47,7 @@ class ParsingService:
         finally:
             os.chdir(old_dir)
 
-    async def _cleanup_graph_if_needed(self, project_id, user_id, cleanup_graph):
+    def _cleanup_graph_if_needed(self, project_id, user_id, cleanup_graph):
         """Clean up existing graph if requested."""
         if not cleanup_graph:
             return
@@ -88,7 +88,7 @@ class ParsingService:
             return max(languages, key=languages.get).lower()
         return self.parse_helper.detect_repo_language(extracted_dir)
 
-    async def _handle_parsing_error(self, e, project_id, user_id, project_manager):
+    async def _handle_parsing_error(self, e, project_id, project_manager):
         """Handle parsing service errors."""
         message = str(f"{project_id} Failed during parsing: " + str(e))
         await project_manager.update_project_status(project_id, ProjectStatusEnum.ERROR)
@@ -133,9 +133,9 @@ class ParsingService:
             project_manager = ProjectService(self.db)
             extracted_dir = None
             try:
-                await self._cleanup_graph_if_needed(project_id, user_id, cleanup_graph)
+                self._cleanup_graph_if_needed(project_id, user_id, cleanup_graph)
                 
-                repo, owner, auth = await self.parse_helper.clone_or_copy_repository(repo_details, user_id)
+                repo, _, auth = await self.parse_helper.clone_or_copy_repository(repo_details, user_id)
                 extracted_dir, project_id = await self._setup_project(repo, repo_details, auth, user_id, project_id)
                 
                 language = self._detect_language(repo, extracted_dir)
@@ -144,7 +144,7 @@ class ParsingService:
                 return {"message": "The project has been parsed successfully", "id": project_id}
 
             except ParsingServiceError as e:
-                await self._handle_parsing_error(e, project_id, user_id, project_manager)
+                await self._handle_parsing_error(e, project_id, project_manager)
             except Exception as e:
                 await self._handle_unexpected_error(e, project_id, user_id, project_manager)
             finally:
