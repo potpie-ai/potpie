@@ -1,13 +1,14 @@
-import logging
 import os
 from typing import Optional
 
+from fastapi import HTTPException
 from github.GithubException import BadCredentialsException
 
 from app.modules.code_provider.github.github_provider import GitHubProvider
 from app.modules.code_provider.provider_factory import CodeProviderFactory
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class MockRepo:
@@ -179,8 +180,8 @@ class ProviderWrapper:
 
             if provider_type == "github" and is_401_error:
                 logger.warning(
-                    f"Configured authentication failed (401) for {repo_name}, "
-                    f"falling back to unauthenticated access for public repo"
+                    "Configured authentication failed (401). Falling back to unauthenticated access for public repo",
+                    repo_name=repo_name,
                 )
                 # Try unauthenticated as final fallback for public repos
                 unauth_provider = GitHubProvider()
@@ -264,7 +265,6 @@ class ProviderWrapper:
         """Get project structure using the provider."""
         try:
             # Get the project details from the database using project_id
-            from fastapi import HTTPException
 
             from app.modules.projects.projects_service import ProjectService
 

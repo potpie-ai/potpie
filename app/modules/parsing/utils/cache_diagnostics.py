@@ -1,10 +1,10 @@
-import logging
 from typing import Dict, Any, List
 from sqlalchemy.orm import Session
 from app.modules.parsing.models.inference_cache_model import InferenceCache
 from app.modules.parsing.utils.content_hash import generate_content_hash
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 def analyze_cache_misses(nodes: List[Dict[str, Any]], db: Session) -> Dict[str, Any]:

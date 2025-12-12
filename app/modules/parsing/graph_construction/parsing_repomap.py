@@ -1,4 +1,3 @@
-import logging
 import math
 import os
 import warnings
@@ -11,12 +10,15 @@ from pygments.lexers import guess_lexer_for_filename
 from pygments.token import Token
 from pygments.util import ClassNotFound
 from tqdm import tqdm
-from tree_sitter_languages import get_language, get_parser
+from tree_sitter_language_pack import get_language, get_parser
 
 from app.core.database import get_db
 from app.modules.parsing.graph_construction.parsing_helper import (  # noqa: E402
     ParseHelper,
 )
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 # tree_sitter is throwing a FutureWarning
 warnings.simplefilter("ignore", category=FutureWarning)
@@ -596,7 +598,7 @@ class RepoMap:
                 if not self.parse_helper.is_text_file(file_path):
                     continue
 
-                logging.info(f"\nProcessing file: {rel_path}")
+                logger.info(f"\nProcessing file: {rel_path}")
 
                 # Add file node
                 file_node_name = rel_path
