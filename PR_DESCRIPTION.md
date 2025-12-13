@@ -1,4 +1,4 @@
-![alt text](image.png)# Agent Evaluation Metrics and Token Tracking
+# Agent Evaluation Metrics and Token Tracking
 
 This PR adds evaluation metrics and token tracking capabilities to enable better observability and cost management for the agent system.
 
