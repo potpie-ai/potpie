@@ -110,8 +110,8 @@ To enable login via GitHub, create a GitHub app by following these steps:
 5. **Format your Private Key**: Use the `format_pem.sh` to format your key:
 
    ```bash
-   chmod +x format_pem.sh
-   ./format_pem.sh your-key.pem
+   chmod +x scripts/format_pem.sh
+   ./scripts/format_pem.sh your-key.pem
    ```
 
    The formatted key will be displayed in the terminal. Copy the formatted key and add it to env under `GITHUB_PRIVATE_KEY`.
