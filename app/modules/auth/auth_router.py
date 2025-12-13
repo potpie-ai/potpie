@@ -1,6 +1,9 @@
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
+from functools import wraps
+from collections import defaultdict
+from time import time
 
 import requests
 from dotenv import load_dotenv
@@ -24,6 +27,52 @@ auth_router = APIRouter()
 load_dotenv(override=True)
 
 
+# Rate limiting configuration
+MAX_REQUESTS_PER_MINUTE = 5  # 5 requests per minute per IP
+RATE_LIMIT_WINDOW = 60  # seconds
+
+# Store request counts per IP: {ip: [(timestamp, count)]}
+request_tracker = defaultdict(list)
+
+
+def get_client_ip(request: Request) -> str:
+    """Extract client IP from request, handling proxies."""
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
+def check_rate_limit(request: Request) -> bool:
+    """
+    Check if client has exceeded rate limit.
+    Returns True if request is allowed, False if rate limited.
+    """
+    client_ip = get_client_ip(request)
+    current_time = time()
+    
+    # Clean up old requests (older than RATE_LIMIT_WINDOW)
+    request_tracker[client_ip] = [
+        (timestamp, count) for timestamp, count in request_tracker[client_ip]
+        if current_time - timestamp < RATE_LIMIT_WINDOW
+    ]
+    
+    # Count requests in current window
+    request_count = sum(count for _, count in request_tracker[client_ip])
+    
+    if request_count >= MAX_REQUESTS_PER_MINUTE:
+        return False  # Rate limited
+    
+    # Record this request
+    if request_tracker[client_ip] and request_tracker[client_ip][-1][0] == int(current_time):
+        # Same second, increment count
+        request_tracker[client_ip][-1] = (int(current_time), request_count + 1)
+    else:
+        # New second
+        request_tracker[client_ip].append((int(current_time), 1))
+    
+    return True  # Request allowed
+
+
 async def send_slack_message(message: str):
     payload = {"text": message}
     if SLACK_WEBHOOK_URL:
@@ -32,7 +81,15 @@ async def send_slack_message(message: str):
 
 class AuthAPI:
     @auth_router.post("/login")
-    async def login(login_request: LoginRequest):
+    async def login(login_request: LoginRequest, request: Request):
+        # Check rate limit
+        if not check_rate_limit(request):
+            client_ip = get_client_ip(request)
+            return JSONResponse(
+                content={"error": f"Rate limit exceeded. Maximum {MAX_REQUESTS_PER_MINUTE} requests per minute allowed."},
+                status_code=429,
+            )
+        
         email, password = login_request.email, login_request.password
 
         try:
@@ -52,6 +109,13 @@ class AuthAPI:
 
     @auth_router.post("/signup")
     async def signup(request: Request, db: Session = Depends(get_db)):
+        # Check rate limit
+        if not check_rate_limit(request):
+            return JSONResponse(
+                content={"error": f"Rate limit exceeded. Maximum {MAX_REQUESTS_PER_MINUTE} requests per minute allowed."},
+                status_code=429,
+            )
+        
         body = json.loads(await request.body())
         uid = body["uid"]
         oauth_token = body["accessToken"]
