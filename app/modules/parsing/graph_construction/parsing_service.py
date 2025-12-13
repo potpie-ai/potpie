@@ -1,4 +1,3 @@
-from app.modules.utils.logger import setup_logger, log_context
 import os
 import shutil
 import traceback
@@ -22,6 +21,7 @@ from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
 from app.modules.utils.email_helper import EmailHelper
+from app.modules.utils.logger import log_context, setup_logger
 from app.modules.utils.parse_webhook_helper import ParseWebhookHelper
 
 from .parsing_schema import ParsingRequest
@@ -258,7 +258,7 @@ class ParsingService:
                     project_id, ProjectStatusEnum.PARSED
                 )
                 # Generate docstrings using InferenceService
-                await self.inference_service.run_inference(project_id)
+                # await self.inference_service.run_inference(project_id)
                 logger.info(f"DEBUGNEO4J: After inference project {project_id}")
                 self.inference_service.log_graph_stats(project_id)
                 await self.project_service.update_project_status(
