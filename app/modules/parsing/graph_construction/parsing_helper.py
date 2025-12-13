@@ -10,7 +10,7 @@ from urllib.parse import urlparse, urlunparse
 import requests
 import requests.auth
 from fastapi import HTTPException
-from git import GitCommandError, Repo
+from git import GitCommandError, InvalidGitRepositoryError, Repo
 from sqlalchemy.orm import Session
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
@@ -556,7 +556,7 @@ class ParseHelper:
 
         try:
             # Clone the repository to temporary directory with shallow clone for faster download
-            repo_obj = Repo.clone_from(
+            _ = Repo.clone_from(
                 clone_url_with_auth, temp_clone_dir, branch=branch, depth=1
             )
             logger.info(
@@ -843,7 +843,7 @@ class ParseHelper:
                     extracted_dir = await self.download_and_extract_tarball(
                         repo,
                         commit_id,
-                        os.getenv("PROJECT_PATH"),
+                        str(Path(os.getenv("PROJECT_PATH", "projects/")).absolute()),
                         auth,
                         repo_details,
                         user_id,
@@ -853,7 +853,7 @@ class ParseHelper:
                     extracted_dir = await self.download_and_extract_tarball(
                         repo,
                         branch,
-                        os.getenv("PROJECT_PATH"),
+                        str(Path(os.getenv("PROJECT_PATH", "projects/")).absolute()),
                         auth,
                         repo_details,
                         user_id,
@@ -987,7 +987,6 @@ class ParseHelper:
         If the base repo doesn't exist, initialize it and copy the extracted repo.
         If it exists, return the existing repo.
         """
-        from git import Repo, InvalidGitRepositoryError
 
         # Check if base repo already exists and is a valid git repo
         if base_repo_path.exists():

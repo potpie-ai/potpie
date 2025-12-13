@@ -1,13 +1,13 @@
 import os
-from typing import Optional, Dict, Any
 from enum import Enum
+from typing import Any, Dict, Optional
 
+from app.core.config_provider import config_provider
 from app.modules.code_provider.base.code_provider_interface import (
-    ICodeProvider,
     AuthMethod,
+    ICodeProvider,
 )
 from app.modules.code_provider.github.github_provider import GitHubProvider
-from app.core.config_provider import config_provider
 from app.modules.utils.logger import setup_logger
 
 try:
@@ -196,8 +196,8 @@ class CodeProviderFactory:
             raise ValueError("GitHub App credentials not configured")
 
         # Get installation ID for repo
-        from github.Auth import AppAuth
         import requests
+        from github.Auth import AppAuth
 
         if not private_key.startswith("-----BEGIN"):
             private_key = f"-----BEGIN RSA PRIVATE KEY-----\n{private_key}\n-----END RSA PRIVATE KEY-----\n"
@@ -211,7 +211,7 @@ class CodeProviderFactory:
             "Authorization": f"Bearer {jwt}",
             "X-GitHub-Api-Version": "2022-11-28",
         }
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=30)
 
         if response.status_code == 404:
             # App not installed on this repository (likely public repo or no access)
@@ -308,7 +308,7 @@ class CodeProviderFactory:
         # For GitHub with App configured: Try GitHub App first, then PAT
         if provider_type == ProviderType.GITHUB and is_github_app_configured:
             logger.info(
-                f"GitHub App is configured, trying App auth first for {repo_name}"
+                "GitHub App is configured, trying App auth first", repo_name=repo_name
             )
             try:
                 return CodeProviderFactory.create_github_app_provider(repo_name)

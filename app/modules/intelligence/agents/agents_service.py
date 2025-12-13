@@ -1,6 +1,12 @@
 import os
+from pathlib import Path
 from typing import List, Optional
 
+from pydantic import BaseModel
+
+from app.modules.intelligence.agents.chat_agents.supervisor_agent import (
+    SupervisorAgent,
+)
 from app.modules.intelligence.agents.chat_agents.system_agents.general_purpose_agent import (
     GeneralPurposeAgent,
 )
@@ -10,7 +16,11 @@ from app.modules.intelligence.agents.custom_agents.custom_agent_schema import (
 from app.modules.intelligence.agents.custom_agents.custom_agents_service import (
     CustomAgentService,
 )
+from app.modules.intelligence.prompts.prompt_service import PromptService
+from app.modules.intelligence.provider.provider_service import ProviderService
+from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.utils.logger import setup_logger
+
 from .chat_agent import AgentWithInfo, ChatContext
 from .chat_agents.system_agents import (
     blast_radius_agent,
@@ -21,13 +31,6 @@ from .chat_agents.system_agents import (
     qna_agent,
     unit_test_agent,
 )
-from app.modules.intelligence.provider.provider_service import ProviderService
-from app.modules.intelligence.prompts.prompt_service import PromptService
-from app.modules.intelligence.tools.tool_service import ToolService
-from app.modules.intelligence.agents.chat_agents.supervisor_agent import (
-    SupervisorAgent,
-)
-from pydantic import BaseModel
 
 logger = setup_logger(__name__)
 
@@ -48,7 +51,7 @@ class AgentsService:
         prompt_provider: PromptService,
         tools_provider: ToolService,
     ):
-        self.project_path = os.getenv("PROJECT_PATH", "projects/")
+        self.project_path = str(Path(os.getenv("PROJECT_PATH", "projects/")).absolute())
         self.db = db
         self.prompt_service = PromptService(db)
         self.system_agents = self._system_agents(

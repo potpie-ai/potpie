@@ -1,5 +1,7 @@
-from typing import Dict, Any, List
+from typing import Any, Dict, List
+
 from sqlalchemy.orm import Session
+
 from app.modules.parsing.models.inference_cache_model import InferenceCache
 from app.modules.parsing.utils.content_hash import generate_content_hash
 from app.modules.utils.logger import setup_logger
@@ -108,39 +110,27 @@ def analyze_cache_misses(nodes: List[Dict[str, Any]], db: Session) -> Dict[str, 
 
 def log_diagnostics_summary(diagnostics: Dict[str, Any]) -> None:
     """Log a human-readable summary of diagnostics"""
-    logger.info("=" * 60)
-    logger.info("CACHE DIAGNOSTICS SUMMARY")
-    logger.info("=" * 60)
-    logger.info(f"Total nodes analyzed: {diagnostics['total_nodes']}")
-    logger.info(f"Cache hit rate: {diagnostics.get('cache_hit_rate', 0):.1f}%")
-    logger.info("")
-    logger.info("Issues detected:")
-    logger.info(
-        f"  - Missing node_type: {diagnostics['missing_node_type']} "
-        f"({diagnostics.get('missing_type_pct', 0):.1f}%)"
-    )
-    logger.info(
-        f"  - Unresolved references: {diagnostics['unresolved_references']} "
-        f"({diagnostics.get('unresolved_ref_pct', 0):.1f}%)"
-    )
-    logger.info("")
+    # Log structured diagnostics summary
+    logger.bind(
+        total_nodes=diagnostics["total_nodes"],
+        cache_hit_rate=diagnostics.get("cache_hit_rate", 0),
+        missing_node_type=diagnostics["missing_node_type"],
+        missing_type_pct=diagnostics.get("missing_type_pct", 0),
+        unresolved_references=diagnostics["unresolved_references"],
+        unresolved_ref_pct=diagnostics.get("unresolved_ref_pct", 0),
+    ).info("Cache diagnostics summary")
 
-    # Log examples
     if diagnostics["examples"]["missing_type"]:
-        logger.info("Example nodes missing type:")
-        for ex in diagnostics["examples"]["missing_type"]:
-            logger.info(f"  - {ex['node_id']}: {ex['text_preview']}")
+        logger.bind(
+            examples=diagnostics["examples"]["missing_type"],
+        ).debug("Example nodes missing type")
 
     if diagnostics["examples"]["unresolved_ref"]:
-        logger.info("Example nodes with unresolved references:")
-        for ex in diagnostics["examples"]["unresolved_ref"]:
-            logger.info(f"  - {ex['node_id']}: {ex['text_preview']}")
+        logger.bind(
+            examples=diagnostics["examples"]["unresolved_ref"],
+        ).debug("Example nodes with unresolved references")
 
     if diagnostics["examples"]["cache_miss"]:
-        logger.info("Example cache misses:")
-        for ex in diagnostics["examples"]["cache_miss"]:
-            logger.info(
-                f"  - {ex['node_id']} (type={ex['has_type']}): {ex['text_preview']}"
-            )
-
-    logger.info("=" * 60)
+        logger.bind(
+            examples=diagnostics["examples"]["cache_miss"],
+        ).debug("Example cache misses")
