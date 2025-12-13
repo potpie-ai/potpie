@@ -1,18 +1,18 @@
 # Agent Evaluation Metrics and Token Tracking
 
-This PR adds comprehensive evaluation metrics and token tracking capabilities to the Potpie agent system, enabling better observability and cost management.
+This PR adds evaluation metrics and token tracking capabilities to enable better observability and cost management for the agent system.
 
-## 🎯 Motivation
+## Motivation
 
-Currently, there is no way to:
-- Measure agent response quality and performance
-- Track LLM token usage and associated costs
-- Identify performance bottlenecks in agent execution
-- Optimize agent behavior based on data
+The current implementation lacks visibility into agent performance and LLM costs:
+- No metrics for agent response quality or execution time
+- No tracking of LLM token usage and associated costs
+- Limited ability to identify performance bottlenecks
+- No data for optimization decisions
 
-This PR provides the foundation for data-driven agent improvement and cost optimization.
+This PR addresses these gaps by providing a metrics collection framework and token tracking system.
 
-## ✨ Features Added
+## Features Added
 
 ### 1. Agent Evaluation Metrics (`app/modules/intelligence/agents/evaluation/`)
 
@@ -91,9 +91,9 @@ tests/intelligence/provider/
 └── test_token_counter.py               # Token counter tests (95%+ coverage)
 ```
 
-## 🧪 Testing
+## Testing
 
-All new functionality is thoroughly tested:
+All new functionality includes comprehensive test coverage:
 
 ```bash
 # Run metrics tests
@@ -107,13 +107,13 @@ pytest tests/intelligence/ -v
 ```
 
 **Test Coverage:**
-- ✅ 23 test cases for MetricsCollector
-- ✅ 19 test cases for TokenCounter
-- ✅ Edge cases: empty inputs, no tool calls, zero tokens
-- ✅ Multiple model support tested
-- ✅ Cost calculation accuracy verified
+- 23 test cases for MetricsCollector
+- 19 test cases for TokenCounter
+- Edge cases covered: empty inputs, no tool calls, zero tokens
+- Multiple model support validated
+- Cost calculation accuracy verified
 
-## 🔄 Integration Path
+## Integration Path
 
 These modules are designed to be easily integrated into existing agents:
 
@@ -150,15 +150,15 @@ class ProviderService:
         logger.info("LLM usage", input_tokens=input_tokens, cost=cost)
 ```
 
-## 📊 Expected Benefits
+## Expected Benefits
 
-1. **Cost Visibility**: Track LLM costs in real-time, identify expensive operations
-2. **Performance Monitoring**: Measure agent response times, tool efficiency
-3. **Quality Metrics**: Foundation for automated agent evaluation
-4. **Optimization**: Data-driven decisions for agent improvements
-5. **Debugging**: Better insights when things go wrong
+- **Cost Visibility**: Real-time tracking of LLM costs to identify expensive operations
+- **Performance Monitoring**: Measurement of agent response times and tool efficiency
+- **Quality Metrics**: Foundation for automated agent evaluation
+- **Optimization**: Data-driven decision making for agent improvements
+- **Debugging**: Better insights for troubleshooting
 
-## 🔍 Design Decisions
+## Design Decisions
 
 - **Non-invasive**: Modules don't modify existing code, easy to integrate gradually
 - **Extensible**: Easy to add new metrics or supported models
@@ -166,7 +166,7 @@ class ProviderService:
 - **Well-documented**: Comprehensive docstrings and examples
 - **Tested**: High test coverage ensures reliability
 
-## 🚀 Future Enhancements
+## Future Enhancements
 
 These modules provide the foundation for:
 - Integration with observability platforms (LangSmith, Phoenix)
@@ -175,15 +175,7 @@ These modules provide the foundation for:
 - Real-time cost alerting
 - Quality score calculation using LLM-as-judge
 
-## 📚 Related
-
-This PR addresses key requirements from the ML Internship job description:
-- ✅ Agent Evaluation Frameworks
-- ✅ Observability Implementation
-- ✅ Testing and Validation
-- ✅ Python expertise with modern libraries
-
-## ✅ Checklist
+## Checklist
 
 - [x] Code follows project style guidelines
 - [x] Comprehensive tests added (42 test cases total)
@@ -192,14 +184,6 @@ This PR addresses key requirements from the ML Internship job description:
 - [x] No breaking changes to existing code
 - [x] Type hints throughout
 - [x] Ready for integration into existing agents
-
-## 👤 Author
-
-Created as part of the ML Internship application, demonstrating:
-- Understanding of LLM agent architectures
-- Observability best practices
-- Python testing expertise
-- Clean, maintainable code design
 
 ---
 
