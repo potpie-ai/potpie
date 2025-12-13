@@ -146,7 +146,7 @@ class PydanticRagAgent(ChatAgent):
             CURRENT CONTEXT AND AGENT TASK OVERVIEW:
             {self._create_task_description(task_config=config.tasks[0],ctx=ctx)}
             """,
-            "output_retries": 3,
+            "output_retries": self.max_iter,
             "output_type": str,
             "defer_model_check": True,
             "end_strategy": "exhaustive",
