@@ -1,4 +1,4 @@
-# Agent Evaluation Metrics and Token Tracking
+![alt text](image.png)# Agent Evaluation Metrics and Token Tracking
 
 This PR adds evaluation metrics and token tracking capabilities to enable better observability and cost management for the agent system.
 
@@ -76,7 +76,7 @@ print(f"Cost: ${cost:.4f}")
 
 ## 📁 Files Added
 
-```
+```text
 app/modules/intelligence/agents/evaluation/
 ├── __init__.py
 └── metrics.py                          # Metrics collection system

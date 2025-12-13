@@ -161,7 +161,7 @@ class MetricsCollector:
             total_duration_ms=duration,
             response_length=len(response),
             response_word_count=len(response.split()),
-            tools_called=tracking_data['tools_called'],
+            tools_called=list(tracking_data['tools_called']),
             tool_call_count=len(tracking_data['tools_called']),
             tool_success_count=tracking_data['tool_successes'],
             tool_failure_count=tracking_data['tool_failures'],

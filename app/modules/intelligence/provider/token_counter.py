@@ -6,7 +6,7 @@ It supports multiple models and provides accurate cost estimates.
 """
 
 import tiktoken
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, ClassVar
 
 
 class TokenCounter:
@@ -35,7 +35,7 @@ class TokenCounter:
     
     # Token pricing per 1,000 tokens (as of Dec 2025)
     # Update these values as pricing changes
-    PRICING = {
+    PRICING: ClassVar[Dict[str, Dict[str, float]]] = {
         'gpt-4': {'input': 0.03, 'output': 0.06},
         'gpt-4-turbo': {'input': 0.01, 'output': 0.03},
         'gpt-3.5-turbo': {'input': 0.0015, 'output': 0.002},
@@ -61,11 +61,11 @@ class TokenCounter:
             else:
                 # Use cl100k_base as approximation for other models
                 self.encoding = tiktoken.get_encoding("cl100k_base")
-        except Exception:
+        except (KeyError, ValueError):
             # Fallback to cl100k_base if model not found
             self.encoding = tiktoken.get_encoding("cl100k_base")
     
-    def count_tokens(self, text: str) -> int:
+    def count_tokens(self, text: Optional[str]) -> int:
         """
         Count tokens in a text string.
         
@@ -140,7 +140,7 @@ class TokenCounter:
         
         return input_cost + output_cost
     
-    def _normalize_model_name(self, model: str) -> str:
+    def _normalize_model_name(self, model: str) -> Optional[str]:
         """
         Normalize model name for pricing lookup.
         
@@ -148,17 +148,18 @@ class TokenCounter:
             model: The model name
             
         Returns:
-            str: Normalized model name that matches PRICING keys
+            str: Normalized model name that matches PRICING keys, or None if no match
         """
         model_lower = model.lower()
         
-        # Check each pricing key
-        for key in self.PRICING.keys():
+        # Check pricing keys in order of specificity (longest first)
+        # This ensures gpt-4-turbo matches before gpt-4
+        for key in sorted(self.PRICING.keys(), key=len, reverse=True):
             if key in model_lower:
                 return key
         
-        # Default to gpt-3.5-turbo pricing if no match
-        return 'gpt-3.5-turbo'
+        # Return None for unknown models
+        return None
     
     def get_pricing_info(self) -> Dict[str, float]:
         """
