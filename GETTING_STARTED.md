@@ -60,6 +60,11 @@ Ensure `~/.local/bin` is in your PATH.
 
 5. Start using Potpie with your local codebases!
 
+## Code Quality & Pre-commit
+We use strict pre-commit hooks to maintain code quality. 
+For details on how to handle linting errors and auto-fixes, please read our [Pre-commit Guide](docs/PRECOMMIT.md).
+
+
 # Production setup
 
 For a production deployment with Firebase authentication, Github access, Secret Management etc
