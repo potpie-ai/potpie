@@ -1,20 +1,28 @@
 from typing import Dict, List
 
+from langchain_core.tools import StructuredTool
 from sqlalchemy.orm import Session
 
+from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.change_detection.change_detection_tool import (
     get_change_detection_tool,
 )
-from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
-    get_code_file_structure_tool,
-    GetCodeFileStructureTool,
+from app.modules.intelligence.tools.code_query_tools.bash_command_tool import (
+    bash_command_tool,
 )
 from app.modules.intelligence.tools.code_query_tools.code_analysis import (
     universal_analyze_code_tool,
 )
+from app.modules.intelligence.tools.code_query_tools.get_code_file_structure import (
+    GetCodeFileStructureTool,
+    get_code_file_structure_tool,
+)
 from app.modules.intelligence.tools.code_query_tools.get_code_graph_from_node_id_tool import (
-    get_code_graph_from_node_id_tool,
     GetCodeGraphFromNodeIdTool,
+    get_code_graph_from_node_id_tool,
+)
+from app.modules.intelligence.tools.code_query_tools.get_file_content_by_path import (
+    fetch_file_tool,
 )
 from app.modules.intelligence.tools.code_query_tools.get_node_neighbours_from_node_id_tool import (
     get_node_neighbours_from_node_id_tool,
@@ -22,12 +30,39 @@ from app.modules.intelligence.tools.code_query_tools.get_node_neighbours_from_no
 from app.modules.intelligence.tools.code_query_tools.intelligent_code_graph_tool import (
     get_intelligent_code_graph_tool,
 )
+from app.modules.intelligence.tools.confluence_tools import (
+    add_confluence_comment_tool,
+    create_confluence_page_tool,
+    get_confluence_page_tool,
+    get_confluence_space_pages_tool,
+    get_confluence_spaces_tool,
+    search_confluence_pages_tool,
+    update_confluence_page_tool,
+)
+from app.modules.intelligence.tools.jira_tools import (
+    add_jira_comment_tool,
+    create_jira_issue_tool,
+    get_jira_issue_tool,
+    get_jira_project_details_tool,
+    get_jira_project_users_tool,
+    get_jira_projects_tool,
+    link_jira_issues_tool,
+    search_jira_issues_tool,
+    transition_jira_issue_tool,
+    update_jira_issue_tool,
+)
 from app.modules.intelligence.tools.kg_based_tools.ask_knowledge_graph_queries_tool import (
     get_ask_knowledge_graph_queries_tool,
 )
+from app.modules.intelligence.tools.kg_based_tools.get_call_chain_between_node_ids import (
+    get_call_chain_between_node_ids,
+)
+from app.modules.intelligence.tools.kg_based_tools.get_circular_dependencies_tool import (
+    get_circular_dependencies_tool,
+)
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_multiple_node_ids_tool import (
-    get_code_from_multiple_node_ids_tool,
     GetCodeFromMultipleNodeIdsTool,
+    get_code_from_multiple_node_ids_tool,
 )
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool import (
     get_code_from_node_id_tool,
@@ -35,18 +70,25 @@ from app.modules.intelligence.tools.kg_based_tools.get_code_from_node_id_tool im
 from app.modules.intelligence.tools.kg_based_tools.get_code_from_probable_node_name_tool import (
     get_code_from_probable_node_name_tool,
 )
+from app.modules.intelligence.tools.kg_based_tools.get_dependencies_tool import (
+    get_dependencies_tool,
+)
+from app.modules.intelligence.tools.kg_based_tools.get_dependents_tool import (
+    get_dependents_tool,
+)
 from app.modules.intelligence.tools.kg_based_tools.get_nodes_from_tags_tool import (
     get_nodes_from_tags_tool,
 )
-from app.modules.intelligence.tools.code_query_tools.get_file_content_by_path import (
-    fetch_file_tool,
+from app.modules.intelligence.tools.kg_based_tools.node_search_from_text import (
+    node_search_from_text_tool,
 )
-from app.modules.intelligence.tools.code_query_tools.bash_command_tool import (
-    bash_command_tool,
+from app.modules.intelligence.tools.linear_tools import (
+    get_linear_issue_tool,
+    update_linear_issue_tool,
 )
 from app.modules.intelligence.tools.tool_schema import ToolInfo, ToolInfoWithParameters
-from app.modules.intelligence.tools.web_tools.code_provider_tool import (
-    code_provider_tool,
+from app.modules.intelligence.tools.web_tools.code_provider_add_pr_comment import (
+    code_provider_add_pr_comments_tool,
 )
 from app.modules.intelligence.tools.web_tools.code_provider_create_branch import (
     code_provider_create_branch_tool,
@@ -54,46 +96,20 @@ from app.modules.intelligence.tools.web_tools.code_provider_create_branch import
 from app.modules.intelligence.tools.web_tools.code_provider_create_pr import (
     code_provider_create_pull_request_tool,
 )
-from app.modules.intelligence.tools.web_tools.code_provider_add_pr_comment import (
-    code_provider_add_pr_comments_tool,
+from app.modules.intelligence.tools.web_tools.code_provider_tool import (
+    code_provider_tool,
 )
 from app.modules.intelligence.tools.web_tools.code_provider_update_file import (
     code_provider_update_file_tool,
 )
+from app.modules.intelligence.tools.web_tools.web_search_tool import web_search_tool
 from app.modules.intelligence.tools.web_tools.webpage_extractor_tool import (
     webpage_extractor_tool,
 )
-from app.modules.intelligence.tools.linear_tools import (
-    get_linear_issue_tool,
-    update_linear_issue_tool,
-)
-from app.modules.intelligence.tools.jira_tools import (
-    get_jira_issue_tool,
-    search_jira_issues_tool,
-    create_jira_issue_tool,
-    update_jira_issue_tool,
-    add_jira_comment_tool,
-    transition_jira_issue_tool,
-    get_jira_projects_tool,
-    get_jira_project_details_tool,
-    get_jira_project_users_tool,
-    link_jira_issues_tool,
-)
-from app.modules.intelligence.tools.confluence_tools import (
-    get_confluence_spaces_tool,
-    get_confluence_page_tool,
-    search_confluence_pages_tool,
-    get_confluence_space_pages_tool,
-    create_confluence_page_tool,
-    update_confluence_page_tool,
-    add_confluence_comment_tool,
-)
-from app.modules.intelligence.tools.web_tools.web_search_tool import web_search_tool
-from app.modules.intelligence.provider.provider_service import ProviderService
-from langchain_core.tools import StructuredTool
+
+from .code_changes_manager import create_code_changes_management_tools
 from .think_tool import think_tool
 from .todo_management_tool import create_todo_management_tools
-from .code_changes_manager import create_code_changes_management_tools
 
 
 class ToolService:
@@ -191,6 +207,15 @@ class ToolService:
             "analyze_code_structure": universal_analyze_code_tool(
                 self.db, self.user_id
             ),
+            "search_code_docstring": node_search_from_text_tool(self.db, self.user_id),
+            "get_call_chain_between_node_ids": get_call_chain_between_node_ids(
+                self.db, self.user_id
+            ),
+            "get_circular_dependencies": get_circular_dependencies_tool(
+                self.db, self.user_id
+            ),
+            "get_dependencies": get_dependencies_tool(self.db, self.user_id),
+            "get_dependents": get_dependents_tool(self.db, self.user_id),
         }
 
         # Add bash command tool if repo manager is enabled
