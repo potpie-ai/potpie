@@ -25,6 +25,9 @@ from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 
 # --- App and Model Imports ---
+# Note: app is imported at module level, but the client fixture (line 311+)
+# uses dependency overrides to inject test DB sessions, ensuring tests use
+# the test database created by setup_test_database fixture.
 from app.main import app
 from app.core.base_model import Base
 from app.core.database import get_db, get_async_db
@@ -43,13 +46,7 @@ from app.modules.code_provider.github.github_service import GithubService
 # =================================================================
 # 1. PYTEST CONFIGURATION & TEST GATING
 # =================================================================
-
-
-def pytest_configure(config):
-    """Registers the 'github_live' marker with pytest."""
-    config.addinivalue_line(
-        "markers", "github_live: marks tests that hit the live GitHub API"
-    )
+# Note: Markers are registered in root tests/conftest.py
 
 
 @pytest.fixture(autouse=True)

@@ -26,7 +26,7 @@ class TestEncodingDetector:
             assert result is not None
             assert result.lower() in ["utf-8", "utf-8-sig", "ascii"]
         finally:
-            Path(temp_path).unlink()
+            Path(temp_path).unlink(missing_ok=True)
 
     def test_reads_utf8_content(self):
         """Should read UTF-8 file content correctly."""
@@ -40,7 +40,7 @@ class TestEncodingDetector:
             assert result is not None
             assert content in result
         finally:
-            Path(temp_path).unlink()
+            Path(temp_path).unlink(missing_ok=True)
 
     def test_returns_none_for_nonexistent_file(self):
         """Should return None for files that don't exist."""
@@ -59,4 +59,4 @@ class TestEncodingDetector:
             # Should detect some form of UTF-16
             assert result.lower() in ["utf-16", "utf-16-le", "utf-16-be"]
         finally:
-            Path(temp_path).unlink()
+            Path(temp_path).unlink(missing_ok=True)
