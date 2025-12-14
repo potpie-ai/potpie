@@ -4,7 +4,7 @@ This directory contains all tests for the Potpie application, organized into two
 
 ## Directory Structure
 
-```
+```text
 tests/
 ├── conftest.py              # Root config (minimal, markers only)
 ├── unit/                    # Unit tests (no external dependencies)
@@ -55,10 +55,11 @@ def test_content_hash():
 **Purpose:** Tests that verify interactions between components and external services.
 
 **Requirements:** 
-- PostgreSQL (via `POSTGRES_SERVER` env var)
-- Redis (via `REDISHOST` env var)
-- Neo4j (via `NEO4J_URI` env var)
-- GitHub tokens for API tests (via `GH_TOKEN_LIST` env var)
+- PostgreSQL (via `POSTGRES_SERVER` env var) - **Required**
+- GitHub tokens for live API tests (via `GH_TOKEN_LIST` env var) - **Optional** (only for tests marked `@pytest.mark.github_live`)
+- Private repo name (via `PRIVATE_TEST_REPO_NAME` env var) - **Optional** (only for private repo tests)
+
+**Note:** Redis and Neo4j are mocked in integration tests and do not require actual services.
 
 **Location:** All integration tests go in `tests/integration/` subdirectories.
 
@@ -106,7 +107,7 @@ By separating the test infrastructure:
 If you have existing tests:
 
 1. **Determine if test is unit or integration:**
-   - Uses `db_session`, `async_db_session`, `github_service`? → Integration
+   - Uses `db_session`, `async_db_session`, `github_service_with_fake_redis`, or `client`? → Integration
    - Imports only pure functions, no external deps? → Unit
 
 2. **Move to appropriate directory:**
@@ -149,7 +150,7 @@ unit-tests:
 # Full validation on PR
 integration-tests:
   script:
-    - docker-compose up -d postgres redis neo4j
+    - docker-compose up -d postgres
     - pytest tests/integration/ -v
 ```
 

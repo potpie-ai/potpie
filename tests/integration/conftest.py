@@ -52,12 +52,10 @@ def pytest_configure(config):
     )
 
 
-@pytest.fixture(scope="session", autouse=True)
-def require_github_tokens():
-    """Skips 'github_live' tests if the GH_TOKEN_LIST environment variable is not set."""
-    # This fixture runs for all sessions but only skips tests with the 'github_live' marker.
-    # We can check for the marker in the request if we want to be more specific, but this is fine.
-    if not os.environ.get("GH_TOKEN_LIST"):
+@pytest.fixture(autouse=True)
+def require_github_tokens(request):
+    """Skip only tests marked github_live when GH_TOKEN_LIST is missing."""
+    if request.node.get_closest_marker("github_live") and not os.environ.get("GH_TOKEN_LIST"):
         pytest.skip(
             "Skipping live GitHub tests: GH_TOKEN_LIST environment variable not set."
         )
@@ -88,6 +86,12 @@ def setup_test_database():
         raise ValueError(f"FATAL: Main database '{main_db_name}' looks like a test DB.")
 
     test_db_name = f"{main_db_name}_test"
+    
+    # Safety check: validate database name contains only safe characters
+    import re
+    if not re.fullmatch(r"[A-Za-z0-9_]+", test_db_name):
+        raise ValueError(f"FATAL: Refusing to use unsafe test database name: {test_db_name!r}")
+    
     test_db_url = parsed_url._replace(path=f"/{test_db_name}").geturl()
     default_db_url = parsed_url._replace(path="/postgres").geturl()
 
@@ -152,7 +156,7 @@ class FakeRedis:
     def setex(self, key, ttl, val):
         self._store[key] = (
             val.encode("utf-8") if isinstance(val, str) else val,
-            time.time() + ttl if ttl else None,
+            time.time() + ttl if ttl is not None else None,
         )
 
 
@@ -180,7 +184,7 @@ def mock_redis_stream_manager(monkeypatch):
     mock_manager.redis_client.exists.return_value = False
     monkeypatch.setattr(
         "app.modules.conversations.utils.redis_streaming.RedisStreamManager",
-        lambda: mock_manager,
+        lambda *args, **kwargs: mock_manager,
     )
     return mock_manager
 
