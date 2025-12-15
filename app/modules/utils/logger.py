@@ -215,6 +215,7 @@ def configure_logging(level: Optional[str] = None):
             serialize=True,  # Get structured record, then format in sink
         )
     else:
+
         def _filter(record):
             """Filter sensitive data in development logs"""
             record["message"] = filter_sensitive_data(str(record["message"]))
