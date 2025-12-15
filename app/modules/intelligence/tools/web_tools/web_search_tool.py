@@ -1,6 +1,8 @@
 import os
 import asyncio
-import logging
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, Field
@@ -37,7 +39,7 @@ class WebSearchTool:
         self.user_id = user_id
         self.api_key = os.getenv("OPENROUTER_API_KEY", "None")
         if self.api_key == "None":
-            logging.warning("OPENROUTER_API_KEY environment variable is not set")
+            logger.warning("OPENROUTER_API_KEY environment variable is not set")
         self.temperature = 0.3
         self.max_tokens = 12000
         self.output_schema = WebSearchToolOutput
@@ -62,8 +64,8 @@ class WebSearchTool:
                     "citations": [],
                 }
             return response
-        except Exception as e:
-            logging.exception(f"Error {str(e)}")
+        except Exception:
+            logger.exception("Error in web search tool")
             response = {
                 "success": False,
                 "content": "Tool Call Error",
@@ -91,7 +93,7 @@ class WebSearchTool:
                 "citations": [],
             }
         except Exception as e:
-            logging.exception(f"Error in _make_llm_call: {str(e)}")
+            logger.exception("Error in _make_llm_call")
             return {
                 "success": False,
                 "content": f"LLM call failed: {str(e)}",

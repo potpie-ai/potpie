@@ -1,4 +1,3 @@
-import logging
 from datetime import datetime
 
 from fastapi import HTTPException
@@ -8,8 +7,9 @@ from sqlalchemy.orm import Session
 
 from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_schema import ProjectStatusEnum
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class ProjectServiceError(Exception):
@@ -144,7 +144,7 @@ class ProjectService:
         )
         project = ProjectService.create_project(self.db, project)
         message = f"Project id '{project.id}' for repo '{repo_name}' and branch '{branch_name}' registered successfully."
-        logging.info(message)
+        logger.info(message)
         return project_id
 
     async def list_projects(self, user_id: str):

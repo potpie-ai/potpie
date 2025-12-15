@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import os
 import random
 import re
@@ -18,6 +17,7 @@ from fastapi import HTTPException
 from github import Github
 from github.Auth import AppAuth
 from sqlalchemy import func
+from app.modules.utils.logger import setup_logger
 from sqlalchemy.orm import Session
 from redis import Redis
 
@@ -30,7 +30,7 @@ from app.modules.code_provider.provider_factory import CodeProviderFactory
 from app.modules.code_provider.base.code_provider_interface import AuthMethod
 from app.modules.parsing.utils.file_utils import FileUtils
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class GithubService:
@@ -488,10 +488,10 @@ class GithubService:
                 return {"repositories": repo_list}
 
         except Exception as e:
-            logger.error(f"Failed to fetch repositories: {str(e)}", exc_info=True)
+            logger.exception("Failed to fetch repositories", user_id=user_id)
             raise HTTPException(
-                status_code=500, detail=f"Failed to fetch repositories: {str(e)}"
-            )
+                status_code=500, detail="Failed to fetch repositories"
+            ) from e
         finally:
             total_duration = time.time() - start_time  # Calculate total duration
             logger.info(

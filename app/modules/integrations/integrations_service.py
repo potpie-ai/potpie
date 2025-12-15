@@ -27,12 +27,14 @@ from .integrations_schema import (
 )
 from .integration_model import Integration
 from starlette.config import Config
-import logging
 import time
 import uuid
+from app.modules.utils.logger import setup_logger
+from app.modules.integrations import hash_user_id
 from datetime import datetime, timedelta, timezone
-
 from .token_encryption import decrypt_token
+
+logger = setup_logger(__name__)
 
 
 class IntegrationsService:
@@ -213,13 +215,46 @@ class IntegrationsService:
                 response = await client.post(token_url, data=refresh_data)
 
                 if response.status_code != 200:
-                    logging.error(
-                        f"Token refresh failed: {response.status_code} - {response.text}"
+                    # Safely parse response to extract structured error fields
+                    sanitized_error = None
+                    try:
+                        error_data = response.json()
+                        error_field = error_data.get("error", "")
+                        error_description = error_data.get("error_description", "")
+                        if error_field or error_description:
+                            sanitized_error = f"error: {error_field}"
+                            if error_description:
+                                sanitized_error += (
+                                    f", error_description: {error_description[:200]}"
+                                )
+                        else:
+                            # JSON parsed but no error fields, use truncated response text
+                            response_text = response.text or ""
+                            sanitized_error = (
+                                response_text[:250]
+                                if response_text
+                                else "No response body"
+                            )
+                    except Exception:
+                        # Fallback to truncated response.text if JSON parsing fails
+                        response_text = response.text or ""
+                        sanitized_error = (
+                            response_text[:250] if response_text else "No response body"
+                        )
+
+                    # Log sanitized error at error level
+                    logger.error(
+                        f"Token refresh failed: {response.status_code} - {sanitized_error}"
                     )
+                    # Log full response body at debug level for detailed troubleshooting
+                    logger.debug(
+                        f"Token refresh full response: status={response.status_code}, body={response.text}"
+                    )
+                    # Raise exception with minimal message
                     raise Exception(f"Token refresh failed: {response.status_code}")
 
                 token_response = response.json()
-                logging.info(
+                logger.info(
                     f"Token refresh successful, received: {list(token_response.keys())}"
                 )
 
@@ -249,7 +284,7 @@ class IntegrationsService:
                 self.db.commit()
                 self.db.refresh(db_integration)
 
-                logging.info(
+                logger.info(
                     f"Integration {integration_id} tokens refreshed successfully"
                 )
 
@@ -261,7 +296,9 @@ class IntegrationsService:
                 }
 
         except Exception as e:
-            logging.error(f"Failed to refresh Sentry token: {str(e)}")
+            logger.exception(
+                "Failed to refresh Sentry token", integration_id=integration_id
+            )
             raise Exception(f"Token refresh failed: {str(e)}")
 
     async def get_valid_sentry_token(self, integration_id: str) -> str:
@@ -295,13 +332,13 @@ class IntegrationsService:
                     )
                     if datetime.utcnow() >= expires_at:
                         # Token expired, refresh it
-                        logging.info(
+                        logger.info(
                             f"Token expired for integration {integration_id}, refreshing..."
                         )
                         refresh_result = await self.refresh_sentry_token(integration_id)
                         return refresh_result["access_token"]
                 except ValueError:
-                    logging.warning(
+                    logger.warning(
                         f"Invalid expiration date format for integration {integration_id}"
                     )
 
@@ -309,7 +346,9 @@ class IntegrationsService:
             return decrypt_token(auth_data["access_token"])
 
         except Exception as e:
-            logging.error(f"Failed to get valid Sentry token: {str(e)}")
+            logger.exception(
+                "Failed to get valid Sentry token", integration_id=integration_id
+            )
             raise Exception(f"Failed to get valid token: {str(e)}")
 
     async def _exchange_code_for_tokens(
@@ -318,50 +357,20 @@ class IntegrationsService:
         """Exchange OAuth authorization code for access tokens and get organization info"""
         try:
             import httpx
-            import time
 
             # Get OAuth client credentials from config
             client_id = self.config("SENTRY_CLIENT_ID", default="")
             client_secret = self.config("SENTRY_CLIENT_SECRET", default="")
             # Use the redirect_uri from the request instead of hardcoded config
 
-            # Comprehensive debugging for OAuth token exchange
-            logging.info("=== COMPREHENSIVE OAuth Token Exchange Debug ===")
-            logging.info(f"Timestamp: {time.time()}")
-            logging.info(f"Code length: {len(code)}")
-            logging.info(f"Code preview: {code[:20]}...")
-            logging.info(f"Code full: {code}")
-            logging.info(f"Redirect URI: {redirect_uri}")
-            logging.info(f"Redirect URI length: {len(redirect_uri)}")
-            logging.info(f"Client ID configured: {bool(client_id)}")
-            logging.info(f"Client ID length: {len(client_id) if client_id else 0}")
-            logging.info(
-                f"Client ID preview: {client_id[:8] + '...' if client_id and len(client_id) > 8 else client_id}"
+            # Debug logging for OAuth token exchange (DEBUG level only)
+            logger.debug(
+                "OAuth token exchange starting",
+                code_length=len(code),
+                has_client_id=bool(client_id),
+                has_client_secret=bool(client_secret),
+                has_redirect_uri=bool(redirect_uri),
             )
-            logging.info(f"Client Secret configured: {bool(client_secret)}")
-            logging.info(
-                f"Client Secret length: {len(client_secret) if client_secret else 0}"
-            )
-            logging.info(
-                f"Client Secret preview: {client_secret[:8] + '...' if client_secret and len(client_secret) > 8 else client_secret}"
-            )
-
-            # Log the exact request that will be sent
-            logging.info("=== REQUEST DETAILS ===")
-            logging.info("Token URL: https://sentry.io/oauth/token/")
-            logging.info("Request method: POST")
-            logging.info("Content-Type: application/x-www-form-urlencoded")
-            logging.info(
-                "Request body fields: client_id, client_secret, grant_type, code, redirect_uri"
-            )
-            logging.info("Grant type: authorization_code")
-            logging.info(f"Code: {code}")
-            logging.info(f"Redirect URI: {redirect_uri}")
-            logging.info(f"Client ID: {client_id}")
-            logging.info(
-                f"Client Secret: {'*' * len(client_secret) if client_secret else 'NOT_SET'}"
-            )
-            logging.info("Note: Including redirect_uri in token exchange request")
 
             if not client_id or not client_secret or not redirect_uri:
                 missing = []
@@ -374,10 +383,6 @@ class IntegrationsService:
                 raise Exception(
                     f"Sentry OAuth credentials not configured. Missing: {', '.join(missing)}"
                 )
-
-            logging.info(
-                f"Exchanging OAuth code for tokens with client_id: {client_id[:8]}..."
-            )
 
             # Sentry OAuth token endpoint
             token_url = "https://sentry.io/oauth/token/"
@@ -392,20 +397,15 @@ class IntegrationsService:
                 "redirect_uri": redirect_uri,
             }
 
-            logging.info(f"Token exchange request data: {list(token_data.keys())}")
-            logging.info(f"Token URL: {token_url}")
-            logging.info("Note: Including redirect_uri for validation")
+            logger.debug(
+                "Token exchange request prepared",
+                token_url=token_url,
+                fields=list(token_data.keys()),
+            )
 
             # Make the token exchange request
             async with httpx.AsyncClient(timeout=30.0) as client:
-                logging.info("Making OAuth token exchange request...")
-
-                # Log the exact request data being sent (without secrets)
-                debug_data = {
-                    k: v for k, v in token_data.items() if k != "client_secret"
-                }
-                debug_data["client_secret"] = "***REDACTED***"
-                logging.info(f"Request payload (debug): {debug_data}")
+                logger.debug("Making OAuth token exchange request")
 
                 # Use form-encoded data as required by OAuth 2.0 spec
                 response = await client.post(
@@ -414,84 +414,49 @@ class IntegrationsService:
                     headers={"Content-Type": "application/x-www-form-urlencoded"},
                 )
 
-                # Comprehensive response debugging
-                logging.info("=== RESPONSE ANALYSIS ===")
-                logging.info(f"Response status code: {response.status_code}")
-                logging.info(f"Response reason: {response.reason_phrase}")
-                logging.info(f"Response URL: {response.url}")
-                logging.info(f"Response headers count: {len(response.headers)}")
-
-                # Log all response headers
-                for header_name, header_value in response.headers.items():
-                    logging.info(f"Response header - {header_name}: {header_value}")
-
-                logging.info(f"Response content length: {len(response.content)}")
-                logging.info(f"Response text: {response.text}")
-                logging.info(f"Response content (bytes): {response.content}")
-
-                # Try to parse as JSON
-                try:
-                    response_json = response.json()
-                    logging.info(f"Response JSON: {response_json}")
-                except Exception as json_error:
-                    logging.info(f"Response is not valid JSON: {json_error}")
+                # Log response details
+                logger.debug(
+                    "OAuth token exchange response",
+                    status_code=response.status_code,
+                    content_length=len(response.content),
+                )
 
                 if response.status_code != 200:
-                    logging.error("=== ERROR ANALYSIS ===")
-                    logging.error(
-                        f"HTTP Error: {response.status_code} {response.reason_phrase}"
-                    )
-
                     # Try to parse error response for more details
                     try:
                         error_data = response.json()
-                        logging.error(f"Error response JSON: {error_data}")
-
                         error_type = error_data.get("error", "unknown")
                         error_description = error_data.get(
                             "error_description", "No description provided"
                         )
 
-                        logging.error(f"Error type: {error_type}")
-                        logging.error(f"Error description: {error_description}")
+                        logger.error(
+                            "OAuth token exchange failed",
+                            status_code=response.status_code,
+                            error_type=error_type,
+                            error_description=error_description,
+                        )
 
-                        # Detailed analysis based on error type
+                        # Log helpful hints for common errors at DEBUG level
                         if error_type == "invalid_grant":
-                            logging.error("=== INVALID_GRANT ANALYSIS ===")
-                            logging.error("Possible causes:")
-                            logging.error("1. Authorization code expired (10 minutes)")
-                            logging.error("2. Authorization code already used")
-                            logging.error("3. Redirect URI mismatch")
-                            logging.error("4. Client credentials incorrect")
-                            logging.error("5. Grant type incorrect")
-                            logging.error("6. Code parameter malformed")
-
-                            # Additional debugging for invalid_grant
-                            logging.error("=== DEBUGGING INVALID_GRANT ===")
-                            logging.error(f"Code used: {code}")
-                            logging.error(f"Code length: {len(code)}")
-                            logging.error(f"Client ID used: {client_id}")
-                            logging.error("Grant type used: authorization_code")
-                            logging.error(
-                                "Note: redirect_uri NOT sent in token exchange (per Sentry docs)"
+                            logger.debug(
+                                "Invalid grant error - common causes: "
+                                "expired code, code already used, redirect URI mismatch, "
+                                "or incorrect client credentials"
                             )
 
-                    except Exception as parse_error:
-                        logging.error(
-                            f"Could not parse error response as JSON: {parse_error}"
-                        )
-                        logging.error(f"Raw response: {response.text}")
-                else:
-                    logging.info("=== SUCCESS ===")
-                    logging.info("OAuth token exchange successful!")
+                    except Exception:
+                        logger.error(
+                            "OAuth token exchange failed",
+                            status_code=response.status_code,
+                            response_text=response.text[:200],
+                        )  # Truncate response
 
                 response.raise_for_status()
 
                 # Parse the response
                 token_response = response.json()
-                logging.info(
-                    f"OAuth token exchange successful, received: {list(token_response.keys())}"
-                )
+                logger.info("OAuth token exchange successful")
 
                 # Get organization information using the access token
                 org_info = await self._get_sentry_organization_info(
@@ -510,13 +475,15 @@ class IntegrationsService:
                     "organization": org_info,
                 }
 
-                logging.info(
-                    f"Successfully exchanged code for tokens: {tokens.get('token_type')} token"
+                logger.debug(
+                    "Token exchange complete",
+                    token_type=tokens.get("token_type"),
+                    has_refresh_token=bool(tokens.get("refresh_token")),
                 )
                 return tokens
 
         except Exception as e:
-            logging.error(f"Failed to exchange OAuth code for tokens: {str(e)}")
+            logger.exception("Failed to exchange OAuth code for tokens")
             raise Exception(f"OAuth token exchange failed: {str(e)}")
 
     async def _get_sentry_organization_info(
@@ -538,7 +505,7 @@ class IntegrationsService:
                 )
 
                 if response.status_code != 200:
-                    logging.error(
+                    logger.error(
                         f"Failed to get organization info: {response.status_code}"
                     )
                     return None
@@ -547,7 +514,9 @@ class IntegrationsService:
                 # Return the first organization (Sentry OAuth is typically scoped to one organization)
                 if organizations:
                     org = organizations[0]
-                    logging.info(f"Retrieved organization info: {org.get('slug')}")
+                    logger.debug(
+                        "Retrieved organization info", org_slug=org.get("slug")
+                    )
                     return {
                         "id": str(org.get("id")),
                         "slug": org.get("slug"),
@@ -556,8 +525,8 @@ class IntegrationsService:
 
                 return None
 
-        except Exception as e:
-            logging.error(f"Error getting organization info: {str(e)}")
+        except Exception:
+            logger.exception("Error getting organization info")
             return None
 
     async def make_sentry_api_call(
@@ -598,7 +567,7 @@ class IntegrationsService:
                 return response.json()
 
         except Exception as e:
-            logging.error(f"Error making Sentry API call: {str(e)}")
+            logger.exception("Error making Sentry API call")
             raise Exception(f"Failed to make Sentry API call: {str(e)}")
 
     async def get_sentry_organizations(
@@ -629,18 +598,17 @@ class IntegrationsService:
         """Save Sentry integration with authorization code (backend handles token exchange)"""
         try:
             from .token_encryption import encrypt_token
-            import time
 
-            logging.info("=== Sentry Integration Save Debug ===")
-            logging.info("Processing Sentry integration with authorization code")
-            logging.info(
-                f"Request data: instance_name={request.instance_name}, integration_type={request.integration_type}"
+            logger.info(
+                "Processing Sentry integration",
+                instance_name=request.instance_name,
+                integration_type=request.integration_type,
             )
-            logging.info(f"Authorization code length: {len(request.code)}")
-            logging.info(f"Code preview: {request.code[:20]}...")
-            logging.info(f"Redirect URI from request: {request.redirect_uri}")
-            logging.info(f"Request timestamp: {request.timestamp}")
-            logging.info(f"Current timestamp: {time.time()}")
+            logger.debug(
+                "OAuth code validation",
+                code_length=len(request.code),
+                has_redirect_uri=bool(request.redirect_uri),
+            )
 
             # Validate the authorization code format and timing
             if not request.code or len(request.code) < 20:
@@ -661,23 +629,19 @@ class IntegrationsService:
                 current_time = datetime.now(timezone.utc)
                 time_diff = (current_time - request_time).total_seconds()
 
-                logging.info(
-                    f"Time difference between request and now: {time_diff} seconds"
-                )
-
                 if time_diff > 600:  # 10 minutes
-                    logging.warning(
-                        f"Authorization code might be expired (age: {time_diff} seconds)"
+                    logger.warning(
+                        "Authorization code might be expired", age_seconds=time_diff
                     )
                     raise Exception(
                         f"Authorization code may be expired (age: {time_diff} seconds)"
                     )
 
             except ValueError as e:
-                logging.warning(f"Could not parse request timestamp: {e}")
+                logger.warning(f"Could not parse request timestamp: {e}")
 
-            # Exchange authorization code for tokens using clean implementation
-            logging.info("Exchanging authorization code for tokens")
+            # Exchange authorization code for tokens
+            logger.debug("Exchanging authorization code for tokens")
             tokens = await self.sentry_oauth.exchange_code_for_tokens(
                 request.code, request.redirect_uri
             )
@@ -731,8 +695,8 @@ class IntegrationsService:
                 org_info["slug"], user_id
             )
             if existing_integration:
-                logging.warning(
-                    f"Sentry account (org: {org_info['slug']}, user: {user_id}) is already integrated: {existing_integration['integration_id']}"
+                logger.warning(
+                    f"Sentry account (org: {org_info['slug']}, user: {hash_user_id(user_id)}) is already integrated: {existing_integration['integration_id']}"
                 )
                 raise Exception(
                     f"Sentry account is already integrated. "
@@ -782,7 +746,7 @@ class IntegrationsService:
             self.db.add(db_integration)
             self.db.commit()
             self.db.refresh(db_integration)
-            logging.info(
+            logger.info(
                 f"Integration saved to database with encrypted tokens: {integration_id}"
             )
 
@@ -801,7 +765,7 @@ class IntegrationsService:
             }
 
         except Exception as e:
-            logging.error(f"Error saving Sentry integration: {str(e)}")
+            logger.exception("Error saving Sentry integration")
 
             # Provide more helpful error messages based on the error type
             error_message = str(e)
@@ -850,19 +814,19 @@ class IntegrationsService:
             )
 
             if db_integration:
-                logging.info(
+                logger.info(
                     f"Found Linear integration {db_integration.integration_id} "
                     f"by org_id {organization_id}"
                 )
                 return self._db_to_dict(db_integration)
 
-            logging.warning(
+            logger.warning(
                 f"No Linear integration found for organization {organization_id}"
             )
             return None
 
         except Exception as e:
-            logging.error(
+            logger.error(
                 f"Error looking up Linear integration by org ID {organization_id}: {str(e)}"
             )
             return None
@@ -931,7 +895,7 @@ class IntegrationsService:
                     ),
                 }
 
-                logging.info(f"Deleting integration: {integration_details}")
+                logger.info(f"Deleting integration: {integration_details}")
 
                 # Clean up Jira webhooks if this is a Jira integration
                 if db_integration.integration_type == "jira":
@@ -941,15 +905,17 @@ class IntegrationsService:
                 self.db.delete(db_integration)
                 self.db.commit()
 
-                logging.info(
+                logger.info(
                     f"Integration successfully deleted from database: {integration_id}"
                 )
                 return True
             else:
-                logging.warning(f"Integration not found for deletion: {integration_id}")
+                logger.warning(f"Integration not found for deletion: {integration_id}")
                 return False
-        except Exception as e:
-            logging.error(f"Error deleting integration {integration_id}: {str(e)}")
+        except Exception:
+            logger.exception(
+                "Error deleting integration", integration_id=integration_id
+            )
             self.db.rollback()
             return False
 
@@ -960,7 +926,7 @@ class IntegrationsService:
             webhooks = metadata.get("webhooks", [])
 
             if not webhooks:
-                logging.info("No webhooks to clean up for Jira integration")
+                logger.info("No webhooks to clean up for Jira integration")
                 return
 
             # Get access token and site_id from auth_data column (not metadata)
@@ -972,10 +938,10 @@ class IntegrationsService:
             site_id = scope_data.get("org_slug") or metadata.get("site_id")
 
             if not access_token or not site_id:
-                logging.warning(
+                logger.warning(
                     f"Cannot cleanup webhooks: missing access_token or site_id for integration {db_integration.integration_id}"
                 )
-                logging.debug(
+                logger.debug(
                     f"auth_data: {auth_data}, scope_data: {scope_data}, metadata: {metadata}"
                 )
                 return
@@ -997,27 +963,27 @@ class IntegrationsService:
                         )
                         if success:
                             deleted_count += 1
-                            logging.info(
+                            logger.info(
                                 f"Deleted Jira webhook {webhook_id} for integration {db_integration.integration_id}"
                             )
                         else:
                             failed_count += 1
-                            logging.warning(
+                            logger.warning(
                                 f"Failed to delete Jira webhook {webhook_id}"
                             )
                     except Exception as e:
                         failed_count += 1
-                        logging.error(
+                        logger.error(
                             f"Error deleting Jira webhook {webhook_id}: {str(e)}"
                         )
 
-            logging.info(
+            logger.info(
                 f"Webhook cleanup complete for integration {db_integration.integration_id}: "
                 f"{deleted_count} deleted, {failed_count} failed"
             )
 
-        except Exception as e:
-            logging.error(f"Error during webhook cleanup: {str(e)}")
+        except Exception:
+            logger.exception("Error during webhook cleanup")
             # Don't raise - we still want to delete the integration even if webhook cleanup fails
 
     async def update_integration_status(
@@ -1036,13 +1002,13 @@ class IntegrationsService:
                 setattr(db_integration, "active", active)
                 setattr(db_integration, "updated_at", datetime.utcnow())
                 self.db.commit()
-                logging.info(
+                logger.info(
                     f"Integration status updated: {integration_id} -> active: {active}"
                 )
                 return True
             return False
-        except Exception as e:
-            logging.error(f"Error updating integration status: {str(e)}")
+        except Exception:
+            logger.exception("Error updating integration status")
             self.db.rollback()
             return False
 
@@ -1081,7 +1047,7 @@ class IntegrationsService:
             self.db.add(db_integration)
             self.db.commit()
             self.db.refresh(db_integration)
-            logging.info(f"Integration created: {integration_id}")
+            logger.info("Integration created", integration_id=integration_id)
 
             # Convert to schema model for response
             integration_schema = self._db_to_schema(db_integration)
@@ -1090,7 +1056,7 @@ class IntegrationsService:
             )
 
         except Exception as e:
-            logging.error(f"Error creating integration: {str(e)}")
+            logger.exception("Error creating integration")
             self.db.rollback()
             return IntegrationResponse(success=False, data=None, error=str(e))
 
@@ -1114,7 +1080,7 @@ class IntegrationsService:
 
             # Log the update attempt
             old_name = str(db_integration.name)
-            logging.info(
+            logger.info(
                 f"Updating integration name: {integration_id} from '{old_name}' to '{request.name}'"
             )
 
@@ -1125,7 +1091,9 @@ class IntegrationsService:
             self.db.commit()
             self.db.refresh(db_integration)
 
-            logging.info(f"Integration name successfully updated: {integration_id}")
+            logger.info(
+                "Integration name successfully updated", integration_id=integration_id
+            )
 
             integration_schema = self._db_to_schema(db_integration)
             return IntegrationResponse(
@@ -1133,7 +1101,9 @@ class IntegrationsService:
             )
 
         except Exception as e:
-            logging.error(f"Error updating integration {integration_id}: {str(e)}")
+            logger.exception(
+                "Error updating integration", integration_id=integration_id
+            )
             self.db.rollback()
             return IntegrationResponse(success=False, data=None, error=str(e))
 
@@ -1159,7 +1129,7 @@ class IntegrationsService:
             )
 
         except Exception as e:
-            logging.error(f"Error getting integration: {str(e)}")
+            logger.exception("Error getting integration")
             return IntegrationResponse(success=False, data=None, error=str(e))
 
     async def list_integrations_schema(
@@ -1201,7 +1171,7 @@ class IntegrationsService:
             )
 
         except Exception as e:
-            logging.error(f"Error listing integrations: {str(e)}")
+            logger.exception("Error listing integrations")
             return IntegrationListResponse(
                 success=False, count=0, integrations={}, error=str(e)
             )
@@ -1292,7 +1262,7 @@ class IntegrationsService:
             )
 
             if not db_integration:
-                logging.warning(
+                logger.warning(
                     f"Integration not found for deletion (schema): {integration_id}"
                 )
                 return IntegrationResponse(
@@ -1305,7 +1275,7 @@ class IntegrationsService:
             integration_schema = self._db_to_schema(db_integration)
 
             # Log integration details before deletion for audit trail
-            logging.info(
+            logger.info(
                 f"Deleting integration (schema): integration_id='{integration_schema.integration_id}', name='{integration_schema.name}', type='{integration_schema.integration_type}', status='{integration_schema.status}', created_by='{integration_schema.created_by}', created_at='{integration_schema.created_at}'"
             )
 
@@ -1317,13 +1287,16 @@ class IntegrationsService:
             self.db.delete(db_integration)
             self.db.commit()
 
-            logging.info(f"Integration successfully deleted (schema): {integration_id}")
+            logger.info(
+                "Integration successfully deleted (schema)",
+                integration_id=integration_id,
+            )
             return IntegrationResponse(
                 success=True, data=integration_schema, error=None
             )
 
         except Exception as e:
-            logging.error(
+            logger.error(
                 f"Error deleting integration (schema) {integration_id}: {str(e)}"
             )
             self.db.rollback()
@@ -1340,7 +1313,7 @@ class IntegrationsService:
             }
 
         except Exception as e:
-            logging.error(f"Error logging Linear webhook: {str(e)}")
+            logger.error(f"Error logging Linear webhook: {str(e)}")
             return {
                 "status": "error",
                 "message": f"Failed to log Linear webhook: {str(e)}",
@@ -1359,7 +1332,7 @@ class IntegrationsService:
             }
 
         except Exception as e:
-            logging.error(f"Error logging Jira webhook: {str(e)}")
+            logger.error(f"Error logging Jira webhook: {str(e)}")
             return {
                 "status": "error",
                 "message": f"Failed to log Jira webhook: {str(e)}",
@@ -1419,17 +1392,17 @@ class IntegrationsService:
             )
 
             if db_integration:
-                logging.info(
+                logger.info(
                     f"Found Jira integration {db_integration.integration_id} "
                     f"by site_id {site_id}"
                 )
                 return self._db_to_dict(db_integration)
 
-            logging.warning(f"No Jira integration found for site {site_id}")
+            logger.warning(f"No Jira integration found for site {site_id}")
             return None
 
         except Exception as e:
-            logging.error(
+            logger.error(
                 f"Error looking up Jira integration by site ID {site_id}: {str(e)}"
             )
             return None
@@ -1450,18 +1423,18 @@ class IntegrationsService:
             )
 
             if existing_integration:
-                logging.info(
+                logger.info(
                     f"Found existing Linear integration for organization {org_id}: {existing_integration.integration_id}"
                 )
                 return self._db_to_dict(existing_integration)
 
-            logging.info(
+            logger.info(
                 f"No existing Linear integration found for organization {org_id}"
             )
             return None
 
         except Exception as e:
-            logging.error(f"Error checking for existing Linear integration: {str(e)}")
+            logger.error(f"Error checking for existing Linear integration: {str(e)}")
             return None
 
     async def check_existing_sentry_integration(
@@ -1483,18 +1456,18 @@ class IntegrationsService:
             )
 
             if existing_integration:
-                logging.info(
-                    f"Found existing Sentry integration for org {org_slug}, user {user_id}: {existing_integration.integration_id}"
+                logger.info(
+                    f"Found existing Sentry integration for org {org_slug}, user {hash_user_id(user_id)}: {existing_integration.integration_id}"
                 )
                 return self._db_to_dict(existing_integration)
 
-            logging.info(
-                f"No existing Sentry integration found for org {org_slug}, user {user_id}"
+            logger.info(
+                f"No existing Sentry integration found for org {org_slug}, user {hash_user_id(user_id)}"
             )
             return None
 
         except Exception as e:
-            logging.error(f"Error checking for existing Sentry integration: {str(e)}")
+            logger.error(f"Error checking for existing Sentry integration: {str(e)}")
             return None
 
     async def check_existing_jira_integration(
@@ -1513,16 +1486,16 @@ class IntegrationsService:
             )
 
             if existing_integration:
-                logging.info(
+                logger.info(
                     f"Found existing Jira integration for site {site_id}: {existing_integration.integration_id}"
                 )
                 return self._db_to_dict(existing_integration)
 
-            logging.info(f"No existing Jira integration found for site {site_id}")
+            logger.debug("No existing Jira integration found for site", site_id=site_id)
             return None
 
         except Exception as e:
-            logging.error(f"Error checking for existing Jira integration: {str(e)}")
+            logger.error(f"Error checking for existing Jira integration: {str(e)}")
             return None
 
     async def save_linear_integration(
@@ -1531,7 +1504,6 @@ class IntegrationsService:
         """Save Linear integration with authorization code (backend handles token exchange)"""
         try:
             from .token_encryption import encrypt_token
-            import time
 
             # Validate the authorization code format and timing
             if not request.code or len(request.code) < 10:
@@ -1558,7 +1530,7 @@ class IntegrationsService:
                     )
 
             except ValueError as e:
-                logging.warning(f"Could not parse request timestamp: {e}")
+                logger.warning(f"Could not parse request timestamp: {e}")
 
             # Exchange authorization code for tokens
             tokens = await self.linear_oauth.exchange_code_for_tokens(
@@ -1715,7 +1687,7 @@ class IntegrationsService:
             }
 
         except Exception as e:
-            logging.error(f"Error saving Linear integration: {str(e)}")
+            logger.error(f"Error saving Linear integration: {str(e)}")
 
             # Provide more helpful error messages based on the error type
             error_message = str(e)
@@ -1785,7 +1757,7 @@ class IntegrationsService:
             self.db.commit()
             self.db.refresh(db_integration)
 
-            logging.info(f"Integration saved successfully: {integration_id}")
+            logger.info("Integration saved successfully", integration_id=integration_id)
 
             # Return the integration data
             return {
@@ -1803,7 +1775,7 @@ class IntegrationsService:
             }
 
         except Exception as e:
-            logging.error(f"Error saving integration: {str(e)}")
+            logger.error(f"Error saving integration: {str(e)}")
             self.db.rollback()
             raise Exception(f"Failed to save integration: {str(e)}")
 
@@ -1930,7 +1902,7 @@ class IntegrationsService:
                 # Only create webhook if we have a callback URL
                 if webhook_callback and site_id and access_token:
                     try:
-                        logging.info(
+                        logger.info(
                             "Registering Jira webhook for site %s to %s",
                             site_id,
                             webhook_callback,
@@ -1983,18 +1955,18 @@ class IntegrationsService:
                                     "url": webhook_callback,
                                 }
                             )
-                            logging.info(
+                            logger.info(
                                 f"Stored webhook ID {webhook_id} in integration metadata"
                             )
 
                     except Exception as wh_exc:
-                        logging.warning(
+                        logger.warning(
                             "Failed to register Jira webhook for site %s: %s",
                             site_id,
                             str(wh_exc),
                         )
             except Exception as e:
-                logging.error(f"Error during Jira webhook registration: {str(e)}")
+                logger.error(f"Error during Jira webhook registration: {str(e)}")
 
             db_integration = Integration()
             setattr(db_integration, "integration_id", integration_id)
@@ -2032,7 +2004,7 @@ class IntegrationsService:
             }
 
         except Exception as e:
-            logging.error(f"Error saving Jira integration: {str(e)}")
+            logger.error(f"Error saving Jira integration: {str(e)}")
             self.db.rollback()
             raise Exception(f"Failed to save Jira integration: {str(e)}")
 
@@ -2084,7 +2056,7 @@ class IntegrationsService:
                     token_expired = True
 
             if token_expired and encrypted_refresh_token:
-                logging.info(
+                logger.info(
                     f"Access token expired for integration {integration_id}, refreshing..."
                 )
                 try:
@@ -2112,11 +2084,11 @@ class IntegrationsService:
                     self.db.commit()
 
                     access_token = new_tokens["access_token"]
-                    logging.info(
+                    logger.info(
                         f"Successfully refreshed token for integration {integration_id}"
                     )
                 except Exception as e:
-                    logging.error(f"Failed to refresh Jira token: {str(e)}")
+                    logger.error(f"Failed to refresh Jira token: {str(e)}")
                     raise Exception(f"Failed to refresh expired token: {str(e)}")
 
         metadata = getattr(db_integration, "integration_metadata", {}) or {}
@@ -2152,7 +2124,7 @@ class IntegrationsService:
                 "site_url": context.get("site_url"),
             }
         except Exception as e:
-            logging.error(
+            logger.error(
                 f"Failed to fetch Jira accessible resources for {integration_id}: {str(e)}"
             )
             raise
@@ -2182,7 +2154,7 @@ class IntegrationsService:
             )
 
         if response.status_code != 200:
-            logging.error(
+            logger.error(
                 "Failed to fetch Jira projects (%s): %s",
                 response.status_code,
                 response.text,
@@ -2223,7 +2195,7 @@ class IntegrationsService:
             )
 
         if response.status_code != 200:
-            logging.error(
+            logger.error(
                 "Failed to fetch Jira project details (%s): %s",
                 response.status_code,
                 response.text,
@@ -2283,7 +2255,7 @@ class IntegrationsService:
             )
 
         except Exception as e:
-            logging.error(f"Error fetching Jira integration status: {str(e)}")
+            logger.error(f"Error fetching Jira integration status: {str(e)}")
             return JiraIntegrationStatus(user_id=user_id, is_connected=False)
 
     async def deactivate_jira_integrations_for_user(self, user_id: str) -> int:
@@ -2302,11 +2274,11 @@ class IntegrationsService:
             for db_integration in integrations_to_deactivate:
                 try:
                     await self._cleanup_jira_webhooks(db_integration)
-                    logging.info(
+                    logger.info(
                         f"Cleaned up webhooks for integration {db_integration.integration_id}"
                     )
                 except Exception as webhook_error:
-                    logging.error(
+                    logger.error(
                         f"Failed to cleanup webhooks for integration {db_integration.integration_id}: {str(webhook_error)}"
                     )
                     # Continue with deactivation even if webhook cleanup fails
@@ -2330,7 +2302,7 @@ class IntegrationsService:
             self.db.commit()
             return updated or 0
         except Exception as e:
-            logging.error(
+            logger.error(
                 f"Error deactivating Jira integrations for {user_id}: {str(e)}"
             )
             self.db.rollback()
@@ -2448,7 +2420,7 @@ class IntegrationsService:
 
             # Note: Confluence OAuth 2.0 apps cannot register webhooks
             # Webhooks are only available for Atlassian Connect apps
-            logging.info(
+            logger.info(
                 "Confluence OAuth 2.0 integration created for site %s (webhooks not available)",
                 site_id,
             )
@@ -2492,7 +2464,7 @@ class IntegrationsService:
             }
 
         except Exception as e:
-            logging.error(f"Error saving Confluence integration: {str(e)}")
+            logger.error(f"Error saving Confluence integration: {str(e)}")
             self.db.rollback()
             raise
 
@@ -2563,7 +2535,7 @@ class IntegrationsService:
                 "site_url": context.get("site_url"),
             }
         except Exception as e:
-            logging.error(
+            logger.error(
                 f"Failed to fetch Confluence accessible resources for {integration_id}: {str(e)}"
             )
             raise
@@ -2595,7 +2567,7 @@ class IntegrationsService:
             )
 
         if response.status_code != 200:
-            logging.error(
+            logger.error(
                 "Failed to fetch Confluence spaces (%s): %s",
                 response.status_code,
                 response.text,
@@ -2658,7 +2630,7 @@ class IntegrationsService:
             )
 
         except Exception as e:
-            logging.error(f"Error fetching Confluence integration status: {str(e)}")
+            logger.error(f"Error fetching Confluence integration status: {str(e)}")
             return ConfluenceIntegrationStatus(user_id=user_id, is_connected=False)
 
     async def deactivate_confluence_integrations_for_user(self, user_id: str) -> int:
@@ -2685,7 +2657,7 @@ class IntegrationsService:
             self.db.commit()
             return updated or 0
         except Exception as e:
-            logging.error(
+            logger.error(
                 f"Error deactivating Confluence integrations for {user_id}: {str(e)}"
             )
             self.db.rollback()

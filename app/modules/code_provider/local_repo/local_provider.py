@@ -1,4 +1,3 @@
-import logging
 import os
 from typing import Any, Dict, List, Optional
 
@@ -10,8 +9,9 @@ from app.modules.code_provider.base.code_provider_interface import (
     ICodeProvider,
 )
 from app.modules.parsing.utils.file_utils import FileUtils
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class LocalProvider(ICodeProvider):

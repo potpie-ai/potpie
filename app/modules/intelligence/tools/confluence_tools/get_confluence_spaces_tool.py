@@ -3,7 +3,9 @@
 Allows agents to fetch list of available Confluence spaces for the user.
 """
 
-import logging
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 import asyncio
 from typing import Any, Dict
 from langchain_core.tools import StructuredTool
@@ -133,7 +135,7 @@ class GetConfluenceSpacesTool:
                 await client.close()
 
         except Exception as e:
-            logging.error(f"Error getting Confluence spaces: {str(e)}")
+            logger.exception(f"Error getting Confluence spaces: {str(e)}")
             return {"success": False, "error": str(e)}
 
     def run(self, limit: int = 25, space_type: str = "all") -> Dict[str, Any]:

@@ -5,7 +5,6 @@ Allows agents to run bash commands (grep, awk, find, etc.) on the codebase.
 Only works if the project's worktree exists in the repo manager.
 """
 
-import logging
 import os
 import shlex
 from typing import Dict, Any, Optional
@@ -16,8 +15,9 @@ from langchain_core.tools import StructuredTool
 from app.modules.projects.projects_service import ProjectService
 from app.modules.repo_manager import RepoManager
 from app.modules.utils.gvisor_runner import run_command_isolated, CommandResult
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 # SECURITY: Commands that are ALWAYS blocked (write/modify operations)
 ALWAYS_BLOCKED_COMMANDS = {
@@ -153,8 +153,7 @@ class BashCommandToolInput(BaseModel):
 
 class BashCommandTool:
     name: str = "bash_command"
-    description: str = (
-        """Run bash commands (grep, awk, find, sed, etc.) on the codebase.
+    description: str = """Run bash commands (grep, awk, find, sed, etc.) on the codebase.
 
         This tool allows you to execute common Unix/bash commands directly on the repository files.
         The command will be executed in the repository's worktree directory using gVisor sandbox isolation
@@ -218,7 +217,6 @@ class BashCommandTool:
                 "working_directory": "src"
             }
         """
-    )
     args_schema: type[BaseModel] = BashCommandToolInput
 
     def __init__(self, sql_db: Session, user_id: str):
@@ -435,11 +433,16 @@ class BashCommandTool:
                     "error": result.stderr,
                     "exit_code": result.returncode,
                 }
-            except Exception as e:
-                logger.error(f"[BASH_COMMAND] Error executing command with gVisor: {e}")
+            except Exception:
+                logger.exception(
+                    "[BASH_COMMAND] Error executing command with gVisor",
+                    project_id=project_id,
+                    command=command,
+                    working_directory=working_directory,
+                )
                 return {
                     "success": False,
-                    "error": f"Error executing command: {str(e)}",
+                    "error": "Error executing command",
                     "output": "",
                     "exit_code": -1,
                 }
@@ -451,11 +454,16 @@ class BashCommandTool:
                 "output": "",
                 "exit_code": -1,
             }
-        except Exception as e:
-            logger.exception(f"[BASH_COMMAND] Unexpected error: {e}")
+        except Exception:
+            logger.exception(
+                "[BASH_COMMAND] Unexpected error",
+                project_id=project_id,
+                command=command,
+                working_directory=working_directory,
+            )
             return {
                 "success": False,
-                "error": f"Unexpected error: {str(e)}",
+                "error": "Unexpected error",
                 "output": "",
                 "exit_code": -1,
             }
