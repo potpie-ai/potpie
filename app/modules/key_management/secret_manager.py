@@ -1,6 +1,5 @@
 import asyncio
 import functools
-import logging
 import os
 from typing import Dict, List, Literal, Optional
 
@@ -23,10 +22,11 @@ from app.modules.key_management.secrets_schema import (
 )
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.APIRouter import APIRouter
+from app.modules.utils.logger import setup_logger
 from app.modules.utils.posthog_helper import PostHogClient
 
 # Set up logging
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class SecretStorageHandler:

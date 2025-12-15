@@ -211,7 +211,7 @@ class CodeProviderFactory:
             "Authorization": f"Bearer {jwt}",
             "X-GitHub-Api-Version": "2022-11-28",
         }
-        response = requests.get(url, headers=headers, timeout=30)
+        response = requests.get(url, headers=headers, timeout=60)
 
         if response.status_code == 404:
             # App not installed on this repository (likely public repo or no access)
