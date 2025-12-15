@@ -21,6 +21,7 @@ dependencies = [
     "celery>=5.5.3",
     "chardet>=5.2.0",
     "cryptography>=46.0.3",
+    "dspy>=3.0.4",
     "fastapi>=0.121.0",
     "firebase-admin>=7.1.0",
     "firecrawl-py>=4.6.0",

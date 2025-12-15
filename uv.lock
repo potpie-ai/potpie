@@ -312,7 +312,7 @@ wheels = [
 
 [[package]]
 name = "arize-phoenix"
-version = "12.22.0"
+version = "12.25.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aioitertools" },
@@ -360,14 +360,14 @@ dependencies = [
     { name = "uvicorn" },
     { name = "wrapt" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/85/5c/5ec14e950e7d09595bafb4dae9be4c60d0f1cb5d1a0f39311c4bc4609d3b/arize_phoenix-12.22.0.tar.gz", hash = "sha256:ebf25dffd899bb25d205ce2e76dc009e5659ea19600672d01492f70881e41ddd", size = 2371925, upload-time = "2025-12-09T22:21:56.255Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/71/23/7e78d52f64ce4c8a419ea67d567c017af14fbda71ba1c11bb83d48ef7302/arize_phoenix-12.25.0.tar.gz", hash = "sha256:5f0997c7776101c5329237053c79ff7edcb4d30e5e6d6cb5b7de297092d8a6d5", size = 2379480, upload-time = "2025-12-12T05:07:02.148Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/62/4b/3cc9651f4e40f5f6c01d1c6efb7969703ee59991a070f5d75b8645d09a97/arize_phoenix-12.22.0-py3-none-any.whl", hash = "sha256:3df73b4b1b0af4c0bd232818b0b68ef053d50b7e3c846b144aaef1f97f8a1707", size = 2600523, upload-time = "2025-12-09T22:21:53.518Z" },
+    { url = "https://files.pythonhosted.org/packages/9d/b0/0b3a194ad84b18f8bfe5e2ad86ad87ae8780172c15b750fe292e0860b975/arize_phoenix-12.25.0-py3-none-any.whl", hash = "sha256:52e6932b31887e2f907738c199170d1e945267fc81202fe106979b51fc1b0a3f", size = 2604966, upload-time = "2025-12-12T05:06:59.724Z" },
 ]
 
 [[package]]
 name = "arize-phoenix-client"
-version = "1.26.0"
+version = "1.27.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -378,14 +378,14 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c8/14/f9e2fc93b1fd0e4c7aeec53a704d9190d50f9528654c8739c2a13a47bd11/arize_phoenix_client-1.26.0.tar.gz", hash = "sha256:d2777a1c3501c91ce1fd8fbd52e2c49220a06356f30f413ae50a36b8db700d62", size = 140058, upload-time = "2025-11-25T21:03:36.341Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e0/1b/8ccb00a3ee23a7ccf0f2de6495cd4f0aa0a9e31089498fff4c18a6f80d68/arize_phoenix_client-1.27.0.tar.gz", hash = "sha256:7981c0e306799b4e637008fb82423ac282d7f5d386685204499d012603321706", size = 141347, upload-time = "2025-12-11T17:31:40.208Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0d/f9/b218741593d2e4f2940380a12fdb7e25bccbe9b813e5bd86e74e0c245b45/arize_phoenix_client-1.26.0-py3-none-any.whl", hash = "sha256:b37ec4560b94c0d489579fd07b8ce0c765e34e1d181772055eed9daf932a8c03", size = 147102, upload-time = "2025-11-25T21:03:35.054Z" },
+    { url = "https://files.pythonhosted.org/packages/cd/63/2ed6df30fb5a5cc28108c78307ba28b9a7e2307797e36247db2e85085847/arize_phoenix_client-1.27.0-py3-none-any.whl", hash = "sha256:7369a599f2214c51e0753bdbf0bdfeb232508543ab05d4cec2ef5772700e521e", size = 148442, upload-time = "2025-12-11T17:31:39.042Z" },
 ]
 
 [[package]]
 name = "arize-phoenix-evals"
-version = "2.7.0"
+version = "2.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jsonpath-ng" },
@@ -398,9 +398,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ed/19/83d96015e5d335266a3bbecee7424a229f901fa5ec8de9a427215b2b1a8f/arize_phoenix_evals-2.7.0.tar.gz", hash = "sha256:979ae68dbbece12b0844b4d0dbd959065f0a3e2cbb8947fc8919d4bff5864363", size = 111280, upload-time = "2025-12-04T20:11:53.868Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5e/c8/155f17f5b5e2e4d45b0c8be5975e19d0086490ead092c12281957c63ef28/arize_phoenix_evals-2.7.1.tar.gz", hash = "sha256:e68a39185cab5f0da6c8cd95d3f3ed9edfa539558d901cb6f9e554ce3fa96693", size = 111388, upload-time = "2025-12-12T01:49:37.392Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9f/57/7e43965dad8f266fb12e4e0b705e7493e137f65b01a5a6aa03196f781661/arize_phoenix_evals-2.7.0-py3-none-any.whl", hash = "sha256:2dac4210601af84b85509b3d66add3ad2281fab695d661c5e860c2334bfbb9a9", size = 156412, upload-time = "2025-12-04T20:11:52.565Z" },
+    { url = "https://files.pythonhosted.org/packages/16/a9/36b9dfd9398b638f872996a7c19381c9b183688dbd53cb9113895d0a3051/arize_phoenix_evals-2.7.1-py3-none-any.whl", hash = "sha256:de3fae9991c63d84439cd74e8e7cf6634ccaffef81ba9f7734baffd99943611e", size = 156526, upload-time = "2025-12-12T01:49:35.818Z" },
 ]
 
 [[package]]
@@ -441,6 +441,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/a5/ae/136395dfbfe00dfc94da3f3e136d0b13f394cba8f4841120e34226265780/async_timeout-5.0.1.tar.gz", hash = "sha256:d9321a7a3d5a6a5e187e824d2fa0793ce379a202935782d555d6e9d2735677d3", size = 9274, upload-time = "2024-11-06T16:41:39.6Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fe/ba/e2081de779ca30d473f21f5b30e0e737c438205440784c7dfc81efc2b029/async_timeout-5.0.1-py3-none-any.whl", hash = "sha256:39e3809566ff85354557ec2398b55e096c8364bacac9405a7a1fa429e77fe76c", size = 6233, upload-time = "2024-11-06T16:41:37.9Z" },
+]
+
+[[package]]
+name = "asyncer"
+version = "0.0.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ff/67/7ea59c3e69eaeee42e7fc91a5be67ca5849c8979acac2b920249760c6af2/asyncer-0.0.8.tar.gz", hash = "sha256:a589d980f57e20efb07ed91d0dbe67f1d2fd343e7142c66d3a099f05c620739c", size = 18217, upload-time = "2024-08-24T23:15:36.449Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8a/04/15b6ca6b7842eda2748bda0a0af73f2d054e9344320f8bba01f994294bcb/asyncer-0.0.8-py3-none-any.whl", hash = "sha256:5920d48fc99c8f8f0f1576e1882f5022885589c5fcbc46ce4224ec3e53776eeb", size = 9209, upload-time = "2024-08-24T23:15:35.317Z" },
 ]
 
 [[package]]
@@ -953,6 +965,15 @@ wheels = [
 ]
 
 [[package]]
+name = "cloudpickle"
+version = "3.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/27/fb/576f067976d320f5f0114a8d9fa1215425441bb35627b1993e5afd8111e5/cloudpickle-3.1.2.tar.gz", hash = "sha256:7fda9eb655c9c230dab534f1983763de5835249750e85fbcef43aaa30a9a2414", size = 22330, upload-time = "2025-11-03T09:25:26.604Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/88/39/799be3f2f0f38cc727ee3b4f1445fe6d5e4133064ec2e4115069418a5bb6/cloudpickle-3.1.2-py3-none-any.whl", hash = "sha256:9acb47f6afd73f60dc1df93bb801b472f05ff42fa6c84167d25cb206be1fbf4a", size = 22228, upload-time = "2025-11-03T09:25:25.534Z" },
+]
+
+[[package]]
 name = "cohere"
 version = "5.20.0"
 source = { registry = "https://pypi.org/simple" }
@@ -979,6 +1000,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d8/53/6f443c9a4a8358a93a6792e2acffb9d9d5cb0a5cfd8802644b7b1c9a02e4/colorama-0.4.6.tar.gz", hash = "sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44", size = 27697, upload-time = "2022-10-25T02:36:22.414Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d1/d6/3965ed04c63042e047cb6a3e6ed1a63a35087b6a609aa3a15ed8ac56c221/colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6", size = 25335, upload-time = "2022-10-25T02:36:20.889Z" },
+]
+
+[[package]]
+name = "colorlog"
+version = "6.10.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a2/61/f083b5ac52e505dfc1c624eafbf8c7589a0d7f32daa398d2e7590efa5fda/colorlog-6.10.1.tar.gz", hash = "sha256:eb4ae5cb65fe7fec7773c2306061a8e63e02efc2c72eba9d27b0fa23c94f1321", size = 17162, upload-time = "2025-10-16T16:14:11.978Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6d/c1/e419ef3723a074172b68aaa89c9f3de486ed4c2399e2dbd8113a4fdcaf9e/colorlog-6.10.1-py3-none-any.whl", hash = "sha256:2d7e8348291948af66122cff006c9f8da6255d224e7cf8e37d8de2df3bad8c9c", size = 11743, upload-time = "2025-10-16T16:14:10.512Z" },
 ]
 
 [[package]]
@@ -1124,6 +1157,41 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d9/02/111134bfeb6e6c7ac4c74594e39a59f6c0195dc4846afbeac3cba60f1927/docutils-0.22.3.tar.gz", hash = "sha256:21486ae730e4ca9f622677b1412b879af1791efcfba517e4c6f60be543fc8cdd", size = 2290153, upload-time = "2025-11-06T02:35:55.655Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/11/a8/c6a4b901d17399c77cd81fb001ce8961e9f5e04d3daf27e8925cb012e163/docutils-0.22.3-py3-none-any.whl", hash = "sha256:bd772e4aca73aff037958d44f2be5229ded4c09927fcf8690c577b66234d6ceb", size = 633032, upload-time = "2025-11-06T02:35:52.391Z" },
+]
+
+[[package]]
+name = "dspy"
+version = "3.0.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "asyncer" },
+    { name = "backoff" },
+    { name = "cachetools" },
+    { name = "cloudpickle" },
+    { name = "diskcache" },
+    { name = "gepa" },
+    { name = "joblib" },
+    { name = "json-repair" },
+    { name = "litellm" },
+    { name = "magicattr" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "openai" },
+    { name = "optuna" },
+    { name = "orjson" },
+    { name = "pillow" },
+    { name = "pydantic" },
+    { name = "regex" },
+    { name = "requests" },
+    { name = "rich" },
+    { name = "tenacity" },
+    { name = "tqdm" },
+    { name = "xxhash" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8e/18/0042d299cd5e85fdb381568f0cfcc7769122e8f70ea0a2d33e12fd63e705/dspy-3.0.4.tar.gz", hash = "sha256:cb4529df9a91353a16144d9d94ba6ff25f36fc5adfd921f127f4c49d0e309fb8", size = 236376, upload-time = "2025-11-10T17:43:37.619Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/94/52/56eed4828175f48f712a50a994293065afa7cc98cb112992a0b071179b6c/dspy-3.0.4-py3-none-any.whl", hash = "sha256:c0a88c7936f41f6f613ee6ca8cd92e63746ff2bd780e3896615ade7628eb6a6a", size = 285224, upload-time = "2025-11-10T17:43:36.263Z" },
 ]
 
 [[package]]
@@ -1522,6 +1590,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b8/47/f25fb84fa40142699dc54ca294628d600625eb3d90fead103a606b4e999a/genai_prices-0.0.47.tar.gz", hash = "sha256:3b8c514f0ce5818b3944a371861586ed9bfe10d02598e62c350b5bd2916d03c2", size = 54501, upload-time = "2025-11-25T18:38:17.695Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4e/84/d50c52d0eeadb9dbf7f2f86da9b6257e162b7c6a791f5b1009bae912c103/genai_prices-0.0.47-py3-none-any.whl", hash = "sha256:735e45950d2299276f2c00cd18075b77a124cd24ee58243f236ee29af3210594", size = 57000, upload-time = "2025-11-25T18:38:16.464Z" },
+]
+
+[[package]]
+name = "gepa"
+version = "0.0.17"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/61/f0/fe312ed4405ddc2ca97dc1ce8915c4dd707e413503e6832910ab088fceb6/gepa-0.0.17.tar.gz", hash = "sha256:641ed46f8127618341b66ee82a87fb46a21c5d2d427a5e0b91c850a7f7f64e7f", size = 99816, upload-time = "2025-09-25T22:13:45.476Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/88/dc/2bc81a01caa887ed58db3c725bebf1e98f37807a4d06c51ecaa85a7cabe0/gepa-0.0.17-py3-none-any.whl", hash = "sha256:0ea98f4179dbc8dd83bdf53494f302e663ee1da8300d086c4cc8ce4aefa4042c", size = 110464, upload-time = "2025-09-25T22:13:44.14Z" },
 ]
 
 [[package]]
@@ -2605,6 +2682,14 @@ wheels = [
 ]
 
 [[package]]
+name = "magicattr"
+version = "0.1.6"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2a/7e/76b7e0c391bee7e9273725c29c8fe41c4df62a215ce58aa8e3518baee0bb/magicattr-0.1.6-py2.py3-none-any.whl", hash = "sha256:d96b18ee45b5ee83b09c17e15d3459a64de62d538808c2f71182777dd9dbbbdf", size = 4664, upload-time = "2022-01-25T16:56:47.074Z" },
+]
+
+[[package]]
 name = "mako"
 version = "1.3.10"
 source = { registry = "https://pypi.org/simple" }
@@ -3662,6 +3747,25 @@ wheels = [
 ]
 
 [[package]]
+name = "optuna"
+version = "4.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "alembic" },
+    { name = "colorlog" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "packaging" },
+    { name = "pyyaml" },
+    { name = "sqlalchemy" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/6b/81/08f90f194eed78178064a9383432eca95611e2c5331e7b01e2418ce4b15a/optuna-4.6.0.tar.gz", hash = "sha256:89e38c2447c7f793a726617b8043f01e31f0bad54855040db17eb3b49404a369", size = 477444, upload-time = "2025-11-10T05:14:30.151Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/58/de/3d8455b08cb6312f8cc46aacdf16c71d4d881a1db4a4140fc5ef31108422/optuna-4.6.0-py3-none-any.whl", hash = "sha256:4c3a9facdef2b2dd7e3e2a8ae3697effa70fae4056fcf3425cfc6f5a40feb069", size = 404708, upload-time = "2025-11-10T05:14:28.6Z" },
+]
+
+[[package]]
 name = "ordered-set"
 version = "4.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4080,6 +4184,7 @@ dependencies = [
     { name = "celery" },
     { name = "chardet" },
     { name = "cryptography" },
+    { name = "dspy" },
     { name = "fastapi" },
     { name = "firebase-admin" },
     { name = "firecrawl-py" },
@@ -4171,6 +4276,7 @@ requires-dist = [
     { name = "celery", specifier = ">=5.5.3" },
     { name = "chardet", specifier = ">=5.2.0" },
     { name = "cryptography", specifier = ">=46.0.3" },
+    { name = "dspy", specifier = ">=3.0.4" },
     { name = "fastapi", specifier = ">=0.121.0" },
     { name = "firebase-admin", specifier = ">=7.1.0" },
     { name = "firecrawl-py", specifier = ">=4.6.0" },
