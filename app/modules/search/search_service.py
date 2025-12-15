@@ -10,9 +10,7 @@ from app.modules.search.search_models import SearchIndex
 
 class SearchService:
     def __init__(self, db: Session):
-        self.project_path = (
-            str(Path(os.getenv("PROJECT_PATH", "projects/")).absolute()),
-        )
+        self.project_path = str(Path(os.getenv("PROJECT_PATH", "projects/")).absolute())
         self.db = db
 
     async def commit_indices(self):
