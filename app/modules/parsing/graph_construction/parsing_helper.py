@@ -17,6 +17,7 @@ from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
 from app.modules.parsing.utils.repo_name_normalizer import normalize_repo_name
 from app.modules.parsing.utils.file_utils import FileUtils
+from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.utils.logger import setup_logger
@@ -829,6 +830,22 @@ class ParseHelper:
         # repo_details can be ParsingRequest in dev mode, which lacks these methods
         repo_metadata = ParseHelper.extract_repository_metadata(repo)
         repo_metadata["error_message"] = None
+        
+        # Include parse filters in properties, preserving existing filters if any
+        existing_project = self.db.query(Project).filter(Project.id == project_id).first()
+        if existing_project and existing_project.properties:
+            try:
+                existing_metadata = json.loads(existing_project.properties.decode("utf-8"))
+                existing_filters = existing_metadata.get("parse_filters", {})
+                if existing_filters:
+                    repo_metadata["parse_filters"] = existing_filters
+            except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+                pass
+        
+        # Override with new filters if provided
+        if hasattr(repo_details, 'filters') and repo_details.filters:
+            repo_metadata["parse_filters"] = repo_details.filters.model_dump()
+        
         project_metadata = json.dumps(repo_metadata).encode("utf-8")
         ProjectService.update_project(
             self.db,

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from asyncio import create_task
 from typing import Any, Dict
@@ -34,6 +35,30 @@ load_dotenv(override=True)
 
 
 class ParsingController:
+    @staticmethod
+    def get_filters_from_properties(properties: bytes) -> dict:
+        """Extract parse filters from properties BYTEA field."""
+        if not properties:
+            return {}
+        try:
+            metadata = json.loads(properties.decode("utf-8"))
+            return metadata.get("parse_filters", {})
+        except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+            return {}
+    
+    @staticmethod
+    def update_filters_in_properties(properties: bytes, new_filters: dict) -> bytes:
+        """Update parse filters in properties BYTEA field."""
+        if not properties:
+            metadata = {"parse_filters": new_filters}
+        else:
+            try:
+                metadata = json.loads(properties.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+                metadata = {}
+            metadata["parse_filters"] = new_filters
+        return json.dumps(metadata).encode("utf-8")
+    
     @staticmethod
     def normalize_filters(f):
         """Normalize filter dictionary by sorting all list values for consistent comparison."""
@@ -199,7 +224,7 @@ class ParsingController:
                 )
 
                 # Check if filters have changed
-                current_filters = project.parse_filters or {}
+                current_filters = ParsingController.get_filters_from_properties(project.properties)
                 new_filters = (
                     repo_details.filters.model_dump() if repo_details.filters else {}
                 )
@@ -237,10 +262,12 @@ class ParsingController:
                             f"[DEBUG] Updating filters for project {project_id}"
                         )
                         logger.info(
-                            f"[DEBUG]   Old parse_filters: {project.parse_filters}"
+                            f"[DEBUG]   Old parse_filters: {current_filters}"
                         )
                         logger.info(f"[DEBUG]   New parse_filters: {new_filters}")
-                        project.parse_filters = new_filters
+                        project.properties = ParsingController.update_filters_in_properties(
+                            project.properties, new_filters
+                        )
                         db.add(project)
                         db.commit()
                         db.refresh(project)
@@ -408,7 +435,7 @@ class ParsingController:
         if not project:
             return {"status": "NOT_FOUND", "last_parsed_at": None}
 
-        current_filters = project.parse_filters or {}
+        current_filters = ParsingController.get_filters_from_properties(project.properties)
         new_filters = repo_details.filters.model_dump() if repo_details.filters else {}
 
         filters_match = ParsingController.normalize_filters(
