@@ -613,7 +613,12 @@ class ParseHelper:
 
         try:
             for root, _, files in os.walk(repo_dir):
-                if any(part.startswith(".") for part in root.split(os.sep)):
+                root_parts = root.split(os.sep)
+                # Skip hidden directories (like .git, .venv) but NOT the current directory indicator (.)
+                if any(
+                    part.startswith(".") and part not in (".", "..")
+                    for part in root_parts
+                ):
                     continue
 
                 for file in files:

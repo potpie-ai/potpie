@@ -5,7 +5,6 @@ import traceback
 import fnmatch
 from asyncio import create_task
 from contextlib import contextmanager
-from typing import Optional
 
 # Apply encoding patch BEFORE importing blar_graph
 from app.modules.parsing.utils.encoding_patch import apply_encoding_patch
@@ -220,14 +219,28 @@ class ParsingService:
             # Filter directories in-place to prevent walking into them
             for d in list(dirs):
                 dir_path = os.path.join(root, d)
-                rel_path = os.path.join(rel_root, d)
+                rel_path = os.path.join(rel_root, d) if rel_root else d
 
                 # Check if directory should be excluded
+                should_remove = False
                 path_parts = rel_path.split(os.sep)
-                should_remove = any(
-                    excluded_dir in path_parts
-                    for excluded_dir in filters.excluded_directories
-                )
+
+                for excluded_dir in filters.excluded_directories:
+                    # Handle both simple names (e.g., "deployment") and paths (e.g., "app/modules")
+                    if os.sep in excluded_dir or "/" in excluded_dir:
+                        # Normalize to use os.sep
+                        normalized_excluded = excluded_dir.replace("/", os.sep)
+                        # It's a path - check if rel_path equals it or starts with it
+                        if rel_path == normalized_excluded or rel_path.startswith(
+                            normalized_excluded + os.sep
+                        ):
+                            should_remove = True
+                            break
+                    else:
+                        # It's a simple directory name - check if it's in any part of the path
+                        if excluded_dir in path_parts:
+                            should_remove = True
+                            break
 
                 if should_remove:
                     shutil.rmtree(dir_path)
@@ -237,17 +250,32 @@ class ParsingService:
             # Filter files
             for f in files:
                 file_path = os.path.join(root, f)
-                rel_path = os.path.join(rel_root, f)
+                rel_path = os.path.join(rel_root, f) if rel_root else f
 
                 should_remove = False
 
                 # Check directory exclusions for file's path
                 path_parts = rel_path.split(os.sep)
                 dir_parts = path_parts[:-1]
+                dir_path_str = os.sep.join(dir_parts) if dir_parts else ""
+
                 for excluded_dir in filters.excluded_directories:
-                    if excluded_dir in dir_parts:
-                        should_remove = True
-                        break
+                    # Handle both simple names (e.g., "deployment") and paths (e.g., "app/modules")
+                    if os.sep in excluded_dir or "/" in excluded_dir:
+                        # Normalize to use os.sep
+                        normalized_excluded = excluded_dir.replace("/", os.sep)
+                        # It's a path - check if file's directory equals or starts with it
+                        if (
+                            dir_path_str == normalized_excluded
+                            or dir_path_str.startswith(normalized_excluded + os.sep)
+                        ):
+                            should_remove = True
+                            break
+                    else:
+                        # It's a simple directory name - check if it's in any part of the path
+                        if excluded_dir in dir_parts:
+                            should_remove = True
+                            break
 
                 if not should_remove:
                     # Check extension exclusions
