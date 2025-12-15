@@ -191,7 +191,7 @@ def configure_logging(level: Optional[str] = None):
     if level is None:
         level = os.getenv("LOG_LEVEL", "INFO").upper()
 
-    env = os.getenv("ENV", "development")
+    env = os.getenv("ENV").lower().strip()
 
     _logger.remove()
 
@@ -207,10 +207,7 @@ def configure_logging(level: Optional[str] = None):
 
     _logger = _logger.patch(patcher)
 
-    if env == "production":
-        # Production: Flat JSON format for better machine readability
-        # This format is easier for log aggregation tools (ELK, Datadog, Splunk, etc.)
-        # Use serialize=True to get structured data, then format as flat JSON
+    if env != "development":
         _logger.add(
             production_log_sink,
             format="{message}",
