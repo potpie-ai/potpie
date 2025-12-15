@@ -1,0 +1,149 @@
+name: Bug Report
+description: Report a bug or unexpected behavior
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out the form below to help us understand and fix the issue.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component/Module
+      description: Which part of Potpie is affected?
+      options:
+        - Auth
+        - Code Provider (GitHub/GitBucket/Local)
+        - Conversations
+        - Intelligence (Agents/Tools/Prompts)
+        - Integrations (Jira/Linear/Confluence/Sentry/GitHub)
+        - Parsing
+        - Projects
+        - Search
+        - Media
+        - API
+        - UI
+        - Deployment/Docker
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      description: Where is this bug occurring?
+      options:
+        - Development (isDevelopmentMode=enabled)
+        - Production
+        - Both
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: How severe is this bug?
+      options:
+        - Critical (Service down/Data loss)
+        - High (Major feature broken)
+        - Medium (Feature partially broken)
+        - Low (Minor issue/Cosmetic)
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating System
+      description: Your operating system (e.g., macOS, Linux, Windows)
+      placeholder: "e.g., macOS 14.0, Ubuntu 22.04, Windows 11"
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment_info
+    attributes:
+      label: Environment Information
+      description: |
+        Please provide relevant environment details:
+        - Python version
+        - Docker version (if applicable)
+        - uv version
+        - Any relevant environment variables (sanitize sensitive data)
+      placeholder: |
+        Python: 3.11.5
+        Docker: 24.0.0
+        uv: 0.1.0
+        ENV: development
+        isDevelopmentMode: enabled
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened?
+      placeholder: A clear and concise description of what the bug is.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What should have happened?
+      placeholder: A clear and concise description of what you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened?
+      placeholder: A clear and concise description of what actually happened.
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Please provide numbered steps to reproduce the issue
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. Scroll down to '...'
+        4. See error
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs/Error Messages
+      description: |
+        Please paste any relevant error messages, stack traces, or logs.
+        Wrap code blocks with triple backticks (```).
+      placeholder: |
+        ```
+        Paste error messages or logs here
+        ```
+    validations:
+      required: false
+      render: shell
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context, screenshots, or information about the problem
+      placeholder: Add any other context about the problem here.
+    validations:
+      required: false
+

@@ -1,0 +1,79 @@
+name: Documentation Issue
+description: Report a documentation problem or request an improvement
+title: "[Docs]: "
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve our documentation! Please fill out the form below.
+
+  - type: dropdown
+    id: doc_type
+    attributes:
+      label: Documentation Type
+      description: What type of documentation is affected?
+      options:
+        - README
+        - API Documentation
+        - Setup/Installation Guide
+        - Contributing Guide
+        - Code Comments/Inline Docs
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: issue_type
+    attributes:
+      label: Issue Type
+      description: What's wrong with the documentation?
+      options:
+        - Missing Information
+        - Incorrect Information
+        - Unclear/Confusing
+        - Outdated
+        - Typo/Grammar
+    validations:
+      required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: Location
+      description: File path, URL, or section where the issue is located
+      placeholder: "e.g., README.md, docs/getting-started.md, app/modules/auth/auth_service.py"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What's wrong or missing in the documentation?
+      placeholder: |
+        Clearly describe what's wrong or missing.
+        If it's incorrect information, explain what's wrong and what it should say.
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggested_fix
+    attributes:
+      label: Suggested Fix
+      description: How should this be fixed? (Optional but helpful!)
+      placeholder: |
+        If you have a suggestion for how to fix this, please describe it here.
+        You can also provide the corrected text.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context or information
+      placeholder: Add any other context about the documentation issue here.
+    validations:
+      required: false
+
