@@ -323,8 +323,8 @@ class PydanticRagAgent(ChatAgent):
                     # Test if base64 is valid
                     base64.b64decode(base64_data)
                 except Exception as e:
-                    logger.error(
-                        f"Invalid base64 format for image {attachment_id}: {str(e)}"
+                    logger.exception(
+                        f"Invalid base64 format for image {attachment_id}: {e}"
                     )
                     continue
 
@@ -356,9 +356,8 @@ class PydanticRagAgent(ChatAgent):
                 )
 
             except Exception as e:
-                logger.error(
-                    f"Failed to add image {attachment_id} to content: {str(e)}",
-                    exc_info=True,
+                logger.exception(
+                    f"Failed to add image {attachment_id} to content: {e}"
                 )
                 continue
 
@@ -389,8 +388,8 @@ class PydanticRagAgent(ChatAgent):
 
                         base64.b64decode(base64_data)
                     except Exception as e:
-                        logger.error(
-                            f"Invalid base64 format for context image {attachment_id}: {str(e)}"
+                        logger.exception(
+                            f"Invalid base64 format for context image {attachment_id}: {e}"
                         )
                         continue
 
@@ -415,9 +414,8 @@ class PydanticRagAgent(ChatAgent):
                         f"Successfully added context image {attachment_id} to multimodal content"
                     )
                 except Exception as e:
-                    logger.error(
-                        f"Failed to add context image {attachment_id} to content: {str(e)}",
-                        exc_info=True,
+                    logger.exception(
+                        f"Failed to add context image {attachment_id} to content: {e}"
                     )
                     continue
 
