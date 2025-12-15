@@ -76,4 +76,3 @@ body:
       placeholder: Add any other context about the documentation issue here.
     validations:
       required: false
-
