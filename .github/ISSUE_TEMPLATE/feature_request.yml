@@ -96,4 +96,3 @@ body:
       placeholder: Add any other context, screenshots, or mockups about the feature request here.
     validations:
       required: false
-

@@ -53,7 +53,7 @@ body:
       label: Environment
       description: Your setup details (optional but helpful)
       placeholder: |
-        Python version: 
+        Python version:
         Docker version:
         Operating System:
         Environment variables (sanitize sensitive data):
@@ -69,4 +69,3 @@ body:
       placeholder: Add any other context about your question here.
     validations:
       required: false
-
