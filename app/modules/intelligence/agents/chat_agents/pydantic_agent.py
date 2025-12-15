@@ -474,7 +474,9 @@ class PydanticRagAgent(ChatAgent):
                     resp = await agent.run(
                         user_prompt=ctx.query,
                         message_history=message_history,
-                        usage_limits=UsageLimits(request_limit=self.max_iter),
+                        usage_limits=UsageLimits(
+                            request_limit=self.max_iter, tool_calls_limit=self.max_iter
+                        ),
                     )
             except (TimeoutError, anyio.WouldBlock, Exception) as mcp_error:
                 logger.warning(f"MCP server initialization failed: {mcp_error}")
@@ -484,7 +486,9 @@ class PydanticRagAgent(ChatAgent):
                 resp = await agent.run(
                     user_prompt=ctx.query,
                     message_history=message_history,
-                    usage_limits=UsageLimits(request_limit=self.max_iter),
+                    usage_limits=UsageLimits(
+                        request_limit=self.max_iter, tool_calls_limit=self.max_iter
+                    ),
                 )
 
             return ChatAgentResponse(
@@ -493,10 +497,10 @@ class PydanticRagAgent(ChatAgent):
                 citations=[],
             )
 
-        except Exception as e:
-            logger.error(f"Error in standard run method: {str(e)}", exc_info=True)
+        except Exception:
+            logger.exception("Error in standard run method")
             return ChatAgentResponse(
-                response=f"An error occurred while processing your request: {str(e)}",
+                response="An error occurred while processing your request. Please try again later.",
                 tool_calls=[],
                 citations=[],
             )
@@ -519,7 +523,9 @@ class PydanticRagAgent(ChatAgent):
             resp = await agent.run(
                 user_prompt=multimodal_content,
                 message_history=message_history,
-                usage_limits=UsageLimits(request_limit=self.max_iter),
+                usage_limits=UsageLimits(
+                    request_limit=self.max_iter, tool_calls_limit=self.max_iter
+                ),
             )
 
             return ChatAgentResponse(
@@ -578,7 +584,9 @@ class PydanticRagAgent(ChatAgent):
             async with agent.iter(
                 user_prompt=multimodal_content,
                 message_history=message_history,
-                usage_limits=UsageLimits(request_limit=self.max_iter),
+                usage_limits=UsageLimits(
+                    request_limit=self.max_iter, tool_calls_limit=self.max_iter
+                ),
             ) as run:
                 async for node in run:
                     if Agent.is_model_request_node(node):
@@ -677,7 +685,9 @@ class PydanticRagAgent(ChatAgent):
                             ModelResponse([TextPart(content=msg)])
                             for msg in ctx.history
                         ],
-                        usage_limits=UsageLimits(request_limit=self.max_iter),
+                        usage_limits=UsageLimits(
+                            request_limit=self.max_iter, tool_calls_limit=self.max_iter
+                        ),
                     ) as run:
                         async for node in run:
                             if Agent.is_model_request_node(node):
@@ -723,9 +733,7 @@ class PydanticRagAgent(ChatAgent):
                                     )
                                     continue
                                 except Exception as e:
-                                    logger.error(
-                                        f"Unexpected error in model request stream: {e}"
-                                    )
+                                    logger.exception("Unexpected error in model request stream")
                                     yield ChatAgentResponse(
                                         response="\n\n*An unexpected error occurred. Continuing...*\n\n",
                                         tool_calls=[],
@@ -831,6 +839,9 @@ class PydanticRagAgent(ChatAgent):
                             ModelResponse([TextPart(content=msg)])
                             for msg in ctx.history
                         ],
+                        usage_limits=UsageLimits(
+                            request_limit=self.max_iter, tool_calls_limit=self.max_iter
+                        ),
                     ) as run:
                         async for node in run:
                             if Agent.is_model_request_node(node):
@@ -971,35 +982,30 @@ class PydanticRagAgent(ChatAgent):
                             elif Agent.is_end_node(node):
                                 logger.info("result streamed successfully!!")
 
-                except (ModelRetry, AgentRunError, UserError) as pydantic_error:
-                    logger.error(
-                        f"Pydantic-ai error in fallback agent iteration: {pydantic_error}"
-                    )
+                except (ModelRetry, AgentRunError, UserError):
+                    logger.exception("Pydantic-ai error in fallback agent iteration")
                     yield ChatAgentResponse(
-                        response=f"\n\n*The agent encountered an error while processing your request: {str(pydantic_error)}*\n\n",
+                        response="\n\n*The agent encountered an error while processing your request. Please try again.* \n\n",
                         tool_calls=[],
                         citations=[],
                     )
-                except Exception as e:
-                    logger.error(f"Unexpected error in fallback agent iteration: {e}")
+                except Exception:
+                    logger.exception("Unexpected error in fallback agent iteration")
                     yield ChatAgentResponse(
-                        response=f"\n\n*An unexpected error occurred: {str(e)}*\n\n",
+                        response="\n\n*An unexpected error occurred. Please try again.* \n\n",
                         tool_calls=[],
                         citations=[],
                     )
 
-        except (ModelRetry, AgentRunError, UserError) as pydantic_error:
-            logger.error(
-                f"Pydantic-ai error in run_stream method: {str(pydantic_error)}",
-                exc_info=True,
-            )
+        except (ModelRetry, AgentRunError, UserError):
+            logger.exception("Pydantic-ai error in run_stream method")
             yield ChatAgentResponse(
-                response=f"\n\n*The agent encountered an error: {str(pydantic_error)}*\n\n",
+                response="\n\n*The agent encountered an error. Please try again.*\n\n",
                 tool_calls=[],
                 citations=[],
             )
-        except Exception as e:
-            logger.error(f"Error in run_stream method: {str(e)}", exc_info=True)
+        except Exception:
+            logger.exception("Error in run_stream method")
             yield ChatAgentResponse(
                 response="\n\n*An error occurred during streaming*\n\n",
                 tool_calls=[],
