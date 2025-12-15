@@ -1,0 +1,9 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Discord Community
+    url: https://discord.gg/ryk5CMD5v6
+    about: Join our Discord community for discussions and support
+  - name: 📚 Documentation
+    url: https://docs.potpie.ai
+    about: Check out our documentation for guides and API reference
+
