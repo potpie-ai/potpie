@@ -4,6 +4,10 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
+
+[project.scripts]
+potpie = "app.cli:app"
+
 dependencies = [
     "agentops>=0.4.21",
     "aiofiles>=25.1.0",

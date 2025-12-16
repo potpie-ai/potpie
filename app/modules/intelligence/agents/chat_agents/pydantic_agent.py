@@ -41,6 +41,7 @@ from pydantic_ai.messages import (
     ModelMessage,
 )
 from pydantic_ai.exceptions import ModelRetry, AgentRunError, UserError
+from pydantic_ai.usage import UsageLimits
 from langchain_core.tools import StructuredTool
 
 logger = setup_logger(__name__)
@@ -51,9 +52,8 @@ def handle_exception(tool_func):
     def wrapper(*args, **kwargs):
         try:
             return tool_func(*args, **kwargs)
-        except Exception:
-            # Use Loguru's native exception() with context kwargs
-            logger.exception("Exception in tool function", tool_name=tool_func.__name__)
+        except Exception as e:
+            logger.error(f"Exception in tool function: {e}")
             return "An internal error occurred. Please try again later."
 
     return wrapper
@@ -322,10 +322,9 @@ class PydanticRagAgent(ChatAgent):
 
                     # Test if base64 is valid
                     base64.b64decode(base64_data)
-                except Exception:
+                except Exception as e:
                     logger.exception(
-                        f"Invalid base64 format for image {attachment_id}",
-                        attachment_id=attachment_id,
+                        f"Invalid base64 format for image {attachment_id}: {e}"
                     )
                     continue
 
@@ -356,10 +355,9 @@ class PydanticRagAgent(ChatAgent):
                     f"Successfully added image {attachment_id} to multimodal content"
                 )
 
-            except Exception:
+            except Exception as e:
                 logger.exception(
-                    f"Failed to add image {attachment_id} to content",
-                    attachment_id=attachment_id,
+                    f"Failed to add image {attachment_id} to content: {e}"
                 )
                 continue
 
@@ -389,10 +387,9 @@ class PydanticRagAgent(ChatAgent):
                         import base64
 
                         base64.b64decode(base64_data)
-                    except Exception:
+                    except Exception as e:
                         logger.exception(
-                            f"Invalid base64 format for context image {attachment_id}",
-                            attachment_id=attachment_id,
+                            f"Invalid base64 format for context image {attachment_id}: {e}"
                         )
                         continue
 
@@ -416,10 +413,9 @@ class PydanticRagAgent(ChatAgent):
                     logger.info(
                         f"Successfully added context image {attachment_id} to multimodal content"
                     )
-                except Exception:
+                except Exception as e:
                     logger.exception(
-                        f"Failed to add context image {attachment_id} to content",
-                        attachment_id=attachment_id,
+                        f"Failed to add context image {attachment_id} to content: {e}"
                     )
                     continue
 
@@ -476,6 +472,9 @@ class PydanticRagAgent(ChatAgent):
                     resp = await agent.run(
                         user_prompt=ctx.query,
                         message_history=message_history,
+                        usage_limits=UsageLimits(
+                            request_limit=self.max_iter, tool_calls_limit=self.max_iter
+                        ),
                     )
             except (TimeoutError, anyio.WouldBlock, Exception) as mcp_error:
                 logger.warning(f"MCP server initialization failed: {mcp_error}")
@@ -485,6 +484,9 @@ class PydanticRagAgent(ChatAgent):
                 resp = await agent.run(
                     user_prompt=ctx.query,
                     message_history=message_history,
+                    usage_limits=UsageLimits(
+                        request_limit=self.max_iter, tool_calls_limit=self.max_iter
+                    ),
                 )
 
             return ChatAgentResponse(
@@ -493,10 +495,10 @@ class PydanticRagAgent(ChatAgent):
                 citations=[],
             )
 
-        except Exception as e:
+        except Exception:
             logger.exception("Error in standard run method")
             return ChatAgentResponse(
-                response=f"An error occurred while processing your request: {str(e)}",
+                response="An error occurred while processing your request. Please try again later.",
                 tool_calls=[],
                 citations=[],
             )
@@ -519,6 +521,9 @@ class PydanticRagAgent(ChatAgent):
             resp = await agent.run(
                 user_prompt=multimodal_content,
                 message_history=message_history,
+                usage_limits=UsageLimits(
+                    request_limit=self.max_iter, tool_calls_limit=self.max_iter
+                ),
             )
 
             return ChatAgentResponse(
@@ -527,8 +532,8 @@ class PydanticRagAgent(ChatAgent):
                 citations=[],
             )
 
-        except Exception:
-            logger.exception("Error in multimodal run method")
+        except Exception as e:
+            logger.error(f"Error in multimodal run method: {str(e)}", exc_info=True)
             # Fallback to standard execution
             logger.info("Falling back to standard text-only execution")
             return await self._run_standard(ctx)
@@ -577,6 +582,9 @@ class PydanticRagAgent(ChatAgent):
             async with agent.iter(
                 user_prompt=multimodal_content,
                 message_history=message_history,
+                usage_limits=UsageLimits(
+                    request_limit=self.max_iter, tool_calls_limit=self.max_iter
+                ),
             ) as run:
                 async for node in run:
                     if Agent.is_model_request_node(node):
@@ -652,8 +660,8 @@ class PydanticRagAgent(ChatAgent):
                     elif Agent.is_end_node(node):
                         logger.info("multimodal result streamed successfully!!")
 
-        except Exception:
-            logger.exception("Error in multimodal stream")
+        except Exception as e:
+            logger.error(f"Error in multimodal stream: {str(e)}", exc_info=True)
             # Fallback to standard streaming
             async for chunk in self._run_standard_stream(ctx):
                 yield chunk
@@ -675,6 +683,9 @@ class PydanticRagAgent(ChatAgent):
                             ModelResponse([TextPart(content=msg)])
                             for msg in ctx.history
                         ],
+                        usage_limits=UsageLimits(
+                            request_limit=self.max_iter, tool_calls_limit=self.max_iter
+                        ),
                     ) as run:
                         async for node in run:
                             if Agent.is_model_request_node(node):
@@ -719,10 +730,8 @@ class PydanticRagAgent(ChatAgent):
                                         "Model request stream would block - continuing..."
                                     )
                                     continue
-                                except Exception:
-                                    logger.exception(
-                                        "Unexpected error in model request stream"
-                                    )
+                                except Exception as e:
+                                    logger.exception("Unexpected error in model request stream")
                                     yield ChatAgentResponse(
                                         response="\n\n*An unexpected error occurred. Continuing...*\n\n",
                                         tool_calls=[],
@@ -802,9 +811,9 @@ class PydanticRagAgent(ChatAgent):
                                         "Tool call stream would block - continuing..."
                                     )
                                     continue
-                                except Exception:
-                                    logger.exception(
-                                        "Unexpected error in tool call stream"
+                                except Exception as e:
+                                    logger.error(
+                                        f"Unexpected error in tool call stream: {e}"
                                     )
                                     yield ChatAgentResponse(
                                         response="\n\n*An unexpected error occurred during tool execution. Continuing...*\n\n",
@@ -828,6 +837,9 @@ class PydanticRagAgent(ChatAgent):
                             ModelResponse([TextPart(content=msg)])
                             for msg in ctx.history
                         ],
+                        usage_limits=UsageLimits(
+                            request_limit=self.max_iter, tool_calls_limit=self.max_iter
+                        ),
                     ) as run:
                         async for node in run:
                             if Agent.is_model_request_node(node):
@@ -871,9 +883,9 @@ class PydanticRagAgent(ChatAgent):
                                         "Model request stream would block - continuing..."
                                     )
                                     continue
-                                except Exception:
-                                    logger.exception(
-                                        "Unexpected error in fallback model request stream"
+                                except Exception as e:
+                                    logger.error(
+                                        f"Unexpected error in fallback model request stream: {e}"
                                     )
                                     yield ChatAgentResponse(
                                         response="\n\n*An unexpected error occurred. Continuing...*\n\n",
@@ -954,9 +966,9 @@ class PydanticRagAgent(ChatAgent):
                                         "Tool call stream would block - continuing..."
                                     )
                                     continue
-                                except Exception:
-                                    logger.exception(
-                                        "Unexpected error in fallback tool call stream"
+                                except Exception as e:
+                                    logger.error(
+                                        f"Unexpected error in fallback tool call stream: {e}"
                                     )
                                     yield ChatAgentResponse(
                                         response="\n\n*An unexpected error occurred during tool execution. Continuing...*\n\n",
@@ -968,27 +980,25 @@ class PydanticRagAgent(ChatAgent):
                             elif Agent.is_end_node(node):
                                 logger.info("result streamed successfully!!")
 
-                except (ModelRetry, AgentRunError, UserError) as pydantic_error:
-                    logger.error(
-                        f"Pydantic-ai error in fallback agent iteration: {pydantic_error}"
-                    )
+                except (ModelRetry, AgentRunError, UserError):
+                    logger.exception("Pydantic-ai error in fallback agent iteration")
                     yield ChatAgentResponse(
-                        response=f"\n\n*The agent encountered an error while processing your request: {str(pydantic_error)}*\n\n",
+                        response="\n\n*The agent encountered an error while processing your request. Please try again.* \n\n",
                         tool_calls=[],
                         citations=[],
                     )
-                except Exception as e:
+                except Exception:
                     logger.exception("Unexpected error in fallback agent iteration")
                     yield ChatAgentResponse(
-                        response=f"\n\n*An unexpected error occurred: {str(e)}*\n\n",
+                        response="\n\n*An unexpected error occurred. Please try again.* \n\n",
                         tool_calls=[],
                         citations=[],
                     )
 
-        except (ModelRetry, AgentRunError, UserError) as pydantic_error:
+        except (ModelRetry, AgentRunError, UserError):
             logger.exception("Pydantic-ai error in run_stream method")
             yield ChatAgentResponse(
-                response=f"\n\n*The agent encountered an error: {str(pydantic_error)}*\n\n",
+                response="\n\n*The agent encountered an error. Please try again.*\n\n",
                 tool_calls=[],
                 citations=[],
             )
