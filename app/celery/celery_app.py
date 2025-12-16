@@ -90,6 +90,9 @@ def configure_celery(queue_prefix: str):
             "app.celery.tasks.agent_tasks.execute_regenerate_background": {
                 "queue": f"{queue_prefix}_agent_tasks"  # Same queue as other agent tasks
             },
+            "app.celery.tasks.agent_execution_task.execute_agent_direct": {
+                "queue": f"{queue_prefix}_agent_tasks"  # Direct agent execution queue
+            },
             # Event bus task routes - both go to the same queue
             "app.modules.event_bus.tasks.event_tasks.process_webhook_event": {
                 "queue": "external-event"
@@ -140,4 +143,5 @@ from celery.contrib.abortable import AbortableTask  # noqa
 # Import tasks to ensure they are registered
 import app.celery.tasks.parsing_tasks  # noqa # Ensure the task module is imported
 import app.celery.tasks.agent_tasks  # noqa # Ensure the agent task module is imported
+import app.celery.tasks.agent_execution_task  # noqa # Ensure agent execution task is registered
 import app.modules.event_bus.tasks.event_tasks  # noqa # Ensure event bus tasks are registered

@@ -10,17 +10,18 @@ from sqlalchemy.orm import Session
 from app.modules.intelligence.agents.chat_agent import ChatAgentResponse, ChatContext
 from app.modules.intelligence.agents.custom_agents.custom_agent_model import (
     CustomAgent as CustomAgentModel,
+)
+from app.modules.intelligence.agents.custom_agents.custom_agent_model import (
     CustomAgentShare as CustomAgentShareModel,
 )
 from app.modules.intelligence.agents.custom_agents.custom_agent_schema import (
     Agent,
     AgentCreate,
     AgentUpdate,
+    AgentVisibility,
     Task,
     TaskCreate,
-    AgentVisibility,
 )
-
 from app.modules.intelligence.agents.custom_agents.runtime_agent import (
     RuntimeCustomAgent,
 )
@@ -825,6 +826,7 @@ class CustomAgentService:
         """Fetches the list of available tool IDs."""
         try:
             tools = ToolService(self.db, user_id).list_tools()
+            print([tool.id for tool in tools])
             return [tool.id for tool in tools]
         except Exception:
             logger.exception("Error fetching available tools", user_id=user_id)
