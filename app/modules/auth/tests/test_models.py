@@ -127,21 +127,36 @@ class TestUserAuthProvider:
         assert provider is None
 
     def test_oauth_tokens(self, db_session, test_user):
-        """Test storing OAuth tokens"""
+        """Test storing OAuth tokens (encrypted)"""
+        from app.modules.integrations.token_encryption import encrypt_token, decrypt_token
+
+        # Tokens should be encrypted when stored
+        plain_access_token = "access-token-123"
+        plain_refresh_token = "refresh-token-456"
+        encrypted_access_token = encrypt_token(plain_access_token)
+        encrypted_refresh_token = encrypt_token(plain_refresh_token)
+
         provider = UserAuthProvider(
             user_id=test_user.uid,
             provider_type="sso_google",
             provider_uid="google-123",
-            access_token="access-token-123",
-            refresh_token="refresh-token-456",
-            token_expires_at=datetime.utcnow() + timedelta(hours=1),
-            linked_at=datetime.utcnow(),
+            access_token=encrypted_access_token,
+            refresh_token=encrypted_refresh_token,
+            token_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            linked_at=datetime.now(timezone.utc),
         )
         db_session.add(provider)
         db_session.commit()
 
-        assert provider.access_token == "access-token-123"
-        assert provider.refresh_token == "refresh-token-456"
+        # Tokens should be encrypted in database
+        assert provider.access_token == encrypted_access_token
+        assert provider.refresh_token == encrypted_refresh_token
+        assert provider.access_token != plain_access_token  # Should be encrypted
+        assert provider.refresh_token != plain_refresh_token  # Should be encrypted
+
+        # Tokens should decrypt correctly
+        assert decrypt_token(provider.access_token) == plain_access_token
+        assert decrypt_token(provider.refresh_token) == plain_refresh_token
         assert provider.token_expires_at is not None
 
 

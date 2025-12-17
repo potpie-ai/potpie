@@ -12,6 +12,8 @@ from typing import Optional, Dict, Any, List, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 
+from app.modules.integrations.token_encryption import encrypt_token, decrypt_token
+
 # Constants
 LINKING_TOKEN_LENGTH = 32  # Length of URL-safe token for provider linking
 LINKING_TOKEN_EXPIRY_MINUTES = 15  # Expiration time for pending provider links
@@ -117,6 +119,56 @@ class UnifiedAuthService:
             .first()
         )
 
+    def get_decrypted_access_token(
+        self, user_id: str, provider_type: str
+    ) -> Optional[str]:
+        """
+        Get decrypted access token for a user's provider.
+        
+        Returns None if provider not found or token not available.
+        Handles both encrypted and plaintext tokens (backward compatibility).
+        """
+        provider = self.get_provider(user_id, provider_type)
+        if not provider or not provider.access_token:
+            return None
+        
+        try:
+            # Try to decrypt (token is encrypted)
+            return decrypt_token(provider.access_token)
+        except Exception:
+            # Token might be plaintext (from before encryption was added)
+            # Return as-is for backward compatibility
+            logger.warning(
+                f"Failed to decrypt token for user {user_id}, provider {provider_type}. "
+                "Assuming plaintext token (backward compatibility)."
+            )
+            return provider.access_token
+
+    def get_decrypted_refresh_token(
+        self, user_id: str, provider_type: str
+    ) -> Optional[str]:
+        """
+        Get decrypted refresh token for a user's provider.
+        
+        Returns None if provider not found or token not available.
+        Handles both encrypted and plaintext tokens (backward compatibility).
+        """
+        provider = self.get_provider(user_id, provider_type)
+        if not provider or not provider.refresh_token:
+            return None
+        
+        try:
+            # Try to decrypt (token is encrypted)
+            return decrypt_token(provider.refresh_token)
+        except Exception:
+            # Token might be plaintext (from before encryption was added)
+            # Return as-is for backward compatibility
+            logger.warning(
+                f"Failed to decrypt refresh token for user {user_id}, provider {provider_type}. "
+                "Assuming plaintext token (backward compatibility)."
+            )
+            return provider.refresh_token
+
     def add_provider(
         self,
         user_id: str,
@@ -141,14 +193,26 @@ class UnifiedAuthService:
         existing_providers = self.get_user_providers(user_id)
         is_first = len(existing_providers) == 0
 
+        # Encrypt tokens before storing
+        encrypted_access_token = (
+            encrypt_token(provider_create.access_token)
+            if provider_create.access_token
+            else None
+        )
+        encrypted_refresh_token = (
+            encrypt_token(provider_create.refresh_token)
+            if provider_create.refresh_token
+            else None
+        )
+
         # Create new provider
         new_provider = UserAuthProvider(
             user_id=user_id,
             provider_type=provider_create.provider_type,
             provider_uid=provider_create.provider_uid,
             provider_data=provider_create.provider_data,
-            access_token=provider_create.access_token,
-            refresh_token=provider_create.refresh_token,
+            access_token=encrypted_access_token,
+            refresh_token=encrypted_refresh_token,
             token_expires_at=provider_create.token_expires_at,
             is_primary=is_first or provider_create.is_primary,
             linked_at=utc_now(),
@@ -566,13 +630,18 @@ class UnifiedAuthService:
         self.db.add(new_user)
         self.db.flush()  # Get the user ID
 
+        # Encrypt token before storing
+        encrypted_access_token = (
+            encrypt_token(access_token) if access_token else None
+        )
+
         # Create provider
         provider = UserAuthProvider(
             user_id=new_user.uid,
             provider_type=provider_type,
             provider_uid=provider_uid,
             provider_data=provider_data,
-            access_token=access_token,
+            access_token=encrypted_access_token,
             is_primary=True,  # First provider is always primary
             linked_at=utc_now(),
             last_used_at=utc_now(),
