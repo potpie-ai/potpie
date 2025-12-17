@@ -1,0 +1,98 @@
+name: Feature Request
+description: Suggest a new feature or enhancement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! Please fill out the form below to help us understand your request.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component/Module
+      description: Which part of Potpie would this feature affect?
+      options:
+        - Auth
+        - Code Provider (GitHub/GitBucket/Local)
+        - Conversations
+        - Intelligence (Agents/Tools/Prompts)
+        - Integrations (Jira/Linear/Confluence/Sentry/GitHub)
+        - Parsing
+        - Projects
+        - Search
+        - Media
+        - API
+        - UI
+        - Deployment/Docker
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: feature_type
+    attributes:
+      label: Feature Type
+      description: What type of feature is this?
+      options:
+        - New Agent
+        - New Tool
+        - New Integration
+        - Enhancement to Existing Feature
+        - API Enhancement
+        - UI/UX Improvement
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem does this feature solve?
+      placeholder: |
+        Describe the problem you're trying to solve. For example:
+        "I'm always frustrated when..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: How should this feature work?
+      placeholder: |
+        Describe your proposed solution in detail. How would this feature work?
+    validations:
+      required: true
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use Case
+      description: Describe a specific use case for this feature
+      placeholder: |
+        Provide a concrete example of how you would use this feature.
+        For example: "When I want to do X, I would use this feature to..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Have you considered any alternative solutions?
+      placeholder: |
+        Describe any alternative solutions or features you've considered.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context, mockups, or information about the feature request
+      placeholder: Add any other context, screenshots, or mockups about the feature request here.
+    validations:
+      required: false

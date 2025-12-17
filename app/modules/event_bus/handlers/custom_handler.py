@@ -4,12 +4,12 @@ Custom Event Handler
 Handler for processing custom events.
 """
 
-import logging
 from typing import Any, Dict
 
 from sqlalchemy.orm import Session
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class CustomEventHandler:

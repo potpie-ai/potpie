@@ -44,7 +44,6 @@ class AuthService:
         except Exception as e:
             return None, {"error": f"An unexpected error occurred: {str(e)}"}
 
-    @classmethod
     @staticmethod
     async def check_auth(
         request: Request,
