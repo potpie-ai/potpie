@@ -203,16 +203,44 @@ class ConversationService:
         hidden: bool = False,
     ) -> tuple[str, str]:
         try:
-            if not await self.agent_service.validate_agent_id(
-                user_id, conversation.agent_ids[0]
-            ):
-                raise ConversationServiceError(
-                    f"Invalid agent_id: {conversation.agent_ids[0]}"
+            logger.info(
+                f"🔍 [create_conversation] Received request - "
+                f"project_ids={conversation.project_ids} (type={type(conversation.project_ids)}, len={len(conversation.project_ids) if conversation.project_ids else 'None'}), "
+                f"agent_ids={conversation.agent_ids} (type={type(conversation.agent_ids)}, len={len(conversation.agent_ids) if conversation.agent_ids else 'None'})"
+            )
+            # Validate agent_id only if agent_ids is not empty
+            # Workflow conversations may have empty agent_ids
+            if conversation.agent_ids and len(conversation.agent_ids) > 0:
+                if not await self.agent_service.validate_agent_id(
+                    user_id, conversation.agent_ids[0]
+                ):
+                    raise ConversationServiceError(
+                        f"Invalid agent_id: {conversation.agent_ids[0]}"
+                    )
+            else:
+                logger.info(
+                    f"Creating conversation without agent_id (workflow conversation) for user {user_id}"
                 )
 
-            project_name = await self.project_service.get_project_name(
-                conversation.project_ids
+            # For workflow conversations, project_ids may be empty
+            # Use a default project name in that case
+            # Check if project_ids is empty or contains only empty/None values
+            project_ids_list = conversation.project_ids if conversation.project_ids else []
+            has_valid_project_ids = (
+                len(project_ids_list) > 0 
+                and any(pid and str(pid).strip() for pid in project_ids_list)
             )
+            
+            if has_valid_project_ids:
+                logger.info(f"Calling get_project_name with project_ids: {project_ids_list}")
+                project_name = await self.project_service.get_project_name(
+                    project_ids_list
+                )
+            else:
+                logger.info(
+                    f"Using 'Workflow' as project_name (empty or invalid project_ids: {project_ids_list})"
+                )
+                project_name = "Workflow"  # Default for workflow conversations
 
             title = (
                 conversation.title.strip().replace("Untitled", project_name)
@@ -224,11 +252,18 @@ class ConversationService:
                 conversation, title, user_id, hidden
             )
 
-            asyncio.create_task(
-                CodeProviderService(self.db).get_project_structure_async(
-                    conversation.project_ids[0]
+            # Only fetch project structure if project_ids is not empty
+            # Workflow conversations may have empty project_ids
+            if conversation.project_ids and len(conversation.project_ids) > 0:
+                asyncio.create_task(
+                    CodeProviderService(self.db).get_project_structure_async(
+                        conversation.project_ids[0]
+                    )
                 )
-            )
+            else:
+                logger.info(
+                    f"Skipping project structure fetch for workflow conversation {conversation_id}"
+                )
 
             await self._add_system_message(conversation_id, project_name, user_id)
 
@@ -264,15 +299,21 @@ class ConversationService:
         )
         await self.conversation_store.create(new_conversation)
 
+        project_id_str = conversation.project_ids[0] if conversation.project_ids and len(conversation.project_ids) > 0 else "None"
+        agent_id_str = conversation.agent_ids[0] if conversation.agent_ids and len(conversation.agent_ids) > 0 else "None (workflow conversation)"
         logger.info(
-            f"Project id : {conversation.project_ids[0]} Created new conversation with ID: {conversation_id}, title: {title}, user_id: {user_id}, agent_id: {conversation.agent_ids[0]}, hidden: {hidden}"
+            f"Project id : {project_id_str} Created new conversation with ID: {conversation_id}, title: {title}, user_id: {user_id}, agent_id: {agent_id_str}, hidden: {hidden}"
         )
         return conversation_id
 
     async def _add_system_message(
         self, conversation_id: str, project_name: str, user_id: str
     ):
-        content = f"You can now ask questions about the {project_name} repository."
+        # For workflow conversations, use a different message
+        if project_name == "Workflow":
+            content = "This is a workflow conversation for Human-in-the-Loop (HITL) interactions."
+        else:
+            content = f"You can now ask questions about the {project_name} repository."
         try:
             self.history_manager.add_message_chunk(
                 conversation_id, content, MessageType.SYSTEM_GENERATED, user_id
@@ -341,6 +382,32 @@ class ConversationService:
                         f"Conversation with id {conversation_id} not found"
                     )
 
+                # Check if this is a workflow conversation (empty project_ids)
+                # Workflow conversations can have agents (for agent nodes) or be HITL-only
+                # If it has agents, we should generate AI responses for agent queries
+                # If it's HITL-only (no agents), skip AI generation
+                has_project = conversation.project_ids and len(conversation.project_ids) > 0
+                has_agent = conversation.agent_ids and len(conversation.agent_ids) > 0
+                
+                if not has_project and not has_agent:
+                    # This is a HITL-only workflow conversation - just store the message, don't generate AI response
+                    logger.info(
+                        f"HITL-only workflow conversation detected (no project_ids, no agent_ids). "
+                        f"Storing message without AI generation for conversation {conversation_id}"
+                    )
+                    # Message is already stored above, just return empty response
+                    yield ChatMessageResponse(
+                        message="", citations=[], tool_calls=[]
+                    )
+                    return
+                elif not has_project and has_agent:
+                    # This is a workflow conversation with an agent - allow AI generation for agent queries
+                    logger.info(
+                        f"Workflow conversation with agent detected (no project_ids, but has agent_ids). "
+                        f"Allowing AI generation for agent queries in conversation {conversation_id}"
+                    )
+                    # Continue with normal AI generation flow below
+
                 # Check if this is the first human message
                 if conversation.human_message_count == 1:
                     new_title = await self._generate_title(
@@ -353,7 +420,7 @@ class ConversationService:
                 )
                 if not project_id:
                     raise ConversationServiceError(
-                        "No project associated with this conversation"
+                        "No project associated with this conversation."
                     )
 
                 if stream:
@@ -401,7 +468,12 @@ class ConversationService:
     async def _generate_title(
         self, conversation: Conversation, message_content: str
     ) -> str:
-        agent_type = conversation.agent_ids[0]
+        # For workflow conversations without agents, use a default agent type
+        agent_type = (
+            conversation.agent_ids[0] 
+            if conversation.agent_ids and len(conversation.agent_ids) > 0 
+            else "workflow"
+        )
 
         prompt = (
             "Given an agent type '{agent_type}' and an initial message '{message}', "
@@ -639,6 +711,14 @@ class ConversationService:
                 f"Conversation with id {conversation_id} not found"
             )
 
+        # For workflow conversations, agent_ids may be empty
+        # In that case, we can't generate AI responses, so raise an error
+        if not conversation.agent_ids or len(conversation.agent_ids) == 0:
+            raise ConversationServiceError(
+                "Cannot generate AI response for workflow conversation without agents. "
+                "Workflow conversations are for HITL interactions only."
+            )
+        
         agent_id = conversation.agent_ids[0]
         project_id = conversation.project_ids[0] if conversation.project_ids else None
 
