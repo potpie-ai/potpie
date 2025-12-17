@@ -32,20 +32,48 @@ logger = logging.getLogger(__name__)
 class SecretStorageHandler:
     """Handles storage, retrieval, and deletion of secrets across different storage backends."""
 
+    # Class-level cache for GCP availability
+    _gcp_available: Optional[bool] = None
+    _gcp_client: Optional[secretmanager.SecretManagerServiceClient] = None
+    _gcp_project_id: Optional[str] = None
+
+    @staticmethod
+    def _check_gcp_availability_once():
+        """Check GCP availability once and cache the result."""
+        if SecretStorageHandler._gcp_available is not None:
+            # Already checked, return cached result
+            return SecretStorageHandler._gcp_client, SecretStorageHandler._gcp_project_id
+
+        # First time check
+        project_id = os.environ.get("GCP_PROJECT")
+        if not project_id:
+            SecretStorageHandler._gcp_available = False
+            SecretStorageHandler._gcp_client = None
+            SecretStorageHandler._gcp_project_id = None
+            logger.info("GCP_PROJECT not set, GCP Secret Manager unavailable")
+            return None, None
+
+        try:
+            client = secretmanager.SecretManagerServiceClient()
+            # Test with a simple operation to verify access
+            # We'll do a lightweight check - just verify client can be created
+            SecretStorageHandler._gcp_available = True
+            SecretStorageHandler._gcp_client = client
+            SecretStorageHandler._gcp_project_id = project_id
+            logger.info(f"GCP Secret Manager initialized successfully for project: {project_id}")
+            return client, project_id
+        except Exception as e:
+            # GCP not available, cache the failure
+            SecretStorageHandler._gcp_available = False
+            SecretStorageHandler._gcp_client = None
+            SecretStorageHandler._gcp_project_id = None
+            logger.warning(f"GCP Secret Manager not available: {str(e)}")
+            return None, None
+
     @staticmethod
     def get_client_and_project():
         """Return the Google Secret Manager client and project ID only if GCP_PROJECT is set."""
-        project_id = os.environ.get("GCP_PROJECT")
-        if not project_id:
-            return None, None
-        try:
-            client = secretmanager.SecretManagerServiceClient()
-            return client, project_id
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to initialize Secret Manager client: {str(e)}",
-            )
+        return SecretStorageHandler._check_gcp_availability_once()
 
     @staticmethod
     def get_encryption_key():
@@ -205,18 +233,22 @@ class SecretStorageHandler:
                 secret_id = SecretStorageHandler.format_secret_id(
                     service, customer_id, service_type
                 )
-                name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
-                logger.info(f"Attempting to get secret from GCP: {name}")
+                if secret_id:  # Only attempt if secret_id is valid (not None in dev mode)
+                    name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
+                    logger.info(f"Attempting to get secret from GCP: {name}")
 
-                try:
-                    response = client.access_secret_version(request={"name": name})
-                    secret = response.payload.data.decode("UTF-8")
-                    logger.info(f"Successfully retrieved secret from GCP for {service}")
-                    return secret
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to get secret from GCP for {service}: {str(e)}"
-                    )
+                    try:
+                        response = client.access_secret_version(request={"name": name})
+                        secret = response.payload.data.decode("UTF-8")
+                        logger.info(f"Successfully retrieved secret from GCP for {service}")
+                        return secret
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to get secret from GCP for {service}: {str(e)}"
+                        )
+                else:
+                    # Dev mode - skip GCP
+                    logger.debug(f"Skipping GCP check for {service} (dev mode)")
 
             if db and preferences is not None:
                 # Fallback: get from UserPreferences

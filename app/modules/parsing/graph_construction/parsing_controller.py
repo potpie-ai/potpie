@@ -14,7 +14,7 @@ from app.celery.tasks.parsing_tasks import process_parsing
 from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.parsing.graph_construction.parsing_helper import ParseHelper
-from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
+from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest, ParsingStatusRequest
 from app.modules.parsing.graph_construction.parsing_service import ParsingService
 from app.modules.parsing.graph_construction.parsing_validator import (
     validate_parsing_input,
@@ -337,4 +337,44 @@ class ParsingController:
             raise
         except Exception as e:
             logger.error(f"Error in fetch_parsing_status: {str(e)}")
+            raise HTTPException(status_code=500, detail="Internal server error")
+
+    @staticmethod
+    async def fetch_parsing_status_by_repo(
+        request: ParsingStatusRequest, db: AsyncSession, user: Dict[str, Any]
+    ):
+        try:
+            user_id = user["user_id"]
+            project_manager = ProjectService(db)
+
+            # Use ProjectService to find project by repo_name and commit_id/branch_name
+            normalized_repo_name = normalize_repo_name(request.repo_name)
+            project = await project_manager.get_project_from_db(
+                normalized_repo_name,
+                request.branch_name,
+                user_id,
+                repo_path=None,
+                commit_id=request.commit_id,
+            )
+
+            if not project:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Project not found for the given repo_name and commit_id/branch_name",
+                )
+
+            parse_helper = ParseHelper(db)
+            is_latest = await parse_helper.check_commit_status(project.id)
+
+            return {
+                "project_id": project.id,
+                "repo_name": project.repo_name,
+                "status": project.status,
+                "latest": is_latest,
+            }
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error in fetch_parsing_status_by_repo: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")

@@ -78,7 +78,7 @@ def configure_celery(queue_prefix: str):
         worker_max_memory_per_child=2000000,  # Restart worker if using more than 2GB
         # Removed task_default_rate_limit - was limiting to 10 tasks/min per worker, severely restricting concurrency
         # If rate limiting is needed, apply it per-task using @task(rate_limit='...') decorator
-        task_reject_on_worker_lost=True,  # Requeue tasks if worker dies
+        task_reject_on_worker_lost=False,  # Don't requeue tasks if worker dies
         broker_transport_options={
             "visibility_timeout": 5400
         },  # 45 minutes visibility timeout
@@ -110,11 +110,28 @@ def configure_litellm_for_celery():
     Configure LiteLLM to use synchronous logging in Celery workers.
     This prevents async logging handlers from creating unawaited coroutines
     that cause SIGTRAP errors in forked worker processes.
+
+    Set LITELLM_DEBUG=true to enable verbose debug logging.
     """
     try:
         import litellm
 
         logger.info("Configuring LiteLLM for Celery workers...")
+
+        # Enable debug logging if LITELLM_DEBUG environment variable is set
+        litellm_debug = os.getenv("LITELLM_DEBUG", "false").lower() in (
+            "true",
+            "1",
+            "yes",
+        )
+        if litellm_debug:
+            litellm.set_verbose = True
+            litellm._turn_on_debug()
+            logger.info("LiteLLM debug logging ENABLED (LITELLM_DEBUG=true)")
+        else:
+            logger.debug(
+                "LiteLLM debug logging disabled (set LITELLM_DEBUG=true to enable)"
+            )
 
         # Disable verbose logging to reduce async handler usage
         # Use getattr/setattr to avoid type checking issues

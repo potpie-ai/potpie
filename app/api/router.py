@@ -27,7 +27,10 @@ from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.parsing.graph_construction.parsing_controller import ParsingController
-from app.modules.parsing.graph_construction.parsing_schema import ParsingRequest
+from app.modules.parsing.graph_construction.parsing_schema import (
+    ParsingRequest,
+    ParsingStatusRequest,
+)
 from app.modules.projects.projects_controller import ProjectController
 from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
@@ -133,6 +136,15 @@ async def get_parsing_status(
     user=Depends(get_api_key_user),
 ):
     return await ParsingController.fetch_parsing_status(project_id, db, user)
+
+
+@router.post("/parsing-status")
+async def get_parsing_status_by_repo(
+    request: ParsingStatusRequest,
+    db: Session = Depends(get_db),
+    user=Depends(get_api_key_user),
+):
+    return await ParsingController.fetch_parsing_status_by_repo(request, db, user)
 
 
 @router.post("/conversations/{conversation_id}/message/")

@@ -44,6 +44,13 @@ from functools import wraps
 
 litellm.num_retries = 5  # Number of retries for rate limited requests
 
+# Enable debug logging if LITELLM_DEBUG environment variable is set
+_litellm_debug = os.getenv("LITELLM_DEBUG", "false").lower() in ("true", "1", "yes")
+if _litellm_debug:
+    litellm.set_verbose = True
+    litellm._turn_on_debug()
+    logger.info("LiteLLM debug logging ENABLED (LITELLM_DEBUG=true)")
+
 OVERLOAD_ERROR_PATTERNS = {
     "anthropic": ["overloaded", "overloaded_error", "capacity", "rate limit exceeded"],
     "openai": [

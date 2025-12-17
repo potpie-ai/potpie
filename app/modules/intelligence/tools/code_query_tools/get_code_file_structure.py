@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
+from app.modules.intelligence.tools.tool_utils import truncate_response
 
 logger = logging.getLogger(__name__)
 
@@ -17,16 +18,6 @@ MAX_RESPONSE_LENGTH = 80000  # 80k characters
 class RepoStructureRequest(BaseModel):
     project_id: str
     path: Optional[str] = None
-
-
-def _truncate_response(content: str, max_length: int = MAX_RESPONSE_LENGTH) -> str:
-    """Truncate response content if it exceeds the maximum length and add truncation notice."""
-    if len(content) <= max_length:
-        return content
-    
-    truncated = content[:max_length]
-    notice = f"\n\n⚠️ [TRUNCATED] Response truncated: showing first {max_length:,} characters of {len(content):,} total characters. The response may be incomplete."
-    return truncated + notice
 
 
 class GetCodeFileStructureTool:
