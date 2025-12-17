@@ -12,11 +12,21 @@ from typing import Optional, Dict, Any, List, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 
+# Constants
+LINKING_TOKEN_LENGTH = 32  # Length of URL-safe token for provider linking
+LINKING_TOKEN_EXPIRY_MINUTES = 15  # Expiration time for pending provider links
+
+
+# Use timezone-aware datetime.now() instead of deprecated utcnow()
+def utc_now() -> datetime:
+    """Get current UTC time as timezone-aware datetime"""
+    return datetime.now(timezone.utc)
+
+
 from app.modules.auth.sso_providers import (
-    GoogleSSOProvider,
-    AzureSSOProvider,
     BaseSSOProvider,
 )
+from app.modules.auth.sso_providers.provider_registry import SSOProviderRegistry
 
 from app.modules.auth.auth_provider_model import (
     UserAuthProvider,
@@ -49,11 +59,9 @@ class UnifiedAuthService:
         self.db = db
         self.user_service = UserService(db)
 
-        # Initialize SSO providers
-        self.sso_providers: Dict[str, BaseSSOProvider] = {
-            "google": GoogleSSOProvider(),
-            "azure": AzureSSOProvider(),
-        }
+        # Get singleton SSO provider instances from registry
+        # Providers are stateless and can be safely shared across requests
+        self.sso_providers: Dict[str, BaseSSOProvider] = SSOProviderRegistry.get_all_providers()
 
     def get_sso_provider(self, provider_name: str) -> Optional[BaseSSOProvider]:
         """Get SSO provider by name"""
@@ -141,8 +149,8 @@ class UnifiedAuthService:
             refresh_token=provider_create.refresh_token,
             token_expires_at=provider_create.token_expires_at,
             is_primary=is_first or provider_create.is_primary,
-            linked_at=datetime.utcnow(),
-            last_used_at=datetime.utcnow(),
+            linked_at=utc_now(),
+            last_used_at=utc_now(),
             linked_by_ip=ip_address,
             linked_by_user_agent=user_agent,
         )
@@ -243,7 +251,7 @@ class UnifiedAuthService:
         """Update last_used_at for a provider"""
         provider = self.get_provider(user_id, provider_type)
         if provider:
-            provider.last_used_at = datetime.utcnow()
+            provider.last_used_at = utc_now()
             self.db.commit()
 
     # ===== Authentication Flow =====
@@ -287,12 +295,13 @@ class UnifiedAuthService:
                 # This ensures the correct email is shown in the sidebar
                 if not existing_provider.is_primary:
                     logger.info(
-                        f"Setting {provider_type} as primary provider for user {existing_user.uid} (user signed in with this provider)"
+                        f"Setting {provider_type} as primary provider for user "
+                        f"{existing_user.uid} (user signed in with this provider)"
                     )
                     self.set_primary_provider(existing_user.uid, provider_type)
 
                 # Update last login
-                existing_user.last_login_at = datetime.utcnow()
+                existing_user.last_login_at = utc_now()
                 self.db.commit()
 
                 # Audit log
@@ -337,12 +346,13 @@ class UnifiedAuthService:
                     user_agent=user_agent,
                 )
 
+                providers_str = ", ".join(existing_providers)
                 return existing_user, SSOLoginResponse(
                     status="needs_linking",
                     user_id=existing_user.uid,
                     email=email,
                     display_name=existing_user.display_name,
-                    message=f"Account exists with {', '.join(existing_providers)}. Link this provider?",
+                    message=f"Account exists with {providers_str}. Link this provider?",
                     linking_token=linking_token,
                     existing_providers=existing_providers,
                 )
@@ -390,8 +400,10 @@ class UnifiedAuthService:
         user_agent: Optional[str] = None,
     ) -> str:
         """Create a pending provider link (expires in 15 minutes)"""
-        token = secrets.token_urlsafe(32)
-        expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+        token = secrets.token_urlsafe(LINKING_TOKEN_LENGTH)
+        expires_at = datetime.now(timezone.utc) + timedelta(
+            minutes=LINKING_TOKEN_EXPIRY_MINUTES
+        )
 
         pending_link = PendingProviderLink(
             user_id=user_id,
@@ -439,7 +451,8 @@ class UnifiedAuthService:
             # Both are timezone-aware, comparison should work
             pass
         logger.info(
-            f"Current time (UTC): {now}, Expires at: {expires_at}, expires_at.tzinfo: {expires_at.tzinfo if expires_at else None}"
+            f"Current time (UTC): {now}, Expires at: {expires_at}, "
+            f"expires_at.tzinfo: {expires_at.tzinfo if expires_at else None}"
         )
         if expires_at and expires_at < now:
             logger.warning(
@@ -534,9 +547,9 @@ class UnifiedAuthService:
         """Create a new user with their first auth provider"""
         # Extract organization from email using utility function
         from app.modules.utils.email_helper import extract_organization_from_email
-        
+
         organization = extract_organization_from_email(email)
-        
+
         # Create user
         new_user = User(
             uid=provider_uid,  # Use provider UID as user ID initially
@@ -544,8 +557,8 @@ class UnifiedAuthService:
             display_name=display_name or email.split("@")[0],
             email_verified=email_verified,
             organization=organization,
-            created_at=datetime.utcnow(),
-            last_login_at=datetime.utcnow(),
+            created_at=utc_now(),
+            last_login_at=utc_now(),
         )
 
         self.db.add(new_user)
@@ -559,8 +572,8 @@ class UnifiedAuthService:
             provider_data=provider_data,
             access_token=access_token,
             is_primary=True,  # First provider is always primary
-            linked_at=datetime.utcnow(),
-            last_used_at=datetime.utcnow(),
+            linked_at=utc_now(),
+            last_used_at=utc_now(),
             linked_by_ip=ip_address,
             linked_by_user_agent=user_agent,
         )
