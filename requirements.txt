@@ -66,7 +66,7 @@ fastapi==0.121.0
 fastavro==1.12.1
 fastmcp==2.13.0.2
 fastuuid==0.14.0
-filelock==3.20.0
+filelock==3.20.1
 firebase-admin==7.1.0
 firecrawl-py==4.6.0
 flower==2.0.1
