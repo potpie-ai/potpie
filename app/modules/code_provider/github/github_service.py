@@ -183,7 +183,7 @@ class GithubService:
 
     def get_github_oauth_token(self, uid: str) -> Optional[str]:
         """
-        Get user's GitHub OAuth token from provider_info.
+        Get user's GitHub OAuth token from UserAuthProvider (new system) or provider_info (legacy).
 
         Returns:
             OAuth token if available, None otherwise
@@ -195,7 +195,36 @@ class GithubService:
         if user is None:
             raise HTTPException(status_code=404, detail="User not found")
 
-        # Safely access provider_info and access_token
+        # Try new UserAuthProvider system first
+        try:
+            from app.modules.auth.auth_provider_model import UserAuthProvider
+            from app.modules.integrations.token_encryption import decrypt_token
+
+            github_provider = (
+                self.db.query(UserAuthProvider)
+                .filter(
+                    UserAuthProvider.user_id == uid,
+                    UserAuthProvider.provider_type == "firebase_github",
+                )
+                .first()
+            )
+            if github_provider and github_provider.access_token:
+                logger.info(f"Found GitHub token in UserAuthProvider for user {uid}")
+                # Decrypt the token before returning
+                try:
+                    decrypted_token = decrypt_token(github_provider.access_token)
+                    return decrypted_token
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to decrypt GitHub token for user {uid}: {str(e)}. "
+                        "Assuming plaintext token (backward compatibility)."
+                    )
+                    # Token might be plaintext (from before encryption was added)
+                    return github_provider.access_token
+        except Exception as e:
+            logger.debug(f"Error checking UserAuthProvider: {str(e)}")
+
+        # Fallback to legacy provider_info system
         if user.provider_info is None:
             logger.warning(f"User {uid} has no provider_info")
             return None
