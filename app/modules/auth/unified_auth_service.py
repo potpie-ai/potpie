@@ -124,14 +124,14 @@ class UnifiedAuthService:
     ) -> Optional[str]:
         """
         Get decrypted access token for a user's provider.
-        
+
         Returns None if provider not found or token not available.
         Handles both encrypted and plaintext tokens (backward compatibility).
         """
         provider = self.get_provider(user_id, provider_type)
         if not provider or not provider.access_token:
             return None
-        
+
         try:
             # Try to decrypt (token is encrypted)
             return decrypt_token(provider.access_token)
@@ -149,14 +149,14 @@ class UnifiedAuthService:
     ) -> Optional[str]:
         """
         Get decrypted refresh token for a user's provider.
-        
+
         Returns None if provider not found or token not available.
         Handles both encrypted and plaintext tokens (backward compatibility).
         """
         provider = self.get_provider(user_id, provider_type)
         if not provider or not provider.refresh_token:
             return None
-        
+
         try:
             # Try to decrypt (token is encrypted)
             return decrypt_token(provider.refresh_token)
@@ -631,9 +631,7 @@ class UnifiedAuthService:
         self.db.flush()  # Get the user ID
 
         # Encrypt token before storing
-        encrypted_access_token = (
-            encrypt_token(access_token) if access_token else None
-        )
+        encrypted_access_token = encrypt_token(access_token) if access_token else None
 
         # Create provider
         provider = UserAuthProvider(

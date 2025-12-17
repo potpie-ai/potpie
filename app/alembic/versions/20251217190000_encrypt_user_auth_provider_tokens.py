@@ -23,38 +23,38 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """
     Encrypt existing plaintext tokens in user_auth_providers table.
-    
+
     This migration:
     1. Identifies tokens that are likely plaintext (not encrypted)
     2. Encrypts them using the TokenEncryption utility
     3. Updates the database with encrypted versions
     4. Handles NULL tokens gracefully
-    
+
     Note: This is a data migration that runs Python code.
     The service layer will handle decryption automatically going forward.
     """
     # Import encryption utility
     from app.modules.integrations.token_encryption import encrypt_token, decrypt_token
-    
+
     # Get database connection
     conn = op.get_bind()
-    
+
     # Fetch all providers with tokens
     result = conn.execute(text("""
-        SELECT id, access_token, refresh_token 
-        FROM user_auth_providers 
+        SELECT id, access_token, refresh_token
+        FROM user_auth_providers
         WHERE access_token IS NOT NULL OR refresh_token IS NOT NULL
     """))
-    
+
     providers = result.fetchall()
     encrypted_count = 0
     skipped_count = 0
     error_count = 0
-    
+
     for provider_id, access_token, refresh_token in providers:
         try:
             updates = {}
-            
+
             # Encrypt access_token if present
             if access_token:
                 # Check if already encrypted by trying to decrypt
@@ -68,7 +68,7 @@ def upgrade() -> None:
                     # Decryption failed - token is likely plaintext, encrypt it
                     encrypted_access = encrypt_token(access_token)
                     updates['access_token'] = encrypted_access
-            
+
             # Encrypt refresh_token if present
             if refresh_token:
                 try:
@@ -79,7 +79,7 @@ def upgrade() -> None:
                     # Decryption failed - token is likely plaintext, encrypt it
                     encrypted_refresh = encrypt_token(refresh_token)
                     updates['refresh_token'] = encrypted_refresh
-            
+
             # Update if we have changes
             if updates:
                 set_clause = ", ".join([f"{k} = :{k}" for k in updates.keys()])
@@ -91,13 +91,13 @@ def upgrade() -> None:
                 encrypted_count += 1
             else:
                 skipped_count += 1
-                
+
         except Exception as e:
             # Log error but continue with other providers
             error_count += 1
             # Use print for migration logging (Alembic captures this)
             print(f"Error encrypting tokens for provider {provider_id}: {str(e)}")
-    
+
     print(
         f"Token encryption migration complete: "
         f"{encrypted_count} providers encrypted, "
