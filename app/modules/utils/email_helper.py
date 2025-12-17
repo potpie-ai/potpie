@@ -105,7 +105,6 @@ PERSONAL_EMAIL_DOMAINS = {
     # Additional common providers
     "proton.me",
     "pm.me",
-    "icloud.com",
     "me.com",
     "mac.com",
     "yahoo.co.uk",
@@ -138,7 +137,6 @@ PERSONAL_EMAIL_DOMAINS = {
     "guerrillamailblock.com",
     "pokemail.net",
     "spamgourmet.com",
-    "throwaway.email",
     "temp-mail.org",
     "emailondeck.com",
     "fakeinbox.com",
@@ -152,7 +150,6 @@ PERSONAL_EMAIL_DOMAINS = {
     "spamfree24.eu",
     "spamfree24.net",
     "spamfree24.com",
-    "spamgourmet.com",
     "spamhole.com",
     "spam.la",
     "spamobox.com",

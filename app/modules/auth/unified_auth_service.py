@@ -81,14 +81,14 @@ class UnifiedAuthService:
         """
         provider = self.get_sso_provider(provider_name)
         if not provider:
-            logger.error(f"Unknown SSO provider: {provider_name}")
+            logger.error("Unknown SSO provider: %s", provider_name)
             return None
 
         try:
             user_info = await provider.verify_token(id_token)
             return user_info
         except ValueError as e:
-            logger.error(f"Token verification failed for {provider_name}: {str(e)}")
+            logger.error("Token verification failed for %s: %s", provider_name, str(e))
             return None
 
     # ===== Provider Management =====
@@ -164,8 +164,10 @@ class UnifiedAuthService:
             # Token might be plaintext (from before encryption was added)
             # Return as-is for backward compatibility
             logger.warning(
-                f"Failed to decrypt refresh token for user {user_id}, provider {provider_type}. "
-                "Assuming plaintext token (backward compatibility)."
+                "Failed to decrypt refresh token for user %s, provider %s. "
+                "Assuming plaintext token (backward compatibility).",
+                user_id,
+                provider_type,
             )
             return provider.refresh_token
 
@@ -185,7 +187,9 @@ class UnifiedAuthService:
         existing = self.get_provider(user_id, provider_create.provider_type)
         if existing:
             logger.warning(
-                f"Provider {provider_create.provider_type} already exists for user {user_id}"
+                "Provider %s already exists for user %s",
+                provider_create.provider_type,
+                user_id,
             )
             return existing
 
@@ -246,7 +250,9 @@ class UnifiedAuthService:
         )
 
         logger.info(
-            f"Added provider {provider_create.provider_type} for user {user_id}"
+            "Added provider %s for user %s",
+            provider_create.provider_type,
+            user_id,
         )
         return new_provider
 
@@ -254,7 +260,7 @@ class UnifiedAuthService:
         """Set a provider as the primary login method"""
         provider = self.get_provider(user_id, provider_type)
         if not provider:
-            logger.warning(f"Provider {provider_type} not found for user {user_id}")
+            logger.warning("Provider %s not found for user %s", provider_type, user_id)
             return False
 
         # Unset all other primary providers
@@ -266,7 +272,7 @@ class UnifiedAuthService:
         provider.is_primary = True
         self.db.commit()
 
-        logger.info(f"Set primary provider to {provider_type} for user {user_id}")
+        logger.info("Set primary provider to %s for user %s", provider_type, user_id)
         return True
 
     def unlink_provider(self, user_id: str, provider_type: str) -> bool:
@@ -278,14 +284,16 @@ class UnifiedAuthService:
         """
         provider = self.get_provider(user_id, provider_type)
         if not provider:
-            logger.warning(f"Provider {provider_type} not found for user {user_id}")
+            logger.warning("Provider %s not found for user %s", provider_type, user_id)
             return False
 
         # Check if this is the only provider
         all_providers = self.get_user_providers(user_id)
         if len(all_providers) <= 1:
             logger.error(
-                f"Cannot unlink last provider {provider_type} for user {user_id}"
+                "Cannot unlink last provider %s for user %s",
+                provider_type,
+                user_id,
             )
             raise ValueError("Cannot unlink the only authentication provider")
 
@@ -310,7 +318,7 @@ class UnifiedAuthService:
             status="success",
         )
 
-        logger.info(f"Unlinked provider {provider_type} for user {user_id}")
+        logger.info("Unlinked provider %s for user %s", provider_type, user_id)
         return True
 
     def update_last_used(self, user_id: str, provider_type: str):
@@ -361,8 +369,9 @@ class UnifiedAuthService:
                 # This ensures the correct email is shown in the sidebar
                 if not existing_provider.is_primary:
                     logger.info(
-                        f"Setting {provider_type} as primary provider for user "
-                        f"{existing_user.uid} (user signed in with this provider)"
+                        "Setting %s as primary provider for user %s (user signed in with this provider)",
+                        provider_type,
+                        existing_user.uid,
                     )
                     self.set_primary_provider(existing_user.uid, provider_type)
 
@@ -485,9 +494,11 @@ class UnifiedAuthService:
         self.db.add(pending_link)
         self.db.commit()
 
-        logger.info(
-            f"Created pending link for user {user_id}, provider {provider_type}"
-        )
+            logger.info(
+                "Created pending link for user %s, provider %s",
+                user_id,
+                provider_type,
+            )
         return token
 
     def confirm_provider_link(self, linking_token: str) -> Optional[UserAuthProvider]:
@@ -503,7 +514,7 @@ class UnifiedAuthService:
         )
 
         if not pending:
-            logger.warning(f"Invalid linking token: {linking_token}")
+            logger.warning("Invalid linking token: %s", linking_token)
             return None
 
         # Check expiration - ensure both datetimes are timezone-aware
@@ -522,7 +533,10 @@ class UnifiedAuthService:
         )
         if expires_at and expires_at < now:
             logger.warning(
-                f"Expired linking token: {linking_token} (expired at {expires_at}, now is {now})"
+                "Expired linking token: %s (expired at %s, now is %s)",
+                linking_token,
+                expires_at,
+                now,
             )
             self.db.delete(pending)
             self.db.commit()
@@ -533,8 +547,10 @@ class UnifiedAuthService:
         existing_provider = self.get_provider(pending.user_id, pending.provider_type)
         if existing_provider:
             logger.info(
-                f"Provider {pending.provider_type} already exists for user {pending.user_id}. "
-                f"Provider ID: {existing_provider.id}. Deleting pending link."
+                "Provider %s already exists for user %s. Provider ID: %s. Deleting pending link.",
+                pending.provider_type,
+                pending.user_id,
+                existing_provider.id,
             )
             self.db.delete(pending)
             self.db.commit()
@@ -571,12 +587,13 @@ class UnifiedAuthService:
             self.db.commit()
 
             logger.info(
-                f"Confirmed provider link for user {pending.user_id}, "
-                f"provider {pending.provider_type}"
+                "Confirmed provider link for user %s, provider %s",
+                pending.user_id,
+                pending.provider_type,
             )
             return new_provider
         except Exception as e:
-            logger.error(f"Error confirming provider link: {str(e)}", exc_info=True)
+            logger.error("Error confirming provider link: %s", str(e), exc_info=True)
             self.db.rollback()
             raise
 
@@ -591,7 +608,7 @@ class UnifiedAuthService:
         if pending:
             self.db.delete(pending)
             self.db.commit()
-            logger.info(f"Cancelled pending link: {linking_token}")
+            logger.info("Cancelled pending link: %s", linking_token)
             return True
 
         return False
@@ -651,7 +668,7 @@ class UnifiedAuthService:
         self.db.commit()
         self.db.refresh(new_user)
 
-        logger.info(f"Created new user {new_user.uid} with provider {provider_type}")
+        logger.info("Created new user %s with provider %s", new_user.uid, provider_type)
         return new_user
 
     def _log_auth_event(

@@ -3,7 +3,7 @@ Pytest fixtures for auth tests
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -50,8 +50,8 @@ def test_user(db_session):
         email="test@example.com",
         display_name="Test User",
         email_verified=True,
-        created_at=datetime.utcnow(),
-        last_login_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
+        last_login_at=datetime.now(timezone.utc),
     )
     db_session.add(user)
     db_session.commit()
@@ -68,8 +68,8 @@ def test_user_with_github(db_session, test_user):
         provider_uid="github-123",
         provider_data={"login": "testuser"},
         is_primary=True,
-        linked_at=datetime.utcnow(),
-        last_used_at=datetime.utcnow(),
+        linked_at=datetime.now(timezone.utc),
+        last_used_at=datetime.now(timezone.utc),
     )
     db_session.add(provider)
     db_session.commit()
@@ -86,8 +86,8 @@ def test_user_with_multiple_providers(db_session, test_user_with_github):
         provider_uid="google-456",
         provider_data={"email": "test@example.com"},
         is_primary=False,
-        linked_at=datetime.utcnow(),
-        last_used_at=datetime.utcnow(),
+        linked_at=datetime.now(timezone.utc),
+        last_used_at=datetime.now(timezone.utc),
     )
     db_session.add(google_provider)
     db_session.commit()
@@ -103,7 +103,7 @@ def pending_link(db_session, test_user):
         provider_uid="google-789",
         provider_data={"email": "test@example.com"},
         token="test-linking-token-123",
-        expires_at=datetime.utcnow() + timedelta(minutes=15),
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
         ip_address="127.0.0.1",
     )
     db_session.add(link)
@@ -122,7 +122,7 @@ def org_sso_config(db_session):
         sso_config={"client_id": "test-client-id"},
         enforce_sso=True,
         allow_other_providers=False,
-        configured_at=datetime.utcnow(),
+        configured_at=datetime.now(timezone.utc),
         is_active=True,
     )
     db_session.add(config)

@@ -209,35 +209,39 @@ class GithubService:
                 .first()
             )
             if github_provider and github_provider.access_token:
-                logger.info(f"Found GitHub token in UserAuthProvider for user {uid}")
+                logger.info("Found GitHub token in UserAuthProvider for user %s", uid)
                 # Decrypt the token before returning
                 try:
                     decrypted_token = decrypt_token(github_provider.access_token)
                     return decrypted_token
                 except Exception as e:
                     logger.warning(
-                        f"Failed to decrypt GitHub token for user {uid}: {str(e)}. "
-                        "Assuming plaintext token (backward compatibility)."
+                        "Failed to decrypt GitHub token for user %s: %s. "
+                        "Assuming plaintext token (backward compatibility).",
+                        uid,
+                        str(e),
                     )
                     # Token might be plaintext (from before encryption was added)
                     return github_provider.access_token
         except Exception as e:
-            logger.debug(f"Error checking UserAuthProvider: {str(e)}")
+            logger.debug("Error checking UserAuthProvider: %s", str(e))
 
         # Fallback to legacy provider_info system
         if user.provider_info is None:
-            logger.warning(f"User {uid} has no provider_info")
+            logger.warning("User %s has no provider_info", uid)
             return None
 
         if not isinstance(user.provider_info, dict):
             logger.warning(
-                f"User {uid} provider_info is not a dict: {type(user.provider_info)}"
+                "User %s provider_info is not a dict: %s",
+                uid,
+                type(user.provider_info),
             )
             return None
 
         access_token = user.provider_info.get("access_token")
         if not access_token:
-            logger.warning(f"User {uid} has no access_token in provider_info")
+            logger.warning("User %s has no access_token in provider_info", uid)
             return None
 
         return access_token

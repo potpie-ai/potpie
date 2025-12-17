@@ -107,14 +107,14 @@ class GoogleSSOProvider(BaseSSOProvider):
                 raw_data=idinfo,
             )
 
-            logger.info(f"Successfully verified Google token for {user_info.email}")
+            logger.info("Successfully verified Google token for %s", user_info.email)
             return user_info
 
         except ValueError as e:
-            logger.error(f"Google token verification failed: {str(e)}")
+            logger.error("Google token verification failed: %s", str(e))
             raise ValueError(f"Invalid Google ID token: {str(e)}")
         except Exception as e:
-            logger.error(f"Unexpected error verifying Google token: {str(e)}")
+            logger.error("Unexpected error verifying Google token: %s", str(e))
             raise ValueError(f"Failed to verify Google ID token: {str(e)}")
 
     def get_authorization_url(
