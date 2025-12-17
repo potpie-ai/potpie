@@ -61,7 +61,9 @@ class UnifiedAuthService:
 
         # Get singleton SSO provider instances from registry
         # Providers are stateless and can be safely shared across requests
-        self.sso_providers: Dict[str, BaseSSOProvider] = SSOProviderRegistry.get_all_providers()
+        self.sso_providers: Dict[str, BaseSSOProvider] = (
+            SSOProviderRegistry.get_all_providers()
+        )
 
     def get_sso_provider(self, provider_name: str) -> Optional[BaseSSOProvider]:
         """Get SSO provider by name"""

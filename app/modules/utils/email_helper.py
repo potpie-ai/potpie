@@ -8,6 +8,7 @@ import re
 # Try to import email-inspector library for robust email domain detection
 try:
     from email_inspector import inspect as email_inspect
+
     EMAIL_INSPECTOR_AVAILABLE = True
 except ImportError:
     EMAIL_INSPECTOR_AVAILABLE = False
@@ -226,18 +227,18 @@ PERSONAL_EMAIL_DOMAINS = {
 def is_personal_email_domain(email: str) -> bool:
     """
     Check if an email address belongs to a personal/free email provider.
-    
+
     This function uses the email-inspector library (if available) which maintains
     a database of over 16,000 free email providers. Falls back to a built-in
     comprehensive list if the library is not available.
-    
+
     Args:
         email: The email address to check (e.g., "user@example.com")
-    
+
     Returns:
         True if the email domain is a personal/free email provider, False otherwise.
         Returns False if the email format is invalid or domain cannot be extracted.
-    
+
     Examples:
         >>> is_personal_email_domain("user@gmail.com")
         True
@@ -248,7 +249,7 @@ def is_personal_email_domain(email: str) -> bool:
     """
     if not email or "@" not in email:
         return False
-    
+
     # Try using email-inspector library first (more robust, 16,000+ domains)
     if EMAIL_INSPECTOR_AVAILABLE:
         try:
@@ -258,8 +259,10 @@ def is_personal_email_domain(email: str) -> bool:
                 return result["free"]
             # Fallback if result format is unexpected
         except Exception as e:
-            logging.warning(f"Error using email-inspector for {email}: {e}. Falling back to built-in list.")
-    
+            logging.warning(
+                f"Error using email-inspector for {email}: {e}. Falling back to built-in list."
+            )
+
     # Fallback to built-in comprehensive list
     try:
         domain = email.split("@")[1].lower().strip()
@@ -271,16 +274,16 @@ def is_personal_email_domain(email: str) -> bool:
 def extract_organization_from_email(email: str) -> str | None:
     """
     Extract organization domain from an email address.
-    
+
     If the email belongs to a personal/free email provider, returns None.
     Otherwise, returns the domain as the organization.
-    
+
     Args:
         email: The email address to extract organization from
-    
+
     Returns:
         The organization domain (e.g., "company.com") or None if personal email
-    
+
     Examples:
         >>> extract_organization_from_email("user@company.com")
         'company.com'
@@ -289,7 +292,7 @@ def extract_organization_from_email(email: str) -> str | None:
     """
     if not email or "@" not in email:
         return None
-    
+
     try:
         domain = email.split("@")[1].lower().strip()
         if is_personal_email_domain(email):

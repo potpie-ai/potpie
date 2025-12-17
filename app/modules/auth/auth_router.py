@@ -111,9 +111,9 @@ class AuthAPI:
                 content=json.dumps({"uid": uid, "exists": False}),
                 status_code=201,
             )
-    
+
     # ===== Multi-Provider SSO Endpoints =====
-    
+
     @auth_router.post("/sso/login")
     async def sso_login(
         request: Request,
@@ -122,7 +122,7 @@ class AuthAPI:
     ):
         """
         SSO Login endpoint.
-        
+
         Handles login via any SSO provider (Google, Azure, Okta, SAML).
         Returns one of three statuses:
         - 'success': User authenticated
@@ -131,40 +131,45 @@ class AuthAPI:
         """
         try:
             unified_auth = UnifiedAuthService(db)
-            
+
             # Get request context
             ip_address = request.client.host if request.client else None
             user_agent = request.headers.get("user-agent")
-            
+
             # Map SSO provider to our provider type
             provider_type = f"sso_{sso_request.sso_provider}"
-            
+
             # TODO: Verify the ID token with the SSO provider
             # For now, we trust the frontend validation
             # In production, verify token server-side
-            
+
             # Extract provider data from token (mock for now)
             provider_data = sso_request.provider_data or {}
-            provider_uid = provider_data.get("sub") or provider_data.get("oid") or sso_request.email
-            
+            provider_uid = (
+                provider_data.get("sub")
+                or provider_data.get("oid")
+                or sso_request.email
+            )
+
             # Authenticate or create user
             user, response = unified_auth.authenticate_or_create(
                 email=sso_request.email,
                 provider_type=provider_type,
                 provider_uid=provider_uid,
                 provider_data=provider_data,
-                display_name=provider_data.get("name") or sso_request.email.split("@")[0],
+                display_name=provider_data.get("name")
+                or sso_request.email.split("@")[0],
                 email_verified=True,  # SSO providers always verify email
                 ip_address=ip_address,
                 user_agent=user_agent,
             )
-            
+
             # Send Slack notification for new users
             if response.status == "new_user":
                 await send_slack_message(
                     f"New SSO signup: {sso_request.email} via {sso_request.sso_provider}"
                 )
-                
+
                 PostHogClient().send_event(
                     user.uid,
                     "sso_signup_event",
@@ -173,18 +178,18 @@ class AuthAPI:
                         "sso_provider": sso_request.sso_provider,
                     },
                 )
-            
+
             return JSONResponse(
                 content=response.model_dump(),
                 status_code=200 if response.status == "success" else 202,
             )
-            
+
         except Exception as e:
             return JSONResponse(
                 content={"error": f"SSO login failed: {str(e)}"},
                 status_code=400,
             )
-    
+
     @auth_router.post("/providers/confirm-linking")
     async def confirm_provider_linking(
         confirm_request: ConfirmLinkingRequest,
@@ -192,37 +197,39 @@ class AuthAPI:
     ):
         """
         Confirm linking a new provider to existing account.
-        
+
         Called after user confirms they want to link the provider
         when 'needs_linking' status is returned from login.
         """
         try:
             unified_auth = UnifiedAuthService(db)
-            
+
             new_provider = unified_auth.confirm_provider_link(
                 confirm_request.linking_token
             )
-            
+
             if not new_provider:
                 return JSONResponse(
                     content={"error": "Invalid or expired linking token"},
                     status_code=400,
                 )
-            
+
             return JSONResponse(
                 content={
                     "message": "Provider linked successfully",
-                    "provider": AuthProviderResponse.from_orm(new_provider).model_dump(),
+                    "provider": AuthProviderResponse.from_orm(
+                        new_provider
+                    ).model_dump(),
                 },
                 status_code=200,
             )
-            
+
         except Exception as e:
             return JSONResponse(
                 content={"error": f"Failed to link provider: {str(e)}"},
                 status_code=400,
             )
-    
+
     @auth_router.delete("/providers/cancel-linking/{linking_token}")
     async def cancel_provider_linking(
         linking_token: str,
@@ -232,7 +239,7 @@ class AuthAPI:
         try:
             unified_auth = UnifiedAuthService(db)
             success = unified_auth.cancel_pending_link(linking_token)
-            
+
             if success:
                 return JSONResponse(
                     content={"message": "Linking cancelled"},
@@ -243,13 +250,13 @@ class AuthAPI:
                     content={"error": "Linking token not found"},
                     status_code=404,
                 )
-                
+
         except Exception as e:
             return JSONResponse(
                 content={"error": f"Failed to cancel linking: {str(e)}"},
                 status_code=400,
             )
-    
+
     @auth_router.get("/providers/me")
     async def get_my_providers(
         request: Request,
@@ -257,44 +264,43 @@ class AuthAPI:
     ):
         """
         Get all authentication providers for the current user.
-        
+
         Requires authentication.
         """
         try:
             # Get user from auth token
             user_data = await auth_handler.check_auth(request, None)
             user_id = user_data.get("user_id")
-            
+
             if not user_id:
                 return JSONResponse(
                     content={"error": "Authentication required"},
                     status_code=401,
                 )
-            
+
             unified_auth = UnifiedAuthService(db)
             providers = unified_auth.get_user_providers(user_id)
-            
-            primary_provider = next(
-                (p for p in providers if p.is_primary),
-                None
-            )
-            
+
+            primary_provider = next((p for p in providers if p.is_primary), None)
+
             response = UserAuthProvidersResponse(
                 providers=[AuthProviderResponse.from_orm(p) for p in providers],
-                primary_provider=AuthProviderResponse.from_orm(primary_provider) if primary_provider else None,
+                primary_provider=AuthProviderResponse.from_orm(primary_provider)
+                if primary_provider
+                else None,
             )
-            
+
             return JSONResponse(
                 content=response.model_dump(),
                 status_code=200,
             )
-            
+
         except Exception as e:
             return JSONResponse(
                 content={"error": f"Failed to get providers: {str(e)}"},
                 status_code=400,
             )
-    
+
     @auth_router.post("/providers/set-primary")
     async def set_primary_provider(
         request: Request,
@@ -306,19 +312,19 @@ class AuthAPI:
             # Get user from auth token
             user_data = await auth_handler.check_auth(request, None)
             user_id = user_data.get("user_id")
-            
+
             if not user_id:
                 return JSONResponse(
                     content={"error": "Authentication required"},
                     status_code=401,
                 )
-            
+
             unified_auth = UnifiedAuthService(db)
             success = unified_auth.set_primary_provider(
                 user_id,
                 primary_request.provider_type,
             )
-            
+
             if success:
                 return JSONResponse(
                     content={"message": "Primary provider updated"},
@@ -329,13 +335,13 @@ class AuthAPI:
                     content={"error": "Provider not found"},
                     status_code=404,
                 )
-                
+
         except Exception as e:
             return JSONResponse(
                 content={"error": f"Failed to set primary provider: {str(e)}"},
                 status_code=400,
             )
-    
+
     @auth_router.delete("/providers/unlink")
     async def unlink_provider(
         request: Request,
@@ -347,21 +353,21 @@ class AuthAPI:
             # Get user from auth token
             user_data = await auth_handler.check_auth(request, None)
             user_id = user_data.get("user_id")
-            
+
             if not user_id:
                 return JSONResponse(
                     content={"error": "Authentication required"},
                     status_code=401,
                 )
-            
+
             unified_auth = UnifiedAuthService(db)
-            
+
             try:
                 success = unified_auth.unlink_provider(
                     user_id,
                     unlink_request.provider_type,
                 )
-                
+
                 if success:
                     return JSONResponse(
                         content={"message": "Provider unlinked"},
@@ -372,20 +378,20 @@ class AuthAPI:
                         content={"error": "Provider not found"},
                         status_code=404,
                     )
-                    
+
             except ValueError as ve:
                 # Cannot unlink last provider
                 return JSONResponse(
                     content={"error": str(ve)},
                     status_code=400,
                 )
-                
+
         except Exception as e:
             return JSONResponse(
                 content={"error": f"Failed to unlink provider: {str(e)}"},
                 status_code=400,
             )
-    
+
     @auth_router.get("/account/me")
     async def get_my_account(
         request: Request,
@@ -396,30 +402,29 @@ class AuthAPI:
             # Get user from auth token
             user_data = await auth_handler.check_auth(request, None)
             user_id = user_data.get("user_id")
-            
+
             if not user_id:
                 return JSONResponse(
                     content={"error": "Authentication required"},
                     status_code=401,
                 )
-            
+
             user_service = UserService(db)
             user = user_service.get_user_by_uid(user_id)
-            
+
             if not user:
                 return JSONResponse(
                     content={"error": "User not found"},
                     status_code=404,
                 )
-            
+
             unified_auth = UnifiedAuthService(db)
             providers = unified_auth.get_user_providers(user_id)
-            
+
             primary_provider = next(
-                (p.provider_type for p in providers if p.is_primary),
-                None
+                (p.provider_type for p in providers if p.is_primary), None
             )
-            
+
             response = AccountResponse(
                 user_id=user.uid,
                 email=user.email,
@@ -431,12 +436,12 @@ class AuthAPI:
                 providers=[AuthProviderResponse.from_orm(p) for p in providers],
                 primary_provider=primary_provider,
             )
-            
+
             return JSONResponse(
                 content=response.model_dump(),
                 status_code=200,
             )
-            
+
         except Exception as e:
             return JSONResponse(
                 content={"error": f"Failed to get account: {str(e)}"},

@@ -25,7 +25,7 @@ class TestUserModel:
     def test_get_primary_provider(self, db_session, test_user_with_github):
         """Test User.get_primary_provider()"""
         primary = test_user_with_github.get_primary_provider()
-        
+
         assert primary is not None
         assert primary.provider_type == "firebase_github"
         assert primary.is_primary == True
@@ -53,7 +53,7 @@ class TestUserModel:
         )
         db_session.add(user)
         db_session.commit()
-        
+
         assert user.organization == "company.com"
         assert user.organization_name == "Test Company"
 
@@ -73,7 +73,7 @@ class TestUserAuthProvider:
         )
         db_session.add(provider)
         db_session.commit()
-        
+
         assert provider.id is not None
         assert provider.user_id == test_user.uid
         assert provider.provider_type == "sso_google"
@@ -88,7 +88,7 @@ class TestUserAuthProvider:
             linked_at=datetime.utcnow(),
         )
         db_session.add(duplicate)
-        
+
         with pytest.raises(Exception):  # IntegrityError
             db_session.commit()
 
@@ -102,24 +102,24 @@ class TestUserAuthProvider:
             linked_at=datetime.utcnow(),
         )
         db_session.add(duplicate)
-        
+
         with pytest.raises(Exception):  # IntegrityError
             db_session.commit()
 
     def test_cascade_delete(self, db_session, test_user_with_github):
         """Test providers are deleted when user is deleted"""
         user_id = test_user_with_github.uid
-        
+
         # Verify provider exists
         provider = db_session.query(UserAuthProvider).filter_by(
             user_id=user_id
         ).first()
         assert provider is not None
-        
+
         # Delete user
         db_session.delete(test_user_with_github)
         db_session.commit()
-        
+
         # Verify provider is deleted
         provider = db_session.query(UserAuthProvider).filter_by(
             user_id=user_id
@@ -139,7 +139,7 @@ class TestUserAuthProvider:
         )
         db_session.add(provider)
         db_session.commit()
-        
+
         assert provider.access_token == "access-token-123"
         assert provider.refresh_token == "refresh-token-456"
         assert provider.token_expires_at is not None
@@ -162,7 +162,7 @@ class TestPendingProviderLink:
         )
         db_session.add(link)
         db_session.commit()
-        
+
         assert link.id is not None
         assert link.token == "unique-token-123"
 
@@ -177,7 +177,7 @@ class TestPendingProviderLink:
             expires_at=datetime.utcnow() + timedelta(minutes=15),
         )
         db_session.add(duplicate)
-        
+
         with pytest.raises(Exception):  # IntegrityError
             db_session.commit()
 
@@ -193,17 +193,17 @@ class TestPendingProviderLink:
         )
         db_session.add(link)
         db_session.commit()
-        
+
         assert link.expires_at < datetime.utcnow()
 
     def test_cascade_delete_with_user(self, db_session, test_user, pending_link):
         """Test pending links are deleted when user is deleted"""
         token = pending_link.token
-        
+
         # Delete user
         db_session.delete(test_user)
         db_session.commit()
-        
+
         # Verify link is deleted
         link = db_session.query(PendingProviderLink).filter_by(
             token=token
@@ -231,7 +231,7 @@ class TestOrganizationSSOConfig:
         )
         db_session.add(config)
         db_session.commit()
-        
+
         assert config.id is not None
         assert config.domain == "company.com"
         assert config.enforce_sso == True
@@ -245,7 +245,7 @@ class TestOrganizationSSOConfig:
             configured_at=datetime.utcnow(),
         )
         db_session.add(duplicate)
-        
+
         with pytest.raises(Exception):  # IntegrityError
             db_session.commit()
 
@@ -266,12 +266,12 @@ class TestOrganizationSSOConfig:
         )
         db_session.add(inactive)
         db_session.commit()
-        
+
         # Query active only
         active_configs = db_session.query(OrganizationSSOConfig).filter_by(
             is_active=True
         ).all()
-        
+
         assert len(active_configs) == 1
         assert active_configs[0].domain == "company.com"
 
@@ -292,7 +292,7 @@ class TestAuthAuditLog:
         )
         db_session.add(log)
         db_session.commit()
-        
+
         assert log.id is not None
         assert log.event_type == "login"
         assert log.status == "success"
@@ -310,7 +310,7 @@ class TestAuthAuditLog:
         )
         db_session.add(log)
         db_session.commit()
-        
+
         assert log.id is not None
         assert log.user_id is None
         assert log.error_message == "Invalid token"
@@ -329,7 +329,7 @@ class TestAuthAuditLog:
         )
         db_session.add(log)
         db_session.commit()
-        
+
         assert isinstance(log.extra_data, dict)
         assert log.extra_data["custom_field"] == "value"
 
@@ -345,12 +345,12 @@ class TestAuthAuditLog:
             )
             db_session.add(log)
         db_session.commit()
-        
+
         # Query login events
         login_logs = db_session.query(AuthAuditLog).filter_by(
             event_type="login"
         ).all()
-        
+
         assert len(login_logs) == 2
 
     def test_query_by_time_range(self, db_session, test_user):
@@ -369,12 +369,11 @@ class TestAuthAuditLog:
         )
         db_session.add_all([old_log, recent_log])
         db_session.commit()
-        
+
         # Query last 24 hours
         cutoff = datetime.utcnow() - timedelta(hours=24)
         recent_logs = db_session.query(AuthAuditLog).filter(
             AuthAuditLog.created_at >= cutoff
         ).all()
-        
-        assert len(recent_logs) == 1
 
+        assert len(recent_logs) == 1

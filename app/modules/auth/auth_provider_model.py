@@ -25,10 +25,10 @@ from app.core.base_model import Base
 class UserAuthProvider(Base):
     """
     Stores multiple authentication providers for a single user.
-    
+
     A user can have multiple auth providers (GitHub, Google SSO, Azure AD, etc.)
     but maintains a single account identity based on email.
-    
+
     Examples:
         - User signs up with GitHub → Creates firebase_github provider
         - Same user later adds SSO → Creates sso_google provider
@@ -54,7 +54,9 @@ class UserAuthProvider(Base):
     provider_data = Column(JSONB)  # Full provider response/metadata
 
     # OAuth tokens (for API access, e.g., GitHub API)
-    access_token = Column(Text)  # OAuth access token (should be encrypted in production)
+    access_token = Column(
+        Text
+    )  # OAuth access token (should be encrypted in production)
     refresh_token = Column(Text)  # OAuth refresh token (should be encrypted)
     token_expires_at = Column(TIMESTAMP(timezone=True))
 
@@ -84,10 +86,10 @@ class UserAuthProvider(Base):
 class PendingProviderLink(Base):
     """
     Temporary storage for provider linking confirmation.
-    
+
     When a user attempts to login with a new provider but already has an account
     with the same email, we create a pending link and ask for user confirmation.
-    
+
     These records expire after 15 minutes for security.
     """
 
@@ -121,7 +123,7 @@ class PendingProviderLink(Base):
 class OrganizationSSOConfig(Base):
     """
     SSO configuration for organizational domains.
-    
+
     Maps email domains to SSO providers and stores configuration.
     Enables features like:
     - Auto-detecting which SSO provider to use based on email domain
@@ -142,18 +144,14 @@ class OrganizationSSOConfig(Base):
     sso_config = Column(JSONB, nullable=False)  # Provider-specific configuration
 
     # Policies
-    enforce_sso = Column(
-        Boolean, default=False
-    )  # If true, force SSO for this domain
+    enforce_sso = Column(Boolean, default=False)  # If true, force SSO for this domain
     allow_other_providers = Column(
         Boolean, default=True
     )  # Allow GitHub, etc. alongside SSO
 
     # Metadata
     configured_by = Column(String(255), ForeignKey("users.uid"))
-    configured_at = Column(
-        TIMESTAMP(timezone=True), default=func.now(), nullable=False
-    )
+    configured_at = Column(TIMESTAMP(timezone=True), default=func.now(), nullable=False)
     is_active = Column(Boolean, default=True)
 
     def __repr__(self):
@@ -163,13 +161,13 @@ class OrganizationSSOConfig(Base):
 class AuthAuditLog(Base):
     """
     Audit log for all authentication and authorization events.
-    
+
     Tracks:
     - Login attempts (success/failure)
     - Provider linking/unlinking
     - SSO authentications
     - Security events
-    
+
     Critical for:
     - Security monitoring
     - Compliance (SOC 2, GDPR)
@@ -199,4 +197,3 @@ class AuthAuditLog(Base):
 
     def __repr__(self):
         return f"<AuthAuditLog(event={self.event_type}, user_id={self.user_id}, status={self.status}, created={self.created_at})>"
-

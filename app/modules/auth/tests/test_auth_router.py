@@ -39,7 +39,7 @@ class TestSSOLoginEndpoint:
                 },
             },
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "new_user"
@@ -60,7 +60,7 @@ class TestSSOLoginEndpoint:
                 },
             },
         )
-        
+
         assert response.status_code in [200, 202]
         data = response.json()
         # Should be "needs_linking" since user has GitHub but not Google
@@ -77,7 +77,7 @@ class TestSSOLoginEndpoint:
                 "provider_data": {},
             },
         )
-        
+
         assert response.status_code == 400
 
 
@@ -91,7 +91,7 @@ class TestProviderManagementEndpoints:
             "/api/v1/providers/me",
             headers={"Authorization": f"Bearer {auth_token}"},
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert "providers" in data
@@ -105,7 +105,7 @@ class TestProviderManagementEndpoints:
             headers={"Authorization": f"Bearer {auth_token}"},
             json={"provider_type": "sso_google"},
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["message"] == "Primary provider updated"
@@ -118,7 +118,7 @@ class TestProviderManagementEndpoints:
             headers={"Authorization": f"Bearer {auth_token}"},
             json={"provider_type": "sso_google"},
         )
-        
+
         assert response.status_code == 200
 
     @pytest.mark.skip("Requires full FastAPI app setup")
@@ -129,7 +129,7 @@ class TestProviderManagementEndpoints:
             headers={"Authorization": f"Bearer {auth_token}"},
             json={"provider_type": "firebase_github"},
         )
-        
+
         assert response.status_code == 400
         data = response.json()
         assert "cannot unlink" in data["error"].lower()
@@ -145,7 +145,7 @@ class TestAccountEndpoint:
             "/api/v1/account/me",
             headers={"Authorization": f"Bearer {auth_token}"},
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert "user_id" in data
@@ -164,7 +164,7 @@ class TestProviderLinkingEndpoints:
             "/api/v1/providers/confirm-linking",
             json={"linking_token": pending_link.token},
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["message"] == "Provider linked successfully"
@@ -176,7 +176,7 @@ class TestProviderLinkingEndpoints:
             "/api/v1/providers/confirm-linking",
             json={"linking_token": "invalid-token"},
         )
-        
+
         assert response.status_code == 400
 
     @pytest.mark.skip("Requires full FastAPI app setup")
@@ -185,7 +185,7 @@ class TestProviderLinkingEndpoints:
         response = client.delete(
             f"/api/v1/providers/cancel-linking/{pending_link.token}"
         )
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["message"] == "Linking cancelled"
@@ -208,4 +208,3 @@ def client():
     app.include_router(auth_router)
     client = TestClient(app)
     return client
-

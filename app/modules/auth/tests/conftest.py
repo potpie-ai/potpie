@@ -27,16 +27,16 @@ def db_session():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    
+
     # Create all tables
     Base.metadata.create_all(bind=engine)
-    
+
     # Create session
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = TestingSessionLocal()
-    
+
     yield session
-    
+
     # Cleanup
     session.close()
     Base.metadata.drop_all(bind=engine)
@@ -129,4 +129,3 @@ def org_sso_config(db_session):
     db_session.commit()
     db_session.refresh(config)
     return config
-

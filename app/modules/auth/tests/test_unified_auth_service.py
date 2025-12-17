@@ -20,7 +20,7 @@ class TestUnifiedAuthService:
         assert service.db == db_session
         assert service.user_service is not None
         assert "google" in service.sso_providers
-        
+
         # Test singleton pattern: multiple service instances share same provider
         service2 = UnifiedAuthService(db_session)
         assert service.sso_providers["google"] is service2.sso_providers["google"]
