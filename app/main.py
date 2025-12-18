@@ -117,6 +117,7 @@ class MainApp:
         manually using log_context() in routes where available.
         """
         self.app.add_middleware(LoggingContextMiddleware)
+        logger.info("Logging context middleware configured")
 
     def setup_data(self):
         if os.getenv("isDevelopmentMode") == "enabled":
