@@ -494,11 +494,11 @@ class UnifiedAuthService:
         self.db.add(pending_link)
         self.db.commit()
 
-            logger.info(
-                "Created pending link for user %s, provider %s",
-                user_id,
-                provider_type,
-            )
+        logger.info(
+            "Created pending link for user %s, provider %s",
+            user_id,
+            provider_type,
+        )
         return token
 
     def confirm_provider_link(self, linking_token: str) -> Optional[UserAuthProvider]:
