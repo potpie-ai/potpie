@@ -407,6 +407,7 @@ class ConversationService:
                         f"Allowing AI generation for agent queries in conversation {conversation_id}"
                     )
                     # Continue with normal AI generation flow below
+                    # Note: project_id will be None for workflow conversations, which is handled in _generate_and_stream_ai_response
 
                 # Check if this is the first human message
                 if conversation.human_message_count == 1:
@@ -415,10 +416,14 @@ class ConversationService:
                     )
                     await self._update_conversation_title(conversation_id, new_title)
 
+                # Only require project_id for non-workflow conversations
+                # Workflow conversations with agents can proceed without project_id
                 project_id = (
                     conversation.project_ids[0] if conversation.project_ids else None
                 )
-                if not project_id:
+                if not project_id and has_project:
+                    # Only raise error if we expected a project (has_project is True)
+                    # For workflow conversations, has_project is False, so we skip this check
                     raise ConversationServiceError(
                         "No project associated with this conversation."
                     )
@@ -737,9 +742,18 @@ class ConversationService:
             if type is None:
                 raise ConversationServiceError(f"Invalid agent_id {agent_id}")
 
-            project_name = await self.project_service.get_project_name(
-                project_ids=[project_id]
-            )
+            # For workflow conversations, project_id may be None
+            # Use a default project name in that case
+            if project_id:
+                project_name = await self.project_service.get_project_name(
+                    project_ids=[project_id]
+                )
+            else:
+                # Workflow conversation without project - use default name
+                project_name = "Workflow"
+                logger.info(
+                    f"Workflow conversation detected (no project_id). Using default project name: {project_name}"
+                )
 
             # Prepare multimodal context - use current message attachments if available
             image_attachments = None
