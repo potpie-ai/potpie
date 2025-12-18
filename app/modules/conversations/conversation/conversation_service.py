@@ -408,6 +408,17 @@ class ConversationService:
                     )
                     # Continue with normal AI generation flow below
                     # Note: project_id will be None for workflow conversations, which is handled in _generate_and_stream_ai_response
+                    # Skip project_id validation for workflow conversations
+                    project_id = None
+                else:
+                    # Regular conversation with project - require project_id
+                    project_id = (
+                        conversation.project_ids[0] if conversation.project_ids else None
+                    )
+                    if not project_id:
+                        raise ConversationServiceError(
+                            "No project associated with this conversation."
+                        )
 
                 # Check if this is the first human message
                 if conversation.human_message_count == 1:
@@ -415,18 +426,6 @@ class ConversationService:
                         conversation, message.content
                     )
                     await self._update_conversation_title(conversation_id, new_title)
-
-                # Only require project_id for non-workflow conversations
-                # Workflow conversations with agents can proceed without project_id
-                project_id = (
-                    conversation.project_ids[0] if conversation.project_ids else None
-                )
-                if not project_id and has_project:
-                    # Only raise error if we expected a project (has_project is True)
-                    # For workflow conversations, has_project is False, so we skip this check
-                    raise ConversationServiceError(
-                        "No project associated with this conversation."
-                    )
 
                 if stream:
                     async for chunk in self._generate_and_stream_ai_response(
