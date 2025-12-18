@@ -386,7 +386,12 @@ class ConversationService:
                 # Workflow conversations can have agents (for agent nodes) or be HITL-only
                 # If it has agents, we should generate AI responses for agent queries
                 # If it's HITL-only (no agents), skip AI generation
-                has_project = conversation.project_ids and len(conversation.project_ids) > 0
+                # More robust check: handle None, empty list, or list with empty/None values
+                project_ids_list = conversation.project_ids if conversation.project_ids else []
+                has_project = (
+                    len(project_ids_list) > 0 
+                    and any(pid and str(pid).strip() for pid in project_ids_list)
+                )
                 has_agent = conversation.agent_ids and len(conversation.agent_ids) > 0
                 
                 if not has_project and not has_agent:
