@@ -394,6 +394,14 @@ class ConversationService:
                 )
                 has_agent = conversation.agent_ids and len(conversation.agent_ids) > 0
                 
+                logger.info(
+                    f"🔍 [store_message] Conversation {conversation_id} - "
+                    f"project_ids={project_ids_list} (type={type(project_ids_list)}, len={len(project_ids_list)}), "
+                    f"has_project={has_project}, "
+                    f"agent_ids={conversation.agent_ids}, "
+                    f"has_agent={has_agent}"
+                )
+                
                 if not has_project and not has_agent:
                     # This is a HITL-only workflow conversation - just store the message, don't generate AI response
                     logger.info(
