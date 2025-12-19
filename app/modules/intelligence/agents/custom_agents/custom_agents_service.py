@@ -91,6 +91,71 @@ class CustomAgentService:
             )
             raise
 
+    async def validate_sub_agents(
+        self, user_id: str, agent_id: Optional[str], sub_agent_ids: List[str], depth: int = 0
+    ) -> None:
+        """Validate sub-agents for circular dependencies and ownership"""
+        MAX_DEPTH = 2
+
+        if depth > MAX_DEPTH:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Sub-agent nesting depth exceeds maximum of {MAX_DEPTH} levels"
+            )
+
+        if not sub_agent_ids:
+            return
+
+        for sub_agent_id in sub_agent_ids:
+            sub_agent = await self._get_agent_by_id_and_user(sub_agent_id, user_id)
+            if not sub_agent:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Sub-agent {sub_agent_id} not found or not owned by you"
+                )
+
+            if agent_id and sub_agent_id == agent_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="An agent cannot be its own sub-agent"
+                )
+
+            if agent_id and sub_agent.sub_agents:
+                if agent_id in sub_agent.sub_agents:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Circular dependency detected: {sub_agent_id} already uses this agent as a sub-agent"
+                    )
+                await self.validate_sub_agents(
+                    user_id, agent_id, sub_agent.sub_agents, depth + 1
+                )
+
+    async def get_available_sub_agents(
+        self, user_id: str, exclude_agent_id: Optional[str] = None
+    ) -> List[Agent]:
+        """Get list of agents available to be used as sub-agents"""
+        try:
+            query = self.db.query(CustomAgentModel).filter(
+                CustomAgentModel.user_id == user_id
+            )
+
+            if exclude_agent_id:
+                query = query.filter(CustomAgentModel.id != exclude_agent_id)
+
+            agents = query.all()
+
+            available = []
+            for agent in agents:
+                if exclude_agent_id:
+                    if exclude_agent_id in (agent.sub_agents or []):
+                        continue
+                available.append(self._convert_to_agent_schema(agent))
+
+            return available
+        except SQLAlchemyError:
+            logger.exception("Database error while fetching available sub-agents", user_id=user_id)
+            raise
+
     async def create_share(
         self, agent_id: str, shared_with_user_id: str
     ) -> CustomAgentShareModel:
@@ -351,6 +416,7 @@ class CustomAgentService:
             backstory=custom_agent.backstory,
             system_prompt=custom_agent.system_prompt,
             tasks=task_schemas,
+            sub_agents=custom_agent.sub_agents or [],
             deployment_url=custom_agent.deployment_url,
             created_at=custom_agent.created_at,
             updated_at=custom_agent.updated_at,
@@ -382,6 +448,10 @@ class CustomAgentService:
                     status_code=400,
                     detail=f"The following tool IDs are invalid: {', '.join(invalid_tools)}",
                 )
+
+            # Validate sub-agents if provided
+            if hasattr(agent_data, 'sub_agents') and agent_data.sub_agents:
+                await self.validate_sub_agents(user_id, None, agent_data.sub_agents)
 
             # Enhance task descriptions
             tasks_dict = [task.dict() for task in agent_data.tasks]
@@ -424,6 +494,7 @@ class CustomAgentService:
             backstory=agent_data.backstory,
             system_prompt=agent_data.system_prompt,
             tasks=tasks,
+            sub_agents=getattr(agent_data, 'sub_agents', []) or [],
         )
 
         self.db.add(agent_model)
@@ -448,6 +519,10 @@ class CustomAgentService:
             # Convert to dict and handle special fields
             update_data = agent_data.dict(exclude_unset=True)
             logger.info(f"Update data: {update_data}")
+
+            # Validate sub-agents if provided
+            if "sub_agents" in update_data and update_data["sub_agents"]:
+                await self.validate_sub_agents(user_id, agent_id, update_data["sub_agents"])
 
             # Handle tasks separately if present
             if "tasks" in update_data:
@@ -675,9 +750,10 @@ class CustomAgentService:
             "backstory": agent_model.backstory,
             "system_prompt": agent_model.system_prompt,
             "tasks": agent_model.tasks,
+            "sub_agents": agent_model.sub_agents or [],
         }
         runtime_agent = RuntimeCustomAgent(
-            self.llm_provider, self.tool_service, agent_config
+            self.llm_provider, self.tool_service, agent_config, db=self.db
         )
         try:
             return runtime_agent.run_stream(ctx)

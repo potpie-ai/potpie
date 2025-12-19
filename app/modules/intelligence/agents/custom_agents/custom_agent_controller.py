@@ -260,6 +260,19 @@ class CustomAgentController:
                 detail=f"Failed to list agents: {str(e)}",
             )
 
+    async def get_available_sub_agents(
+        self, user_id: str, exclude_agent_id: Optional[str] = None
+    ) -> List[Agent]:
+        """Get available agents that can be used as sub-agents"""
+        try:
+            return await self.service.get_available_sub_agents(user_id, exclude_agent_id)
+        except Exception as e:
+            logger.error(f"Error getting available sub-agents: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to get available sub-agents: {str(e)}",
+            )
+
     async def update_agent(
         self, agent_id: str, user_id: str, agent_data: AgentUpdate
     ) -> Agent:

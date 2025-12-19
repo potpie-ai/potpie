@@ -16,6 +16,7 @@ class CustomAgent(Base):
     backstory = Column(String)
     system_prompt = Column(String)
     tasks = Column(JSONB)
+    sub_agents = Column(JSONB, default=[], nullable=False)
     deployment_url = Column(String, nullable=True)
     deployment_status = Column(String, default="STOPPED", nullable=True)
     visibility = Column(String, default="private", nullable=False)

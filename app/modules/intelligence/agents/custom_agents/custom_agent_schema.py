@@ -48,6 +48,7 @@ class AgentVisibility(str, Enum):
 
 class AgentCreate(AgentBase):
     tasks: List[TaskCreate]
+    sub_agents: List[str] = Field(default=[], description="List of agent IDs to use as sub-agents")
 
     @field_validator("tasks")
     def validate_tasks(cls, tasks):
@@ -65,12 +66,14 @@ class AgentUpdate(BaseModel):
     system_prompt: Optional[str] = None
     tasks: Optional[List[TaskCreate]] = None
     visibility: Optional[AgentVisibility] = None
+    sub_agents: Optional[List[str]] = None
 
 
 class Agent(AgentBase):
     id: str
     user_id: str
     tasks: List[Task]
+    sub_agents: List[str] = Field(default=[])
     deployment_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime

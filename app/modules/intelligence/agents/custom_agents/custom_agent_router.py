@@ -1,4 +1,6 @@
-from fastapi import Depends, HTTPException
+from typing import Optional
+
+from fastapi import Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -112,6 +114,34 @@ async def list_agents(
         raise he
     except Exception:
         logger.exception("Error listing agents", user_id=user_id)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/available-sub-agents", response_model=list[Agent])
+async def get_available_sub_agents(
+    exclude_agent_id: Optional[str] = Query(
+        None, description="Agent ID to exclude (when editing an existing agent)"
+    ),
+    db: Session = Depends(get_db),
+    user=Depends(auth_handler.check_auth),
+):
+    """Get agents that can be used as sub-agents for a custom agent.
+    
+    Returns the user's own agents, excluding:
+    - The agent being edited (if exclude_agent_id is provided)
+    - Agents that would create circular dependencies
+    """
+    user_id = user["user_id"]
+    custom_agent_controller = CustomAgentController(user_id, db)
+    try:
+        return await custom_agent_controller.get_available_sub_agents(
+            user_id=user_id,
+            exclude_agent_id=exclude_agent_id,
+        )
+    except HTTPException as he:
+        raise he
+    except Exception:
+        logger.exception("Error getting available sub-agents", user_id=user_id)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
