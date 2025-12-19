@@ -30,7 +30,6 @@ from app.modules.auth.unified_auth_service import (
     PROVIDER_TYPE_FIREBASE_EMAIL,
 )
 from app.modules.integrations.token_encryption import encrypt_token
-from app.modules.users.user_schema import CreateUser
 from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.utils.posthog_helper import PostHogClient
@@ -93,11 +92,11 @@ class AuthAPI:
                 )
             elif isinstance(body["providerData"], dict):
                 provider_info = body["providerData"].copy()
-        
+
         # Add access token if available (encrypted before storing)
         if oauth_token:
             provider_info["access_token"] = encrypt_token(oauth_token)
-        
+
         # Validate required fields
         if not uid:
             return Response(
@@ -136,7 +135,7 @@ class AuthAPI:
                 is_first_provider = len(existing_providers) == 0
 
                 from app.modules.auth.auth_schema import AuthProviderCreate
-                
+
                 # Note: unified_auth.add_provider will encrypt the token, so pass plaintext
                 provider_create = AuthProviderCreate(
                     provider_type=provider_type,
@@ -149,7 +148,7 @@ class AuthAPI:
                     user_id=uid,
                     provider_create=provider_create,
                 )
-            
+
             # Update last login if oauth_token is provided (encrypt before storing)
             if oauth_token:
                 encrypted_token = encrypt_token(oauth_token)
