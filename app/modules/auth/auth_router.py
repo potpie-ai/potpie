@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-from datetime import datetime
 
 import requests
 from dotenv import load_dotenv
@@ -30,7 +29,6 @@ from app.modules.auth.unified_auth_service import (
     PROVIDER_TYPE_FIREBASE_GITHUB,
     PROVIDER_TYPE_FIREBASE_EMAIL,
 )
-from app.modules.users.user_schema import CreateUser
 from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.utils.posthog_helper import PostHogClient
@@ -70,46 +68,50 @@ class AuthAPI:
     @auth_router.post("/signup")
     async def signup(request: Request, db: Session = Depends(get_db)):
         body = json.loads(await request.body())
-        
+
         # Extract required fields - handle both structured payload and Firebase user object
         uid = body.get("uid")
         email = body.get("email")
         display_name = body.get("displayName") or body.get("display_name")
         email_verified = body.get("emailVerified") or body.get("email_verified", False)
-        
+
         # Handle different authentication flows
         # GitHub OAuth flow has accessToken, email/password flow doesn't
         oauth_token = body.get("accessToken") or body.get("access_token")
         provider_username = body.get("providerUsername")
-        
+
         # Extract provider info - handle different formats
         provider_info = {}
         if "providerData" in body:
             if isinstance(body["providerData"], list) and len(body["providerData"]) > 0:
-                provider_info = body["providerData"][0].copy() if isinstance(body["providerData"][0], dict) else {}
+                provider_info = (
+                    body["providerData"][0].copy()
+                    if isinstance(body["providerData"][0], dict)
+                    else {}
+                )
             elif isinstance(body["providerData"], dict):
                 provider_info = body["providerData"].copy()
-        
+
         # Add access token if available
         if oauth_token:
             provider_info["access_token"] = oauth_token
-        
+
         # Validate required fields
         if not uid:
             return Response(
                 content=json.dumps({"error": "Missing required field: uid"}),
                 status_code=400,
             )
-        
+
         if not email:
             return Response(
                 content=json.dumps({"error": "Missing required field: email"}),
                 status_code=400,
             )
-        
+
         user_service = UserService(db)
         unified_auth = UnifiedAuthService(db)
-        
+
         # Determine provider type based on available data
         if oauth_token and provider_username:
             # GitHub OAuth flow
@@ -119,9 +121,9 @@ class AuthAPI:
             # Email/password flow
             provider_type = PROVIDER_TYPE_FIREBASE_EMAIL
             provider_uid = uid  # Use Firebase UID as provider UID for email/password
-        
+
         user = user_service.get_user_by_uid(uid)
-        
+
         if user:
             # User exists - update last login and ensure provider exists
             # Check if provider exists, if not create it
@@ -130,9 +132,9 @@ class AuthAPI:
                 # Check if user has any providers
                 existing_providers = unified_auth.get_user_providers(uid)
                 is_first_provider = len(existing_providers) == 0
-                
+
                 from app.modules.auth.auth_schema import AuthProviderCreate
-                
+
                 provider_create = AuthProviderCreate(
                     provider_type=provider_type,
                     provider_uid=provider_uid,
@@ -144,16 +146,16 @@ class AuthAPI:
                     user_id=uid,
                     provider_create=provider_create,
                 )
-            
+
             # Update last login if oauth_token is provided
             if oauth_token:
                 message, error = user_service.update_last_login(uid, oauth_token)
                 if error:
                     return Response(content=message, status_code=400)
-            
+
             # Update last used for the provider
             unified_auth.update_last_used(uid, provider_type)
-            
+
             return Response(
                 content=json.dumps({"uid": uid, "exists": True}),
                 status_code=200,
@@ -171,10 +173,8 @@ class AuthAPI:
                     display_name=display_name or email.split("@")[0],
                     email_verified=email_verified,
                 )
-                
-                await send_slack_message(
-                    f"New signup: {email} ({display_name})"
-                )
+
+                await send_slack_message(f"New signup: {email} ({display_name})")
 
                 PostHogClient().send_event(
                     new_user.uid,
@@ -186,7 +186,7 @@ class AuthAPI:
                         "provider_type": provider_type,
                     },
                 )
-                
+
                 return Response(
                     content=json.dumps({"uid": new_user.uid, "exists": False}),
                     status_code=201,
@@ -244,17 +244,21 @@ class AuthAPI:
                 )
 
             # Use verified data from token
-            provider_data = sso_request.provider_data or verified_user_info.raw_data or {}
+            provider_data = (
+                sso_request.provider_data or verified_user_info.raw_data or {}
+            )
             provider_uid = (
                 verified_user_info.provider_uid
                 or provider_data.get("sub")
                 or provider_data.get("oid")
                 or sso_request.email
             )
-            
+
             # Override email and display_name with verified data
             verified_email = verified_user_info.email or sso_request.email
-            verified_display_name = verified_user_info.display_name or provider_data.get("name")
+            verified_display_name = (
+                verified_user_info.display_name or provider_data.get("name")
+            )
 
             # Authenticate or create user
             user, response = await unified_auth.authenticate_or_create(

@@ -99,7 +99,7 @@ class MainApp:
         allowed_origins_env = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
         # Split by comma if multiple origins are provided
         origins = [origin.strip() for origin in allowed_origins_env.split(",")]
-        
+
         self.app.add_middleware(
             CORSMiddleware,
             allow_origins=origins,
