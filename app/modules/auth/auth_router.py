@@ -92,11 +92,10 @@ class AuthAPI:
                 )
             elif isinstance(body["providerData"], dict):
                 provider_info = body["providerData"].copy()
-
-        # Add access token if available (encrypted before storing)
-        if oauth_token:
-            provider_info["access_token"] = encrypt_token(oauth_token)
-
+        
+        # Note: access_token is passed separately to unified auth methods which handle encryption
+        # We don't need to set it in provider_info since it's stored in a separate column
+        
         # Validate required fields
         if not uid:
             return Response(
