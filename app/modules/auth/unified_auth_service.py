@@ -18,6 +18,14 @@ from app.modules.integrations.token_encryption import encrypt_token, decrypt_tok
 LINKING_TOKEN_LENGTH = 32  # Length of URL-safe token for provider linking
 LINKING_TOKEN_EXPIRY_MINUTES = 15  # Expiration time for pending provider links
 
+# Provider Type Constants
+PROVIDER_TYPE_FIREBASE_GITHUB = "firebase_github"
+PROVIDER_TYPE_FIREBASE_EMAIL = "firebase_email_password"
+PROVIDER_TYPE_SSO_GOOGLE = "sso_google"
+PROVIDER_TYPE_SSO_AZURE = "sso_azure"
+PROVIDER_TYPE_SSO_OKTA = "sso_okta"
+PROVIDER_TYPE_SSO_SAML = "sso_saml"
+
 
 # Use timezone-aware datetime.now() instead of deprecated utcnow()
 def utc_now() -> datetime:
@@ -330,7 +338,7 @@ class UnifiedAuthService:
 
     # ===== Authentication Flow =====
 
-    def authenticate_or_create(
+    async def authenticate_or_create(
         self,
         email: str,
         provider_type: str,
@@ -355,7 +363,7 @@ class UnifiedAuthService:
         email = email.lower().strip()
 
         # Check if user exists by email
-        existing_user = self.user_service.get_user_by_email(email)
+        existing_user = await self.user_service.get_user_by_email(email)
 
         if existing_user:
             # Check if this provider is already linked
