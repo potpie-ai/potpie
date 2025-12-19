@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from datetime import datetime
 
@@ -9,6 +10,8 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import HTTPException
 
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.core.database import get_db
 from app.modules.auth.auth_schema import (
@@ -22,7 +25,11 @@ from app.modules.auth.auth_schema import (
     AccountResponse,
 )
 from app.modules.auth.auth_service import auth_handler
-from app.modules.auth.unified_auth_service import UnifiedAuthService
+from app.modules.auth.unified_auth_service import (
+    UnifiedAuthService,
+    PROVIDER_TYPE_FIREBASE_GITHUB,
+    PROVIDER_TYPE_FIREBASE_EMAIL,
+)
 from app.modules.users.user_schema import CreateUser
 from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
@@ -63,54 +70,139 @@ class AuthAPI:
     @auth_router.post("/signup")
     async def signup(request: Request, db: Session = Depends(get_db)):
         body = json.loads(await request.body())
-        uid = body["uid"]
-        oauth_token = body["accessToken"]
-        user_service = UserService(db)
-        user = user_service.get_user_by_uid(uid)
-        if user:
-            message, error = user_service.update_last_login(uid, oauth_token)
-            if error:
-                return Response(content=message, status_code=400)
-            else:
-                return Response(
-                    content=json.dumps({"uid": uid, "exists": True}),
-                    status_code=200,
-                )
-        else:
-            first_login = datetime.utcnow()
-            provider_info = body["providerData"][0]
+        
+        # Extract required fields - handle both structured payload and Firebase user object
+        uid = body.get("uid")
+        email = body.get("email")
+        display_name = body.get("displayName") or body.get("display_name")
+        email_verified = body.get("emailVerified") or body.get("email_verified", False)
+        
+        # Handle different authentication flows
+        # GitHub OAuth flow has accessToken, email/password flow doesn't
+        oauth_token = body.get("accessToken") or body.get("access_token")
+        provider_username = body.get("providerUsername")
+        
+        # Extract provider info - handle different formats
+        provider_info = {}
+        if "providerData" in body:
+            if isinstance(body["providerData"], list) and len(body["providerData"]) > 0:
+                provider_info = body["providerData"][0].copy() if isinstance(body["providerData"][0], dict) else {}
+            elif isinstance(body["providerData"], dict):
+                provider_info = body["providerData"].copy()
+        
+        # Add access token if available
+        if oauth_token:
             provider_info["access_token"] = oauth_token
-            user = CreateUser(
-                uid=uid,
-                email=body["email"],
-                display_name=body["displayName"],
-                email_verified=body["emailVerified"],
-                created_at=first_login,
-                last_login_at=first_login,
-                provider_info=provider_info,
-                provider_username=body["providerUsername"],
-            )
-            uid, message, error = user_service.create_user(user)
-
-            await send_slack_message(
-                f"New signup: {body['email']} ({body['displayName']})"
-            )
-
-            PostHogClient().send_event(
-                uid,
-                "signup_event",
-                {
-                    "email": body["email"],
-                    "display_name": body["displayName"],
-                    "github_username": body["providerUsername"],
-                },
-            )
-            if error:
-                return Response(content=message, status_code=400)
+        
+        # Validate required fields
+        if not uid:
             return Response(
-                content=json.dumps({"uid": uid, "exists": False}),
-                status_code=201,
+                content=json.dumps({"error": "Missing required field: uid"}),
+                status_code=400,
             )
+        
+        if not email:
+            return Response(
+                content=json.dumps({"error": "Missing required field: email"}),
+                status_code=400,
+            )
+        
+        user_service = UserService(db)
+        unified_auth = UnifiedAuthService(db)
+        
+        # Determine provider type based on available data
+        if oauth_token and provider_username:
+            # GitHub OAuth flow
+            provider_type = PROVIDER_TYPE_FIREBASE_GITHUB
+            provider_uid = uid  # Use Firebase UID as provider UID for GitHub
+        else:
+            # Email/password flow
+            provider_type = PROVIDER_TYPE_FIREBASE_EMAIL
+            provider_uid = uid  # Use Firebase UID as provider UID for email/password
+        
+        user = user_service.get_user_by_uid(uid)
+        
+        if user:
+            # User exists - update last login and ensure provider exists
+            # Check if provider exists, if not create it
+            existing_provider = unified_auth.get_provider(uid, provider_type)
+            if not existing_provider:
+                # Check if user has any providers
+                existing_providers = unified_auth.get_user_providers(uid)
+                is_first_provider = len(existing_providers) == 0
+                
+                from app.modules.auth.auth_schema import AuthProviderCreate
+                
+                provider_create = AuthProviderCreate(
+                    provider_type=provider_type,
+                    provider_uid=provider_uid,
+                    provider_data=provider_info,
+                    access_token=oauth_token,
+                    is_primary=is_first_provider,  # Primary only if it's the first provider
+                )
+                unified_auth.add_provider(
+                    user_id=uid,
+                    provider_create=provider_create,
+                )
+            
+            # Update last login if oauth_token is provided
+            if oauth_token:
+                message, error = user_service.update_last_login(uid, oauth_token)
+                if error:
+                    return Response(content=message, status_code=400)
+            
+            # Update last used for the provider
+            unified_auth.update_last_used(uid, provider_type)
+            
+            return Response(
+                content=json.dumps({"uid": uid, "exists": True}),
+                status_code=200,
+            )
+        else:
+            # New user - create user and provider using unified auth
+            try:
+                # Use unified auth service to create user with provider
+                new_user, response = await unified_auth.authenticate_or_create(
+                    email=email,
+                    provider_type=provider_type,
+                    provider_uid=provider_uid,
+                    provider_data=provider_info,
+                    access_token=oauth_token,
+                    display_name=display_name or email.split("@")[0],
+                    email_verified=email_verified,
+                )
+                
+                await send_slack_message(
+                    f"New signup: {email} ({display_name})"
+                )
+
+                PostHogClient().send_event(
+                    new_user.uid,
+                    "signup_event",
+                    {
+                        "email": email,
+                        "display_name": display_name,
+                        "github_username": provider_username,
+                        "provider_type": provider_type,
+                    },
+                )
+                
+                return Response(
+                    content=json.dumps({"uid": new_user.uid, "exists": False}),
+                    status_code=201,
+                )
+            except ValueError as ve:
+                logger.error(f"Signup validation error: {str(ve)}", exc_info=True)
+                return Response(
+                    content=json.dumps({"error": f"Invalid request: {str(ve)}"}),
+                    status_code=400,
+                )
+            except Exception as e:
+                logger.error(f"Error creating user: {str(e)}", exc_info=True)
+                return Response(
+                    content=json.dumps({"error": f"Failed to create user: {str(e)}"}),
+                    status_code=500,
+                )
 
     # ===== Multi-Provider SSO Endpoints =====
 
@@ -139,27 +231,39 @@ class AuthAPI:
             # Map SSO provider to our provider type
             provider_type = f"sso_{sso_request.sso_provider}"
 
-            # TODO: Verify the ID token with the SSO provider
-            # For now, we trust the frontend validation
-            # In production, verify token server-side
+            # Verify the ID token with the SSO provider
+            verified_user_info = await unified_auth.verify_sso_token(
+                sso_request.sso_provider,
+                sso_request.id_token,
+            )
 
-            # Extract provider data from token (mock for now)
-            provider_data = sso_request.provider_data or {}
+            if not verified_user_info:
+                return JSONResponse(
+                    content={"error": "Invalid or expired SSO token"},
+                    status_code=401,
+                )
+
+            # Use verified data from token
+            provider_data = sso_request.provider_data or verified_user_info.raw_data or {}
             provider_uid = (
-                provider_data.get("sub")
+                verified_user_info.provider_uid
+                or provider_data.get("sub")
                 or provider_data.get("oid")
                 or sso_request.email
             )
+            
+            # Override email and display_name with verified data
+            verified_email = verified_user_info.email or sso_request.email
+            verified_display_name = verified_user_info.display_name or provider_data.get("name")
 
             # Authenticate or create user
-            user, response = unified_auth.authenticate_or_create(
-                email=sso_request.email,
+            user, response = await unified_auth.authenticate_or_create(
+                email=verified_email,
                 provider_type=provider_type,
                 provider_uid=provider_uid,
                 provider_data=provider_data,
-                display_name=provider_data.get("name")
-                or sso_request.email.split("@")[0],
-                email_verified=True,  # SSO providers always verify email
+                display_name=verified_display_name or verified_email.split("@")[0],
+                email_verified=verified_user_info.email_verified,
                 ip_address=ip_address,
                 user_agent=user_agent,
             )
@@ -167,14 +271,14 @@ class AuthAPI:
             # Send Slack notification for new users
             if response.status == "new_user":
                 await send_slack_message(
-                    f"New SSO signup: {sso_request.email} via {sso_request.sso_provider}"
+                    f"New SSO signup: {verified_email} via {sso_request.sso_provider}"
                 )
 
                 PostHogClient().send_event(
                     user.uid,
                     "sso_signup_event",
                     {
-                        "email": sso_request.email,
+                        "email": verified_email,
                         "sso_provider": sso_request.sso_provider,
                     },
                 )
@@ -184,10 +288,17 @@ class AuthAPI:
                 status_code=200 if response.status == "success" else 202,
             )
 
+        except ValueError as ve:
+            logger.error(f"SSO login validation error: {str(ve)}", exc_info=True)
+            return JSONResponse(
+                content={"error": f"Invalid request: {str(ve)}"},
+                status_code=400,
+            )
         except Exception as e:
+            logger.error(f"SSO login error: {str(e)}", exc_info=True)
             return JSONResponse(
                 content={"error": f"SSO login failed: {str(e)}"},
-                status_code=400,
+                status_code=500,
             )
 
     @auth_router.post("/providers/confirm-linking")
@@ -224,10 +335,17 @@ class AuthAPI:
                 status_code=200,
             )
 
+        except ValueError as ve:
+            logger.error(f"Provider linking validation error: {str(ve)}", exc_info=True)
+            return JSONResponse(
+                content={"error": f"Invalid request: {str(ve)}"},
+                status_code=400,
+            )
         except Exception as e:
+            logger.error(f"Provider linking error: {str(e)}", exc_info=True)
             return JSONResponse(
                 content={"error": f"Failed to link provider: {str(e)}"},
-                status_code=400,
+                status_code=500,
             )
 
     @auth_router.delete("/providers/cancel-linking/{linking_token}")

@@ -95,7 +95,11 @@ class MainApp:
             )
 
     def setup_cors(self):
-        origins = ["*"]
+        # Get allowed origins from environment variable, default to localhost:3000 for development
+        allowed_origins_env = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
+        # Split by comma if multiple origins are provided
+        origins = [origin.strip() for origin in allowed_origins_env.split(",")]
+        
         self.app.add_middleware(
             CORSMiddleware,
             allow_origins=origins,
@@ -103,6 +107,7 @@ class MainApp:
             allow_methods=["*"],
             allow_headers=["*"],
         )
+        logger.info(f"CORS configured with allowed origins: {origins}")
 
     def setup_logging_middleware(self):
         """
