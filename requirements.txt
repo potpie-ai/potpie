@@ -56,7 +56,7 @@ fastapi==0.124.0
 fastavro==1.12.1
 fastmcp==2.13.2
 fastuuid==0.14.0
-filelock==3.20.0
+filelock==3.20.1
 firebase-admin==7.1.0
 firecrawl-py==4.10.4
 flower==2.0.1
@@ -200,6 +200,8 @@ pydantic-settings==2.12.0
 pygithub==2.8.1
 pygments==2.19.2
 pyjwt==2.10.1
+pylint==4.0.2
+pypdf>=6.4.2
 pynacl==1.6.1
 pyperclip==1.11.0
 pystache==0.6.8

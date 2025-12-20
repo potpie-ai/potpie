@@ -30,7 +30,7 @@ class CreateUser(BaseModel):
     created_at: datetime
     last_login_at: datetime
     provider_info: dict
-    provider_username: str
+    provider_username: Optional[str] = None
 
 
 class UserProfileResponse(BaseModel):
