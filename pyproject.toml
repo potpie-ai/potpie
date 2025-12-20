@@ -1,11 +1,16 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "potpie"
 version = "0.1.0"
-description = "Add your description here"
+description = "AI-powered code analysis library and CLI"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "agentops>=0.4.21",
+    "click>=8.1.0",
     "aiofiles>=25.1.0",
     "aiohttp>=3.13.2",
     "alembic>=1.17.1",
@@ -102,3 +107,6 @@ skips = ["B101", "B601"]  # Skip assert_used and shell injection warnings
 
 [tool.ruff]
 exclude = ["tests", "app/alembic"]
+
+[project.scripts]
+potpie = "potpie.cli:main"

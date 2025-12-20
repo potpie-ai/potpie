@@ -4409,7 +4409,7 @@ wheels = [
 [[package]]
 name = "potpie"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "agentops" },
     { name = "aiofiles" },
@@ -4426,6 +4426,7 @@ dependencies = [
     { name = "boto3" },
     { name = "celery" },
     { name = "chardet" },
+    { name = "click" },
     { name = "cryptography" },
     { name = "email-inspector" },
     { name = "fastapi" },
@@ -4522,6 +4523,7 @@ requires-dist = [
     { name = "boto3", specifier = ">=1.40.67" },
     { name = "celery", specifier = ">=5.5.3" },
     { name = "chardet", specifier = ">=5.2.0" },
+    { name = "click", specifier = ">=8.1.0" },
     { name = "cryptography", specifier = ">=46.0.3" },
     { name = "email-inspector", specifier = ">=0.1.4" },
     { name = "fastapi", specifier = ">=0.121.0" },
