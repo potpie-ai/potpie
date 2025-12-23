@@ -191,7 +191,7 @@ class AuthAPI:
                 f"Linking GitHub (provider_uid={provider_uid}) to user {user.uid}"
             )
             provider_create = AuthProviderCreate(
-                provider_type=PROVIDER_TYPE_FIREBASE_GITHUB,
+                provider_type=provider_type,  # Use the variable instead of hardcoding
                 provider_uid=provider_uid,  # GitHub Firebase UID
                 provider_data=provider_info,
                 access_token=oauth_token,
@@ -238,10 +238,10 @@ class AuthAPI:
                     logger.info(f"GitHub {provider_uid} linked to user {user.uid}")
 
                     # Update last login
+                    # Note: update_last_login handles encryption internally, pass plaintext token
                     if oauth_token:
-                        encrypted_token = encrypt_token(oauth_token)
-                        user_service.update_last_login(user.uid, encrypted_token)
-
+                        user_service.update_last_login(user.uid, oauth_token)
+                    
                     return Response(
                         content=json.dumps(
                             {
@@ -259,7 +259,7 @@ class AuthAPI:
             try:
                 new_user, _ = await unified_auth.authenticate_or_create(
                     email=email,
-                    provider_type=PROVIDER_TYPE_FIREBASE_GITHUB,
+                    provider_type=provider_type,  # Use the variable instead of hardcoding
                     provider_uid=provider_uid,
                     provider_data=provider_info,
                     access_token=oauth_token,

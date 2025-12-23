@@ -514,106 +514,9 @@ class UnifiedAuthService:
                         f"for email {email} (not in Firebase)"
                     )
                     try:
-                        # Delete related records first to avoid foreign key constraint violations
-                        # Use raw SQL DELETE to avoid SQLAlchemy tracking issues
-                        from sqlalchemy import text
-
-                        # Delete conversations
-                        from app.modules.conversations.conversation.conversation_model import (
-                            Conversation,
-                        )
-
-                        conversations_count = (
-                            self.db.query(Conversation)
-                            .filter(Conversation.user_id == user_uid)
-                            .count()
-                        )
-                        if conversations_count > 0:
-                            logger.info(
-                                f"Deleting {conversations_count} conversations for orphaned user {user_uid}"
-                            )
-                            self.db.execute(
-                                text(
-                                    "DELETE FROM conversations WHERE user_id = :user_id"
-                                ),
-                                {"user_id": user_uid},
-                            )
-
-                        # Delete search_indices first (they reference projects)
-                        from app.modules.search.search_models import SearchIndex
-                        from app.modules.projects.projects_model import Project
-
-                        search_indices_count = (
-                            self.db.query(SearchIndex)
-                            .join(Project, SearchIndex.project_id == Project.id)
-                            .filter(Project.user_id == user_uid)
-                            .count()
-                        )
-                        if search_indices_count > 0:
-                            logger.info(
-                                f"Deleting {search_indices_count} search indices for orphaned user {user_uid}"
-                            )
-                            # Delete search_indices that belong to projects owned by this user
-                            self.db.execute(
-                                text("""
-                                    DELETE FROM search_indices
-                                    WHERE project_id IN (
-                                        SELECT id FROM projects WHERE user_id = :user_id
-                                    )
-                                """),
-                                {"user_id": user_uid},
-                            )
-
-                        # Delete projects
-                        projects_count = (
-                            self.db.query(Project)
-                            .filter(Project.user_id == user_uid)
-                            .count()
-                        )
-                        if projects_count > 0:
-                            logger.info(
-                                f"Deleting {projects_count} projects for orphaned user {user_uid}"
-                            )
-                            self.db.execute(
-                                text("DELETE FROM projects WHERE user_id = :user_id"),
-                                {"user_id": user_uid},
-                            )
-
-                        # Delete custom agents
-                        from app.modules.intelligence.agents.custom_agents.custom_agent_model import (
-                            CustomAgent,
-                        )
-
-                        custom_agents_count = (
-                            self.db.query(CustomAgent)
-                            .filter(CustomAgent.user_id == user_uid)
-                            .count()
-                        )
-                        if custom_agents_count > 0:
-                            logger.info(
-                                f"Deleting {custom_agents_count} custom agents for orphaned user {user_uid}"
-                            )
-                            self.db.execute(
-                                text(
-                                    "DELETE FROM custom_agents WHERE user_id = :user_id"
-                                ),
-                                {"user_id": user_uid},
-                            )
-
-                        # Flush to ensure all deletes are executed before deleting user
-                        self.db.flush()
-
-                        # Expunge the user object to avoid SQLAlchemy trying to update related objects
-                        self.db.expunge(existing_user)
-
-                        # Delete user using raw SQL to avoid relationship tracking issues
-                        self.db.execute(
-                            text("DELETE FROM users WHERE uid = :user_id"),
-                            {"user_id": user_uid},
-                        )
-                        self.db.commit()
-                        logger.info(f"Deleted orphaned user {user_uid}")
-
+                        # Use helper function to delete orphaned user and all related records
+                        self._delete_orphaned_user(user_uid, existing_user)
+                        
                         # Re-query to ensure user is actually deleted and not in session
                         # This prevents issues with stale SQLAlchemy objects
                         self.db.expire_all()
@@ -1055,6 +958,167 @@ class UnifiedAuthService:
         return False
 
     # ===== Helper Methods =====
+
+    def _delete_orphaned_user(self, user_uid: str, user_obj: User) -> None:
+        """
+        Delete an orphaned user and all related records.
+        
+        Handles deletion of all child tables that don't have CASCADE delete,
+        in the correct order to avoid foreign key constraint violations.
+        
+        Args:
+            user_uid: The user's UID to delete
+            user_obj: The User SQLAlchemy object (will be expunged)
+        """
+        from sqlalchemy import text
+        
+        try:
+            # Step 1: Delete user-owned prompts (created_by FK, no CASCADE)
+            from app.modules.intelligence.prompts.prompt_model import Prompt
+            prompts_count = (
+                self.db.query(Prompt)
+                .filter(Prompt.created_by == user_uid)
+                .count()
+            )
+            if prompts_count > 0:
+                logger.info(
+                    f"Deleting {prompts_count} prompts created by orphaned user {user_uid}"
+                )
+                self.db.execute(
+                    text("DELETE FROM prompts WHERE created_by = :user_id"),
+                    {"user_id": user_uid},
+                )
+            
+            # Step 2: Delete user preferences (user_id FK, no CASCADE)
+            from app.modules.users.user_preferences_model import UserPreferences
+            preferences_count = (
+                self.db.query(UserPreferences)
+                .filter(UserPreferences.user_id == user_uid)
+                .count()
+            )
+            if preferences_count > 0:
+                logger.info(
+                    f"Deleting user preferences for orphaned user {user_uid}"
+                )
+                self.db.execute(
+                    text("DELETE FROM user_preferences WHERE user_id = :user_id"),
+                    {"user_id": user_uid},
+                )
+            
+            # Step 3: Delete OrganizationSSOConfig entries (configured_by FK, no CASCADE)
+            from app.modules.auth.auth_provider_model import OrganizationSSOConfig
+            org_configs_count = (
+                self.db.query(OrganizationSSOConfig)
+                .filter(OrganizationSSOConfig.configured_by == user_uid)
+                .count()
+            )
+            if org_configs_count > 0:
+                logger.info(
+                    f"Deleting {org_configs_count} organization SSO configs for orphaned user {user_uid}"
+                )
+                self.db.execute(
+                    text("DELETE FROM organization_sso_config WHERE configured_by = :user_id"),
+                    {"user_id": user_uid},
+                )
+            
+            # Step 4: Delete search_indices (they reference projects, must be deleted first)
+            from app.modules.search.search_models import SearchIndex
+            from app.modules.projects.projects_model import Project
+            search_indices_count = (
+                self.db.query(SearchIndex)
+                .join(Project, SearchIndex.project_id == Project.id)
+                .filter(Project.user_id == user_uid)
+                .count()
+            )
+            if search_indices_count > 0:
+                logger.info(
+                    f"Deleting {search_indices_count} search indices for orphaned user {user_uid}"
+                )
+                self.db.execute(
+                    text("""
+                        DELETE FROM search_indices 
+                        WHERE project_id IN (
+                            SELECT id FROM projects WHERE user_id = :user_id
+                        )
+                    """),
+                    {"user_id": user_uid},
+                )
+            
+            # Step 5: Delete projects (user_id FK with CASCADE, but we delete explicitly for clarity)
+            projects_count = (
+                self.db.query(Project)
+                .filter(Project.user_id == user_uid)
+                .count()
+            )
+            if projects_count > 0:
+                logger.info(
+                    f"Deleting {projects_count} projects for orphaned user {user_uid}"
+                )
+                self.db.execute(
+                    text("DELETE FROM projects WHERE user_id = :user_id"),
+                    {"user_id": user_uid},
+                )
+            
+            # Step 6: Delete custom agents (user_id FK, no CASCADE)
+            from app.modules.intelligence.agents.custom_agents.custom_agent_model import (
+                CustomAgent,
+            )
+            custom_agents_count = (
+                self.db.query(CustomAgent)
+                .filter(CustomAgent.user_id == user_uid)
+                .count()
+            )
+            if custom_agents_count > 0:
+                logger.info(
+                    f"Deleting {custom_agents_count} custom agents for orphaned user {user_uid}"
+                )
+                self.db.execute(
+                    text("DELETE FROM custom_agents WHERE user_id = :user_id"),
+                    {"user_id": user_uid},
+                )
+            
+            # Step 7: Delete conversations (user_id FK with CASCADE, but we delete explicitly)
+            from app.modules.conversations.conversation.conversation_model import Conversation
+            conversations_count = (
+                self.db.query(Conversation)
+                .filter(Conversation.user_id == user_uid)
+                .count()
+            )
+            if conversations_count > 0:
+                logger.info(
+                    f"Deleting {conversations_count} conversations for orphaned user {user_uid}"
+                )
+                self.db.execute(
+                    text("DELETE FROM conversations WHERE user_id = :user_id"),
+                    {"user_id": user_uid},
+                )
+            
+            # Step 8: Flush to ensure all deletes are executed before deleting user
+            self.db.flush()
+            
+            # Step 9: Expunge the user object to avoid SQLAlchemy trying to update related objects
+            self.db.expunge(user_obj)
+            
+            # Step 10: Delete user using raw SQL to avoid relationship tracking issues
+            self.db.execute(
+                text("DELETE FROM users WHERE uid = :user_id"),
+                {"user_id": user_uid},
+            )
+            self.db.commit()
+            logger.info(f"Successfully deleted orphaned user {user_uid} and all related records")
+            
+        except Exception as e:
+            logger.error(
+                f"Error in _delete_orphaned_user for {user_uid}: {str(e)}",
+                exc_info=True,
+            )
+            self.db.rollback()
+            # Re-expunge user object after rollback
+            try:
+                self.db.expunge(user_obj)
+            except Exception:
+                pass  # Object may already be expunged
+            raise  # Re-raise to be handled by caller
 
     def _create_user_with_provider(
         self,
