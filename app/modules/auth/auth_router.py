@@ -7,6 +7,8 @@ from dotenv import load_dotenv
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import HTTPException
+from firebase_admin import auth
+from firebase_admin.exceptions import NotFoundError
 
 from sqlalchemy.orm import Session
 
@@ -23,7 +25,7 @@ from app.modules.auth.auth_schema import (
     AuthProviderResponse,
     AccountResponse,
 )
-from app.modules.auth.auth_service import auth_handler
+from app.modules.auth.auth_service import auth_handler, AuthService
 from app.modules.auth.unified_auth_service import (
     UnifiedAuthService,
     PROVIDER_TYPE_FIREBASE_GITHUB,
@@ -68,142 +70,252 @@ class AuthAPI:
 
     @auth_router.post("/signup")
     async def signup(request: Request, db: Session = Depends(get_db)):
+        """
+        SIMPLIFIED Signup/Login endpoint.
+        
+        Two main flows:
+        1. GitHub LINKING (linkToUserId provided):
+           - Find existing user by linkToUserId (SSO UID)
+           - Add GitHub provider with githubFirebaseUid as provider_uid
+           
+        2. Normal GitHub sign-in (no linkToUserId):
+           - Check if GitHub UID already linked to a user
+           - If yes: Return that user
+           - If no: Create new user with GitHub UID
+        """
         body = json.loads(await request.body())
 
-        # Extract required fields - handle both structured payload and Firebase user object
+        # Extract fields
         uid = body.get("uid")
         email = body.get("email")
         display_name = body.get("displayName") or body.get("display_name")
         email_verified = body.get("emailVerified") or body.get("email_verified", False)
-
-        # Handle different authentication flows
-        # GitHub OAuth flow has accessToken, email/password flow doesn't
+        link_to_user_id = body.get("linkToUserId")  # SSO user UID to link GitHub to
+        github_firebase_uid = body.get("githubFirebaseUid")  # GitHub's Firebase UID
         oauth_token = body.get("accessToken") or body.get("access_token")
         provider_username = body.get("providerUsername")
 
-        # Extract provider info - handle different formats
+        # Extract provider info
         provider_info = {}
         if "providerData" in body:
             if isinstance(body["providerData"], list) and len(body["providerData"]) > 0:
-                provider_info = (
-                    body["providerData"][0].copy()
-                    if isinstance(body["providerData"][0], dict)
-                    else {}
-                )
+                provider_info = body["providerData"][0].copy() if isinstance(body["providerData"][0], dict) else {}
             elif isinstance(body["providerData"], dict):
                 provider_info = body["providerData"].copy()
+        
+        # Add GitHub username to provider_info
+        if provider_username:
+            provider_info["username"] = provider_username
 
-        # Note: access_token is passed separately to unified auth methods which handle encryption
-        # We don't need to set it in provider_info since it's stored in a separate column
+        logger.info(
+            f"Signup: uid={uid}, email={email}, linkToUserId={link_to_user_id}, "
+            f"githubFirebaseUid={github_firebase_uid}, hasToken={bool(oauth_token)}"
+        )
 
-        # Validate required fields
+        # Validate
         if not uid:
-            return Response(
-                content=json.dumps({"error": "Missing required field: uid"}),
-                status_code=400,
-            )
-
+            return Response(content=json.dumps({"error": "Missing uid"}), status_code=400)
         if not email:
-            return Response(
-                content=json.dumps({"error": "Missing required field: email"}),
-                status_code=400,
-            )
+            return Response(content=json.dumps({"error": "Missing email"}), status_code=400)
 
         user_service = UserService(db)
         unified_auth = UnifiedAuthService(db)
+        from app.modules.auth.auth_provider_model import UserAuthProvider
+        from app.modules.auth.auth_schema import AuthProviderCreate
 
-        # Determine provider type based on available data
-        if oauth_token and provider_username:
-            # GitHub OAuth flow
-            provider_type = PROVIDER_TYPE_FIREBASE_GITHUB
-            provider_uid = uid  # Use Firebase UID as provider UID for GitHub
-        else:
-            # Email/password flow
-            provider_type = PROVIDER_TYPE_FIREBASE_EMAIL
-            provider_uid = uid  # Use Firebase UID as provider UID for email/password
+        # Determine if this is GitHub flow
+        is_github_flow = bool(oauth_token and provider_username)
+        provider_type = PROVIDER_TYPE_FIREBASE_GITHUB if is_github_flow else PROVIDER_TYPE_FIREBASE_EMAIL
+        
+        # For GitHub: provider_uid is the GitHub Firebase UID
+        # This is what we store in user_auth_providers.provider_uid
+        provider_uid = github_firebase_uid or uid
 
-        user = user_service.get_user_by_uid(uid)
-
-        if user:
-            # User exists - update last login and ensure provider exists
-            # Check if provider exists, if not create it
-            existing_provider = unified_auth.get_provider(uid, provider_type)
-            if not existing_provider:
-                # Check if user has any providers
-                existing_providers = unified_auth.get_user_providers(uid)
-                is_first_provider = len(existing_providers) == 0
-
-                from app.modules.auth.auth_schema import AuthProviderCreate
-
-                # Note: unified_auth.add_provider will encrypt the token, so pass plaintext
-                provider_create = AuthProviderCreate(
-                    provider_type=provider_type,
-                    provider_uid=provider_uid,
-                    provider_data=provider_info,
-                    access_token=oauth_token,
-                    is_primary=is_first_provider,  # Primary only if it's the first provider
+        # ============================================================
+        # FLOW 1: GITHUB LINKING (linkToUserId provided)
+        # User has SSO account, wants to link GitHub
+        # ============================================================
+        if link_to_user_id and is_github_flow:
+            logger.info(f"GitHub linking: Linking GitHub to SSO user {link_to_user_id}")
+            
+            # Find the SSO user
+            db.expire_all()  # Ensure fresh data
+            user = user_service.get_user_by_uid(link_to_user_id)
+            
+            if not user:
+                logger.error(f"SSO user {link_to_user_id} not found in database!")
+                return Response(
+                    content=json.dumps({"error": "User not found. Please sign in again."}),
+                    status_code=404,
                 )
-                unified_auth.add_provider(
-                    user_id=uid,
-                    provider_create=provider_create,
+            
+            logger.info(f"Found SSO user: uid={user.uid}, email={user.email}")
+            
+            # Check if GitHub already linked
+            existing_github = (
+                db.query(UserAuthProvider)
+                .filter(
+                    UserAuthProvider.user_id == user.uid,
+                    UserAuthProvider.provider_type == PROVIDER_TYPE_FIREBASE_GITHUB,
                 )
-
-            # Update last login if oauth_token is provided (encrypt before storing)
-            if oauth_token:
-                encrypted_token = encrypt_token(oauth_token)
-                message, error = user_service.update_last_login(uid, encrypted_token)
-                if error:
-                    return Response(content=message, status_code=400)
-
-            # Update last used for the provider
-            unified_auth.update_last_used(uid, provider_type)
-
+                .first()
+            )
+            
+            if existing_github:
+                logger.info(f"GitHub already linked to user {user.uid}")
+                return Response(
+                    content=json.dumps({
+                        "uid": user.uid,
+                        "exists": True,
+                        "needs_github_linking": False,
+                    }),
+                    status_code=200,
+                )
+            
+            # Link GitHub provider
+            logger.info(f"Linking GitHub (provider_uid={provider_uid}) to user {user.uid}")
+            provider_create = AuthProviderCreate(
+                provider_type=PROVIDER_TYPE_FIREBASE_GITHUB,
+                provider_uid=provider_uid,  # GitHub Firebase UID
+                provider_data=provider_info,
+                access_token=oauth_token,
+                is_primary=False,  # SSO is primary
+            )
+            unified_auth.add_provider(user_id=user.uid, provider_create=provider_create)
+            db.commit()
+            
+            logger.info(f"Successfully linked GitHub to user {user.uid}")
             return Response(
-                content=json.dumps({"uid": uid, "exists": True}),
+                content=json.dumps({
+                    "uid": user.uid,
+                    "exists": True,
+                    "needs_github_linking": False,
+                }),
                 status_code=200,
             )
-        else:
-            # New user - create user and provider using unified auth
+
+        # ============================================================
+        # FLOW 2: GITHUB SIGN-IN (no linkToUserId)
+        # Check if GitHub UID is already linked to any user
+        # ============================================================
+        if is_github_flow:
+            logger.info(f"GitHub sign-in: Checking if GitHub UID {provider_uid} is linked")
+            
+            # Check if this GitHub Firebase UID is already linked
+            existing_provider = (
+                db.query(UserAuthProvider)
+                .filter(
+                    UserAuthProvider.provider_type == PROVIDER_TYPE_FIREBASE_GITHUB,
+                    UserAuthProvider.provider_uid == provider_uid,
+                )
+                .first()
+            )
+            
+            if existing_provider:
+                # GitHub is linked - find the user
+                user = user_service.get_user_by_uid(existing_provider.user_id)
+                if user:
+                    logger.info(f"GitHub {provider_uid} linked to user {user.uid}")
+                    
+                    # Update last login
+                    if oauth_token:
+                        encrypted_token = encrypt_token(oauth_token)
+                        user_service.update_last_login(user.uid, encrypted_token)
+                    
+                    return Response(
+                        content=json.dumps({
+                            "uid": user.uid,
+                            "exists": True,
+                            "needs_github_linking": False,
+                        }),
+                        status_code=200,
+                    )
+            
+            # GitHub not linked - create new user with GitHub as primary
+            logger.info(f"GitHub {provider_uid} not linked. Creating new user...")
+            
             try:
-                # Note: unified_auth.authenticate_or_create will encrypt the token, so pass plaintext
-                # Use unified auth service to create user with provider
                 new_user, _ = await unified_auth.authenticate_or_create(
                     email=email,
-                    provider_type=provider_type,
+                    provider_type=PROVIDER_TYPE_FIREBASE_GITHUB,
                     provider_uid=provider_uid,
                     provider_data=provider_info,
                     access_token=oauth_token,
                     display_name=display_name or email.split("@")[0],
                     email_verified=email_verified,
                 )
-
+                
+                logger.info(f"Created new user {new_user.uid} with GitHub")
+                
                 await send_slack_message(f"New signup: {email} ({display_name})")
-
                 PostHogClient().send_event(
-                    new_user.uid,
-                    "signup_event",
-                    {
-                        "email": email,
-                        "display_name": display_name,
-                        "github_username": provider_username,
-                        "provider_type": provider_type,
-                    },
+                    new_user.uid, "signup_event",
+                    {"email": email, "display_name": display_name, "provider_type": "firebase_github"},
                 )
-
+                
                 return Response(
-                    content=json.dumps({"uid": new_user.uid, "exists": False}),
+                    content=json.dumps({
+                        "uid": new_user.uid,
+                        "exists": False,
+                        "needs_github_linking": False,  # They signed up with GitHub
+                    }),
                     status_code=201,
                 )
-            except ValueError as ve:
-                logger.error(f"Signup validation error: {str(ve)}", exc_info=True)
+            except Exception as e:
+                logger.error(f"Failed to create user: {e}", exc_info=True)
                 return Response(
-                    content=json.dumps({"error": f"Invalid request: {str(ve)}"}),
-                    status_code=400,
+                    content=json.dumps({"error": f"Signup failed: {str(e)}"}),
+                    status_code=500,
+                )
+
+        # ============================================================
+        # FLOW 3: EMAIL/PASSWORD SIGN-IN (legacy, rarely used)
+        # ============================================================
+        logger.info(f"Email/password flow for {email}")
+        
+        user = user_service.get_user_by_uid(uid)
+        
+        if user:
+            # Existing user
+            logger.info(f"Email/password user exists: {user.uid}")
+            
+            # Check GitHub linking
+            has_github, _ = unified_auth.check_github_linked(user.uid)
+            
+            return Response(
+                content=json.dumps({
+                    "uid": user.uid,
+                    "exists": True,
+                    "needs_github_linking": not has_github,
+                }),
+                status_code=200,
+            )
+        else:
+            # New email/password user
+            try:
+                new_user, _ = await unified_auth.authenticate_or_create(
+                    email=email,
+                    provider_type=PROVIDER_TYPE_FIREBASE_EMAIL,
+                    provider_uid=uid,
+                    provider_data=provider_info,
+                    display_name=display_name or email.split("@")[0],
+                    email_verified=email_verified,
+                )
+                
+                logger.info(f"Created email/password user: {new_user.uid}")
+                
+                return Response(
+                    content=json.dumps({
+                        "uid": new_user.uid,
+                        "exists": False,
+                        "needs_github_linking": True,  # Email users always need GitHub
+                    }),
+                    status_code=201,
                 )
             except Exception as e:
-                logger.error(f"Error creating user: {str(e)}", exc_info=True)
+                logger.error(f"Email/password signup failed: {e}", exc_info=True)
                 return Response(
-                    content=json.dumps({"error": f"Failed to create user: {str(e)}"}),
+                    content=json.dumps({"error": str(e)}),
                     status_code=500,
                 )
 
@@ -288,6 +400,15 @@ class AuthAPI:
                         "email": verified_email,
                         "sso_provider": sso_request.sso_provider,
                     },
+                )
+
+            # Note: GitHub linking check is already done in authenticate_or_create
+            # for both new users (new_user status) and existing users (success status)
+            # The response.needs_github_linking flag is already set correctly
+            if response.status == "new_user":
+                logger.info(
+                    f"New user {user.uid} ({verified_email}) created via SSO. "
+                    f"GitHub linking required: {response.needs_github_linking}"
                 )
 
             return JSONResponse(
@@ -384,7 +505,7 @@ class AuthAPI:
 
     @auth_router.get("/providers/me")
     async def get_my_providers(
-        request: Request,
+        user=Depends(AuthService.check_auth),
         db: Session = Depends(get_db),
     ):
         """
@@ -393,9 +514,9 @@ class AuthAPI:
         Requires authentication.
         """
         try:
-            # Get user from auth token
-            user_data = await auth_handler.check_auth(request, None)
-            user_id = user_data.get("user_id")
+            # Get user from auth token (now properly injected via Depends)
+            # Firebase tokens use 'uid', but we also check 'user_id' for compatibility
+            user_id = user.get("uid") or user.get("user_id")
 
             if not user_id:
                 return JSONResponse(
