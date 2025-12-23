@@ -126,19 +126,21 @@ class UnifiedAuthService:
             )
             .first()
         )
-    
-    def check_github_linked(self, user_id: str) -> Tuple[bool, Optional[UserAuthProvider]]:
+
+    def check_github_linked(
+        self, user_id: str
+    ) -> Tuple[bool, Optional[UserAuthProvider]]:
         """
         Check if a user has GitHub linked.
-        
+
         Flow:
         1. Find user in users table by user_id
         2. Check user_auth_providers table for that user_id where provider_type = 'firebase_github'
         3. Return (True, provider) if found, (False, None) if not
-        
+
         Args:
             user_id: The user's UID (primary key in users table)
-            
+
         Returns:
             Tuple of (is_linked: bool, github_provider: Optional[UserAuthProvider])
         """
@@ -147,7 +149,7 @@ class UnifiedAuthService:
         if not user:
             logger.warning(f"User {user_id} not found in users table")
             return False, None
-        
+
         # Step 2: Check user_auth_providers for GitHub provider
         github_provider = (
             self.db.query(UserAuthProvider)
@@ -159,7 +161,7 @@ class UnifiedAuthService:
             )
             .first()
         )
-        
+
         if github_provider:
             logger.info(
                 f"GitHub provider found for user {user_id}: "
@@ -414,13 +416,17 @@ class UnifiedAuthService:
         if existing_user:
             # Check what providers the user has
             user_providers = self.get_user_providers(existing_user.uid)
-            
+
             # All Firebase-based providers (including SSO via Firebase)
             # Now that we use Firebase ID tokens for SSO, all providers use Firebase UIDs
             firebase_based_providers = [
-                p for p in user_providers
-                if p.provider_type in [PROVIDER_TYPE_FIREBASE_GITHUB, PROVIDER_TYPE_FIREBASE_EMAIL]
-                or p.provider_type.startswith("sso_")  # sso_google, sso_azure, etc. - now use Firebase UIDs
+                p
+                for p in user_providers
+                if p.provider_type
+                in [PROVIDER_TYPE_FIREBASE_GITHUB, PROVIDER_TYPE_FIREBASE_EMAIL]
+                or p.provider_type.startswith(
+                    "sso_"
+                )  # sso_google, sso_azure, etc. - now use Firebase UIDs
             ]
 
             # Check if UID looks like a Firebase UID (28 characters, alphanumeric)
@@ -451,7 +457,9 @@ class UnifiedAuthService:
                         )
                         # Assume user exists to avoid breaking functionality in dev mode
                         firebase_user_exists = True
-                        firebase_initialized = False  # Ensure we don't try to use Firebase
+                        firebase_initialized = (
+                            False  # Ensure we don't try to use Firebase
+                        )
 
                     if firebase_initialized:
                         try:
@@ -509,9 +517,12 @@ class UnifiedAuthService:
                         # Delete related records first to avoid foreign key constraint violations
                         # Use raw SQL DELETE to avoid SQLAlchemy tracking issues
                         from sqlalchemy import text
-                        
+
                         # Delete conversations
-                        from app.modules.conversations.conversation.conversation_model import Conversation
+                        from app.modules.conversations.conversation.conversation_model import (
+                            Conversation,
+                        )
+
                         conversations_count = (
                             self.db.query(Conversation)
                             .filter(Conversation.user_id == user_uid)
@@ -522,13 +533,16 @@ class UnifiedAuthService:
                                 f"Deleting {conversations_count} conversations for orphaned user {user_uid}"
                             )
                             self.db.execute(
-                                text("DELETE FROM conversations WHERE user_id = :user_id"),
+                                text(
+                                    "DELETE FROM conversations WHERE user_id = :user_id"
+                                ),
                                 {"user_id": user_uid},
                             )
-                        
+
                         # Delete search_indices first (they reference projects)
                         from app.modules.search.search_models import SearchIndex
                         from app.modules.projects.projects_model import Project
+
                         search_indices_count = (
                             self.db.query(SearchIndex)
                             .join(Project, SearchIndex.project_id == Project.id)
@@ -542,14 +556,14 @@ class UnifiedAuthService:
                             # Delete search_indices that belong to projects owned by this user
                             self.db.execute(
                                 text("""
-                                    DELETE FROM search_indices 
+                                    DELETE FROM search_indices
                                     WHERE project_id IN (
                                         SELECT id FROM projects WHERE user_id = :user_id
                                     )
                                 """),
                                 {"user_id": user_uid},
                             )
-                        
+
                         # Delete projects
                         projects_count = (
                             self.db.query(Project)
@@ -564,11 +578,12 @@ class UnifiedAuthService:
                                 text("DELETE FROM projects WHERE user_id = :user_id"),
                                 {"user_id": user_uid},
                             )
-                        
+
                         # Delete custom agents
                         from app.modules.intelligence.agents.custom_agents.custom_agent_model import (
                             CustomAgent,
                         )
+
                         custom_agents_count = (
                             self.db.query(CustomAgent)
                             .filter(CustomAgent.user_id == user_uid)
@@ -579,16 +594,18 @@ class UnifiedAuthService:
                                 f"Deleting {custom_agents_count} custom agents for orphaned user {user_uid}"
                             )
                             self.db.execute(
-                                text("DELETE FROM custom_agents WHERE user_id = :user_id"),
+                                text(
+                                    "DELETE FROM custom_agents WHERE user_id = :user_id"
+                                ),
                                 {"user_id": user_uid},
                             )
-                        
+
                         # Flush to ensure all deletes are executed before deleting user
                         self.db.flush()
-                        
+
                         # Expunge the user object to avoid SQLAlchemy trying to update related objects
                         self.db.expunge(existing_user)
-                        
+
                         # Delete user using raw SQL to avoid relationship tracking issues
                         self.db.execute(
                             text("DELETE FROM users WHERE uid = :user_id"),
@@ -596,12 +613,12 @@ class UnifiedAuthService:
                         )
                         self.db.commit()
                         logger.info(f"Deleted orphaned user {user_uid}")
-                        
+
                         # Re-query to ensure user is actually deleted and not in session
                         # This prevents issues with stale SQLAlchemy objects
                         self.db.expire_all()
                         existing_user = await self.user_service.get_user_by_email(email)
-                        
+
                         # If user still exists (shouldn't happen), log warning
                         if existing_user:
                             logger.warning(
@@ -632,39 +649,41 @@ class UnifiedAuthService:
                 # Scenario 1: User exists with this provider → Login
                 # BUT: Check GitHub linking FIRST before completing login
                 from app.modules.auth.auth_provider_model import UserAuthProvider
-                
+
                 # Refresh the user object to ensure we have the latest data
                 self.db.refresh(existing_user)
-                
+
                 # Query for GitHub provider - check all providers for this user for debugging
                 all_providers = self.get_user_providers(existing_user.uid)
                 provider_types = [p.provider_type for p in all_providers]
                 logger.info(
                     f"User {existing_user.uid} ({email}) has providers: {provider_types}"
                 )
-                
+
                 # CRITICAL: Check GitHub linking using systematic approach
                 # Flow: 1. Find user in users table by user_id
                 #       2. Check user_auth_providers for that user_id where provider_type = 'firebase_github'
                 #       3. If found → GitHub linked, if not → GitHub not linked
-                has_github, github_provider = self.check_github_linked(existing_user.uid)
-                
+                has_github, github_provider = self.check_github_linked(
+                    existing_user.uid
+                )
+
                 if not has_github:
                     logger.warning(
                         f"No GitHub provider found for user {existing_user.uid} ({email}). "
                         f"Available providers: {provider_types}"
                     )
-                
+
                 if not has_github:
                     # GitHub not linked - don't complete login, redirect to onboarding
                     logger.info(
                         f"User {existing_user.uid} ({email}) authenticated but GitHub not linked. "
                         "Requiring GitHub linking before login completion."
                     )
-                    
+
                     # Update last login time but don't commit yet (will commit after GitHub linking)
                     existing_user.last_login_at = utc_now()
-                    
+
                     # Audit log
                     self._log_auth_event(
                         user_id=existing_user.uid,
@@ -674,16 +693,19 @@ class UnifiedAuthService:
                         ip_address=ip_address,
                         user_agent=user_agent,
                     )
-                    
-                    return existing_user, SSOLoginResponse(
-                        status="success",  # Keep as success for compatibility
-                        user_id=existing_user.uid,
-                        email=email,
-                        display_name=existing_user.display_name,
-                        message="Login successful, but GitHub account linking required",
-                        needs_github_linking=True,  # Frontend will redirect to onboarding
+
+                    return (
+                        existing_user,
+                        SSOLoginResponse(
+                            status="success",  # Keep as success for compatibility
+                            user_id=existing_user.uid,
+                            email=email,
+                            display_name=existing_user.display_name,
+                            message="Login successful, but GitHub account linking required",
+                            needs_github_linking=True,  # Frontend will redirect to onboarding
+                        ),
                     )
-                
+
                 # GitHub is linked - proceed with normal login
                 self.update_last_used(existing_user.uid, provider_type)
 
@@ -767,13 +789,15 @@ class UnifiedAuthService:
                 existing_user = final_check
                 # Check if this provider is already linked
                 existing_provider = self.get_provider(existing_user.uid, provider_type)
-                
+
                 if existing_provider:
                     # User exists with this provider → Login
                     # BUT: Check GitHub linking FIRST before completing login
                     # Use systematic check_github_linked method
-                    has_github, github_provider = self.check_github_linked(existing_user.uid)
-                    
+                    has_github, github_provider = self.check_github_linked(
+                        existing_user.uid
+                    )
+
                     if not has_github:
                         # GitHub not linked - require linking before login completion
                         logger.info(
@@ -781,21 +805,24 @@ class UnifiedAuthService:
                             "Requiring GitHub linking before login completion (race condition path)."
                         )
                         existing_user.last_login_at = utc_now()
-                        
-                        return existing_user, SSOLoginResponse(
-                            status="success",  # Keep as success for compatibility
-                            user_id=existing_user.uid,
-                            email=email,
-                            display_name=existing_user.display_name,
-                            message="Login successful, but GitHub account linking required",
-                            needs_github_linking=True,  # Frontend will redirect to onboarding
+
+                        return (
+                            existing_user,
+                            SSOLoginResponse(
+                                status="success",  # Keep as success for compatibility
+                                user_id=existing_user.uid,
+                                email=email,
+                                display_name=existing_user.display_name,
+                                message="Login successful, but GitHub account linking required",
+                                needs_github_linking=True,  # Frontend will redirect to onboarding
+                            ),
                         )
-                    
+
                     # GitHub is linked - proceed with normal login
                     self.update_last_used(existing_user.uid, provider_type)
                     existing_user.last_login_at = utc_now()
                     self.db.commit()
-                    
+
                     return existing_user, SSOLoginResponse(
                         status="success",
                         user_id=existing_user.uid,
@@ -807,7 +834,8 @@ class UnifiedAuthService:
                 else:
                     # User exists but not this provider → Create pending link
                     existing_providers = [
-                        p.provider_type for p in self.get_user_providers(existing_user.uid)
+                        p.provider_type
+                        for p in self.get_user_providers(existing_user.uid)
                     ]
                     linking_token = self._create_pending_link(
                         user_id=existing_user.uid,
@@ -817,17 +845,17 @@ class UnifiedAuthService:
                         ip_address=ip_address,
                         user_agent=user_agent,
                     )
-                    
+
                     return existing_user, SSOLoginResponse(
                         status="needs_linking",
                         user_id=existing_user.uid,
                         email=email,
                         display_name=existing_user.display_name,
-                        message=f"Account exists. Link this provider?",
+                        message="Account exists. Link this provider?",
                         linking_token=linking_token,
                         existing_providers=existing_providers,
                     )
-            
+
             # User truly doesn't exist - create new user
             new_user = self._create_user_with_provider(
                 email=email,
@@ -843,6 +871,7 @@ class UnifiedAuthService:
 
             # Check GitHub linking for new users (new users won't have GitHub linked yet)
             from app.modules.auth.auth_provider_model import UserAuthProvider
+
             github_provider = (
                 self.db.query(UserAuthProvider)
                 .filter(
@@ -851,7 +880,7 @@ class UnifiedAuthService:
                 )
                 .first()
             )
-            
+
             # Only check for GitHub provider in database - don't rely on provider_username
             # as it may exist for other providers (e.g., Google SSO)
             has_github = github_provider is not None

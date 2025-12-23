@@ -69,57 +69,68 @@ class GoogleSSOProvider(BaseSSOProvider):
         1. Firebase ID token (issuer: securetoken.google.com/{project_id})
            - Uses Firebase Admin SDK for verification
            - Returns Firebase UID as provider_uid
-        
+
         2. Google OAuth ID token (issuer: accounts.google.com)
            - Uses Google's library for verification
            - Returns Google sub as provider_uid
-        
+
         Firebase tokens are tried first for consistency with Firebase Auth.
         """
         # First, try to verify as Firebase ID token
         try:
             import firebase_admin
             from firebase_admin import auth as firebase_auth
-            
+
             # Check if Firebase is initialized
             try:
                 firebase_admin.get_app()
-                
+
                 # Verify with Firebase Admin SDK
                 decoded_token = firebase_auth.verify_id_token(id_token_str)
-                
+
                 # Extract user info from Firebase token
                 user_info = SSOUserInfo(
                     email=decoded_token.get("email", ""),
                     email_verified=decoded_token.get("email_verified", False),
                     provider_uid=decoded_token["uid"],  # Firebase UID - consistent!
                     display_name=decoded_token.get("name"),
-                    given_name=decoded_token.get("name", "").split(" ")[0] if decoded_token.get("name") else None,
-                    family_name=" ".join(decoded_token.get("name", "").split(" ")[1:]) if decoded_token.get("name") else None,
+                    given_name=decoded_token.get("name", "").split(" ")[0]
+                    if decoded_token.get("name")
+                    else None,
+                    family_name=" ".join(decoded_token.get("name", "").split(" ")[1:])
+                    if decoded_token.get("name")
+                    else None,
                     picture=decoded_token.get("picture"),
                     raw_data=decoded_token,
                 )
-                
+
                 logger.info(
-                    "Successfully verified Firebase ID token for %s (UID: %s)", 
-                    user_info.email, user_info.provider_uid
+                    "Successfully verified Firebase ID token for %s (UID: %s)",
+                    user_info.email,
+                    user_info.provider_uid,
                 )
                 return user_info
-                
+
             except ValueError:
                 # Firebase not initialized, fall through to Google OAuth verification
-                logger.debug("Firebase not initialized, trying Google OAuth verification")
+                logger.debug(
+                    "Firebase not initialized, trying Google OAuth verification"
+                )
             except firebase_admin.exceptions.InvalidIdTokenError as e:
                 # Token is not a valid Firebase token, try Google OAuth
                 logger.debug("Not a Firebase token, trying Google OAuth: %s", str(e))
             except Exception as e:
                 # Other Firebase errors, try Google OAuth
-                logger.debug("Firebase verification failed, trying Google OAuth: %s", str(e))
-                
+                logger.debug(
+                    "Firebase verification failed, trying Google OAuth: %s", str(e)
+                )
+
         except ImportError:
             # Firebase Admin SDK not installed, fall through to Google OAuth
-            logger.debug("Firebase Admin SDK not available, using Google OAuth verification")
-        
+            logger.debug(
+                "Firebase Admin SDK not available, using Google OAuth verification"
+            )
+
         # Fall back to Google OAuth ID token verification
         try:
             # Verify the token with Google
@@ -157,7 +168,9 @@ class GoogleSSOProvider(BaseSSOProvider):
                 raw_data=idinfo,
             )
 
-            logger.info("Successfully verified Google OAuth token for %s", user_info.email)
+            logger.info(
+                "Successfully verified Google OAuth token for %s", user_info.email
+            )
             return user_info
 
         except ValueError as e:

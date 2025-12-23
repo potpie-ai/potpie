@@ -41,7 +41,7 @@ class UserAPI:
             # Get the authenticated user's UID from the token
             # Firebase tokens use 'uid' as the key, but we also check 'user_id' for compatibility
             authenticated_uid = user.get("uid") or user.get("user_id")
-            
+
             # Verify the authenticated user matches the request UID
             if authenticated_uid != request.uid:
                 logger.warning(
