@@ -464,7 +464,7 @@ class UnifiedAuthService:
                     if firebase_initialized:
                         try:
                             # Verify the Firebase user exists
-                            firebase_user = auth.get_user(existing_user.uid)
+                            auth.get_user(existing_user.uid)
                             firebase_user_exists = True
                             logger.debug(
                                 f"Verified Firebase user {existing_user.uid} exists for email {email}"
@@ -773,13 +773,11 @@ class UnifiedAuthService:
             )
 
             # Check GitHub linking for new users (new users won't have GitHub linked yet)
-            from app.modules.auth.auth_provider_model import UserAuthProvider
-
             github_provider = (
                 self.db.query(UserAuthProvider)
                 .filter(
                     UserAuthProvider.user_id == new_user.uid,
-                    UserAuthProvider.provider_type == "firebase_github",
+                    UserAuthProvider.provider_type == PROVIDER_TYPE_FIREBASE_GITHUB,
                 )
                 .first()
             )
