@@ -37,7 +37,7 @@ LARGE_TOOL_RESULT_THRESHOLD = (
 MAX_TOOL_RESULT_TOKENS = 20000  # Maximum tokens to keep in large tool results
 RECENT_TOOL_RESULTS_TO_KEEP = 7  # Always keep last N tool results in full
 MAX_TOOL_ARGS_CHARS = 500  # Maximum characters for tool args in compressed metadata
-MAX_TOOL_RESULT_LINES = 5  # Maximum lines of tool result to keep in compressed metadata
+MAX_TOOL_RESULT_LINES = 6  # Maximum lines of tool result to keep in compressed metadata
 
 
 class TokenAwareHistoryProcessor:

@@ -24,6 +24,10 @@ from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+# Maximum file size to read into memory (10MB)
+# This prevents OOM kills when processing very large files
+MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10MB
+
 
 class ChangeType(str, Enum):
     """Type of code change"""
@@ -129,7 +133,6 @@ class CodeChangesManager:
                 )
                 from app.modules.projects.projects_service import ProjectService
 
-                project_service = ProjectService(db)
                 # Project.id is Text (string) in the database, so query directly with the string project_id
                 # Note: get_project_from_db_by_id_sync has incorrect type hint (int), but actually accepts string
                 logger.debug(
@@ -161,66 +164,156 @@ class CodeChangesManager:
                         )
                         project_details = None
                 except Exception as e:
-                    logger.warning(
-                        f"CodeChangesManager._get_current_content: Error querying project for project_id '{project_id}': {e}",
-                        exc_info=True,
-                    )
-                    project_details = None
+                    # Database session might be invalid in forked workers - try creating a new one
+                    error_str = str(e).lower()
+                    if any(keyword in error_str for keyword in ["connection", "session", "closed", "invalid", "fork"]):
+                        logger.warning(
+                            f"CodeChangesManager._get_current_content: Database session error (likely from forked worker): {e}. "
+                            f"Creating new session for project_id={project_id}"
+                        )
+                        try:
+                            from app.core.database import SessionLocal
+                            try:
+                                db.close()  # Close invalid session if possible
+                            except Exception:
+                                pass  # Ignore errors when closing invalid session
+                            db = SessionLocal()
+                            # Retry the query with new session
+                            project = db.query(Project).filter(Project.id == project_id).first()
+                            if project:
+                                project_details = {
+                                    "project_name": project.repo_name,
+                                    "id": project.id,
+                                    "commit_id": project.commit_id,
+                                    "status": project.status,
+                                    "branch_name": project.branch_name,
+                                    "repo_path": project.repo_path,
+                                    "user_id": project.user_id,
+                                }
+                                logger.debug(
+                                    f"CodeChangesManager._get_current_content: Project details retrieved with new session: "
+                                    f"repo={project_details.get('project_name')}, branch={project_details.get('branch_name')}"
+                                )
+                            else:
+                                project_details = None
+                        except Exception as retry_error:
+                            logger.error(
+                                f"CodeChangesManager._get_current_content: Failed to create new session and retry: {retry_error}",
+                                exc_info=True,
+                            )
+                            project_details = None
+                    else:
+                        logger.warning(
+                            f"CodeChangesManager._get_current_content: Error querying project for project_id '{project_id}': {e}",
+                            exc_info=True,
+                        )
+                        project_details = None
 
                 if project_details and "project_name" in project_details:
-                    cp_service = CodeProviderService(db)
-                    logger.debug(
-                        f"CodeChangesManager._get_current_content: Fetching file content from repository "
-                        f"for '{file_path}' in repo '{project_details['project_name']}'"
-                    )
-                    # Wrap git operations in safe handler to prevent SIGSEGV and timeouts
-                    from app.modules.code_provider.git_safe import (
-                        safe_git_operation,
-                        GitOperationError,
-                    )
-
-                    def _fetch_file_content():
-                        return cp_service.get_file_content(
-                            repo_name=project_details["project_name"],
-                            file_path=file_path,
-                            branch_name=project_details.get("branch_name"),
-                            start_line=None,
-                            end_line=None,
-                            project_id=project_id,
-                            commit_id=project_details.get("commit_id"),
-                        )
-
+                    repo_content = None  # Initialize before try block
                     try:
-                        repo_content = safe_git_operation(
-                            _fetch_file_content,
-                            max_retries=2,
-                            timeout=30.0,  # 30 second timeout per attempt
-                            operation_name=f"get_file_content({file_path})",
+                        cp_service = CodeProviderService(db)
+                        logger.debug(
+                            f"CodeChangesManager._get_current_content: Fetching file content from repository "
+                            f"for '{file_path}' in repo '{project_details['project_name']}'"
                         )
-                    except GitOperationError as git_error:
-                        # If safe wrapper fails after retries, log and continue to filesystem fallback
-                        logger.warning(
-                            f"CodeChangesManager._get_current_content: Safe git operation failed after retries: {git_error}. "
-                            f"Falling back to filesystem for '{file_path}'"
+                        # Wrap git operations in safe handler to prevent SIGSEGV and timeouts
+                        from app.modules.code_provider.git_safe import (
+                            safe_git_operation,
+                            GitOperationError,
+                        )
+
+                        def _fetch_file_content():
+                            return cp_service.get_file_content(
+                                repo_name=project_details["project_name"],
+                                file_path=file_path,
+                                branch_name=project_details.get("branch_name"),
+                                start_line=None,
+                                end_line=None,
+                                project_id=project_id,
+                                commit_id=project_details.get("commit_id"),
+                            )
+
+                        try:
+                            repo_content = safe_git_operation(
+                                _fetch_file_content,
+                                max_retries=2,
+                                timeout=30.0,  # 30 second timeout per attempt
+                                operation_name=f"get_file_content({file_path})",
+                            )
+                        except GitOperationError as git_error:
+                            # If safe wrapper fails after retries, log and continue to filesystem fallback
+                            logger.warning(
+                                f"CodeChangesManager._get_current_content: Safe git operation failed after retries: {git_error}. "
+                                f"Falling back to filesystem for '{file_path}'"
+                            )
+                            repo_content = None
+                        except MemoryError as mem_error:
+                            # Handle memory errors gracefully - this can happen with very large files
+                            logger.error(
+                                f"CodeChangesManager._get_current_content: Memory error fetching '{file_path}' from repository: {mem_error}. "
+                                f"This may indicate the file is too large or system memory is low. "
+                                f"Falling back to filesystem."
+                            )
+                            repo_content = None
+                        except (SystemExit, KeyboardInterrupt) as e:
+                            # Re-raise system exits and interrupts - these should propagate
+                            logger.error(
+                                f"CodeChangesManager._get_current_content: System exit/interrupt during git operation for '{file_path}': {e}"
+                            )
+                            raise
+                        except BaseException as e:
+                            # Catch any other exceptions (including segfault-related errors) to prevent worker crash
+                            logger.error(
+                                f"CodeChangesManager._get_current_content: Unexpected error during git operation for '{file_path}': {type(e).__name__}: {e}. "
+                                f"This may indicate a crash or resource issue. Falling back to filesystem.",
+                                exc_info=True,
+                            )
+                            repo_content = None
+                    except Exception as service_error:
+                        # Catch errors creating CodeProviderService or any other service-related errors
+                        logger.error(
+                            f"CodeChangesManager._get_current_content: Error creating CodeProviderService or fetching file '{file_path}': {service_error}. "
+                            f"Falling back to filesystem.",
+                            exc_info=True,
                         )
                         repo_content = None
 
                     if repo_content:
-                        lines = repo_content.split("\n")
-                        logger.info(
-                            f"CodeChangesManager._get_current_content: Successfully retrieved '{file_path}' "
-                            f"from repository via code provider ({len(repo_content)} chars, {len(lines)} lines)"
-                        )
-                        return repo_content
-                    else:
+                        # Check content size to prevent memory issues
+                        content_size_bytes = len(repo_content.encode("utf-8"))
+                        if content_size_bytes > MAX_FILE_SIZE_BYTES:
+                            logger.warning(
+                                f"CodeChangesManager._get_current_content: File '{file_path}' "
+                                f"from repository is too large ({content_size_bytes} bytes, max {MAX_FILE_SIZE_BYTES} bytes). "
+                                f"Skipping to prevent memory issues. Falling back to filesystem."
+                            )
+                            repo_content = None
+                        else:
+                            lines = repo_content.split("\n")
+                            logger.info(
+                                f"CodeChangesManager._get_current_content: Successfully retrieved '{file_path}' "
+                                f"from repository via code provider ({len(repo_content)} chars, {len(lines)} lines)"
+                            )
+                            return repo_content
+
+                    if not repo_content:
                         logger.warning(
-                            f"CodeChangesManager._get_current_content: Repository returned empty content for '{file_path}'"
+                            f"CodeChangesManager._get_current_content: Repository returned empty or oversized content for '{file_path}'"
                         )
                 else:
                     logger.warning(
                         f"CodeChangesManager._get_current_content: Cannot fetch from repository - "
                         f"project_details={'missing project_name' if project_details else 'None'}"
                     )
+            except MemoryError as mem_error:
+                # Handle memory errors gracefully
+                logger.error(
+                    f"CodeChangesManager._get_current_content: Memory error fetching '{file_path}' from repository: {mem_error}. "
+                    f"This may indicate the file is too large or system memory is low. "
+                    f"Falling back to filesystem."
+                )
+                # Fall through to try filesystem
             except Exception as e:
                 logger.warning(
                     f"CodeChangesManager._get_current_content: Error fetching '{file_path}' from repository: {str(e)}",
@@ -1172,12 +1265,20 @@ class CodeChangesManager:
             file_path: Relative path to the file
 
         Returns:
-            File content as string, or None if file doesn't exist
+            File content as string, or None if file doesn't exist or is too large
         """
         try:
             # Try relative to current working directory
             if os.path.exists(file_path):
-                with open(file_path, "r", encoding="utf-8") as f:
+                file_size = os.path.getsize(file_path)
+                if file_size > MAX_FILE_SIZE_BYTES:
+                    logger.warning(
+                        f"CodeChangesManager._read_file_from_codebase: File '{file_path}' "
+                        f"is too large ({file_size} bytes, max {MAX_FILE_SIZE_BYTES} bytes). "
+                        f"Skipping to prevent memory issues."
+                    )
+                    return None
+                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
                     return f.read()
 
             # Try relative to workspace root (common patterns)
@@ -1190,7 +1291,15 @@ class CodeChangesManager:
 
             for path in possible_paths:
                 if os.path.exists(path):
-                    with open(path, "r", encoding="utf-8") as f:
+                    file_size = os.path.getsize(path)
+                    if file_size > MAX_FILE_SIZE_BYTES:
+                        logger.warning(
+                            f"CodeChangesManager._read_file_from_codebase: File '{file_path}' "
+                            f"(found at {path}) is too large ({file_size} bytes, max {MAX_FILE_SIZE_BYTES} bytes). "
+                            f"Skipping to prevent memory issues."
+                        )
+                        return None
+                    with open(path, "r", encoding="utf-8", errors="replace") as f:
                         logger.debug(
                             f"CodeChangesManager._read_file_from_codebase: Found file at {path}"
                         )
@@ -1198,6 +1307,12 @@ class CodeChangesManager:
 
             logger.debug(
                 f"CodeChangesManager._read_file_from_codebase: File '{file_path}' not found in codebase"
+            )
+            return None
+        except MemoryError as e:
+            logger.error(
+                f"CodeChangesManager._read_file_from_codebase: Memory error reading '{file_path}': {str(e)}. "
+                f"This may indicate the file is too large or system memory is low."
             )
             return None
         except Exception as e:
