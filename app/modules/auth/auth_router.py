@@ -29,7 +29,6 @@ from app.modules.auth.unified_auth_service import (
     PROVIDER_TYPE_FIREBASE_GITHUB,
     PROVIDER_TYPE_FIREBASE_EMAIL,
 )
-from app.modules.integrations.token_encryption import encrypt_token
 from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.utils.posthog_helper import PostHogClient
@@ -241,7 +240,7 @@ class AuthAPI:
                     # Note: update_last_login handles encryption internally, pass plaintext token
                     if oauth_token:
                         user_service.update_last_login(user.uid, oauth_token)
-                    
+
                     return Response(
                         content=json.dumps(
                             {
