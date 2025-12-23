@@ -36,3 +36,18 @@ class CreateUser(BaseModel):
 class UserProfileResponse(BaseModel):
     user_id: str
     profile_pic_url: Optional[str] = None
+
+
+class OnboardingDataRequest(BaseModel):
+    uid: str
+    email: str
+    name: str
+    source: str
+    industry: str
+    jobTitle: str
+    companyName: str
+
+
+class OnboardingDataResponse(BaseModel):
+    success: bool
+    message: str
