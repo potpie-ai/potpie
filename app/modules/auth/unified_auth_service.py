@@ -127,6 +127,52 @@ class UnifiedAuthService:
             .first()
         )
 
+    def check_github_linked(
+        self, user_id: str
+    ) -> Tuple[bool, Optional[UserAuthProvider]]:
+        """
+        Check if a user has GitHub linked.
+
+        Flow:
+        1. Find user in users table by user_id
+        2. Check user_auth_providers table for that user_id where provider_type = 'firebase_github'
+        3. Return (True, provider) if found, (False, None) if not
+
+        Args:
+            user_id: The user's UID (primary key in users table)
+
+        Returns:
+            Tuple of (is_linked: bool, github_provider: Optional[UserAuthProvider])
+        """
+        # Step 1: Verify user exists
+        user = self.db.query(User).filter(User.uid == user_id).first()
+        if not user:
+            logger.warning(f"User {user_id} not found in users table")
+            return False, None
+
+        # Step 2: Check user_auth_providers for GitHub provider
+        github_provider = (
+            self.db.query(UserAuthProvider)
+            .filter(
+                and_(
+                    UserAuthProvider.user_id == user_id,
+                    UserAuthProvider.provider_type == PROVIDER_TYPE_FIREBASE_GITHUB,
+                )
+            )
+            .first()
+        )
+
+        if github_provider:
+            logger.info(
+                f"GitHub provider found for user {user_id}: "
+                f"provider_id={github_provider.id}, provider_uid={github_provider.provider_uid}, "
+                f"linked_at={github_provider.linked_at}"
+            )
+            return True, github_provider
+        else:
+            logger.info(f"No GitHub provider found for user {user_id}")
+            return False, None
+
     def get_decrypted_access_token(
         self, user_id: str, provider_type: str
     ) -> Optional[str]:
@@ -353,6 +399,8 @@ class UnifiedAuthService:
         """
         Main authentication flow for any provider.
 
+        Firebase is the primary source of truth. Local DB is synced from Firebase.
+
         Three scenarios:
         1. User exists with this provider → Login
         2. User exists but not this provider → Create pending link
@@ -362,8 +410,139 @@ class UnifiedAuthService:
         """
         email = email.lower().strip()
 
-        # Check if user exists by email
+        # Check if user exists by email in local DB
         existing_user = await self.user_service.get_user_by_email(email)
+
+        if existing_user:
+            # Check what providers the user has
+            user_providers = self.get_user_providers(existing_user.uid)
+
+            # All Firebase-based providers (including SSO via Firebase)
+            # Now that we use Firebase ID tokens for SSO, all providers use Firebase UIDs
+            firebase_based_providers = [
+                p
+                for p in user_providers
+                if p.provider_type
+                in [PROVIDER_TYPE_FIREBASE_GITHUB, PROVIDER_TYPE_FIREBASE_EMAIL]
+                or p.provider_type.startswith(
+                    "sso_"
+                )  # sso_google, sso_azure, etc. - now use Firebase UIDs
+            ]
+
+            # Check if UID looks like a Firebase UID (28 characters, alphanumeric)
+            uid_looks_like_firebase = (
+                len(existing_user.uid) == 28
+                and existing_user.uid.replace("_", "").replace("-", "").isalnum()
+            )
+
+            # Verify Firebase if user has Firebase-based providers OR if UID looks like Firebase UID
+            if firebase_based_providers or uid_looks_like_firebase:
+                from firebase_admin import auth
+                from firebase_admin.exceptions import NotFoundError
+                import firebase_admin
+
+                firebase_user_exists = False
+                try:
+                    # Check if Firebase is initialized
+                    try:
+                        # Try to get the default app - this will raise ValueError if not initialized
+                        firebase_admin.get_app()
+                        firebase_initialized = True
+                    except (ValueError, Exception) as init_error:
+                        # Firebase not initialized (e.g., development mode)
+                        firebase_initialized = False
+                        logger.warning(
+                            f"Firebase not initialized. Skipping Firebase verification for user {existing_user.uid}. "
+                            f"This is normal in development mode. Error: {str(init_error)}"
+                        )
+                        # Assume user exists to avoid breaking functionality in dev mode
+                        firebase_user_exists = True
+                        firebase_initialized = (
+                            False  # Ensure we don't try to use Firebase
+                        )
+
+                    if firebase_initialized:
+                        try:
+                            # Verify the Firebase user exists
+                            firebase_user = auth.get_user(existing_user.uid)
+                            firebase_user_exists = True
+                            logger.debug(
+                                f"Verified Firebase user {existing_user.uid} exists for email {email}"
+                            )
+                        except NotFoundError:
+                            # User deleted from Firebase but exists in local DB - orphaned record
+                            logger.warning(
+                                f"User {existing_user.uid} with email {email} exists in local DB "
+                                "but not in Firebase. Treating as orphaned record."
+                            )
+                            firebase_user_exists = False
+                        except Exception as e:
+                            # Handle case where Firebase is not properly initialized
+                            if "does not exist" in str(e) or "initialize_app" in str(e):
+                                logger.warning(
+                                    f"Firebase not initialized when verifying user {existing_user.uid}. "
+                                    "Assuming user exists (development mode)."
+                                )
+                                firebase_user_exists = True
+                            else:
+                                logger.error(
+                                    f"Error verifying Firebase user {existing_user.uid}: {str(e)}"
+                                )
+                                # On error, assume Firebase user exists to avoid breaking existing users
+                                firebase_user_exists = True
+                    # If firebase_initialized is False, firebase_user_exists is already set to True above
+                except Exception as e:
+                    # Catch any unexpected errors
+                    if "does not exist" in str(e) or "initialize_app" in str(e):
+                        logger.warning(
+                            f"Firebase not initialized. Assuming user {existing_user.uid} exists (development mode)."
+                        )
+                        firebase_user_exists = True
+                    else:
+                        logger.error(
+                            f"Unexpected error verifying Firebase user {existing_user.uid}: {str(e)}"
+                        )
+                        # On error, assume Firebase user exists to avoid breaking existing users
+                        firebase_user_exists = True
+
+                if not firebase_user_exists:
+                    # Orphaned record - delete from local DB and treat as new user
+                    # Store UID before any operations to avoid accessing after rollback
+                    user_uid = existing_user.uid
+                    logger.info(
+                        f"Deleting orphaned user record {user_uid} "
+                        f"for email {email} (not in Firebase)"
+                    )
+                    try:
+                        # Use helper function to delete orphaned user and all related records
+                        self._delete_orphaned_user(user_uid, existing_user)
+                        
+                        # Re-query to ensure user is actually deleted and not in session
+                        # This prevents issues with stale SQLAlchemy objects
+                        self.db.expire_all()
+                        existing_user = await self.user_service.get_user_by_email(email)
+
+                        # If user still exists (shouldn't happen), log warning
+                        if existing_user:
+                            logger.warning(
+                                f"User {email} still exists after deletion attempt. "
+                                "This may indicate a transaction issue."
+                            )
+                            # Force expunge and set to None
+                            self.db.expunge(existing_user)
+                            existing_user = None
+                        else:
+                            logger.info(f"Confirmed user {email} deleted successfully")
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to delete orphaned user {user_uid}: {str(e)}",
+                            exc_info=True,
+                        )
+                        self.db.rollback()
+                        # Expunge the user object from session to avoid stale state
+                        self.db.expunge(existing_user)
+                        # Reset to None to trigger new user creation
+                        existing_user = None
 
         if existing_user:
             # Check if this provider is already linked
@@ -371,6 +550,66 @@ class UnifiedAuthService:
 
             if existing_provider:
                 # Scenario 1: User exists with this provider → Login
+                # BUT: Check GitHub linking FIRST before completing login
+                from app.modules.auth.auth_provider_model import UserAuthProvider
+
+                # Refresh the user object to ensure we have the latest data
+                self.db.refresh(existing_user)
+
+                # Query for GitHub provider - check all providers for this user for debugging
+                all_providers = self.get_user_providers(existing_user.uid)
+                provider_types = [p.provider_type for p in all_providers]
+                logger.info(
+                    f"User {existing_user.uid} ({email}) has providers: {provider_types}"
+                )
+
+                # CRITICAL: Check GitHub linking using systematic approach
+                # Flow: 1. Find user in users table by user_id
+                #       2. Check user_auth_providers for that user_id where provider_type = 'firebase_github'
+                #       3. If found → GitHub linked, if not → GitHub not linked
+                has_github, github_provider = self.check_github_linked(
+                    existing_user.uid
+                )
+
+                if not has_github:
+                    logger.warning(
+                        f"No GitHub provider found for user {existing_user.uid} ({email}). "
+                        f"Available providers: {provider_types}"
+                    )
+
+                if not has_github:
+                    # GitHub not linked - don't complete login, redirect to onboarding
+                    logger.info(
+                        f"User {existing_user.uid} ({email}) authenticated but GitHub not linked. "
+                        "Requiring GitHub linking before login completion."
+                    )
+
+                    # Update last login time but don't commit yet (will commit after GitHub linking)
+                    existing_user.last_login_at = utc_now()
+
+                    # Audit log
+                    self._log_auth_event(
+                        user_id=existing_user.uid,
+                        event_type="login_blocked_github",
+                        provider_type=provider_type,
+                        status="pending",
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                    )
+
+                    return (
+                        existing_user,
+                        SSOLoginResponse(
+                            status="success",  # Keep as success for compatibility
+                            user_id=existing_user.uid,
+                            email=email,
+                            display_name=existing_user.display_name,
+                            message="Login successful, but GitHub account linking required",
+                            needs_github_linking=True,  # Frontend will redirect to onboarding
+                        ),
+                    )
+
+                # GitHub is linked - proceed with normal login
                 self.update_last_used(existing_user.uid, provider_type)
 
                 # Set this provider as primary since user is signing in with it
@@ -403,6 +642,7 @@ class UnifiedAuthService:
                     email=email,
                     display_name=existing_user.display_name,
                     message="Login successful",
+                    needs_github_linking=False,  # Explicitly set to False
                 )
             else:
                 # Scenario 2: User exists but not this provider → Create pending link
@@ -441,6 +681,85 @@ class UnifiedAuthService:
                 )
         else:
             # Scenario 3: User doesn't exist → Create new user
+            # Double-check that user doesn't exist (in case of race condition or stale session)
+            final_check = await self.user_service.get_user_by_email(email)
+            if final_check:
+                logger.warning(
+                    f"User with email {email} found during final check before creation. "
+                    f"UID: {final_check.uid}. This may indicate a race condition."
+                )
+                # User exists - treat as existing user scenario
+                existing_user = final_check
+                # Check if this provider is already linked
+                existing_provider = self.get_provider(existing_user.uid, provider_type)
+
+                if existing_provider:
+                    # User exists with this provider → Login
+                    # BUT: Check GitHub linking FIRST before completing login
+                    # Use systematic check_github_linked method
+                    has_github, github_provider = self.check_github_linked(
+                        existing_user.uid
+                    )
+
+                    if not has_github:
+                        # GitHub not linked - require linking before login completion
+                        logger.info(
+                            f"User {existing_user.uid} ({email}) authenticated but GitHub not linked. "
+                            "Requiring GitHub linking before login completion (race condition path)."
+                        )
+                        existing_user.last_login_at = utc_now()
+
+                        return (
+                            existing_user,
+                            SSOLoginResponse(
+                                status="success",  # Keep as success for compatibility
+                                user_id=existing_user.uid,
+                                email=email,
+                                display_name=existing_user.display_name,
+                                message="Login successful, but GitHub account linking required",
+                                needs_github_linking=True,  # Frontend will redirect to onboarding
+                            ),
+                        )
+
+                    # GitHub is linked - proceed with normal login
+                    self.update_last_used(existing_user.uid, provider_type)
+                    existing_user.last_login_at = utc_now()
+                    self.db.commit()
+
+                    return existing_user, SSOLoginResponse(
+                        status="success",
+                        user_id=existing_user.uid,
+                        email=email,
+                        display_name=existing_user.display_name,
+                        message="Login successful",
+                        needs_github_linking=False,  # Explicitly set to False
+                    )
+                else:
+                    # User exists but not this provider → Create pending link
+                    existing_providers = [
+                        p.provider_type
+                        for p in self.get_user_providers(existing_user.uid)
+                    ]
+                    linking_token = self._create_pending_link(
+                        user_id=existing_user.uid,
+                        provider_type=provider_type,
+                        provider_uid=provider_uid,
+                        provider_data=provider_data or {},
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                    )
+
+                    return existing_user, SSOLoginResponse(
+                        status="needs_linking",
+                        user_id=existing_user.uid,
+                        email=email,
+                        display_name=existing_user.display_name,
+                        message="Account exists. Link this provider?",
+                        linking_token=linking_token,
+                        existing_providers=existing_providers,
+                    )
+
+            # User truly doesn't exist - create new user
             new_user = self._create_user_with_provider(
                 email=email,
                 provider_type=provider_type,
@@ -452,6 +771,22 @@ class UnifiedAuthService:
                 ip_address=ip_address,
                 user_agent=user_agent,
             )
+
+            # Check GitHub linking for new users (new users won't have GitHub linked yet)
+            from app.modules.auth.auth_provider_model import UserAuthProvider
+
+            github_provider = (
+                self.db.query(UserAuthProvider)
+                .filter(
+                    UserAuthProvider.user_id == new_user.uid,
+                    UserAuthProvider.provider_type == "firebase_github",
+                )
+                .first()
+            )
+
+            # Only check for GitHub provider in database - don't rely on provider_username
+            # as it may exist for other providers (e.g., Google SSO)
+            has_github = github_provider is not None
 
             # Audit log
             self._log_auth_event(
@@ -469,6 +804,7 @@ class UnifiedAuthService:
                 email=email,
                 display_name=new_user.display_name,
                 message="Account created successfully",
+                needs_github_linking=not has_github,  # Set to True if GitHub not linked
             )
 
     # ===== Pending Provider Links =====
@@ -622,6 +958,167 @@ class UnifiedAuthService:
         return False
 
     # ===== Helper Methods =====
+
+    def _delete_orphaned_user(self, user_uid: str, user_obj: User) -> None:
+        """
+        Delete an orphaned user and all related records.
+        
+        Handles deletion of all child tables that don't have CASCADE delete,
+        in the correct order to avoid foreign key constraint violations.
+        
+        Args:
+            user_uid: The user's UID to delete
+            user_obj: The User SQLAlchemy object (will be expunged)
+        """
+        from sqlalchemy import text
+        
+        try:
+            # Step 1: Delete user-owned prompts (created_by FK, no CASCADE)
+            from app.modules.intelligence.prompts.prompt_model import Prompt
+            prompts_count = (
+                self.db.query(Prompt)
+                .filter(Prompt.created_by == user_uid)
+                .count()
+            )
+            if prompts_count > 0:
+                logger.info(
+                    f"Deleting {prompts_count} prompts created by orphaned user {user_uid}"
+                )
+                self.db.execute(
+                    text("DELETE FROM prompts WHERE created_by = :user_id"),
+                    {"user_id": user_uid},
+                )
+            
+            # Step 2: Delete user preferences (user_id FK, no CASCADE)
+            from app.modules.users.user_preferences_model import UserPreferences
+            preferences_count = (
+                self.db.query(UserPreferences)
+                .filter(UserPreferences.user_id == user_uid)
+                .count()
+            )
+            if preferences_count > 0:
+                logger.info(
+                    f"Deleting user preferences for orphaned user {user_uid}"
+                )
+                self.db.execute(
+                    text("DELETE FROM user_preferences WHERE user_id = :user_id"),
+                    {"user_id": user_uid},
+                )
+            
+            # Step 3: Delete OrganizationSSOConfig entries (configured_by FK, no CASCADE)
+            from app.modules.auth.auth_provider_model import OrganizationSSOConfig
+            org_configs_count = (
+                self.db.query(OrganizationSSOConfig)
+                .filter(OrganizationSSOConfig.configured_by == user_uid)
+                .count()
+            )
+            if org_configs_count > 0:
+                logger.info(
+                    f"Deleting {org_configs_count} organization SSO configs for orphaned user {user_uid}"
+                )
+                self.db.execute(
+                    text("DELETE FROM organization_sso_config WHERE configured_by = :user_id"),
+                    {"user_id": user_uid},
+                )
+            
+            # Step 4: Delete search_indices (they reference projects, must be deleted first)
+            from app.modules.search.search_models import SearchIndex
+            from app.modules.projects.projects_model import Project
+            search_indices_count = (
+                self.db.query(SearchIndex)
+                .join(Project, SearchIndex.project_id == Project.id)
+                .filter(Project.user_id == user_uid)
+                .count()
+            )
+            if search_indices_count > 0:
+                logger.info(
+                    f"Deleting {search_indices_count} search indices for orphaned user {user_uid}"
+                )
+                self.db.execute(
+                    text("""
+                        DELETE FROM search_indices 
+                        WHERE project_id IN (
+                            SELECT id FROM projects WHERE user_id = :user_id
+                        )
+                    """),
+                    {"user_id": user_uid},
+                )
+            
+            # Step 5: Delete projects (user_id FK with CASCADE, but we delete explicitly for clarity)
+            projects_count = (
+                self.db.query(Project)
+                .filter(Project.user_id == user_uid)
+                .count()
+            )
+            if projects_count > 0:
+                logger.info(
+                    f"Deleting {projects_count} projects for orphaned user {user_uid}"
+                )
+                self.db.execute(
+                    text("DELETE FROM projects WHERE user_id = :user_id"),
+                    {"user_id": user_uid},
+                )
+            
+            # Step 6: Delete custom agents (user_id FK, no CASCADE)
+            from app.modules.intelligence.agents.custom_agents.custom_agent_model import (
+                CustomAgent,
+            )
+            custom_agents_count = (
+                self.db.query(CustomAgent)
+                .filter(CustomAgent.user_id == user_uid)
+                .count()
+            )
+            if custom_agents_count > 0:
+                logger.info(
+                    f"Deleting {custom_agents_count} custom agents for orphaned user {user_uid}"
+                )
+                self.db.execute(
+                    text("DELETE FROM custom_agents WHERE user_id = :user_id"),
+                    {"user_id": user_uid},
+                )
+            
+            # Step 7: Delete conversations (user_id FK with CASCADE, but we delete explicitly)
+            from app.modules.conversations.conversation.conversation_model import Conversation
+            conversations_count = (
+                self.db.query(Conversation)
+                .filter(Conversation.user_id == user_uid)
+                .count()
+            )
+            if conversations_count > 0:
+                logger.info(
+                    f"Deleting {conversations_count} conversations for orphaned user {user_uid}"
+                )
+                self.db.execute(
+                    text("DELETE FROM conversations WHERE user_id = :user_id"),
+                    {"user_id": user_uid},
+                )
+            
+            # Step 8: Flush to ensure all deletes are executed before deleting user
+            self.db.flush()
+            
+            # Step 9: Expunge the user object to avoid SQLAlchemy trying to update related objects
+            self.db.expunge(user_obj)
+            
+            # Step 10: Delete user using raw SQL to avoid relationship tracking issues
+            self.db.execute(
+                text("DELETE FROM users WHERE uid = :user_id"),
+                {"user_id": user_uid},
+            )
+            self.db.commit()
+            logger.info(f"Successfully deleted orphaned user {user_uid} and all related records")
+            
+        except Exception as e:
+            logger.error(
+                f"Error in _delete_orphaned_user for {user_uid}: {str(e)}",
+                exc_info=True,
+            )
+            self.db.rollback()
+            # Re-expunge user object after rollback
+            try:
+                self.db.expunge(user_obj)
+            except Exception:
+                pass  # Object may already be expunged
+            raise  # Re-raise to be handled by caller
 
     def _create_user_with_provider(
         self,

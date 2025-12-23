@@ -83,6 +83,9 @@ class SSOLoginResponse(BaseModel):
     message: str
     linking_token: Optional[str] = None  # If needs_linking
     existing_providers: Optional[List[str]] = None  # If needs_linking
+    needs_github_linking: Optional[bool] = Field(
+        default=False, description="True if user needs to link GitHub account"
+    )
 
 
 # ===== Provider Linking Flow =====
