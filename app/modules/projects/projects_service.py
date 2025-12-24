@@ -56,6 +56,52 @@ class ProjectService:
                 f"An unexpected error occurred while retrieving project name for project IDs {project_ids}"
             ) from e
 
+    def _ensure_user_exists(self, user_id: str, user_email: str = None):
+        """Ensure user exists in the database, create if not."""
+        from app.modules.users.user_model import User
+        from app.modules.users.user_schema import CreateUser
+        from datetime import datetime
+        
+        # First check by uid
+        user = self.db.query(User).filter(User.uid == user_id).first()
+        if user:
+            return user
+        
+        # If not found by uid, check by email (in case user exists with different uid)
+        if user_email:
+            user = self.db.query(User).filter(User.email == user_email).first()
+            if user:
+                logger.info(
+                    f"User with email {user_email} exists with uid {user.uid}, "
+                    f"but request has uid {user_id}. Using existing user {user.uid}."
+                )
+                # Return the existing user - the project will be associated with the existing user
+                return user
+        
+        # User doesn't exist, create new one
+        logger.info(f"User {user_id} not found in database, creating user record")
+        user_data = CreateUser(
+            uid=user_id,
+            email=user_email or f"{user_id}@potpie.ai",
+            display_name=user_id or "User",
+            email_verified=False,
+            created_at=datetime.utcnow(),
+            last_login_at=datetime.utcnow(),
+            provider_info={},
+            provider_username="",  # Empty string for local/API-created users
+        )
+        from app.modules.users.user_service import UserService
+        user_service = UserService(self.db)
+        uid, message, error = user_service.create_user(user_data)
+        if error:
+            logger.error(f"Failed to create user {user_id}: {message}")
+            raise Exception(f"Failed to create user: {message}")
+        logger.info(f"Created user {user_id} in database")
+        
+        # Refresh to get the created user
+        user = self.db.query(User).filter(User.uid == user_id).first()
+        return user
+
     async def register_project(
         self,
         repo_name: str,
@@ -64,17 +110,26 @@ class ProjectService:
         project_id: str,
         commit_id: str = None,
         repo_path: str = None,
+        user_email: str = None,
     ):
+        # Ensure user exists in database before checking project ownership
+        # This may return a user with a different uid if user exists by email
+        user = self._ensure_user_exists(user_id, user_email)
+        # Use the actual user's uid from the database (may differ from token uid)
+        actual_user_id = user.uid
+        
         # Check if a project with this ID already exists
         existing_project = (
             self.db.query(Project).filter(Project.id == project_id).first()
         )
 
         if existing_project:
-            if existing_project.user_id != user_id:
+            # Check ownership using actual_user_id from database, not token user_id
+            if existing_project.user_id != actual_user_id:
                 message = (
                     f"Project {project_id} ownership mismatch: "
-                    f"stored user {existing_project.user_id}, requesting user {user_id}"
+                    f"stored user {existing_project.user_id}, requesting user {actual_user_id} "
+                    f"(token user_id: {user_id})"
                 )
                 logger.warning(message)
                 raise HTTPException(status_code=403, detail=message)
@@ -99,13 +154,13 @@ class ProjectService:
             message = f"Project id '{project_id}' for repo '{repo_name}' and branch '{branch_name}' updated successfully."
             logger.info(message)
             return project_id
-
+        
         # Create new project if it doesn't exist
         project = Project(
             id=project_id,
             repo_name=repo_name,
             branch_name=branch_name,
-            user_id=user_id,
+            user_id=actual_user_id,  # Use actual user_id from database
             repo_path=repo_path,
             commit_id=commit_id,
             status=ProjectStatusEnum.SUBMITTED.value,

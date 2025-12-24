@@ -7,7 +7,7 @@ from typing import Any, Dict
 from dotenv import load_dotenv
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
+from sqlalchemy import select
 from uuid6 import uuid7
 
 from app.celery.tasks.parsing_tasks import process_parsing
@@ -24,8 +24,6 @@ from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.posthog_helper import PostHogClient
-from app.modules.conversations.conversation.conversation_model import Conversation
-from app.modules.conversations.conversation.conversation_model import Visibility
 from app.modules.projects.projects_model import Project
 
 logger = logging.getLogger(__name__)
@@ -39,74 +37,88 @@ class ParsingController:
     async def parse_directory(
         repo_details: ParsingRequest, db: AsyncSession, user: Dict[str, Any]
     ):
-        if "email" not in user:
-            user_email = None
-        else:
-            user_email = user["email"]
-
-        user_id = user["user_id"]
-        project_manager = ProjectService(db)
-        parse_helper = ParseHelper(db)
-        parsing_service = ParsingService(db, user_id)
-
-        # Auto-detect if repo_name is actually a filesystem path
-        if repo_details.repo_name and not repo_details.repo_path:
-            is_path = (
-                os.path.isabs(repo_details.repo_name)
-                or repo_details.repo_name.startswith(("~", "./", "../"))
-                or os.path.isdir(os.path.expanduser(repo_details.repo_name))
+        # Extract user_email from user object (Firebase tokens may have 'email' field)
+        user_email = user.get("email") or user.get("user_email") or None
+        
+        # Extract user_id from user object (Firebase tokens use 'uid', but we also support 'user_id')
+        user_id = user.get("user_id") or user.get("uid")
+        
+        if not user_id:
+            logger.error(f"User ID not found in user object: {user.keys()}")
+            raise HTTPException(
+                status_code=400,
+                detail="User ID not found in authentication token"
             )
-            if is_path:
-                # Move from repo_name to repo_path
-                repo_details.repo_path = repo_details.repo_name
-                repo_details.repo_name = repo_details.repo_path.split("/")[-1]
-                logger.info(
-                    f"Auto-detected filesystem path: repo_path={repo_details.repo_path}, repo_name={repo_details.repo_name}"
-                )
-
-        if config_provider.get_is_development_mode():
-            # In dev mode: if both repo_path and repo_name are provided, prioritize repo_path (local)
-            if repo_details.repo_path and repo_details.repo_name:
-                repo_details.repo_name = None
-            # Otherwise keep whichever one is provided as-is
-        else:
-            # In non-dev mode: if repo_name is None but repo_path exists, extract repo_name from repo_path
-            if not repo_details.repo_name and repo_details.repo_path:
-                repo_details.repo_name = repo_details.repo_path.split("/")[-1]
-
-        # For later use in the code
-        repo_name = repo_details.repo_name or (
-            repo_details.repo_path.split("/")[-1] if repo_details.repo_path else None
-        )
-        repo_path = repo_details.repo_path
-        if repo_path:
-            if os.getenv("isDevelopmentMode") != "enabled":
-                raise HTTPException(
-                    status_code=400,
-                    detail="Parsing local repositories is only supported in development mode",
-                )
-            else:
-                new_project_id = str(uuid7())
-                return await ParsingController.handle_new_project(
-                    repo_details,
-                    user_id,
-                    user_email,
-                    new_project_id,
-                    project_manager,
-                    db,
-                )
-
-        demo_repos = [
-            "Portkey-AI/gateway",
-            "crewAIInc/crewAI",
-            "AgentOps-AI/agentops",
-            "calcom/cal.com",
-            "langchain-ai/langchain",
-            "AgentOps-AI/AgentStack",
-            "formbricks/formbricks",
-        ]
-
+        
+        # Create a sync session for services that need it (ParsingService, InferenceService, etc.)
+        # These services use .query() which is only available on sync sessions
+        from app.core.database import SessionLocal
+        sync_db = SessionLocal()
+        
         try:
+            # ProjectService can work with both sync and async, but we'll use sync for consistency
+            # with other services that require it
+            project_manager = ProjectService(sync_db)
+            parse_helper = ParseHelper(sync_db)
+            parsing_service = ParsingService(sync_db, user_id)
+
+            # Auto-detect if repo_name is actually a filesystem path
+            if repo_details.repo_name and not repo_details.repo_path:
+                is_path = (
+                    os.path.isabs(repo_details.repo_name)
+                    or repo_details.repo_name.startswith(("~", "./", "../"))
+                    or os.path.isdir(os.path.expanduser(repo_details.repo_name))
+                )
+                if is_path:
+                    # Move from repo_name to repo_path
+                    repo_details.repo_path = repo_details.repo_name
+                    repo_details.repo_name = repo_details.repo_path.split("/")[-1]
+                    logger.info(
+                        f"Auto-detected filesystem path: repo_path={repo_details.repo_path}, repo_name={repo_details.repo_name}"
+                    )
+
+            if config_provider.get_is_development_mode():
+                # In dev mode: if both repo_path and repo_name are provided, prioritize repo_path (local)
+                if repo_details.repo_path and repo_details.repo_name:
+                    repo_details.repo_name = None
+                # Otherwise keep whichever one is provided as-is
+            else:
+                # In non-dev mode: if repo_name is None but repo_path exists, extract repo_name from repo_path
+                if not repo_details.repo_name and repo_details.repo_path:
+                    repo_details.repo_name = repo_details.repo_path.split("/")[-1]
+
+            # For later use in the code
+            repo_name = repo_details.repo_name or (
+                repo_details.repo_path.split("/")[-1] if repo_details.repo_path else None
+            )
+            repo_path = repo_details.repo_path
+            if repo_path:
+                if os.getenv("isDevelopmentMode") != "enabled":
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Parsing local repositories is only supported in development mode",
+                    )
+                else:
+                    new_project_id = str(uuid7())
+                    result = await ParsingController.handle_new_project(
+                        repo_details,
+                        user_id,
+                        user_email,
+                        new_project_id,
+                        project_manager,
+                        db,
+                    )
+                    return result
+
+            demo_repos = [
+                "Portkey-AI/gateway",
+                "crewAIInc/crewAI",
+                "AgentOps-AI/agentops",
+                "calcom/cal.com",
+                "langchain-ai/langchain",
+                "AgentOps-AI/AgentStack",
+                "formbricks/formbricks",
+            ]
             # Normalize repository name for consistent database lookups
             normalized_repo_name = normalize_repo_name(repo_name)
             logger.info(
@@ -173,7 +185,7 @@ class ParsingController:
                         "status": ProjectStatusEnum.READY.value,
                     }
                 else:
-                    return await ParsingController.handle_new_project(
+                    result = await ParsingController.handle_new_project(
                         repo_details,
                         user_id,
                         user_email,
@@ -181,6 +193,7 @@ class ParsingController:
                         project_manager,
                         db,
                     )
+                    return result
 
             # Handle existing projects (including previously duplicated demo projects)
             if project:
@@ -223,7 +236,7 @@ class ParsingController:
             else:
                 # Handle new non-demo projects
                 new_project_id = str(uuid7())
-                return await ParsingController.handle_new_project(
+                result = await ParsingController.handle_new_project(
                     repo_details,
                     user_id,
                     user_email,
@@ -231,10 +244,14 @@ class ParsingController:
                     project_manager,
                     db,
                 )
+                return result
 
         except Exception as e:
             logger.error(f"Error in parse_directory: {e}")
             raise HTTPException(status_code=500, detail="Internal server error")
+        finally:
+            # Close the sync session
+            sync_db.close()
 
     @staticmethod
     async def handle_new_project(
@@ -259,6 +276,7 @@ class ParsingController:
             new_project_id,
             repo_details.commit_id,
             repo_details.repo_path,
+            user_email,
         )
         asyncio.create_task(
             CodeProviderService(db).get_project_structure_async(new_project_id)
@@ -289,37 +307,50 @@ class ParsingController:
     async def fetch_parsing_status(
         project_id: str, db: AsyncSession, user: Dict[str, Any]
     ):
+        # Create a sync session for ParseHelper and ProjectService which need sync Session
+        from app.core.database import SessionLocal
+        sync_db = SessionLocal()
+        
         try:
-            project_query = (
-                select(Project.status)
-                .join(
-                    Conversation, Conversation.project_ids.any(Project.id), isouter=True
+            # Extract user_id and email from user object (handle both uid and user_id)
+            user_id = user.get("user_id") or user.get("uid")
+            user_email = user.get("email") or user.get("user_email") or None
+            
+            if not user_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="User ID not found in authentication token"
                 )
-                .where(
-                    Project.id == project_id,
-                    or_(
-                        Project.user_id == user["user_id"],
-                        Conversation.visibility == Visibility.PUBLIC,
-                        Conversation.shared_with_emails.any(user["email"]),
-                    ),
-                )
-                .limit(1)  # Since we only need one result
+            
+            # Resolve actual user_id (may differ if user exists by email)
+            from app.modules.projects.projects_service import ProjectService
+            project_service = ProjectService(sync_db)
+            user_obj = project_service._ensure_user_exists(user_id, user_email)
+            actual_user_id = user_obj.uid
+            
+            # Query project directly by ID and user_id
+            project_query = select(Project).where(
+                Project.id == project_id,
+                Project.user_id == actual_user_id,
             )
 
-            result = db.execute(project_query)
-            project_status = result.scalars().first()
+            result = await db.execute(project_query)
+            project = result.scalars().first()
 
-            if not project_status:
+            if not project:
                 raise HTTPException(
                     status_code=404, detail="Project not found or access denied"
                 )
-            parse_helper = ParseHelper(db)
+            
+            parse_helper = ParseHelper(sync_db)
             is_latest = await parse_helper.check_commit_status(project_id)
 
-            return {"status": project_status, "latest": is_latest}
+            return {"status": project.status, "latest": is_latest}
 
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"Error in fetch_parsing_status: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
+        finally:
+            sync_db.close()

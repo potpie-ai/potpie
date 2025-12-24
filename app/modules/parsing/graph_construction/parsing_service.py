@@ -97,6 +97,7 @@ class ParsingService:
                     user_id,
                     project_id,
                     commit_id=repo_details.commit_id,
+                    user_email=user_email,
                 )
             else:
                 (
@@ -110,6 +111,7 @@ class ParsingService:
                     user_id,
                     project_id,
                     commit_id=repo_details.commit_id,
+                    user_email=user_email,
                 )
 
             if isinstance(repo, Repo):
@@ -247,7 +249,7 @@ class ParsingService:
                 )
 
                 # Generate docstrings using InferenceService
-                await self.inference_service.run_inference(project_id)
+                # await self.inference_service.run_inference(project_id)
                 logger.info(f"DEBUGNEO4J: After inference project {project_id}")
                 self.inference_service.log_graph_stats(project_id)
                 await self.project_service.update_project_status(
@@ -291,7 +293,7 @@ class ParsingService:
                     project_id, ProjectStatusEnum.PARSED
                 )
                 # Generate docstrings using InferenceService
-                await self.inference_service.run_inference(project_id)
+                # await self.inference_service.run_inference(project_id)
                 logger.info(f"DEBUGNEO4J: After inference project {project_id}")
                 self.inference_service.log_graph_stats(project_id)
                 await self.project_service.update_project_status(

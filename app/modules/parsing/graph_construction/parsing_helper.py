@@ -754,6 +754,7 @@ class ParseHelper:
         user_id,
         project_id=None,  # Change type to str
         commit_id=None,
+        user_email=None,
     ):
         # Check if this is a local repository by examining the repo object
         # In development mode: repo is Repo object, repo_details is ParsingRequest
@@ -808,6 +809,7 @@ class ParseHelper:
                 project_id,
                 commit_id=commit_id,
                 repo_path=repo_path,  # Pass repo_path when registering
+                user_email=user_email,  # Pass user_email for user creation
             )
         if repo_path is not None:
             # Local repository detected - return the path directly without downloading tarball

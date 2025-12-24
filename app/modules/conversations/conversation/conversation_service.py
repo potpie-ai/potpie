@@ -152,12 +152,25 @@ class ConversationService:
         if not user_email:
             return ConversationAccessType.WRITE
 
-        # Use Firebase user ID directly if available, otherwise fall back to email lookup
-        if firebase_user_id:
-            user_id = firebase_user_id
-        else:
+        # Resolve actual user_id from database (may differ from token user_id)
+        # This ensures we match the user_id that was used when creating the conversation
+        from app.modules.projects.projects_service import ProjectService
+        project_service = ProjectService(self.db)
+        token_user_id = firebase_user_id or None
+        if not token_user_id:
             user_service = UserService(self.sql_db)
-            user_id = user_service.get_user_id_by_email(user_email)
+            token_user_id = user_service.get_user_id_by_email(user_email)
+        
+        if token_user_id:
+            user_obj = project_service._ensure_user_exists(token_user_id, user_email)
+            actual_user_id = user_obj.uid
+        else:
+            # Fallback: use email lookup if no user_id available
+            user_service = UserService(self.sql_db)
+            actual_user_id = user_service.get_user_id_by_email(user_email)
+            if not actual_user_id:
+                logger.warning(f"Could not resolve user_id for email {user_email}")
+                return ConversationAccessType.NOT_FOUND
 
         # Retrieve the conversation
         conversation = await self.conversation_store.get_by_id(conversation_id)
@@ -171,7 +184,7 @@ class ConversationService:
         if not conversation.visibility:
             conversation.visibility = Visibility.PRIVATE
 
-        if user_id == conversation.user_id:  # Check if the user is the creator
+        if actual_user_id == conversation.user_id:  # Check if the user is the creator
             return ConversationAccessType.WRITE  # Creator always has write access
 
         if conversation.visibility == Visibility.PUBLIC:
@@ -189,7 +202,7 @@ class ConversationService:
                 )
                 return ConversationAccessType.NOT_FOUND
             # Check if the current user ID is in the shared user IDs
-            if user_id in shared_user_ids:
+            if actual_user_id in shared_user_ids:
                 return ConversationAccessType.READ  # Shared users can only read
             else:
                 return ConversationAccessType.NOT_FOUND
@@ -203,8 +216,26 @@ class ConversationService:
         hidden: bool = False,
     ) -> tuple[str, str]:
         try:
+            # Ensure user exists in database before creating conversation
+            # Use sync session to ensure user is committed before async conversation creation
+            from app.modules.projects.projects_service import ProjectService
+            project_service = ProjectService(self.db)
+            user_obj = project_service._ensure_user_exists(user_id, self.user_email)
+            # Commit the sync session to ensure user is visible to async session
+            # This is important because user creation uses sync session, but conversation uses async
+            try:
+                self.db.commit()
+            except Exception as commit_error:
+                # If commit fails, rollback and re-raise
+                self.db.rollback()
+                logger.error(f"Failed to commit user creation: {commit_error}")
+                raise
+            # Use the actual user's uid from the database (may differ from token uid)
+            actual_user_id = user_obj.uid
+            logger.info(f"Using actual_user_id {actual_user_id} for conversation creation (token user_id: {user_id})")
+            
             if not await self.agent_service.validate_agent_id(
-                user_id, conversation.agent_ids[0]
+                actual_user_id, conversation.agent_ids[0]
             ):
                 raise ConversationServiceError(
                     f"Invalid agent_id: {conversation.agent_ids[0]}"
@@ -221,7 +252,7 @@ class ConversationService:
             )
 
             conversation_id = await self._create_conversation_record(
-                conversation, title, user_id, hidden
+                conversation, title, actual_user_id, hidden
             )
 
             asyncio.create_task(
@@ -230,7 +261,7 @@ class ConversationService:
                 )
             )
 
-            await self._add_system_message(conversation_id, project_name, user_id)
+            await self._add_system_message(conversation_id, project_name, actual_user_id)
 
             return conversation_id, "Conversation created successfully."
         except IntegrityError as e:
