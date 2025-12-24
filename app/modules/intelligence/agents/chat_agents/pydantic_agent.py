@@ -47,16 +47,44 @@ logger = setup_logger(__name__)
 
 
 def handle_exception(tool_func):
-    @functools.wraps(tool_func)
-    def wrapper(*args, **kwargs):
-        try:
-            return tool_func(*args, **kwargs)
-        except Exception:
-            # Use Loguru's native exception() with context kwargs
-            logger.exception("Exception in tool function", tool_name=tool_func.__name__)
-            return "An internal error occurred. Please try again later."
+    """
+    Wraps tool functions to catch exceptions, record them in traces,
+    and return sanitized error signals to the agent.
+    """
+    is_async = inspect.iscoroutinefunction(tool_func)
 
-    return wrapper
+    def _format_error(exc: Exception, func_name: str) -> str:
+        # 1. Log the full stack 
+        logger.exception(f"Tool execution failed: {func_name}")
+
+        # 2. OpenTelemetry Trace (Observability fix)
+        current_span = trace.get_current_span()
+        if current_span:
+            current_span.set_status(StatusCode.ERROR, str(exc))
+            current_span.record_exception(exc)
+
+        # 3. message sanitize for the LLM (S/R fix)
+        error_type = type(exc).__name__
+        # Use existing project redaction logic
+        clean_msg = filter_sensitive_data(str(exc))[:200]
+        return f"FAILURE: Tool '{func_name}' raised {error_type}: {clean_msg}"
+
+    if is_async:
+        @functools.wraps(tool_func)
+        async def async_wrapper(*args, **kwargs):
+            try:
+                return await tool_func(*args, **kwargs)
+            except Exception as e:
+                return _format_error(e, tool_func.__name__)
+        return async_wrapper
+    else:
+        @functools.wraps(tool_func)
+        def sync_wrapper(*args, **kwargs):
+            try:
+                return tool_func(*args, **kwargs)
+            except Exception as e:
+                return _format_error(e, tool_func.__name__)
+        return sync_wrapper
 
 
 class PydanticRagAgent(ChatAgent):
@@ -252,6 +280,10 @@ class PydanticRagAgent(ChatAgent):
                 - Only use the tools listed below
                 - You have access to tools in MCP Servers too, use them effectively. These mcp servers provide you with tools user might ask you to perform tasks on
                 {"- Provide detailed image analysis when images are present" if ctx.has_images() else ""}
+
+                Tool failure handling:
+                If a tool response starts with 'FAILURE:', the tool execution failed.
+                Analyze the error, adjust arguments if possible, and do not treat the response as successful output.
             """
 
     def _debug_multimodal_content(self, ctx: ChatContext) -> None:
