@@ -5,6 +5,9 @@ from typing import List, AsyncGenerator, Sequence
 
 import anyio
 
+from opentelemetry import trace
+from opentelemetry.trace import StatusCode
+
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 
 from .tool_helpers import (
@@ -17,7 +20,7 @@ from app.modules.intelligence.provider.provider_service import (
     ProviderService,
 )
 from .agent_config import AgentConfig, TaskConfig
-from app.modules.utils.logger import setup_logger
+from app.modules.utils.logger import setup_logger, filter_sensitive_data
 
 from ..chat_agent import (
     ChatAgent,
@@ -54,16 +57,16 @@ def handle_exception(tool_func):
     is_async = inspect.iscoroutinefunction(tool_func)
 
     def _format_error(exc: Exception, func_name: str) -> str:
-        # 1. Log the full stack 
+        # 1. Log the full stack trace for developers
         logger.exception(f"Tool execution failed: {func_name}")
 
-        # 2. OpenTelemetry Trace (Observability fix)
+        # 2. Update OpenTelemetry Trace (Observability fix)
         current_span = trace.get_current_span()
         if current_span:
             current_span.set_status(StatusCode.ERROR, str(exc))
             current_span.record_exception(exc)
 
-        # 3. message sanitize for the LLM (S/R fix)
+        # 3. Sanitize the message for the LLM (Security/Reliability fix)
         error_type = type(exc).__name__
         # Use existing project redaction logic
         clean_msg = filter_sensitive_data(str(exc))[:200]
