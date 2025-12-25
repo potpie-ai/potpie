@@ -551,7 +551,6 @@ class UnifiedAuthService:
             if existing_provider:
                 # Scenario 1: User exists with this provider → Login
                 # BUT: Check GitHub linking FIRST before completing login
-                from app.modules.auth.auth_provider_model import UserAuthProvider
 
                 # Refresh the user object to ensure we have the latest data
                 self.db.refresh(existing_user)
