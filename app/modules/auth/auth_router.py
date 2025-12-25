@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.exceptions import HTTPException
 
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,8 @@ from app.modules.auth.auth_schema import (
     AccountResponse,
 )
 from app.modules.auth.auth_service import auth_handler, AuthService
+from app.modules.auth.auth_provider_model import UserAuthProvider
+from app.modules.auth.auth_schema import AuthProviderCreate
 from app.modules.auth.unified_auth_service import (
     UnifiedAuthService,
     PROVIDER_TYPE_FIREBASE_GITHUB,
@@ -125,8 +128,6 @@ class AuthAPI:
 
         user_service = UserService(db)
         unified_auth = UnifiedAuthService(db)
-        from app.modules.auth.auth_provider_model import UserAuthProvider
-        from app.modules.auth.auth_schema import AuthProviderCreate
 
         # Determine if this is GitHub flow
         is_github_flow = bool(oauth_token and provider_username)
@@ -185,6 +186,35 @@ class AuthAPI:
                     status_code=200,
                 )
 
+            # Check if this GitHub account is already linked to a different user
+            existing_provider_with_uid = (
+                db.query(UserAuthProvider)
+                .filter(
+                    UserAuthProvider.provider_type == PROVIDER_TYPE_FIREBASE_GITHUB,
+                    UserAuthProvider.provider_uid == provider_uid,
+                )
+                .first()
+            )
+
+            if existing_provider_with_uid and existing_provider_with_uid.user_id != user.uid:
+                error_message = (
+                    f"GitHub account is already linked to another account. "
+                    f"Please use a different GitHub account or contact support if you believe this is an error."
+                )
+                logger.warning(
+                    f"GitHub account {provider_uid} is already linked to user {existing_provider_with_uid.user_id}, "
+                    f"cannot link to user {user.uid}"
+                )
+                return Response(
+                    content=json.dumps(
+                        {
+                            "error": error_message,
+                            "details": f"GitHub account {provider_uid} is already linked to user {existing_provider_with_uid.user_id}, cannot link to user {user.uid}"
+                        }
+                    ),
+                    status_code=409,  # Conflict
+                )
+
             # Link GitHub provider
             logger.info(
                 f"Linking GitHub (provider_uid={provider_uid}) to user {user.uid}"
@@ -196,8 +226,37 @@ class AuthAPI:
                 access_token=oauth_token,
                 is_primary=False,  # SSO is primary
             )
-            unified_auth.add_provider(user_id=user.uid, provider_create=provider_create)
-            db.commit()
+            
+            try:
+                unified_auth.add_provider(user_id=user.uid, provider_create=provider_create)
+                db.commit()
+            except IntegrityError as e:
+                db.rollback()
+                # Check if it's a unique constraint violation for provider_uid
+                error_str = str(e).lower()
+                if "unique_provider_uid" in error_str or "uniqueviolation" in error_str:
+                    error_message = (
+                        f"GitHub account is already linked to another account. "
+                        f"Please use a different GitHub account or contact support if you believe this is an error."
+                    )
+                    logger.error(
+                        f"GitHub account {provider_uid} is already linked to another user: {e}"
+                    )
+                    return Response(
+                        content=json.dumps(
+                            {
+                                "error": error_message,
+                                "details": f"GitHub account {provider_uid} is already linked to another user. Database constraint violation: {str(e)}"
+                            }
+                        ),
+                        status_code=409,  # Conflict
+                    )
+                # Re-raise other IntegrityErrors (e.g., unique_user_provider)
+                raise
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Unexpected error linking GitHub provider: {e}", exc_info=True)
+                raise
 
             logger.info(f"Successfully linked GitHub to user {user.uid}")
             return Response(
