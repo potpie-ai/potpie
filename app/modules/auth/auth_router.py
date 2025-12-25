@@ -196,10 +196,13 @@ class AuthAPI:
                 .first()
             )
 
-            if existing_provider_with_uid and existing_provider_with_uid.user_id != user.uid:
+            if (
+                existing_provider_with_uid
+                and existing_provider_with_uid.user_id != user.uid
+            ):
                 error_message = (
-                    f"GitHub account is already linked to another account. "
-                    f"Please use a different GitHub account or contact support if you believe this is an error."
+                    "GitHub account is already linked to another account. "
+                    "Please use a different GitHub account or contact support if you believe this is an error."
                 )
                 logger.warning(
                     f"GitHub account {provider_uid} is already linked to user {existing_provider_with_uid.user_id}, "
@@ -209,7 +212,7 @@ class AuthAPI:
                     content=json.dumps(
                         {
                             "error": error_message,
-                            "details": f"GitHub account {provider_uid} is already linked to user {existing_provider_with_uid.user_id}, cannot link to user {user.uid}"
+                            "details": f"GitHub account {provider_uid} is already linked to user {existing_provider_with_uid.user_id}, cannot link to user {user.uid}",
                         }
                     ),
                     status_code=409,  # Conflict
@@ -226,9 +229,11 @@ class AuthAPI:
                 access_token=oauth_token,
                 is_primary=False,  # SSO is primary
             )
-            
+
             try:
-                unified_auth.add_provider(user_id=user.uid, provider_create=provider_create)
+                unified_auth.add_provider(
+                    user_id=user.uid, provider_create=provider_create
+                )
                 db.commit()
             except IntegrityError as e:
                 db.rollback()
@@ -236,8 +241,8 @@ class AuthAPI:
                 error_str = str(e).lower()
                 if "unique_provider_uid" in error_str or "uniqueviolation" in error_str:
                     error_message = (
-                        f"GitHub account is already linked to another account. "
-                        f"Please use a different GitHub account or contact support if you believe this is an error."
+                        "GitHub account is already linked to another account. "
+                        "Please use a different GitHub account or contact support if you believe this is an error."
                     )
                     logger.error(
                         f"GitHub account {provider_uid} is already linked to another user: {e}"
@@ -246,7 +251,7 @@ class AuthAPI:
                         content=json.dumps(
                             {
                                 "error": error_message,
-                                "details": f"GitHub account {provider_uid} is already linked to another user. Database constraint violation: {str(e)}"
+                                "details": f"GitHub account {provider_uid} is already linked to another user. Database constraint violation: {str(e)}",
                             }
                         ),
                         status_code=409,  # Conflict
@@ -255,7 +260,9 @@ class AuthAPI:
                 raise
             except Exception as e:
                 db.rollback()
-                logger.error(f"Unexpected error linking GitHub provider: {e}", exc_info=True)
+                logger.error(
+                    f"Unexpected error linking GitHub provider: {e}", exc_info=True
+                )
                 raise
 
             logger.info(f"Successfully linked GitHub to user {user.uid}")
