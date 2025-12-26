@@ -6,7 +6,7 @@ from typing import List, AsyncGenerator, Sequence
 import anyio
 
 from opentelemetry import trace
-from opentelemetry.trace import StatusCode
+from opentelemetry.trace import Status, StatusCode
 
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 
@@ -63,7 +63,7 @@ def handle_exception(tool_func):
         # 2. Update OpenTelemetry Trace (Observability fix)
         current_span = trace.get_current_span()
         if current_span:
-            current_span.set_status(StatusCode.ERROR, str(exc))
+            current_span.set_status(Status(StatusCode.ERROR, str(exc)))
             current_span.record_exception(exc)
 
         # 3. Sanitize the message for the LLM (Security/Reliability fix)
