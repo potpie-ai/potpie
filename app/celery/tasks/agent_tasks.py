@@ -175,6 +175,85 @@ def execute_agent_background(
                 redis_manager.set_task_status(conversation_id, run_id, "completed")
 
                 logger.info("Background agent execution completed")
+
+                # Trigger memory extraction AFTER agent task completes
+                try:
+                    from app.celery.tasks.memory_tasks import extract_user_preferences
+                    from app.modules.intelligence.memory.chat_history_service import (
+                        ChatHistoryService,
+                    )
+                    from langchain_core.messages import HumanMessage
+
+                    logger.info(
+                        f"[memory manager] Triggering post-completion memory extraction for "
+                        f"conversation_id={conversation_id}, user_id={user_id}"
+                    )
+
+                    # Get recent message history for context
+                    history_manager = ChatHistoryService(self.db)
+                    recent_history = history_manager.get_session_history(
+                        user_id, conversation_id
+                    )
+
+                    # Prepare messages for extraction (last 10 messages for context)
+                    # Only extract from the LATEST exchange (user query + assistant response)
+                    # to avoid re-processing old messages and duplicate extractions
+                    recent_messages = [
+                        {
+                            "role": "user"
+                            if isinstance(msg, HumanMessage)
+                            else "assistant",
+                            "content": msg.content,
+                        }
+                        for msg in recent_history[
+                            -2:
+                        ]  # Only last 2 messages (user + assistant)
+                        if hasattr(msg, "content")
+                    ]
+
+                    # Get project_id from conversation if available
+                    from app.modules.conversations.conversation.conversation_model import (
+                        Conversation,
+                    )
+
+                    conversation = (
+                        self.db.query(Conversation)
+                        .filter(Conversation.id == conversation_id)
+                        .first()
+                    )
+                    project_id = (
+                        conversation.project_ids[0]
+                        if conversation and conversation.project_ids
+                        else None
+                    )
+                    agent_id_from_conv = (
+                        conversation.agent_ids[0]
+                        if conversation and conversation.agent_ids
+                        else None
+                    )
+
+                    # Trigger async extraction (fire-and-forget)
+                    task_result = extract_user_preferences.delay(
+                        user_id=user_id,
+                        messages=recent_messages,
+                        conversation_id=conversation_id,
+                        project_id=project_id,
+                        metadata={
+                            "agent_id": agent_id_from_conv or agent_id,
+                            "triggered_from": "agent_task_completion",
+                        },
+                    )
+                    logger.info(
+                        f"[memory manager] Memory extraction task queued: task_id={task_result.id}, "
+                        f"messages_count={len(recent_messages)}, project_id={project_id}"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[memory manager] Failed to trigger post-completion memory extraction: {e}",
+                        exc_info=True,
+                    )
+                    # Don't fail the main task if memory extraction fails to queue
+
             else:
                 logger.info("Background agent execution cancelled")
 

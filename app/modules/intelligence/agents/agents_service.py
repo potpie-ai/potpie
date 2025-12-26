@@ -20,7 +20,6 @@ from app.modules.intelligence.prompts.prompt_service import PromptService
 from app.modules.intelligence.provider.provider_service import ProviderService
 from app.modules.intelligence.tools.tool_service import ToolService
 from app.modules.utils.logger import setup_logger
-
 from .chat_agent import AgentWithInfo, ChatContext
 from .chat_agents.system_agents import (
     blast_radius_agent,
@@ -70,72 +69,76 @@ class AgentsService:
         prompt_provider: PromptService,
         tools_provider: ToolService,
     ):
+        # Create system agents
+        qna = qna_agent.QnAAgent(llm_provider, tools_provider, prompt_provider)
+        debug = debug_agent.DebugAgent(llm_provider, tools_provider, prompt_provider)
+        unit_test = unit_test_agent.UnitTestAgent(
+            llm_provider, tools_provider, prompt_provider
+        )
+        integration_test = integration_test_agent.IntegrationTestAgent(
+            llm_provider, tools_provider, prompt_provider
+        )
+        lld = low_level_design_agent.LowLevelDesignAgent(
+            llm_provider, tools_provider, prompt_provider
+        )
+        blast_radius = blast_radius_agent.BlastRadiusAgent(
+            llm_provider, tools_provider, prompt_provider
+        )
+        code_gen = code_gen_agent.CodeGenAgent(
+            llm_provider, tools_provider, prompt_provider
+        )
+        general_purpose = GeneralPurposeAgent(
+            llm_provider, tools_provider, prompt_provider
+        )
+
         return {
             "codebase_qna_agent": AgentWithInfo(
                 id="codebase_qna_agent",
                 name="Codebase Q&A Agent",
                 description="An agent specialized in answering questions about the codebase using the knowledge graph and code analysis tools.",
-                agent=qna_agent.QnAAgent(llm_provider, tools_provider, prompt_provider),
+                agent=qna,
             ),
             "debugging_agent": AgentWithInfo(
                 id="debugging_agent",
                 name="Debugging with Knowledge Graph Agent",
                 description="An agent specialized in debugging using knowledge graphs.",
-                agent=debug_agent.DebugAgent(
-                    llm_provider, tools_provider, prompt_provider
-                ),
+                agent=debug,
             ),
             "unit_test_agent": AgentWithInfo(
                 id="unit_test_agent",
                 name="Unit Test Agent",
                 description="An agent specialized in generating unit tests for code snippets for given function names",
-                agent=unit_test_agent.UnitTestAgent(
-                    llm_provider, tools_provider, prompt_provider
-                ),
+                agent=unit_test,
             ),
             "integration_test_agent": AgentWithInfo(
                 id="integration_test_agent",
                 name="Integration Test Agent",
                 description="An agent specialized in generating integration tests for code snippets from the knowledge graph based on given function names of entry points. Works best with Py, JS, TS",
-                agent=integration_test_agent.IntegrationTestAgent(
-                    llm_provider, tools_provider, prompt_provider
-                ),
+                agent=integration_test,
             ),
             "LLD_agent": AgentWithInfo(
                 id="LLD_agent",
                 name="Low-Level Design Agent",
                 description="An agent specialized in generating a low-level design plan for implementing a new feature.",
-                agent=low_level_design_agent.LowLevelDesignAgent(
-                    llm_provider, tools_provider, prompt_provider
-                ),
+                agent=lld,
             ),
             "code_changes_agent": AgentWithInfo(
                 id="code_changes_agent",
                 name="Code Changes Agent",
                 description="An agent specialized in generating blast radius of the code changes in your current branch compared to default branch. Use this for functional review of your code changes. Works best with Py, JS, TS",
-                agent=blast_radius_agent.BlastRadiusAgent(
-                    llm_provider, tools_provider, prompt_provider
-                ),
+                agent=blast_radius,
             ),
             "code_generation_agent": AgentWithInfo(
                 id="code_generation_agent",
                 name="Code Generation Agent",
                 description="An agent specialized in generating code for new features or fixing bugs.",
-                agent=code_gen_agent.CodeGenAgent(
-                    llm_provider,
-                    tools_provider,
-                    prompt_provider,
-                ),
+                agent=code_gen,
             ),
             "general_purpose_agent": AgentWithInfo(
                 id="general_purpose_agent",
                 name="General Purpose Agent",
                 description="Agent for queries not needing understanding of or access to the users code repository",
-                agent=GeneralPurposeAgent(
-                    llm_provider,
-                    tools_provider,
-                    prompt_provider,
-                ),
+                agent=general_purpose,
             ),
         }
 

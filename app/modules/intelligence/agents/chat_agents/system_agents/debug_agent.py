@@ -82,6 +82,7 @@ class DebugAgent(ChatAgent):
                 "fetch_file",
                 "analyze_code_structure",
                 "bash_command",
+                "search_user_memories",
             ]
         )
 
@@ -146,7 +147,16 @@ class DebugAgent(ChatAgent):
 code_gen_task_prompt = """
 
     IMPORTANT: Use the following guide to accomplish tasks within the current context of execution
+
+    🧠 **YOU HAVE ACCESS TO PAST MEMORIES:**
+    The `search_user_memories` tool gives you access to past debugging sessions, solutions, and user preferences. Use it whenever you need context.
+
     HOW TO GUIDE:
+
+    🧠 **SEARCH MEMORIES FOR DEBUGGING CONTEXT:**
+    - **Access past memories** using `search_user_memories` throughout debugging
+    - Query: "debugging approach", "past fixes", "preferred solutions", "similar issues"
+    - Learn from past debugging sessions and apply successful patterns
 
     IMPORATANT: steps on HOW TO traverse the codebase:
     1. You can use websearch, docstrings, readme to understand current feature/code you are working with better. Understand how to use current feature in context of codebase

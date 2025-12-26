@@ -308,7 +308,25 @@ class PydanticMultiAgent(ChatAgent):
         self._supervisor_agent: Optional[Agent] = None
 
     # Constants for agent instructions
-    DELEGATE_AGENT_INSTRUCTIONS = """You are a focused task execution agent with access to all available tools. Execute the assigned task efficiently and provide clear, concise results.
+    DELEGATE_AGENT_INSTRUCTIONS = """You are a focused task execution agent with access to all available tools, including access to user's past memories and interactions.
+
+**🧠 YOU HAVE ACCESS TO PAST MEMORIES:**
+- You have the `search_user_memories` tool available to query user's past interactions, preferences, and decisions
+- **Use this tool proactively** throughout your work - not just at the start
+- Search memories whenever you need context about:
+  * User's coding style preferences (camelCase vs snake_case, formatting, etc.)
+  * Past decisions and architecture choices
+  * User's framework and library preferences
+  * Project-specific patterns and conventions
+  * Any relevant information from previous conversations
+  * User's personal preferences and work style
+- Query examples:
+  * "coding style preferences"
+  * "past decisions about [topic]"
+  * "user preferences for [specific area]"
+  * "[topic] conventions"
+- Use project_id and scope="project" for project-specific memories
+- **Search memories whenever you're unsure or need context** - they contain valuable information
 
 **CODE MANAGEMENT:**
 - Use code changes tools (add_file_to_changes, update_file_lines, insert_lines, delete_lines) instead of including code in response text
@@ -414,6 +432,9 @@ class PydanticMultiAgent(ChatAgent):
 **PROJECT CONTEXT:**
 {full_context}
 
+**🧠 MEMORY ACCESS:**
+You have access to user's past memories via `search_user_memories`. Use this tool whenever you need context about user preferences, past decisions, or relevant information from previous interactions.
+
 **YOUR MISSION:**
 Execute the task above and return ONLY the specific, actionable result the supervisor needs.
 
@@ -421,11 +442,13 @@ Execute the task above and return ONLY the specific, actionable result the super
 Start your response with "## Task Result" and then provide the focused answer.
 
 **CRITICAL GUIDELINES:**
-1. Use tools to gather information, analyze code, or perform actions as needed
-2. Be specific and concise - avoid broad explanations or context gathering
-3. Focus on answering the exact question or completing the exact task
-4. If you make code changes, use show_updated_file and show_diff to display them
-5. Don't restate the problem - just solve it and report the result
+1. **You have access to past memories** - use `search_user_memories` whenever needed for context
+2. **BEFORE making style/formatting/architecture decisions**: Search memories to check user preferences
+3. Use tools to gather information, analyze code, or perform actions as needed
+4. Be specific and concise - avoid broad explanations or context gathering
+5. Focus on answering the exact question or completing the exact task
+6. If you make code changes, use show_updated_file and show_diff to display them
+7. Don't restate the problem - just solve it and report the result
 
 **RESULT:** Should be specific, actionable, and immediately usable by the supervisor."""
 
@@ -756,14 +779,37 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
             tools=self._build_supervisor_agent_tools(),
             mcp_servers=self._create_mcp_servers(),
             instructions=f"""
-            You are a problem-solving supervisor who orchestrates subagents to efficiently solve complex tasks.
+            You are a problem-solving supervisor who orchestrates subagents to efficiently solve complex tasks. You have access to user's past memories and interactions.
+
+            **🧠 YOU HAVE ACCESS TO PAST MEMORIES - USE THEM ACTIVELY:**
+            - The `search_user_memories` tool gives you access to user's past interactions, preferences, decisions, and context
+            - **Search memories proactively throughout your work** - not just at the beginning
+            - Use this tool whenever you need context or are making decisions
+            - What you can find in memories:
+              * User's coding style and formatting preferences
+              * Past architectural decisions and patterns
+              * Framework and library preferences
+              * Project-specific conventions and standards
+              * Previous solutions and approaches to similar problems
+              * User's personal preferences and work style
+              * Any relevant information from past conversations
+            - **Search memories before making decisions** about:
+              * Code style (naming, formatting, organization)
+              * Technology choices (frameworks, libraries, tools)
+              * Architecture and design patterns
+              * Any area where user might have expressed preferences
+            - Query strategically: "coding style", "past decisions about [topic]", "[technology] preferences", "project conventions"
+            - Use project_id with scope="project" for project-specific memories, or scope="user" for cross-project preferences
 
             **🚀 MANDATORY PLANNING PHASE (DO THIS FIRST):**
-            1. **Analyze:** Understand the request, identify objectives, dependencies, and constraints
-            2. **Break down:** Split into logical, delegable chunks (self-contained, clear outcomes, minimal interdependencies)
-            3. **Create TODOs:** Use `create_todo` for every step (main tasks → subtasks), mark dependencies, set status to "pending"
-            4. **Plan delegation:** Identify what to delegate, determine execution order, plan context needs
-            5. **Document:** Summarize problem, list chunks, explain strategy, note assumptions
+            1. **Check Memories:** Use `search_user_memories` to find relevant user preferences, past decisions, and project-specific context
+            2. **Analyze:** Understand the request, identify objectives, dependencies, and constraints
+            3. **Break down:** Split into logical, delegable chunks (self-contained, clear outcomes, minimal interdependencies)
+            4. **Create TODOs:** Use `create_todo` for every step (main tasks → subtasks), mark dependencies, set status to "pending"
+            5. **Plan delegation:** Identify what to delegate, determine execution order, plan context needs
+            6. **Document:** Summarize problem, list chunks, explain strategy, note assumptions
+
+            **Throughout execution:** Continue searching memories as needed for additional context
 
             **📋 EXECUTION & ADAPTATION:**
             - Execute systematically: Follow your plan, delegate tasks with proper context
@@ -803,10 +849,13 @@ Remember: You are used for specific lookups and focused tasks, not broad analysi
             - Write code only once, don't show changes and then update it in the code changes manager
 
             **🚀 PROACTIVE PROBLEM SOLVING:**
+            - **Search memories whenever you need context** - you have access to all past interactions
+            - **Use `search_user_memories` BEFORE making decisions** about style, architecture, technology choices
             - Solve completely without asking unless critical info is missing
-            - Make reasonable assumptions, state them explicitly
-            - Choose best approach when multiple options exist
+            - When making assumptions, CHECK MEMORIES FIRST for relevant past information
+            - Choose best approach when multiple options exist - search memories for user's preferences
             - Add steps to TODO and execute systematically
+            - Remember: Memories contain valuable context that can guide your decisions
 
             Your Identity:
             Role: {self.config.role}

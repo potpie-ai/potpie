@@ -20,6 +20,7 @@ dependencies = [
     "boto3>=1.40.67",
     "celery>=5.5.3",
     "chardet>=5.2.0",
+    # "chromadb>=1.0.13",  # Commented out - replaced by pgvector
     "cryptography>=46.0.3",
     "email-inspector>=0.1.4",
     "fastapi>=0.121.0",
@@ -44,6 +45,7 @@ dependencies = [
     "langsmith>=0.4.41",
     "litellm>=1.80",
     "loguru>=0.7.3",
+    "letta-client==1.6.2",
     "neo4j>=5.28.2",
     "networkx>=3.4.2",
     "newrelic>=11.1.0",
@@ -54,6 +56,7 @@ dependencies = [
     "openinference-instrumentation-pydantic-ai>=0.1.9",
     "pathspec>=0.12.1",
     "pillow>=12.0.0",
+    "pgvector==0.4.2",
     "postgres>=4.0",
     "posthog>=6.9.0",
     "psycopg-binary>=3.2.12",

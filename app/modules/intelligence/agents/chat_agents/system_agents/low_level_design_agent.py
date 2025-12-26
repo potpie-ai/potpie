@@ -77,6 +77,7 @@ class LowLevelDesignAgent(ChatAgent):
                 "fetch_file",
                 "analyze_code_structure",
                 "bash_command",
+                "search_user_memories",
             ]
         )
 
@@ -151,7 +152,16 @@ class LowLevelDesignAgent(ChatAgent):
 lld_task_prompt = """
 
     IMPORTANT: Use the following guide to accomplish tasks within the current context of execution
+
+    🧠 **YOU HAVE ACCESS TO PAST MEMORIES:**
+    The `search_user_memories` tool provides access to past architectural decisions, design patterns, and user preferences. Use this whenever you need context about established patterns.
+
     HOW TO GUIDE:
+
+    🧠 **SEARCH MEMORIES FOR DESIGN CONTEXT:**
+    - **Access architectural memories** using `search_user_memories` throughout design process
+    - Query: "architecture preferences", "design patterns", "framework choices", "past architectural decisions"
+    - Align your design with user's established patterns and preferences
 
     IMPORATANT: steps on HOW TO traverse the codebase:
     1. You can use websearch, docstrings, readme to understand current feature/code you are working with better. Understand how to use current feature in context of codebase

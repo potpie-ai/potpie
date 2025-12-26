@@ -82,6 +82,7 @@ class QnAAgent(ChatAgent):
                 "fetch_file",
                 "analyze_code_structure",
                 "bash_command",
+                "search_user_memories",
             ]
         )
 
@@ -155,7 +156,17 @@ class QnAAgent(ChatAgent):
 
 qna_task_prompt = """
     IMPORTANT: Use the following guide to accomplish tasks within the current context of execution
+
+    🧠 **YOU HAVE ACCESS TO PAST MEMORIES:**
+    You have the `search_user_memories` tool available. This gives you access to user's past interactions, preferences, decisions, and any relevant context from previous conversations. Use this tool whenever you need additional context.
+
     HOW TO GUIDE:
+
+    🧠 **STEP 0: SEARCH MEMORIES FOR CONTEXT:**
+    - **Access memories proactively** using `search_user_memories` throughout your work
+    - Query for: "coding preferences", "project architecture", "past decisions", "[specific topic]"
+    - Memories help you provide personalized, context-aware answers aligned with user's style
+    - Search whenever you need more context about user's preferences or past interactions
 
     IMPORATANT: steps on HOW TO traverse the codebase:
     1. You can use websearch, docstrings, readme to understand current feature/code you are working with better. Understand how to use current feature in context of codebase

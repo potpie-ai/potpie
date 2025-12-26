@@ -2744,8 +2744,25 @@ wheels = [
 ]
 
 [[package]]
-name = "litellm"
-version = "1.80.5"
+name = "letta-client"
+version = "1.6.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "distro" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "sniffio" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f7/38/bbaaa26d0cfdabeaa13a99d0a0e94a6b1a23414df96a7e575bad141427b1/letta_client-1.6.2.tar.gz", hash = "sha256:eb243808dd17f36b093194af1728167c012f55a8edf53a593cdd207b666504fb", size = 255075, upload-time = "2025-12-22T23:08:42.905Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e8/e0/98609b457e7d633e01e166cfc9342d1bdcaec6dcda1935353340c0c1b2db/letta_client-1.6.2-py3-none-any.whl", hash = "sha256:cb6cde942860cbe33b02c0170790a42a681038e907f2cff82357eaa453a9b1ac", size = 393194, upload-time = "2025-12-22T23:08:41.349Z" },
+]
+
+[[package]]
+name = "letta-client"
+version = "1.6.2"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
     "python_full_version < '3.11' and sys_platform == 'win32'",
@@ -4252,6 +4269,19 @@ wheels = [
 ]
 
 [[package]]
+name = "pgvector"
+version = "0.4.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/25/6c/6d8b4b03b958c02fa8687ec6063c49d952a189f8c91ebbe51e877dfab8f7/pgvector-0.4.2.tar.gz", hash = "sha256:322cac0c1dc5d41c9ecf782bd9991b7966685dee3a00bc873631391ed949513a", size = 31354, upload-time = "2025-12-05T01:07:17.87Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5a/26/6cee8a1ce8c43625ec561aff19df07f9776b7525d9002c86bceb3e0ac970/pgvector-0.4.2-py3-none-any.whl", hash = "sha256:549d45f7a18593783d5eec609ea1684a724ba8405c4cb182a0b2b08aeff04e08", size = 27441, upload-time = "2025-12-05T01:07:16.536Z" },
+]
+
+[[package]]
 name = "pillow"
 version = "12.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4461,6 +4491,7 @@ dependencies = [
     { name = "openinference-instrumentation-openai" },
     { name = "openinference-instrumentation-pydantic-ai" },
     { name = "pathspec" },
+    { name = "pgvector" },
     { name = "pillow" },
     { name = "postgres" },
     { name = "posthog" },
@@ -4544,6 +4575,7 @@ requires-dist = [
     { name = "langchain", specifier = ">=1.0.3" },
     { name = "langgraph", specifier = ">=1.0.2" },
     { name = "langsmith", specifier = ">=0.4.41" },
+    { name = "letta-client", specifier = "==1.6.2" },
     { name = "litellm", specifier = ">=1.80" },
     { name = "loguru", specifier = ">=0.7.3" },
     { name = "neo4j", specifier = ">=5.28.2" },
@@ -4555,6 +4587,7 @@ requires-dist = [
     { name = "openinference-instrumentation-openai", specifier = ">=0.1.40" },
     { name = "openinference-instrumentation-pydantic-ai", specifier = ">=0.1.9" },
     { name = "pathspec", specifier = ">=0.12.1" },
+    { name = "pgvector", specifier = "==0.4.2" },
     { name = "pillow", specifier = ">=12.0.0" },
     { name = "postgres", specifier = ">=4.0" },
     { name = "posthog", specifier = ">=6.9.0" },

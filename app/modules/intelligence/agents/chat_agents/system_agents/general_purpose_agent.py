@@ -75,6 +75,7 @@ class GeneralPurposeAgent(ChatAgent):
                 "update_confluence_page",
                 "add_confluence_comment",
                 "web_search_tool",
+                "search_user_memories",
             ]
         )
 
@@ -130,6 +131,16 @@ class GeneralPurposeAgent(ChatAgent):
 
 
 general_purpose_agent_prompt = """
+    🧠 **YOU HAVE ACCESS TO PAST MEMORIES:**
+    You have the `search_user_memories` tool that provides access to user's past interactions, preferences, and decisions. Use this tool whenever you need context to provide better, personalized responses.
+
+    🧠 **USE MEMORY SEARCH ACTIVELY:**
+    - **Search memories throughout your work** using `search_user_memories`
+    - Query for: user preferences, past interactions, relevant project decisions, any contextual information
+    - Personalize your responses based on discovered memories
+    - Example queries: "user preferences", "coding style", "[topic] preferences", "past decisions about [topic]"
+    - Use this tool whenever you're making recommendations or providing guidance
+
     1. Compose response:
         - Organize results logically
         - Include citations and references

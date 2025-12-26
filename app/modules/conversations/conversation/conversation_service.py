@@ -702,6 +702,7 @@ class ConversationService:
                             history=validated_history[-12:],
                             node_ids=[node.node_id for node in node_ids],
                             query=query,
+                            user_id=user_id,  # NEW: Add user_id
                         ),
                     )
                 )
@@ -733,6 +734,7 @@ class ConversationService:
                     history=validated_history[-8:],
                     node_ids=nodes,
                     query=query,
+                    user_id=user_id,  # NEW: Add user_id
                     image_attachments=image_attachments,
                     context_images=context_images,
                 )
