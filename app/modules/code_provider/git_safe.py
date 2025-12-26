@@ -79,7 +79,10 @@ def safe_git_operation(
 
         # Use ThreadPoolExecutor instead of raw threading for better timeout control
         # This allows the executor to properly manage the thread lifecycle
-        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"git-op-{operation_name[:20]}")
+        executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix=f"git-op-{operation_name[:20]}"
+        )
+        future = None
         try:
             future = executor.submit(operation)
             try:
@@ -87,17 +90,32 @@ def safe_git_operation(
                 return result
             except FutureTimeoutError:
                 # Cancel the future (though the thread may still run)
-                future.cancel()
+                if future:
+                    future.cancel()
                 logger.warning(
                     f"Git operation '{operation_name}' timed out after {timeout} seconds"
                 )
                 raise GitOperationTimeoutError(
                     f"Git operation '{operation_name}' timed out after {timeout} seconds"
                 )
+        except Exception as e:
+            # If we get any exception, make sure we clean up
+            if future:
+                try:
+                    future.cancel()
+                except Exception:
+                    pass
+            raise
         finally:
-            # Shutdown the executor - this will wait for the thread to finish
-            # but in practice, if it's hanging, we'll continue anyway
-            executor.shutdown(wait=False)  # Don't wait for hanging operations
+            # Shutdown the executor - don't wait for hanging operations
+            # This prevents resource leaks that can cause worker crashes
+            try:
+                executor.shutdown(wait=False)  # Don't wait for hanging operations
+            except Exception as shutdown_error:
+                # Log but don't raise - we're already handling a timeout/error
+                logger.debug(
+                    f"Error shutting down executor for '{operation_name}': {shutdown_error}"
+                )
 
     for attempt in range(max_retries):
         try:
@@ -113,7 +131,7 @@ def safe_git_operation(
                         f"Git operation '{operation_name}' exceeded maximum total timeout "
                         f"of {max_total_timeout} seconds"
                     )
-            
+
             # Execute the operation with timeout
             result = _execute_with_timeout()
             if attempt > 0:

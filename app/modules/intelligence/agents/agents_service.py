@@ -1,6 +1,7 @@
 import os
 from typing import List, Optional
 
+from app.modules.intelligence.agents.chat_agents.system_agents import sweb_debug_agent
 from app.modules.intelligence.agents.chat_agents.system_agents.general_purpose_agent import (
     GeneralPurposeAgent,
 )
@@ -132,6 +133,14 @@ class AgentsService:
                     llm_provider,
                     tools_provider,
                     prompt_provider,
+                ),
+            ),
+            "sweb_debug_agent": AgentWithInfo(
+                id="sweb_debug_agent",
+                name="SWEB Debug Agent",
+                description="An agent specialized in debugging issues in a codebase.",
+                agent=sweb_debug_agent.SWEBDebugAgent(
+                    llm_provider, tools_provider, prompt_provider
                 ),
             ),
         }

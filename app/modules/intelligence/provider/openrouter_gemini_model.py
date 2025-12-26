@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, Dict
+from typing import Any, Dict, List
 
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.messages import ToolCallPart, ModelMessage, ModelResponse
 from pydantic_ai.models.openai import OpenAIModel, chat
 
 
@@ -38,7 +38,6 @@ class OpenRouterGeminiModel(OpenAIModel):
             if signature:
                 self._tool_call_signatures[call.id] = signature
 
-    @staticmethod
     def _extract_signature_from_tool_call(self, tool_call: Any) -> str | None:
         """Return the `thought_signature` field from a tool call if it exists."""
         function_obj = getattr(tool_call, "function", None)
@@ -83,7 +82,28 @@ class OpenRouterGeminiModel(OpenAIModel):
             ) or self._tool_call_signatures.get(t.tool_call_id)
             if not signature:
                 # Generate a deterministic placeholder so the provider always receives a signature.
+                # Use a consistent format based on tool_call_id for reproducibility
                 signature = f"{t.tool_call_id}-{uuid.uuid4().hex[:8]}"
             self._tool_call_signatures[t.tool_call_id] = signature
-            function_payload.setdefault("thought_signature", signature)
+            # Always set the signature, even if it was already there (ensures it's present)
+            function_payload["thought_signature"] = signature
         return tool_call_param
+
+    async def _map_messages(self, messages: List[ModelMessage]) -> List[chat.ChatCompletionMessageParam]:
+        """Override to ensure all tool calls have thought_signature before mapping."""
+        # First, ensure all ToolCallParts in message history have signatures
+        for message in messages:
+            if isinstance(message, ModelResponse):
+                for part in message.parts:
+                    if isinstance(part, ToolCallPart):
+                        # Ensure the ToolCallPart has a signature attribute
+                        if not hasattr(part, "thought_signature") or not getattr(part, "thought_signature"):
+                            # Try to get from cache, or generate a new one
+                            signature = self._tool_call_signatures.get(part.tool_call_id)
+                            if not signature:
+                                signature = f"{part.tool_call_id}-{uuid.uuid4().hex[:8]}"
+                                self._tool_call_signatures[part.tool_call_id] = signature
+                            setattr(part, "thought_signature", signature)
+        
+        # Now call the parent implementation which will use our _map_tool_call override
+        return await super()._map_messages(messages)

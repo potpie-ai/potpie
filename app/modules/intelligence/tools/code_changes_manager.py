@@ -249,12 +249,13 @@ class CodeChangesManager:
 
                         try:
                             # Use max_total_timeout to prevent operations from running indefinitely
-                            # Even with 2 retries at 30s each, cap total time at 60s to prevent worker hangs
+                            # Even with 2 retries at 20s each, cap total time at 40s to prevent worker hangs
+                            # Reduced timeouts to fail faster and prevent worker crashes
                             repo_content = safe_git_operation(
                                 _fetch_file_content,
-                                max_retries=2,
-                                timeout=30.0,  # 30 second timeout per attempt
-                                max_total_timeout=60.0,  # Maximum 60 seconds total for all retries
+                                max_retries=1,  # Reduced to 1 retry to fail faster
+                                timeout=20.0,  # 20 second timeout per attempt (reduced from 30s)
+                                max_total_timeout=40.0,  # Maximum 40 seconds total (reduced from 60s)
                                 operation_name=f"get_file_content({file_path})",
                             )
                         except GitOperationError as git_error:
@@ -273,11 +274,12 @@ class CodeChangesManager:
                             )
                             repo_content = None
                         except (SystemExit, KeyboardInterrupt) as e:
-                            # Re-raise system exits and interrupts - these should propagate
+                            # Don't re-raise - catch and fallback to prevent worker crash
                             logger.error(
-                                f"CodeChangesManager._get_current_content: System exit/interrupt during git operation for '{file_path}': {e}"
+                                f"CodeChangesManager._get_current_content: System exit/interrupt during git operation for '{file_path}': {e}. "
+                                f"Falling back to filesystem to prevent worker crash."
                             )
-                            raise
+                            repo_content = None
                         except BaseException as e:
                             # Catch any other exceptions (including segfault-related errors) to prevent worker crash
                             logger.error(

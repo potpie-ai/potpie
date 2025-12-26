@@ -6,7 +6,64 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolCallPart,
 )
+from typing import Set
+
+
+def _is_llm_response_with_text(msg: ModelMessage) -> bool:
+    """Check if a message is an LLM response with text content.
+    
+    CRITICAL: LLM responses should NEVER be removed from history.
+    The LLM needs to see what it already said to avoid repeating itself.
+    """
+    if isinstance(msg, ModelResponse):
+        for part in msg.parts:
+            if isinstance(part, TextPart):
+                content = part.content or ""
+                if content.strip():
+                    return True
+    return False
+
+
+def _strip_problematic_tool_calls(
+    msg: ModelResponse, problematic_ids: Set[str]
+) -> Optional[ModelResponse]:
+    """Strip problematic tool calls from a ModelResponse while preserving text content.
+    
+    CRITICAL: This preserves the LLM's conversational text while removing orphaned
+    tool_use blocks that would cause Anthropic API to reject the request.
+    
+    Args:
+        msg: The ModelResponse to process
+        problematic_ids: Set of tool_call_ids that are orphaned/problematic
+        
+    Returns:
+        A new ModelResponse with only non-problematic parts, or None if no parts remain
+    """
+    if not isinstance(msg, ModelResponse):
+        return None
+    
+    kept_parts = []
+    
+    for part in msg.parts:
+        # Always keep TextPart
+        if isinstance(part, TextPart):
+            kept_parts.append(part)
+        # For ToolCallPart, only keep if not problematic
+        elif isinstance(part, ToolCallPart):
+            tool_call_id = getattr(part, "tool_call_id", None)
+            if tool_call_id and tool_call_id in problematic_ids:
+                continue  # Skip this problematic tool call
+            kept_parts.append(part)
+        else:
+            # Keep any other part types
+            kept_parts.append(part)
+    
+    if not kept_parts:
+        return None
+    
+    return ModelResponse(parts=kept_parts, model_name=msg.model_name)
 
 from app.modules.intelligence.agents.chat_agent import ChatContext
 from app.modules.utils.logger import setup_logger
@@ -151,6 +208,9 @@ def validate_and_fix_message_history(
         # Second pass: identify messages to remove (including their pairs)
         messages_to_skip: set = set()
 
+        # Track messages that need tool call stripping (LLM responses with problematic tool calls)
+        messages_to_strip: set = set()
+
         for i, msg in enumerate(messages):
             call_ids = message_tool_call_ids[i]
             is_tool_call = _is_tool_call_msg(msg)
@@ -161,18 +221,46 @@ def validate_and_fix_message_history(
 
             # CRITICAL: Remove if ANY tool_call_id is problematic
             if any(tid in problematic_ids for tid in call_ids):
+                # For LLM response messages with text, we don't remove the entire message.
+                # Instead we mark it for tool call stripping - keep the text, remove the tool calls.
+                if _is_llm_response_with_text(msg):
+                    logger.debug(
+                        f"[Message History Validation] LLM response at message {i} has problematic "
+                        f"tool_call_ids: {call_ids}. Will strip tool calls but preserve text."
+                    )
+                    messages_to_strip.add(i)
+                    continue
+
                 messages_to_skip.add(i)
 
-                # Also remove paired messages
+                # Also remove paired messages (but NOT LLM responses with text)
                 if is_tool_call and i + 1 < len(messages):
-                    messages_to_skip.add(i + 1)
+                    next_msg = messages[i + 1]
+                    if not _is_llm_response_with_text(next_msg):
+                        messages_to_skip.add(i + 1)
                 if is_tool_result and i > 0 and _is_tool_call_msg(messages[i - 1]):
-                    messages_to_skip.add(i - 1)
+                    prev_msg = messages[i - 1]
+                    if not _is_llm_response_with_text(prev_msg):
+                        messages_to_skip.add(i - 1)
 
-        # Build filtered messages
-        filtered_messages = [
-            msg for i, msg in enumerate(messages) if i not in messages_to_skip
-        ]
+        # Build filtered messages, stripping tool calls from LLM responses as needed
+        filtered_messages = []
+        for i, msg in enumerate(messages):
+            if i in messages_to_skip:
+                continue
+            
+            # Strip problematic tool calls from LLM responses
+            if i in messages_to_strip and isinstance(msg, ModelResponse):
+                stripped_msg = _strip_problematic_tool_calls(msg, problematic_ids)
+                if stripped_msg:
+                    filtered_messages.append(stripped_msg)
+                    logger.debug(
+                        f"[Message History Validation] Stripped problematic tool calls from "
+                        f"message {i}, kept text content"
+                    )
+                continue
+            
+            filtered_messages.append(msg)
 
         # Safety check
         if not filtered_messages and messages:

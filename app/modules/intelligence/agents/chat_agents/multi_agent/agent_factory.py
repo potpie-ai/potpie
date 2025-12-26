@@ -4,6 +4,7 @@ from typing import List, Dict, Optional, Callable, Any
 from pydantic_ai import Agent, Tool
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 from langchain_core.tools import StructuredTool
+from pydantic_ai.settings import ModelSettings
 
 from .utils.delegation_utils import AgentType
 from .utils.tool_utils import wrap_structured_tools, deduplicate_tools_by_name

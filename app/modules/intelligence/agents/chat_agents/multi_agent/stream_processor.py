@@ -177,15 +177,68 @@ class StreamProcessor:
             context: Context string for logging
             current_context: Current chat context (optional, needed for delegations)
         """
+        # Track processed nodes by their object id to prevent duplicate processing
+        # This can happen when pydantic_ai emits the same node multiple times during parallel tool calls
+        processed_node_ids: set = set()
+
+        # Track node counts for debugging duplicate response issues
+        node_counts = {
+            "model_request": 0,
+            "call_tools": 0,
+            "end": 0,
+            "other": 0,
+            "skipped_duplicates": 0,
+        }
+
         async for node in run:
-            if Agent.is_model_request_node(node):
+            # Use object id to uniquely identify each node instance
+            node_id = id(node)
+
+            # Determine node type for logging
+            is_model_request = Agent.is_model_request_node(node)
+            is_call_tools = Agent.is_call_tools_node(node)
+            is_end = Agent.is_end_node(node)
+            node_type = (
+                "model_request"
+                if is_model_request
+                else "call_tools" if is_call_tools else "end" if is_end else "other"
+            )
+
+            # Check if we've already processed this node
+            if node_id in processed_node_ids:
+                node_counts["skipped_duplicates"] += 1
+                logger.warning(
+                    f"[{context}] Skipping duplicate node: type={node_type}, node_id={node_id}, "
+                    f"total_skipped={node_counts['skipped_duplicates']}"
+                )
+                continue
+
+            # Mark node as processed
+            processed_node_ids.add(node_id)
+            node_counts[node_type] = node_counts.get(node_type, 0) + 1
+
+            logger.info(
+                f"[{context}] Processing node #{sum(node_counts.values()) - node_counts['skipped_duplicates']}: "
+                f"type={node_type}, node_id={node_id}, "
+                f"counts={{model_request: {node_counts['model_request']}, call_tools: {node_counts['call_tools']}, end: {node_counts['end']}}}"
+            )
+
+            if is_model_request:
                 # Stream tokens from the model's request
+                logger.info(
+                    f"[{context}] Starting model request stream (model_request #{node_counts['model_request']})"
+                )
                 try:
                     async with node.stream(run.ctx) as request_stream:
+                        chunk_count = 0
                         async for chunk in self.yield_text_stream_events(
                             request_stream, context
                         ):
+                            chunk_count += 1
                             yield chunk
+                        logger.info(
+                            f"[{context}] Finished model request stream: yielded {chunk_count} chunks"
+                        )
                 except Exception as e:
                     error_response = self.handle_stream_error(
                         e, f"{context} model request stream"
@@ -194,7 +247,7 @@ class StreamProcessor:
                         yield error_response
                     continue
 
-            elif Agent.is_call_tools_node(node):
+            elif is_call_tools:
                 # Handle tool calls and results
                 async for response in self.process_tool_call_node(
                     node, run.ctx, current_context=current_context
@@ -233,6 +286,14 @@ class StreamProcessor:
                 queue_consumer_tasks: Dict[str, asyncio.Task] = {}
                 # Track output queues for each consumer task
                 output_queues: Dict[str, asyncio.Queue] = {}
+                # Track which streams have been fully drained (to prevent duplicate draining)
+                drained_streams: set = set()
+
+                # Track event counts for debugging
+                tool_call_event_count = 0
+                tool_result_event_count = 0
+
+                logger.info(f"[process_tool_call_node] Starting tool call processing")
 
                 async def consume_delegation_queue(
                     tool_call_id: str,
@@ -278,48 +339,55 @@ class StreamProcessor:
                 async for event in handle_stream:
                     # Yield any chunks from active delegation streams immediately
                     # This ensures real-time streaming even when main stream is idle
-                    for tool_call_id in list(active_streams.keys()):
-                        if tool_call_id in output_queues:
-                            output_queue = output_queues[tool_call_id]
-                            # Consume all available chunks from output queue
-                            while True:
-                                try:
-                                    chunk = output_queue.get_nowait()
-                                    if chunk is None:
-                                        # Stream completed, clean up
-                                        active_streams.pop(tool_call_id, None)
-                                        output_queues.pop(tool_call_id, None)
-                                        self.delegation_manager.remove_active_stream(
-                                            tool_call_id
-                                        )
-                                        # Cancel and wait for consumer task
-                                        if tool_call_id in queue_consumer_tasks:
-                                            task = queue_consumer_tasks.pop(
-                                                tool_call_id
-                                            )
-                                            if not task.done():
-                                                task.cancel()
-                                                try:
-                                                    await task
-                                                except asyncio.CancelledError:
-                                                    pass
-                                        # Cancel the streaming task if it's still running
-                                        if tool_call_id in streaming_tasks:
-                                            task = streaming_tasks.pop(tool_call_id)
-                                            if not task.done():
-                                                task.cancel()
-                                                try:
-                                                    await task
-                                                except asyncio.CancelledError:
-                                                    pass
-                                        break
-                                    yield chunk
-                                except asyncio.QueueEmpty:
+                    # Only process streams that haven't been fully drained yet
+                    for tool_call_id in list(output_queues.keys()):
+                        if tool_call_id in drained_streams:
+                            continue  # Skip streams that have already been fully drained
+                        output_queue = output_queues[tool_call_id]
+                        # Consume all available chunks from output queue
+                        while True:
+                            try:
+                                chunk = output_queue.get_nowait()
+                                if chunk is None:
+                                    # Stream completed, mark as drained and clean up
+                                    drained_streams.add(tool_call_id)
+                                    active_streams.pop(tool_call_id, None)
+                                    output_queues.pop(tool_call_id, None)
+                                    self.delegation_manager.remove_active_stream(
+                                        tool_call_id
+                                    )
+                                    # Cancel and wait for consumer task
+                                    if tool_call_id in queue_consumer_tasks:
+                                        task = queue_consumer_tasks.pop(tool_call_id)
+                                        if not task.done():
+                                            task.cancel()
+                                            try:
+                                                await task
+                                            except asyncio.CancelledError:
+                                                pass
+                                    # Cancel the streaming task if it's still running
+                                    if tool_call_id in streaming_tasks:
+                                        task = streaming_tasks.pop(tool_call_id)
+                                        if not task.done():
+                                            task.cancel()
+                                            try:
+                                                await task
+                                            except asyncio.CancelledError:
+                                                pass
                                     break
+                                yield chunk
+                            except asyncio.QueueEmpty:
+                                break
 
                     if isinstance(event, FunctionToolCallEvent):
+                        tool_call_event_count += 1
                         tool_call_id = event.part.tool_call_id or ""
                         tool_name = event.part.tool_name
+
+                        logger.info(
+                            f"[process_tool_call_node] FunctionToolCallEvent #{tool_call_event_count}: "
+                            f"tool_name={tool_name}, tool_call_id={tool_call_id[:8]}..."
+                        )
 
                         # Yield the tool call event
                         yield ChatAgentResponse(
@@ -438,11 +506,22 @@ class StreamProcessor:
                                         task.cancel()
 
                     if isinstance(event, FunctionToolResultEvent):
+                        tool_result_event_count += 1
                         tool_call_id = event.result.tool_call_id or ""
                         tool_name = event.result.tool_name or "unknown"
 
+                        logger.info(
+                            f"[process_tool_call_node] FunctionToolResultEvent #{tool_result_event_count}: "
+                            f"tool_name={tool_name}, tool_call_id={tool_call_id[:8]}..."
+                        )
+
                         # If this was a delegation tool, drain any remaining chunks
-                        if is_delegation_tool(tool_name) and tool_call_id:
+                        # Only drain if we haven't already drained this stream
+                        if (
+                            is_delegation_tool(tool_name)
+                            and tool_call_id
+                            and tool_call_id not in drained_streams
+                        ):
                             # Drain any remaining chunks from output queue
                             if tool_call_id in output_queues:
                                 output_queue = output_queues[tool_call_id]
@@ -454,6 +533,8 @@ class StreamProcessor:
                                     for chunk in chunks:
                                         yield chunk
                                     if completed:
+                                        # Mark as drained after completion
+                                        drained_streams.add(tool_call_id)
                                         break
                                     # Small delay to allow more chunks to arrive
                                     await asyncio.sleep(0.05)
@@ -494,19 +575,29 @@ class StreamProcessor:
                         async for response in self.yield_tool_result_event(event):
                             yield response
 
-                # After all events are processed, drain any remaining chunks
-                for tool_call_id in list(active_streams.keys()):
-                    queue = active_streams[tool_call_id]
+                # After all events are processed, drain any remaining chunks from output queues
+                # Use output_queues (not active_streams) since that's where chunks are actually stored
+                # Only drain streams that haven't been fully drained yet
+                for tool_call_id in list(output_queues.keys()):
+                    if tool_call_id in drained_streams:
+                        # Already fully drained, just clean up
+                        output_queues.pop(tool_call_id, None)
+                        active_streams.pop(tool_call_id, None)
+                        self.delegation_manager.remove_active_stream(tool_call_id)
+                        continue
+                    output_queue = output_queues[tool_call_id]
                     # Wait longer for final chunks
                     for _ in range(20):  # Try up to 20 times
                         chunks, completed = await self.consume_queue_chunks(
-                            queue, timeout=0.1, max_chunks=50
+                            output_queue, timeout=0.1, max_chunks=50
                         )
                         for chunk in chunks:
                             yield chunk
                         if completed:
+                            drained_streams.add(tool_call_id)
                             break
                         await asyncio.sleep(0.05)
+                    output_queues.pop(tool_call_id, None)
                     active_streams.pop(tool_call_id, None)
                     self.delegation_manager.remove_active_stream(tool_call_id)
 
@@ -519,6 +610,13 @@ class StreamProcessor:
                         except asyncio.CancelledError:
                             pass
                     streaming_tasks.pop(tool_call_id, None)
+
+                # Log summary of tool call processing
+                logger.info(
+                    f"[process_tool_call_node] Completed: "
+                    f"tool_calls={tool_call_event_count}, tool_results={tool_result_event_count}, "
+                    f"drained_streams={len(drained_streams)}"
+                )
 
         except (
             ModelRetry,

@@ -19,6 +19,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolCallPart,
     UserPromptPart,
     SystemPromptPart,
 )
@@ -401,6 +402,91 @@ Conversation history to summarize:
                     ):
                         return True
         return False
+
+    def _is_llm_response_message(self, msg: ModelMessage) -> bool:
+        """Check if a message is an LLM response (ModelResponse with any TextPart).
+
+        CRITICAL: LLM responses should NEVER be removed from history, regardless of length.
+        The LLM needs to see what it already said to avoid repeating itself.
+
+        A ModelResponse can contain BOTH TextPart AND ToolCallPart. We must ALWAYS preserve
+        the entire message to maintain context, even if the text is short.
+
+        Args:
+            msg: The message to check
+
+        Returns:
+            True if this is an LLM response that should ALWAYS be preserved
+        """
+        if isinstance(msg, ModelResponse):
+            for part in msg.parts:
+                if isinstance(part, TextPart):
+                    content = part.content or ""
+                    # ANY text content means this is an LLM response - preserve it
+                    # Don't use min_length - even short responses are important context
+                    if content.strip():
+                        return True
+        return False
+
+    def _has_meaningful_text_content(
+        self, msg: ModelMessage, min_length: int = 50
+    ) -> bool:
+        """DEPRECATED: Use _is_llm_response_message instead.
+
+        This method is kept for backward compatibility but now just calls _is_llm_response_message
+        with no minimum length requirement.
+        """
+        return self._is_llm_response_message(msg)
+
+    def _strip_problematic_tool_calls(
+        self, msg: ModelResponse, problematic_tool_call_ids: Set[str]
+    ) -> Optional[ModelResponse]:
+        """Strip problematic tool calls from a ModelResponse while preserving text content.
+
+        CRITICAL: This is the key to preserving LLM text context while maintaining valid
+        tool_use/tool_result pairing for the Anthropic API.
+
+        When a ModelResponse contains BOTH TextPart (LLM's conversational text) AND
+        ToolCallPart (tool calls), and some of those tool calls are orphaned (no matching
+        tool_result), we need to:
+        1. KEEP the TextPart (so the LLM doesn't repeat itself)
+        2. REMOVE only the problematic ToolCallPart (so Anthropic doesn't reject the request)
+
+        Args:
+            msg: The ModelResponse to process
+            problematic_tool_call_ids: Set of tool_call_ids that are orphaned/problematic
+
+        Returns:
+            A new ModelResponse with only non-problematic parts, or None if no parts remain
+        """
+        if not isinstance(msg, ModelResponse):
+            return None
+
+        # Separate parts into text parts and tool call parts
+        kept_parts = []
+
+        for part in msg.parts:
+            # Always keep TextPart
+            if isinstance(part, TextPart):
+                kept_parts.append(part)
+            # For ToolCallPart, only keep if not problematic
+            elif isinstance(part, ToolCallPart):
+                tool_call_id = getattr(part, "tool_call_id", None)
+                if tool_call_id and tool_call_id in problematic_tool_call_ids:
+                    logger.debug(
+                        f"[History Processor] Stripping problematic ToolCallPart with id={tool_call_id}"
+                    )
+                    continue  # Skip this problematic tool call
+                kept_parts.append(part)
+            else:
+                # Keep any other part types (e.g., RetryPromptPart, etc.)
+                kept_parts.append(part)
+
+        if not kept_parts:
+            return None
+
+        # Create a new ModelResponse with only the kept parts
+        return ModelResponse(parts=kept_parts, model_name=msg.model_name)
 
     def _count_message_tokens(
         self, msg: ModelMessage, model_name: Optional[str] = None
@@ -785,6 +871,19 @@ Conversation history to summarize:
                 )
 
                 if any_problematic:
+                    # CRITICAL: For LLM response messages with text content, we DON'T remove
+                    # the entire message. Instead, we'll strip just the problematic tool calls
+                    # in the second pass. This preserves the LLM's conversational text context
+                    # while removing the orphaned tool_use blocks that Anthropic would reject.
+                    if self._is_llm_response_message(msg):
+                        logger.debug(
+                            f"[History Processor] LLM response message {i} has problematic tool_call_ids: "
+                            f"{[tid for tid in call_ids if tid in problematic_tool_call_ids]}. "
+                            f"Will strip tool calls but preserve text."
+                        )
+                        # Don't add to messages_to_skip - we'll handle it specially in second pass
+                        continue
+
                     messages_to_skip.add(i)
                     logger.debug(
                         f"[History Processor] Marking message {i} for removal (has problematic tool_call_ids: "
@@ -794,17 +893,23 @@ Conversation history to summarize:
                     # CRITICAL: If this is a tool_call message, also remove the next message
                     # (which should contain the tool_results)
                     if is_tool_call and i + 1 < len(messages):
-                        messages_to_skip.add(i + 1)
-                        logger.debug(
-                            f"[History Processor] Also marking message {i+1} for removal "
-                            f"(tool_result for removed tool_call)"
-                        )
+                        next_msg = messages[i + 1]
+                        # Don't remove if next message is an LLM response with text
+                        if not self._is_llm_response_message(next_msg):
+                            messages_to_skip.add(i + 1)
+                            logger.debug(
+                                f"[History Processor] Also marking message {i+1} for removal "
+                                f"(tool_result for removed tool_call)"
+                            )
 
                     # CRITICAL: If this is a tool_result message, also remove the previous message
                     # (which should contain the tool_calls)
                     if is_tool_result and i > 0:
                         prev_msg = messages[i - 1]
-                        if self._is_tool_call_message(prev_msg):
+                        # Don't remove if previous message is an LLM response with text
+                        if self._is_tool_call_message(
+                            prev_msg
+                        ) and not self._is_llm_response_message(prev_msg):
                             messages_to_skip.add(i - 1)
                             logger.debug(
                                 f"[History Processor] Also marking message {i-1} for removal "
@@ -812,14 +917,44 @@ Conversation history to summarize:
                             )
 
             # Second pass: build the validated messages list
+            # For LLM response messages with problematic tool calls, strip the tool calls
+            # but preserve the text content
             for i, msg in enumerate(messages):
-                if i not in messages_to_skip:
-                    validated_messages.append(msg)
-                else:
+                if i in messages_to_skip:
                     call_ids = message_tool_call_ids[i]
                     logger.debug(
                         f"[History Processor] Removing message {i} with tool_call_ids: {call_ids}"
                     )
+                    continue
+
+                # Check if this is an LLM response that needs tool call stripping
+                if isinstance(msg, ModelResponse) and self._is_llm_response_message(
+                    msg
+                ):
+                    call_ids = message_tool_call_ids[i]
+                    has_problematic = any(
+                        tid in problematic_tool_call_ids for tid in call_ids
+                    )
+
+                    if has_problematic:
+                        # Strip problematic tool calls but keep text
+                        stripped_msg = self._strip_problematic_tool_calls(
+                            msg, problematic_tool_call_ids
+                        )
+                        if stripped_msg:
+                            validated_messages.append(stripped_msg)
+                            logger.debug(
+                                f"[History Processor] Stripped problematic tool calls from LLM response {i}, "
+                                f"kept text content"
+                            )
+                        else:
+                            # Shouldn't happen since we checked _is_llm_response_message
+                            logger.warning(
+                                f"[History Processor] Stripping tool calls from message {i} left no content"
+                            )
+                        continue
+
+                validated_messages.append(msg)
 
             # Safety check: if we removed everything, keep at least user messages
             if not validated_messages:
@@ -931,18 +1066,26 @@ Conversation history to summarize:
                     if not call_ids:
                         continue
 
+                    # CRITICAL: ALWAYS preserve LLM response messages with text content
+                    if self._is_llm_response_message(msg):
+                        continue
+
                     # CRITICAL: Remove if ANY tool_call_id is problematic
                     if any(tid in working_problematic for tid in call_ids):
                         working_messages_to_skip.add(i)
-                        # Also remove paired messages
+                        # Also remove paired messages (but NOT LLM responses with text)
                         if is_tool_call and i + 1 < len(working_messages):
-                            working_messages_to_skip.add(i + 1)
+                            next_msg = working_messages[i + 1]
+                            if not self._is_llm_response_message(next_msg):
+                                working_messages_to_skip.add(i + 1)
                         if (
                             is_tool_result
                             and i > 0
                             and self._is_tool_call_message(working_messages[i - 1])
                         ):
-                            working_messages_to_skip.add(i - 1)
+                            prev_msg = working_messages[i - 1]
+                            if not self._is_llm_response_message(prev_msg):
+                                working_messages_to_skip.add(i - 1)
 
                 for i, msg in enumerate(working_messages):
                     if i not in working_messages_to_skip:
@@ -1076,6 +1219,19 @@ Conversation history to summarize:
             # Always keep user messages
             if is_user:
                 filtered_messages.append(msg)
+                continue
+
+            # CRITICAL: ALWAYS preserve LLM response messages (ModelResponse with any TextPart)
+            # This is the most important rule - the LLM needs to see what it already said
+            # to avoid repeating itself. This takes precedence over ALL other logic.
+            if self._is_llm_response_message(msg):
+                filtered_messages.append(msg)
+                logger.debug(
+                    f"[History Processor] ALWAYS preserving LLM response at message {i} during compression"
+                )
+                # If this is also a tool call, mark next message to be kept for tool_result pairing
+                if is_tool_call and i + 1 < len(messages):
+                    messages_to_keep_next.add(i + 1)
                 continue
 
             # Check if this tool call/result should be kept
@@ -1667,18 +1823,6 @@ Conversation history to summarize:
         Returns:
             Processed message history
         """
-        # Log input RunContext to debug file
-        # Commented out - not needed right now
-        # if logger.isEnabledFor(logging.DEBUG):
-        #     self._write_tokenizer_debug_file(
-        #         f"Input messages count: {len(messages)}\n"
-        #         f"Input RunContext logged at start of processing",
-        #         "input_runcontext",
-        #         None,
-        #         None,
-        #         ctx,
-        #     )
-
         # Get model name from context if available
         model_name = self._get_model_name_from_context(ctx)
 
@@ -1745,12 +1889,23 @@ Conversation history to summarize:
                 other_messages.append(msg)
 
         # Always keep all user messages (they're typically small and critical)
-        # Identify the last N tool results to keep in full (newer than last 5)
+        # Identify the last N tool results to keep in full (newer than last N)
         recent_tool_results_to_keep = RECENT_TOOL_RESULTS_TO_KEEP
         tool_call_ids_to_keep_full: Set[str] = set()
 
         # Get the last N tool results (by position, not size)
-        if len(tool_result_messages) > recent_tool_results_to_keep:
+        # CRITICAL: If there are fewer than N tool results, keep ALL of them
+        if len(tool_result_messages) <= recent_tool_results_to_keep:
+            # Keep ALL tool results - we have fewer than the limit
+            for i, (msg, _, _, _, is_tool_result, tool_call_ids) in enumerate(
+                message_metadata
+            ):
+                if is_tool_result:
+                    tool_call_ids_to_keep_full.update(tool_call_ids)
+            logger.debug(
+                f"Keeping ALL {len(tool_result_messages)} tool results (under limit of {recent_tool_results_to_keep})"
+            )
+        else:
             # Get indices of the most recent tool result messages
             recent_indices = []
             for i in range(len(message_metadata) - 1, -1, -1):
@@ -1866,6 +2021,9 @@ Conversation history to summarize:
         # First, mark which messages should be kept (not marked for removal)
         messages_to_keep_mask = [False] * len(message_metadata)
 
+        # Count preserved LLM responses for logging
+        preserved_llm_responses = 0
+
         for i, (
             msg,
             msg_tokens,
@@ -1879,26 +2037,50 @@ Conversation history to summarize:
                 messages_to_keep_mask[i] = True
                 continue
 
+            # CRITICAL: ALWAYS preserve LLM response messages (ModelResponse with any TextPart)
+            # This is the most important rule - the LLM needs to see what it already said
+            # to avoid repeating itself. This takes precedence over ALL other logic.
+            if self._is_llm_response_message(msg):
+                messages_to_keep_mask[i] = True
+                preserved_llm_responses += 1
+                logger.debug(
+                    f"[History Processor] ALWAYS preserving LLM response at message {i} "
+                    f"(may also have tool_call_ids: {tool_call_ids_in_msg})"
+                )
+                continue
+
+            # For non-tool messages (no tool_call_ids), keep them
+            if not tool_call_ids_in_msg:
+                messages_to_keep_mask[i] = True
+                continue
+
             # Check if this tool call/result should be removed (old)
+            # ONLY remove pure tool call/result messages, not LLM responses
             should_remove = any(
                 tid in tool_call_ids_to_remove for tid in tool_call_ids_in_msg
             )
 
             if should_remove:
-                # Mark for removal
+                # Mark for removal - but only if this is a PURE tool message
+                # (we already preserved LLM responses above)
+                logger.debug(
+                    f"[History Processor] Removing old tool message at {i}: "
+                    f"is_tool_call={is_tool_call}, is_tool_result={is_tool_result}, "
+                    f"tool_call_ids={tool_call_ids_in_msg}"
+                )
                 continue
 
-            # For non-tool messages, keep them
-            if not is_tool_call and not is_tool_result:
-                messages_to_keep_mask[i] = True
-                continue
-
-            # For tool calls and results, we'll validate pairing in the next step
+            # Keep recent tool calls and results
             messages_to_keep_mask[i] = True
+
+        logger.info(
+            f"[History Processor] Preserved {preserved_llm_responses} LLM response messages"
+        )
 
         # Now validate tool_use -> tool_result pairing
         # Remove tool calls that don't have results in the next message
         # Remove tool results that don't have calls in the previous message
+        # CRITICAL: NEVER remove LLM responses with text content, even if tool pairing is broken
         for i, (
             msg,
             msg_tokens,
@@ -1908,6 +2090,13 @@ Conversation history to summarize:
             tool_call_ids_in_msg,
         ) in enumerate(message_metadata):
             if not messages_to_keep_mask[i]:
+                continue
+
+            # CRITICAL: NEVER remove LLM responses with text content
+            # This check must come BEFORE tool pairing validation
+            if self._is_llm_response_message(msg):
+                # This is an LLM response - keep it no matter what
+                # The LLM needs to see what it already said to avoid repeating itself
                 continue
 
             # For tool calls: must have result in next message
@@ -2017,9 +2206,15 @@ Conversation history to summarize:
             ctx, messages_to_keep, model_name
         )
 
+        # Count how many messages have meaningful text content (assistant responses)
+        preserved_text_messages = sum(
+            1 for msg in messages_to_keep if self._has_meaningful_text_content(msg)
+        )
+
         logger.info(
             f"Filtered messages: keeping {len(messages_to_keep)} messages "
-            f"({keep_tokens} tokens after compression)"
+            f"({keep_tokens} tokens after compression), "
+            f"preserved {preserved_text_messages} assistant text messages"
         )
 
         # If we're still over the limit, continue compressing older messages
