@@ -35,6 +35,9 @@ from app.modules.intelligence.provider.openrouter_gemini_model import (
     OpenRouterGeminiModel,
 )
 from pydantic_ai.providers.anthropic import AnthropicProvider
+from app.modules.intelligence.provider.anthropic_caching_model import (
+    CachingAnthropicModel,
+)
 import litellm
 
 import random
@@ -1263,12 +1266,17 @@ class ProviderService:
                 for key, value in provider_kwargs.items()
                 if key != "api_version"
             }
-            return AnthropicModel(
+            # Use CachingAnthropicModel for improved cache hit rates
+            # This adds cache_control to tools and system prompts
+            return CachingAnthropicModel(
                 model_name=model_name,
                 provider=AnthropicProvider(
                     api_key=api_key,
                     **anthropic_kwargs,
                 ),
+                enable_tool_caching=True,
+                enable_system_caching=True,
+                cache_ttl="5m",  # 5 minute cache TTL (refreshes on hit)
             )
 
         raise UnsupportedProviderError(

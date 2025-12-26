@@ -13,7 +13,7 @@ from enum import Enum
 from dataclasses import dataclass, asdict
 
 # Removed langchain_core dependency - using simple tool structure instead
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class TodoStatus(str, Enum):
@@ -222,8 +222,24 @@ class CreateTodoInput(BaseModel):
         description="Agent type this task will be delegated to (e.g., 'think_execute')",
     )
     dependencies: Optional[List[str]] = Field(
-        default=None, description="List of todo IDs this task depends on"
+        default=None,
+        description="List of todo IDs (strings) that must be completed before this task. Must be an array/list, not a string. Example: ['abc123', 'def456'] or [] for no dependencies. Leave as null/empty if no dependencies.",
     )
+
+    @field_validator("dependencies", mode="before")
+    @classmethod
+    def coerce_dependencies_to_list(cls, v):
+        """Coerce string to list if a string is accidentally passed"""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            # If a string is passed, treat it as a single-item list
+            # This handles cases where the model passes a string instead of a list
+            return [v]
+        if isinstance(v, list):
+            return v
+        # For any other type, try to convert to list
+        return [str(v)]
 
 
 class UpdateTodoStatusInput(BaseModel):
@@ -466,7 +482,7 @@ def create_todo_management_tools() -> List[SimpleTool]:
     tools = [
         SimpleTool(
             name="create_todo",
-            description="Create a new todo item for task tracking. Use this to break down complex requests into manageable tasks.",
+            description="Create a new todo item for task tracking. Use this to break down complex requests into manageable tasks. IMPORTANT: The 'dependencies' parameter must be a list/array of todo IDs (strings), not a single string. Use [] for no dependencies or ['todo_id1', 'todo_id2'] for multiple dependencies.",
             func=create_todo_tool,
             args_schema=CreateTodoInput,
         ),

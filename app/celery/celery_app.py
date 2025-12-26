@@ -7,7 +7,7 @@ import asyncio
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 from celery import Celery
-from celery.signals import worker_process_shutdown
+from celery.signals import worker_process_shutdown, worker_process_init
 from dotenv import load_dotenv
 
 from app.core.models import *  # noqa #This will import and initialize all models
@@ -75,10 +75,15 @@ def configure_celery(queue_prefix: str):
         task_time_limit=5400,  # 90 minutes in seconds
         # Add fair task distribution settings
         worker_max_tasks_per_child=200,  # Restart worker after 200 tasks to prevent memory leaks
-        worker_max_memory_per_child=2000000,  # Restart worker if using more than 2GB
+        # Memory limit: Restart worker if using more than configured limit (in KB)
+        # Note: SIGKILL (signal 9) from OS can kill workers before this limit is reached
+        # File size limits in CodeChangesManager help prevent memory spikes
+        worker_max_memory_per_child=int(
+            os.getenv("CELERY_WORKER_MAX_MEMORY_KB", "2000000")
+        ),  # Default: 2GB (2000000 KB)
         # Removed task_default_rate_limit - was limiting to 10 tasks/min per worker, severely restricting concurrency
         # If rate limiting is needed, apply it per-task using @task(rate_limit='...') decorator
-        task_reject_on_worker_lost=False,  # Don't requeue tasks if worker dies
+        task_reject_on_worker_lost=False,  # Don't requeue tasks if worker dies (prevents infinite retry loops)
         broker_transport_options={
             "visibility_timeout": 5400
         },  # 45 minutes visibility timeout
@@ -315,6 +320,35 @@ def configure_litellm_for_celery():
         logger.debug("LiteLLM not available, skipping configuration")
     except Exception as e:
         logger.warning(f"Failed to configure LiteLLM for Celery: {e}", exc_info=True)
+
+
+@worker_process_init.connect
+def log_worker_memory_config(sender, **kwargs):
+    """
+    Log worker memory configuration on initialization.
+    This helps debug memory-related issues like SIGKILL.
+    """
+    try:
+        import psutil
+        import os as os_module
+
+        process = psutil.Process()
+        memory_info = process.memory_info()
+        max_memory_kb = int(os_module.getenv("CELERY_WORKER_MAX_MEMORY_KB", "2000000"))
+        logger.info(
+            f"Worker process {process.pid} initialized. "
+            f"Baseline memory (RSS): {memory_info.rss / 1024 / 1024:.2f} MB "
+            f"(includes Python runtime + imported modules). "
+            f"Max memory limit: {max_memory_kb / 1024:.2f} MB. "
+            f"File size limit: {10} MB (configured in CodeChangesManager)"
+        )
+    except ImportError:
+        # psutil not available, skip detailed logging
+        logger.info(
+            "Worker process initialized. Install psutil for detailed memory logging."
+        )
+    except Exception as e:
+        logger.debug(f"Could not log worker memory config: {e}")
 
 
 @worker_process_shutdown.connect

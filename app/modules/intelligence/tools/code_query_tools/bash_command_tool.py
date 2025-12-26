@@ -7,6 +7,7 @@ Only works if the project's worktree exists in the repo manager.
 
 import logging
 import os
+import re
 import shlex
 from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
@@ -137,6 +138,49 @@ INJECTION_PATTERNS = [
 ]
 
 
+def _split_pipes_respecting_quotes(command: str) -> list[str]:
+    """
+    Split a command on pipes (|) while respecting quoted strings.
+
+    This handles cases like: grep "pattern|with|pipes" | head
+    where the pipe inside quotes should not be treated as a separator.
+
+    Args:
+        command: The command string that may contain pipes
+
+    Returns:
+        List of command parts split on pipes (outside of quotes)
+    """
+    parts = []
+    current_part = []
+    in_single_quote = False
+    in_double_quote = False
+    i = 0
+
+    while i < len(command):
+        char = command[i]
+
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+            current_part.append(char)
+        elif char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+            current_part.append(char)
+        elif char == "|" and not in_single_quote and not in_double_quote:
+            # This is a real pipe separator
+            parts.append("".join(current_part).strip())
+            current_part = []
+        else:
+            current_part.append(char)
+        i += 1
+
+    # Add the last part
+    if current_part:
+        parts.append("".join(current_part).strip())
+
+    return parts if parts else [command.strip()]
+
+
 def _extract_command_name(command: str) -> str:
     """
     Extract the base command name from a command string.
@@ -153,7 +197,10 @@ def _extract_command_name(command: str) -> str:
 
     # Handle pipes - extract first command
     if "|" in command:
-        command = command.split("|")[0].strip()
+        # Use proper quote-aware splitting
+        pipe_parts = _split_pipes_respecting_quotes(command)
+        if pipe_parts:
+            command = pipe_parts[0].strip()
 
     # Split by whitespace to get first token
     parts = command.split()
@@ -169,6 +216,111 @@ def _extract_command_name(command: str) -> str:
         first_part = first_part.split("/")[-1]
 
     return first_part.lower()
+
+
+def _is_semicolon_in_find_exec(command: str) -> bool:
+    """
+    Check if a semicolon is part of a valid find -exec syntax.
+
+    The find -exec command requires a semicolon (often escaped as \\;)
+    to terminate the exec command. This is a legitimate use case.
+
+    Args:
+        command: The command string to check
+
+    Returns:
+        True if the semicolon appears to be part of find -exec syntax
+    """
+    # Check if command starts with 'find' (case insensitive)
+    command_lower = command.lower().strip()
+    if not command_lower.startswith("find "):
+        return False
+
+    # Look for -exec flag followed by a semicolon (escaped or not)
+    # Pattern: -exec ... ; or -exec ... \;
+    # The semicolon can be at the end or followed by other find options like -o, -and, etc.
+    # We match: -exec followed by whitespace, then any characters (non-greedy), then ; or \;
+    exec_pattern = r"-exec\s+[^;]+[\\]?;"
+    if re.search(exec_pattern, command):
+        return True
+
+    return False
+
+
+def _is_semicolon_safe_in_single_command(command: str) -> bool:
+    """
+    Check if a semicolon is safe because it's part of a single command syntax,
+    not used for command chaining.
+
+    We allow semicolons when:
+    1. They're part of find -exec syntax
+    2. They're inside quoted strings (not actual command separators)
+    3. There's only one unquoted semicolon and it appears to be part of command syntax
+
+    Args:
+        command: The command string to check
+
+    Returns:
+        True if the semicolon appears safe (part of single command syntax)
+    """
+    # First check if it's find -exec (already handled, but check anyway)
+    if _is_semicolon_in_find_exec(command):
+        return True
+
+    # Count unquoted, unescaped semicolons (actual command separators)
+    # and check if they appear to separate distinct commands
+    semicolon_positions = []
+    in_single_quote = False
+    in_double_quote = False
+    i = 0
+
+    while i < len(command):
+        char = command[i]
+
+        # Handle escaping (skip escaped characters)
+        if char == "\\" and i + 1 < len(command):
+            # Skip the escaped character
+            i += 2
+            continue
+
+        # Track quote state
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+        elif char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+        elif char == ";" and not in_single_quote and not in_double_quote:
+            # This is an unquoted, unescaped semicolon - potential command separator
+            semicolon_positions.append(i)
+        i += 1
+
+    # If no unquoted semicolons, it's safe (all semicolons were in quotes)
+    if not semicolon_positions:
+        return True
+
+    # If there's only one unquoted semicolon, check if it looks like command chaining
+    # Command chaining typically has whitespace before and after the semicolon,
+    # and the parts before/after look like separate commands
+    if len(semicolon_positions) == 1:
+        semicolon_pos = semicolon_positions[0]
+        before = command[:semicolon_pos].strip()
+        after = command[semicolon_pos + 1 :].strip()
+
+        # If there's substantial content before and after, it's likely command chaining
+        # Check if both parts look like they could be standalone commands
+        # (have at least a few characters and don't look like part of find -exec)
+        if len(before) > 3 and len(after) > 3:
+            # Check if the part before looks like a complete command
+            # (starts with a command name, not part of find -exec syntax)
+            before_lower = before.lower()
+            if not before_lower.startswith("find ") or "-exec" not in before_lower:
+                # This looks like command chaining - block it
+                return False
+
+        # If we get here, it's likely part of command syntax (like find -exec)
+        return True
+
+    # Multiple unquoted semicolons definitely indicate command chaining - block it
+    return False
 
 
 def _validate_command_safety(command: str) -> tuple[bool, Optional[str]]:
@@ -195,8 +347,13 @@ def _validate_command_safety(command: str) -> tuple[bool, Optional[str]]:
             )
 
     # Check for command injection patterns (except pipes which are handled separately)
+    # Allow semicolons if they're part of a single command (not command chaining)
     for pattern in INJECTION_PATTERNS:
         if pattern in command:
+            # Special case: allow semicolons when they're part of a single command syntax
+            # (e.g., find -exec) rather than used for command chaining
+            if pattern == ";" and _is_semicolon_safe_in_single_command(command):
+                continue  # Skip this check, it's a valid semicolon in single command
             return (
                 False,
                 f"Command contains injection pattern '{pattern}'. Command chaining/substitution is not allowed.",
@@ -204,9 +361,12 @@ def _validate_command_safety(command: str) -> tuple[bool, Optional[str]]:
 
     # SECURITY: Whitelist check - only allowed commands can execute
     # Handle pipes - validate each command in the pipe chain
+    # Use quote-aware splitting to handle pipes inside quoted strings
     if "|" in command:
-        pipe_commands = [cmd.strip() for cmd in command.split("|")]
+        pipe_commands = _split_pipes_respecting_quotes(command)
         for pipe_cmd in pipe_commands:
+            if not pipe_cmd:  # Skip empty parts
+                continue
             cmd_name = _extract_command_name(pipe_cmd)
             if not cmd_name:
                 return (

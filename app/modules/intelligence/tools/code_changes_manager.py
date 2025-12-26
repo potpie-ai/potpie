@@ -132,6 +132,7 @@ class CodeChangesManager:
                     CodeProviderService,
                 )
                 from app.modules.projects.projects_service import ProjectService
+                from app.modules.projects.projects_model import Project
 
                 # Project.id is Text (string) in the database, so query directly with the string project_id
                 # Note: get_project_from_db_by_id_sync has incorrect type hint (int), but actually accepts string
@@ -141,8 +142,6 @@ class CodeChangesManager:
                 try:
                     # Query directly - Project.id is Text column, so string works fine
                     # The method type hint says int, but the actual column accepts strings
-                    from app.modules.projects.projects_model import Project
-
                     project = db.query(Project).filter(Project.id == project_id).first()
                     if project:
                         project_details = {
@@ -166,20 +165,34 @@ class CodeChangesManager:
                 except Exception as e:
                     # Database session might be invalid in forked workers - try creating a new one
                     error_str = str(e).lower()
-                    if any(keyword in error_str for keyword in ["connection", "session", "closed", "invalid", "fork"]):
+                    if any(
+                        keyword in error_str
+                        for keyword in [
+                            "connection",
+                            "session",
+                            "closed",
+                            "invalid",
+                            "fork",
+                        ]
+                    ):
                         logger.warning(
                             f"CodeChangesManager._get_current_content: Database session error (likely from forked worker): {e}. "
                             f"Creating new session for project_id={project_id}"
                         )
                         try:
                             from app.core.database import SessionLocal
+
                             try:
                                 db.close()  # Close invalid session if possible
                             except Exception:
                                 pass  # Ignore errors when closing invalid session
                             db = SessionLocal()
                             # Retry the query with new session
-                            project = db.query(Project).filter(Project.id == project_id).first()
+                            project = (
+                                db.query(Project)
+                                .filter(Project.id == project_id)
+                                .first()
+                            )
                             if project:
                                 project_details = {
                                     "project_name": project.repo_name,
@@ -235,10 +248,13 @@ class CodeChangesManager:
                             )
 
                         try:
+                            # Use max_total_timeout to prevent operations from running indefinitely
+                            # Even with 2 retries at 30s each, cap total time at 60s to prevent worker hangs
                             repo_content = safe_git_operation(
                                 _fetch_file_content,
                                 max_retries=2,
                                 timeout=30.0,  # 30 second timeout per attempt
+                                max_total_timeout=60.0,  # Maximum 60 seconds total for all retries
                                 operation_name=f"get_file_content({file_path})",
                             )
                         except GitOperationError as git_error:

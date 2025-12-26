@@ -184,6 +184,19 @@ MODEL_CONFIG_MAP = {
         "base_url": "https://openrouter.ai/api/v1",
         "api_version": None,
     },
+    "openrouter/google/gemini-3-pro-preview": {
+        "provider": "gemini",
+        "auth_provider": "openrouter",
+        "default_params": {"temperature": 0.3},
+        "capabilities": {
+            "supports_pydantic": True,
+            "supports_streaming": True,
+            "supports_vision": True,
+            "supports_tool_parallelism": True,
+        },
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_version": None,
+    },
 }
 
 
