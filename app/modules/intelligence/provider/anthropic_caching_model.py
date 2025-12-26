@@ -43,7 +43,12 @@ from pydantic_ai.models.anthropic import (
     AnthropicModelName,
     AnthropicStreamedResponse,
 )
-from pydantic_ai.models import ModelRequestParameters, StreamedResponse, get_user_agent, _utils
+from pydantic_ai.models import (
+    ModelRequestParameters,
+    StreamedResponse,
+    get_user_agent,
+    _utils,
+)
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.providers import Provider
 from pydantic_ai.settings import ModelSettings
@@ -71,6 +76,150 @@ except ImportError as e:
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+
+def _sanitize_anthropic_messages(messages: list) -> list:
+    """Sanitize Anthropic-format messages to prevent API errors.
+
+    This is the LAST LINE OF DEFENSE before messages are sent to Anthropic.
+    It handles:
+    1. Duplicate tool_result blocks (same tool_use_id)
+    2. Orphaned tool_use blocks (no matching tool_result)
+    3. Preserves text content even when stripping tool_use
+
+    Works on Anthropic's native message format:
+    - Messages have "role" and "content"
+    - Content is a list of blocks with "type" (text, tool_use, tool_result, etc.)
+    - tool_use has "id", tool_result has "tool_use_id"
+    """
+    if not messages:
+        return messages
+
+    # Track all tool_use IDs and tool_result IDs
+    tool_use_ids: set = set()
+    tool_result_ids: set = set()
+    seen_tool_result_ids: set = set()  # For detecting duplicates
+
+    # First pass: collect all IDs
+    for msg in messages:
+        content = msg.get("content", [])
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    block_type = block.get("type")
+                    if block_type == "tool_use":
+                        tool_use_ids.add(block.get("id"))
+                    elif block_type == "tool_result":
+                        tool_result_ids.add(block.get("tool_use_id"))
+
+    # Find orphaned tool_use IDs (no matching tool_result)
+    orphaned_tool_use_ids = tool_use_ids - tool_result_ids
+
+    if orphaned_tool_use_ids:
+        logger.warning(
+            f"[Anthropic Sanitizer] Found {len(orphaned_tool_use_ids)} orphaned tool_use IDs: "
+            f"{orphaned_tool_use_ids}"
+        )
+
+    # Second pass: filter messages
+    sanitized_messages = []
+
+    for msg in messages:
+        role = msg.get("role")
+        content = msg.get("content", [])
+
+        if isinstance(content, str):
+            # Plain text content - keep as-is
+            sanitized_messages.append(msg)
+            continue
+
+        if not isinstance(content, list):
+            sanitized_messages.append(msg)
+            continue
+
+        # Filter content blocks
+        filtered_content = []
+        text_preserved = []
+
+        for block in content:
+            if not isinstance(block, dict):
+                filtered_content.append(block)
+                continue
+
+            block_type = block.get("type")
+
+            if block_type == "text":
+                # ALWAYS keep text blocks - this preserves LLM responses
+                filtered_content.append(block)
+                text_preserved.append(block.get("text", "")[:50])
+
+            elif block_type == "tool_use":
+                tool_id = block.get("id")
+                # Only keep tool_use if it has a matching tool_result
+                if tool_id in orphaned_tool_use_ids:
+                    logger.debug(
+                        f"[Anthropic Sanitizer] Stripping orphaned tool_use: {tool_id}"
+                    )
+                    continue
+                filtered_content.append(block)
+
+            elif block_type == "tool_result":
+                tool_use_id = block.get("tool_use_id")
+                # Check for duplicate tool_result
+                if tool_use_id in seen_tool_result_ids:
+                    logger.warning(
+                        f"[Anthropic Sanitizer] Removing duplicate tool_result: {tool_use_id}"
+                    )
+                    continue
+                seen_tool_result_ids.add(tool_use_id)
+                filtered_content.append(block)
+
+            else:
+                # Keep other block types (thinking, etc.)
+                filtered_content.append(block)
+
+        # Only add message if it has content
+        if filtered_content:
+            sanitized_msg = dict(msg)
+            sanitized_msg["content"] = filtered_content
+            sanitized_messages.append(sanitized_msg)
+        else:
+            logger.debug(f"[Anthropic Sanitizer] Removing empty message (role={role})")
+
+    # Final validation: ensure tool_use/tool_result pairing is correct
+    # After stripping, we need to check again for orphaned tool_results
+    final_tool_use_ids: set = set()
+    for msg in sanitized_messages:
+        content = msg.get("content", [])
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    final_tool_use_ids.add(block.get("id"))
+
+    # Remove tool_results that no longer have matching tool_use
+    final_messages = []
+    for msg in sanitized_messages:
+        content = msg.get("content", [])
+        if not isinstance(content, list):
+            final_messages.append(msg)
+            continue
+
+        filtered_content = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                if block.get("tool_use_id") not in final_tool_use_ids:
+                    logger.debug(
+                        f"[Anthropic Sanitizer] Removing orphaned tool_result: {block.get('tool_use_id')}"
+                    )
+                    continue
+            filtered_content.append(block)
+
+        if filtered_content:
+            final_msg = dict(msg)
+            final_msg["content"] = filtered_content
+            final_messages.append(final_msg)
+
+    return final_messages
 
 
 # Cache control type for Anthropic
@@ -110,46 +259,58 @@ def _write_cache_metrics_to_file(metrics: dict) -> None:
 def _log_cache_metrics(usage_details: dict[str, int], model_name: str) -> None:
     """
     Log Anthropic cache metrics from usage details and write to .debug folder.
-    
+
     Args:
         usage_details: The usage.details dict from ModelResponse
         model_name: The model name for logging context
     """
     global _session_totals
-    
+
     if _session_totals["session_start"] is None:
         _session_totals["session_start"] = datetime.now().isoformat()
-    
+
     cache_creation = usage_details.get("cache_creation_input_tokens", 0)
     cache_read = usage_details.get("cache_read_input_tokens", 0)
     input_tokens = usage_details.get("input_tokens", 0)
     output_tokens = usage_details.get("output_tokens", 0)
-    
+
     total_input = input_tokens + cache_creation + cache_read
-    
+
     # Update session totals
     _session_totals["total_requests"] += 1
     _session_totals["total_cache_read_tokens"] += cache_read
     _session_totals["total_cache_write_tokens"] += cache_creation
     _session_totals["total_uncached_tokens"] += input_tokens
     _session_totals["total_output_tokens"] += output_tokens
-    
+
     if total_input > 0:
         # Calculate cache hit rate
         cache_hit_rate = (cache_read / total_input * 100) if total_input > 0 else 0
-        cache_write_rate = (cache_creation / total_input * 100) if total_input > 0 else 0
+        cache_write_rate = (
+            (cache_creation / total_input * 100) if total_input > 0 else 0
+        )
         uncached_rate = (input_tokens / total_input * 100) if total_input > 0 else 0
-        
+
         # Calculate cost analysis
         # Without cache: all tokens at full price (100%)
-        # With cache: 
+        # With cache:
         #   - cache_read at 10% price (90% discount)
         #   - cache_creation at 125% price (25% extra for 5min TTL)
         #   - uncached at 100% price
         tokens_without_cache = total_input
-        effective_tokens_with_cache = input_tokens + (cache_creation * 1.25) + (cache_read * 0.1)
-        savings_percent = ((tokens_without_cache - effective_tokens_with_cache) / tokens_without_cache * 100) if tokens_without_cache > 0 else 0
-        
+        effective_tokens_with_cache = (
+            input_tokens + (cache_creation * 1.25) + (cache_read * 0.1)
+        )
+        savings_percent = (
+            (
+                (tokens_without_cache - effective_tokens_with_cache)
+                / tokens_without_cache
+                * 100
+            )
+            if tokens_without_cache > 0
+            else 0
+        )
+
         # Determine cache status
         if cache_read > 0 and cache_creation == 0:
             cache_status = "HIT"
@@ -159,7 +320,7 @@ def _log_cache_metrics(usage_details: dict[str, int], model_name: str) -> None:
             cache_status = "PARTIAL_HIT"
         else:
             cache_status = "MISS"
-        
+
         # Build detailed metrics record
         metrics_record = {
             "timestamp": datetime.now().isoformat(),
@@ -185,7 +346,7 @@ def _log_cache_metrics(usage_details: dict[str, int], model_name: str) -> None:
                     "cache_read_cost": "10% of base (90% discount)",
                     "cache_write_cost": "125% of base (25% extra for 5min TTL)",
                     "uncached_cost": "100% of base",
-                }
+                },
             },
             "session_totals": {
                 "requests": _session_totals["total_requests"],
@@ -193,27 +354,31 @@ def _log_cache_metrics(usage_details: dict[str, int], model_name: str) -> None:
                 "cumulative_cache_write": _session_totals["total_cache_write_tokens"],
                 "cumulative_uncached": _session_totals["total_uncached_tokens"],
                 "cumulative_output": _session_totals["total_output_tokens"],
-            }
+            },
         }
-        
+
         # Calculate cumulative session savings
         session_total_input = (
-            _session_totals["total_cache_read_tokens"] + 
-            _session_totals["total_cache_write_tokens"] + 
-            _session_totals["total_uncached_tokens"]
+            _session_totals["total_cache_read_tokens"]
+            + _session_totals["total_cache_write_tokens"]
+            + _session_totals["total_uncached_tokens"]
         )
         if session_total_input > 0:
             session_effective = (
-                _session_totals["total_uncached_tokens"] + 
-                (_session_totals["total_cache_write_tokens"] * 1.25) + 
-                (_session_totals["total_cache_read_tokens"] * 0.1)
+                _session_totals["total_uncached_tokens"]
+                + (_session_totals["total_cache_write_tokens"] * 1.25)
+                + (_session_totals["total_cache_read_tokens"] * 0.1)
             )
-            session_savings = ((session_total_input - session_effective) / session_total_input * 100)
-            metrics_record["session_totals"]["cumulative_savings_percent"] = round(session_savings, 2)
-        
+            session_savings = (
+                (session_total_input - session_effective) / session_total_input * 100
+            )
+            metrics_record["session_totals"]["cumulative_savings_percent"] = round(
+                session_savings, 2
+            )
+
         # Write to file
         _write_cache_metrics_to_file(metrics_record)
-        
+
         # Log to console
         logger.info(
             f"📊 Anthropic Cache [{cache_status}] [{model_name}]: "
@@ -223,7 +388,7 @@ def _log_cache_metrics(usage_details: dict[str, int], model_name: str) -> None:
             f"output={output_tokens:,}, "
             f"savings≈{savings_percent:.1f}%"
         )
-        
+
         # Log session summary periodically
         if _session_totals["total_requests"] % 5 == 0:
             logger.info(
@@ -304,11 +469,11 @@ class CachingAnthropicModel(AnthropicModel):
         """
         # Call parent implementation to process the response
         model_response = super()._process_response(response)
-        
+
         # Log cache metrics from usage details
         if model_response.usage and model_response.usage.details:
             _log_cache_metrics(model_response.usage.details, str(self._model_name))
-        
+
         return model_response
 
     async def _process_streamed_response(
@@ -316,22 +481,24 @@ class CachingAnthropicModel(AnthropicModel):
     ) -> StreamedResponse:
         """
         Override to log cache metrics from streaming responses.
-        
+
         The usage data is available in the first event (BetaRawMessageStartEvent).
         We peek at it, extract usage, log it, then process normally.
         """
         from datetime import datetime, timezone
-        
+
         # Create peekable stream to access first event (parent also does this)
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
-        
+
         # Extract usage data from first event if it's a start event
         if not isinstance(first_chunk, _utils.Unset) and isinstance(
             first_chunk, BetaRawMessageStartEvent
         ):
             # Extract usage from the start event
-            if hasattr(first_chunk, "message") and hasattr(first_chunk.message, "usage"):
+            if hasattr(first_chunk, "message") and hasattr(
+                first_chunk.message, "usage"
+            ):
                 usage_obj = first_chunk.message.usage
                 # Convert usage to dict format for logging
                 usage_dict = {}
@@ -341,27 +508,29 @@ class CachingAnthropicModel(AnthropicModel):
                     usage_dict = usage_obj.dict()
                 elif isinstance(usage_obj, dict):
                     usage_dict = usage_obj
-                
+
                 # Extract integer values for cache metrics
                 usage_details = {
                     key: value
                     for key, value in usage_dict.items()
                     if isinstance(value, int)
                 }
-                
+
                 if usage_details:
                     _log_cache_metrics(usage_details, str(self._model_name))
-        
+
         # Process the streamed response normally (same as parent)
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior(
                 "Streamed response ended without content or tool calls"
             )
-        
+
         # Since Anthropic doesn't provide a timestamp in the message, we'll use the current time
         timestamp = datetime.now(tz=timezone.utc)
         return AnthropicStreamedResponse(
-            _model_name=self._model_name, _response=peekable_response, _timestamp=timestamp
+            _model_name=self._model_name,
+            _response=peekable_response,
+            _timestamp=timestamp,
         )
 
     def _get_tools(
@@ -418,6 +587,10 @@ class CachingAnthropicModel(AnthropicModel):
                 tool_choice["disable_parallel_tool_use"] = not allow_parallel_tool_calls
 
         system_prompt, anthropic_messages = await self._map_message(messages)
+
+        # CRITICAL: Sanitize messages before sending to API
+        # This is the last line of defense against duplicate tool_results and orphaned tool_use
+        anthropic_messages = _sanitize_anthropic_messages(anthropic_messages)
 
         # Prepare system prompt with intelligent cache_control placement
         system_param: Any = NOT_GIVEN

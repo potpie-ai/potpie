@@ -281,35 +281,98 @@ Conversation history to summarize:
         """Remove duplicate tool results (multiple tool_result blocks with same tool_call_id).
 
         Anthropic API requires each tool_use to have exactly one tool_result.
+        This method handles duplicates both:
+        1. WITHIN a single message (multiple parts with same tool_call_id)
+        2. ACROSS messages (same tool_call_id appearing in multiple messages)
+
         If we find multiple tool_result blocks with the same tool_call_id, we keep only the first one.
         """
         seen_tool_result_ids: Set[str] = set()
         filtered_messages: List[ModelMessage] = []
-        removed_count = 0
+        removed_parts_count = 0
+        removed_messages_count = 0
 
         for i, msg in enumerate(messages):
-            if self._is_tool_result_message(msg):
+            # First, check for and remove duplicate parts WITHIN this message
+            if isinstance(msg, ModelRequest):
+                seen_in_message: Set[str] = set()
+                filtered_parts = []
+                parts_removed = False
+
+                for part in msg.parts:
+                    tool_call_id = None
+                    is_tool_result_part = False
+
+                    if hasattr(part, "__dict__"):
+                        part_dict = part.__dict__
+                        # Check if this is a tool-return part
+                        if part_dict.get("part_kind") == "tool-return":
+                            is_tool_result_part = True
+                            tool_call_id = part_dict.get("tool_call_id")
+                        elif "tool_call_id" in part_dict and (
+                            "result" in part_dict or "content" in part_dict
+                        ):
+                            is_tool_result_part = True
+                            tool_call_id = part_dict.get("tool_call_id")
+
+                    if is_tool_result_part and tool_call_id:
+                        # Check for duplicate within message
+                        if tool_call_id in seen_in_message:
+                            removed_parts_count += 1
+                            parts_removed = True
+                            logger.warning(
+                                f"[History Processor] Removing duplicate tool_result part "
+                                f"within message {i}: tool_call_id={tool_call_id}"
+                            )
+                            continue
+                        # Check for duplicate across messages
+                        if tool_call_id in seen_tool_result_ids:
+                            removed_parts_count += 1
+                            parts_removed = True
+                            logger.warning(
+                                f"[History Processor] Removing duplicate tool_result part "
+                                f"(cross-message) at message {i}: tool_call_id={tool_call_id}"
+                            )
+                            continue
+                        seen_in_message.add(tool_call_id)
+                        seen_tool_result_ids.add(tool_call_id)
+
+                    filtered_parts.append(part)
+
+                # If we removed parts, create a new message with filtered parts
+                if parts_removed:
+                    if filtered_parts:
+                        msg = ModelRequest(parts=filtered_parts)
+                    else:
+                        # All parts were duplicates - skip this message entirely
+                        removed_messages_count += 1
+                        logger.warning(
+                            f"[History Processor] Removing message {i} entirely "
+                            f"(all parts were duplicate tool_results)"
+                        )
+                        continue
+
+            elif self._is_tool_result_message(msg):
+                # For non-ModelRequest tool result messages (edge case)
                 tool_call_ids = self._extract_tool_call_ids_from_message(msg)
-                # Check if we've already seen any of these tool_call_ids as results
                 is_duplicate = any(tid in seen_tool_result_ids for tid in tool_call_ids)
 
                 if is_duplicate:
-                    # This is a duplicate tool result - remove it
-                    removed_count += 1
+                    removed_messages_count += 1
                     logger.warning(
-                        f"[History Processor] Removing duplicate tool result at message {i}: "
+                        f"[History Processor] Removing duplicate tool result message {i}: "
                         f"{tool_call_ids}"
                     )
                     continue
 
-                # Mark these tool_call_ids as seen
                 seen_tool_result_ids.update(tool_call_ids)
 
             filtered_messages.append(msg)
 
-        if removed_count > 0:
+        if removed_parts_count > 0 or removed_messages_count > 0:
             logger.warning(
-                f"[History Processor] Removed {removed_count} duplicate tool result(s)"
+                f"[History Processor] Removed {removed_parts_count} duplicate tool_result part(s) "
+                f"and {removed_messages_count} duplicate message(s)"
             )
 
         return filtered_messages

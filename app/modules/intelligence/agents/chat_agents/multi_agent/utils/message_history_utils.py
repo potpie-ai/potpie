@@ -71,6 +71,60 @@ from app.modules.utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 
+def _remove_duplicate_tool_results(messages: List[ModelMessage]) -> List[ModelMessage]:
+    """Remove duplicate tool_result blocks with the same tool_call_id.
+    
+    Handles duplicates both within a single message and across messages.
+    Anthropic API requires each tool_use to have exactly one tool_result.
+    """
+    seen_tool_result_ids: Set[str] = set()
+    filtered_messages: List[ModelMessage] = []
+    
+    for i, msg in enumerate(messages):
+        if isinstance(msg, ModelRequest):
+            seen_in_message: Set[str] = set()
+            filtered_parts = []
+            parts_removed = False
+            
+            for part in msg.parts:
+                tool_call_id = None
+                is_tool_result_part = False
+                
+                if hasattr(part, "__dict__"):
+                    part_dict = part.__dict__
+                    if part_dict.get("part_kind") == "tool-return":
+                        is_tool_result_part = True
+                        tool_call_id = part_dict.get("tool_call_id")
+                    elif "tool_call_id" in part_dict and (
+                        "result" in part_dict or "content" in part_dict
+                    ):
+                        is_tool_result_part = True
+                        tool_call_id = part_dict.get("tool_call_id")
+                
+                if is_tool_result_part and tool_call_id:
+                    # Check for duplicate within message or across messages
+                    if tool_call_id in seen_in_message or tool_call_id in seen_tool_result_ids:
+                        parts_removed = True
+                        logger.warning(
+                            f"[Message History] Removing duplicate tool_result: {tool_call_id}"
+                        )
+                        continue
+                    seen_in_message.add(tool_call_id)
+                    seen_tool_result_ids.add(tool_call_id)
+                
+                filtered_parts.append(part)
+            
+            if parts_removed:
+                if filtered_parts:
+                    msg = ModelRequest(parts=filtered_parts)
+                else:
+                    continue  # Skip message if all parts were duplicates
+        
+        filtered_messages.append(msg)
+    
+    return filtered_messages
+
+
 def validate_and_fix_message_history(
     messages: List[ModelMessage],
 ) -> List[ModelMessage]:
@@ -86,6 +140,9 @@ def validate_and_fix_message_history(
     """
     if not messages:
         return messages
+
+    # First, remove any duplicate tool_results (same tool_call_id appearing multiple times)
+    messages = _remove_duplicate_tool_results(messages)
 
     def _extract_tool_call_ids(msg: ModelMessage) -> set:
         """Extract all tool_call_ids from a message."""
