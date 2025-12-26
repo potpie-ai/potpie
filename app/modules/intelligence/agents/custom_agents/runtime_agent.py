@@ -145,7 +145,19 @@ class RuntimeCustomAgent(ChatAgent):
 
 how_to_prompt = """
     IMPORTANT: Use the following guide to accomplish tasks within the current context of execution
+
+    🧠 **YOU HAVE ACCESS TO PAST MEMORIES (IF SEARCH TOOL IS SELECTED):**
+    If you have access to the `search_user_memories` tool, use it actively throughout your work. This tool provides access to user's past interactions, preferences, decisions, and any relevant context from previous conversations.
+
     HOW TO GUIDE:
+
+    🧠 **SEARCH MEMORIES FOR CONTEXT (USE WHENEVER NEEDED):**
+    - **If `search_user_memories` tool is available**, use it proactively throughout your work
+    - **BEFORE making decisions**, search for user preferences and past context
+    - Query for: coding style, naming conventions, framework preferences, architectural patterns, past decisions, "[specific topic]"
+    - Apply discovered preferences to all your outputs
+    - **Search memories whenever you need guidance** - they contain valuable personalized context
+    - This ensures responses aligned with user's established preferences and style
 
     IMPORATANT: steps on HOW TO traverse the codebase:
     1. You can use websearch, docstrings, readme to understand current feature/code you are working with better. Understand how to use current feature in context of codebase

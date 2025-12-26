@@ -91,6 +91,7 @@ class CodeGenAgent(ChatAgent):
                 "fetch_file",
                 "analyze_code_structure",
                 "bash_command",
+                "search_user_memories",
             ]
         )
         supports_pydantic = self.llm_provider.supports_pydantic("chat")
@@ -158,7 +159,22 @@ class CodeGenAgent(ChatAgent):
 code_gen_task_prompt = """
 
     IMPORTANT: Use the following guide to accomplish tasks within the current context of execution
+
+    🧠 **YOU HAVE ACCESS TO PAST MEMORIES:**
+    You have the `search_user_memories` tool that gives you access to user's past interactions, preferences, and decisions. Use this tool whenever you need context.
+
     HOW TO GUIDE:
+
+    🧠 **STEP 0: SEARCH MEMORIES FOR RELEVANT CONTEXT:**
+    - **You can access past memories at any time** using `search_user_memories`
+    - **BEFORE writing any code**, search for user's preferences:
+      * Coding style: query="coding style preferences" or "naming conventions"
+      * Framework preferences: query="framework preferences"
+      * Project-specific patterns: use project_id with scope="project"
+      * Past decisions: query="past decisions about [topic]"
+    - Apply discovered preferences to ALL code you generate
+    - **Search memories throughout your work** whenever you need guidance or context
+    - Examples: camelCase vs snake_case, tabs vs spaces, quotes style, import organization, library choices
 
     IMPORATANT: steps on HOW TO traverse the codebase:
     1. You can use websearch, docstrings, readme to understand current feature/code you are working with better. Understand how to use current feature in context of codebase
@@ -176,6 +192,7 @@ code_gen_task_prompt = """
     Follow this structured approach:
 
     Context Analysis:
+    - **FIRST: Search user memories for coding preferences** using `search_user_memories`
     - Review existing code precisely to maintain standard formatting
     - Note exact indentation patterns
     - Identify string literal formats

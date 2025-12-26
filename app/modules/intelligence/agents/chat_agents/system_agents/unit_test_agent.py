@@ -45,6 +45,7 @@ class UnitTestAgent(ChatAgent):
                 "fetch_file",
                 "analyze_code_structure",
                 "bash_command",
+                "search_user_memories",
             ]
         )
         if not self.llm_provider.supports_pydantic("chat"):
@@ -77,7 +78,16 @@ class UnitTestAgent(ChatAgent):
 qna_task_prompt = """
 
     IMPORTANT: Use the following guide to accomplish tasks within the current context of execution
+
+    🧠 **YOU HAVE ACCESS TO PAST MEMORIES:**
+    The `search_user_memories` tool gives you access to user's testing preferences, conventions, and past test patterns. Use this to write tests that match user's style.
+
     HOW TO GUIDE:
+
+    🧠 **SEARCH MEMORIES FOR TESTING CONTEXT:**
+    - **Access testing memories** using `search_user_memories` when writing tests
+    - Query: "testing preferences", "test naming conventions", "test structure preferences", "testing framework choices"
+    - Apply discovered patterns to maintain consistency with user's testing style
 
     IMPORATANT: steps on HOW TO traverse the codebase:
     1. You can use websearch, docstrings, readme to understand current feature/code you are working with better. Understand how to use current feature in context of codebase

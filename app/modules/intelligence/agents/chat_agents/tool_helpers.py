@@ -128,6 +128,8 @@ def get_tool_run_message(tool_name: str):
             return "Updating Confluence page"
         case "AddConfluenceComment":
             return "Adding comment to Confluence page"
+        case "search_user_memories":
+            return "Searching user memories and preferences"
         case _:
             return "Querying data"
 
@@ -242,6 +244,8 @@ def get_tool_response_message(tool_name: str):
             return "Confluence page updated successfully"
         case "AddConfluenceComment":
             return "Comment added to Confluence page"
+        case "search_user_memories":
+            return "Memory search completed successfully"
         case _:
             return "Data queried successfully"
 
@@ -488,6 +492,25 @@ def get_tool_call_info_content(tool_name: str, args: Dict[str, Any]) -> str:
                 comment_type = "reply" if parent_comment_id else "comment"
                 return f"-> adding {comment_type} to page {page_id}"
             return ""
+        case "search_user_memories":
+            query = args.get("query", "")
+            project_id = args.get("project_id")
+            scope = args.get("scope")
+            memory_type = args.get("memory_type")
+            limit = args.get("limit", 5)
+
+            filters = []
+            if project_id:
+                filters.append(f"project: {project_id[:8]}...")
+            if scope:
+                filters.append(f"scope: {scope}")
+            if memory_type:
+                filters.append(f"type: {memory_type}")
+
+            filter_text = f" ({', '.join(filters)})" if filters else ""
+            return (
+                f"-> searching memories for: '{query}'{filter_text} (limit: {limit})\n"
+            )
         case _:
             return ""
 
@@ -680,6 +703,11 @@ description:
             agent_type = tool_name[12:]  # Remove "delegate_to_" prefix
             result_content = str(content) if content else ""
             return get_delegation_result_content(agent_type, result_content)
+        case "search_user_memories":
+            # Memory search returns formatted string with results
+            if isinstance(content, str):
+                return content
+            return str(content)
         case _:
             return ""
 

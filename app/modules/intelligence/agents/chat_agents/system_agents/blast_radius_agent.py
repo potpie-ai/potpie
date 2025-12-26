@@ -46,6 +46,7 @@ class BlastRadiusAgent(ChatAgent):
                 "fetch_file",
                 "analyze_code_structure",
                 "bash_command",
+                "search_user_memories",
             ]
         )
         if not self.llm_provider.supports_pydantic("chat"):
@@ -67,7 +68,16 @@ class BlastRadiusAgent(ChatAgent):
 blast_radius_task_prompt = """
 
     IMPORTANT: Use the following guide to accomplish tasks within the current context of execution
+
+    🧠 **YOU HAVE ACCESS TO PAST MEMORIES:**
+    The `search_user_memories` tool gives you access to user's preferred analysis approaches and past impact assessments. Use this for context.
+
     HOW TO GUIDE:
+
+    🧠 **SEARCH MEMORIES FOR ANALYSIS CONTEXT:**
+    - **Access analysis memories** using `search_user_memories` when assessing impact
+    - Query: "analysis preferences", "risk assessment approach", "past impact analyses"
+    - Apply user's preferred methodology for impact analysis
 
     IMPORATANT: steps on HOW TO traverse the codebase:
     1. You can use websearch, docstrings, readme to understand current feature/code you are working with better. Understand how to use current feature in context of codebase

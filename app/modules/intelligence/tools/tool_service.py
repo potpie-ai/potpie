@@ -94,6 +94,7 @@ from langchain_core.tools import StructuredTool
 from .think_tool import think_tool
 from .todo_management_tool import create_todo_management_tools
 from .code_changes_manager import create_code_changes_management_tools
+from .memory_search_tool import search_user_memories_tool
 
 
 class ToolService:
@@ -191,6 +192,7 @@ class ToolService:
             "analyze_code_structure": universal_analyze_code_tool(
                 self.db, self.user_id
             ),
+            "search_user_memories": search_user_memories_tool(self.db, self.user_id),
         }
 
         # Add bash command tool if repo manager is enabled

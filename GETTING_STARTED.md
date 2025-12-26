@@ -18,7 +18,12 @@ Ensure `~/.local/bin` is in your PATH.
    isDevelopmentMode=enabled
    ENV=development
    OPENAI_API_KEY=<your-openai-key>
+   LETTA_SERVER_URL=http://localhost:8283
+   LETTA_MODEL=openai/gpt-4o-mini
+   LETTA_EMBEDDING=openai/text-embedding-ada-002
    ```
+
+   **Note**: Potpie uses Letta for memory management. The Letta service will start automatically with docker-compose.
 
    Install dependencies with uv:
 
@@ -59,6 +64,34 @@ Ensure `~/.local/bin` is in your PATH.
    ```
 
 5. Start using Potpie with your local codebases!
+
+## Letta Memory System
+
+Potpie uses [Letta](https://www.letta.com/) for stateful agent memory management. The Letta server runs as a Docker container and provides:
+
+- **User-level memories**: Personal preferences that persist across all projects
+- **Project-level memories**: Project-specific information scoped to individual codebases
+- **Semantic search**: Intelligent memory retrieval using embeddings
+- **Passage storage**: Conversational context stored as searchable passages
+
+### Verifying Letta
+
+After starting Potpie, verify Letta is running:
+
+```bash
+curl http://localhost:8283/
+docker logs potpie-letta
+```
+
+The Letta web UI is available at http://localhost:8283 for viewing agents and memories.
+
+### Configuration
+
+Letta configuration is set via environment variables:
+
+- `LETTA_SERVER_URL`: URL of the Letta server (default: `http://localhost:8283`)
+- `LETTA_MODEL`: LLM model in `provider/model` format (default: `openai/gpt-4o-mini`)
+- `LETTA_EMBEDDING`: Embedding model (default: `openai/text-embedding-ada-002`)
 
 # Production setup
 

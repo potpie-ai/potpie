@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:latest
+    image: pgvector/pgvector:pg16
     container_name: potpie_postgres
     environment:
       POSTGRES_USER: postgres
@@ -45,11 +45,30 @@ services:
     networks:
       - app-network
 
+  letta:
+    image: letta/letta:latest
+    container_name: potpie-letta
+    ports:
+      - "8283:8283"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    volumes:
+      - letta_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8283/')\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
 volumes:
   postgres_data:
   neo4j_data:
   neo4j_logs:
   redis_data:
+  letta_data:
 
 networks:
   app-network:

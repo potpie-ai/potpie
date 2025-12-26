@@ -923,9 +923,11 @@ Available Tools:
   * What types of tasks is it best suited for?
   * What limitations or constraints should be considered?
   * How can it be optimally combined with other tools?
+- **CRITICAL: Always include `search_user_memories` tool** to enable the agent to access user's past interactions, preferences, and decisions. This tool should be used proactively throughout the agent's work.
 
 ## Step 4: Match requirements to appropriate tools
 - Which tools are essential for the core requirements?
+- **ALWAYS include `search_user_memories`** to give agents access to past memories and enable personalized responses based on user's preferences, decisions, and interaction history
 - Which additional tools could enhance the solution?
 - What is the optimal sequence of tool usage?
 - How should tools be configured for maximum effectiveness?
@@ -1006,6 +1008,16 @@ Let's think through this step by step:
    - Verify all connections are properly identified
    - Use for creating a complete understanding of code relationships
 
+   **search_user_memories (ALWAYS RECOMMENDED):**
+   - **This tool provides access to user's past interactions, preferences, and decisions**
+   - Agents should use this tool actively throughout their work whenever they need context
+   - Query user preferences, past interactions, and personalized context
+   - Use to understand user's coding style preferences, naming conventions, or specific requirements
+   - Essential for providing personalized and contextually relevant responses
+   - **Instruct agents:** "You have access to past memories via search_user_memories. Use this tool whenever you need context about user preferences or past interactions."
+   - Format queries to search for relevant user preferences related to the current task
+   - Use `scope="project"` for project-specific memories, `scope="user"` for cross-project preferences
+
 
 4. Finally, I'll [concluding action] to ensure [specific quality criteria].
    - Verification steps: [list of verification actions]
@@ -1043,6 +1055,7 @@ IMPORTANT GUIDELINES:
 8. Design the single task to incorporate iteration and refinement based on intermediate results if needed.
 9. Ensure the task includes ALL necessary steps to achieve the complete objective.
 10. The final output delivered to the user MUST be in human-readable markdown format with proper formatting, headings, lists, and code blocks if needed.
+11. **CRITICAL: ALWAYS include `search_user_memories` in the tools list** to enable personalized, context-aware responses. This tool gives agents access to user's past interactions, preferences, and decisions. Instruct agents to use this tool proactively whenever they need context.
 
 Return ONLY the valid JSON object with no additional text.
 """
@@ -1070,6 +1083,7 @@ For each available tool, analyze:
 - What parameters and formatting requirements does it have?
 - What limitations or edge cases should be considered?
 - How can its output be validated?
+- **CRITICAL: Always include `search_user_memories` tool** to give agents access to user's past interactions, preferences, and decisions. This tool enables context-aware, personalized responses.
 
 ## Step 3: Design an optimal execution strategy
 - What is the logical sequence of operations needed?
@@ -1131,6 +1145,16 @@ Your enhanced task description should follow this structure:
    - Follow code paths methodically
    - Verify all connections are properly identified
    - Use for creating a complete understanding of code relationships
+
+   **search_user_memories (ALWAYS RECOMMENDED):**
+   - **This tool provides access to user's past interactions, preferences, and decisions**
+   - Agents should use this tool actively throughout their work whenever they need context
+   - Query user preferences, past interactions, and personalized context
+   - Use to understand user's coding style preferences, naming conventions, or specific requirements
+   - Essential for providing personalized and contextually relevant responses
+   - **Instruct agents:** "You have access to past memories via search_user_memories. Use this tool whenever you need context about user preferences or past interactions."
+   - Format queries to search for relevant user preferences related to the current task
+   - Use `scope="project"` for project-specific memories, `scope="user"` for cross-project preferences
 
 5. **Verification and Validation Strategy**
    - Specific criteria to verify the task was completed successfully
