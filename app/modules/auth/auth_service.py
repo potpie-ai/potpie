@@ -57,7 +57,7 @@ class AuthService:
         is_dev_mode = os.getenv("isDevelopmentMode") == "enabled"
         logging.info(f"DEBUG: Development mode: {is_dev_mode}")
         logging.info(f"DEBUG: Credential provided: {credential is not None}")
-        
+
         # Check if Firebase is initialized
         try:
             firebase_app = firebase_admin.get_app()
@@ -68,12 +68,14 @@ class AuthService:
         # In development mode, use mock authentication if Firebase is not initialized
         if is_dev_mode and not firebase_initialized:
             request.state.user = {"user_id": os.getenv("defaultUsername")}
-            logging.info("DEBUG: Development mode enabled and Firebase not initialized. Using Mock Authentication.")
+            logging.info(
+                "DEBUG: Development mode enabled and Firebase not initialized. Using Mock Authentication."
+            )
             return {
                 "user_id": os.getenv("defaultUsername"),
                 "email": "defaultuser@potpie.ai",
             }
-        
+
         # If no credential provided and not in dev mode (or Firebase is initialized), require auth
         if credential is None:
             if is_dev_mode and firebase_initialized:
@@ -90,10 +92,12 @@ class AuthService:
                 detail="Bearer authentication is needed",
                 headers={"WWW-Authenticate": 'Bearer realm="auth_required"'},
             )
-        
+
         # Verify token if Firebase is initialized
         if not firebase_initialized:
-            logging.warning("DEBUG: Firebase not initialized but token provided. Skipping verification in dev mode.")
+            logging.warning(
+                "DEBUG: Firebase not initialized but token provided. Skipping verification in dev mode."
+            )
             if is_dev_mode:
                 request.state.user = {"user_id": os.getenv("defaultUsername")}
                 return {
@@ -105,7 +109,7 @@ class AuthService:
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail="Firebase authentication service is not available",
                 )
-        
+
         try:
             logging.info(
                 f"DEBUG: Verifying Firebase token: {credential.credentials[:20]}..."
@@ -114,9 +118,7 @@ class AuthService:
             logging.info(
                 f"DEBUG: Successfully verified token for user: {decoded_token.get('user_id', 'unknown')}"
             )
-            logging.info(
-                f"DEBUG: Token email: {decoded_token.get('email', 'unknown')}"
-            )
+            logging.info(f"DEBUG: Token email: {decoded_token.get('email', 'unknown')}")
             request.state.user = decoded_token
         except Exception as err:
             logging.error(f"DEBUG: Firebase token verification failed: {str(err)}")
