@@ -42,6 +42,18 @@ async def get_branch_list(
     return await CodeProviderController(db).get_branch_list(repo_name=repo_name)
 
 
+@router.get("/github/repo-structure")
+async def get_repo_structure(
+    repo_name: str = Query(..., description="Repository name"),
+    branch_name: str = Query(..., description="Branch name"),
+    user=Depends(AuthService.check_auth),
+    db: Session = Depends(get_db),
+):
+    return await CodeProviderController(db).get_repo_structure(
+        repo_name=repo_name, branch_name=branch_name
+    )
+
+
 @router.get("/github/check-public-repo")
 async def check_public_repo(
     repo_name: str = Query(..., description="Repository name"),

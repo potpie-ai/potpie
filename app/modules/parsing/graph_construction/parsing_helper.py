@@ -16,6 +16,8 @@ from sqlalchemy.orm import Session
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
 from app.modules.parsing.utils.repo_name_normalizer import normalize_repo_name
+from app.modules.parsing.utils.file_utils import FileUtils
+from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.utils.logger import setup_logger
@@ -134,71 +136,15 @@ class ParseHelper:
             # If all encodings fail, likely a binary file
             return False
 
-        ext = file_path.split(".")[-1]
-        exclude_extensions = [
-            "png",
-            "jpg",
-            "jpeg",
-            "gif",
-            "bmp",
-            "tiff",
-            "webp",
-            "ico",
-            "svg",
-            "mp4",
-            "avi",
-            "mov",
-            "wmv",
-            "flv",
-            "ipynb",
-        ]
-        include_extensions = [
-            "py",
-            "js",
-            "ts",
-            "c",
-            "cs",
-            "cpp",
-            "h",
-            "hpp",
-            "el",
-            "ex",
-            "exs",
-            "elm",
-            "go",
-            "java",
-            "ml",
-            "mli",
-            "php",
-            "ql",
-            "rb",
-            "rs",
-            "md",
-            "txt",
-            "json",
-            "yaml",
-            "yml",
-            "toml",
-            "ini",
-            "cfg",
-            "conf",
-            "xml",
-            "html",
-            "css",
-            "sh",
-            "ps1",
-            "psm1",
-            "md",
-            "mdx",
-            "xsq",
-            "proto",
-        ]
-        if ext in exclude_extensions:
+        file_name = os.path.basename(file_path)
+
+        if FileUtils.is_excluded_file_name(file_name):
             return False
-        elif ext in include_extensions or open_text_file(file_path):
+
+        if FileUtils.is_valid_file_name(file_name):
             return True
-        else:
-            return False
+
+        return open_text_file(file_path)
 
     async def download_and_extract_tarball(
         self, repo, branch, target_dir, auth, repo_details, user_id
@@ -669,7 +615,12 @@ class ParseHelper:
 
         try:
             for root, _, files in os.walk(repo_dir):
-                if any(part.startswith(".") for part in root.split(os.sep)):
+                root_parts = root.split(os.sep)
+                # Skip hidden directories (like .git, .venv) but NOT the current directory indicator (.)
+                if any(
+                    part.startswith(".") and part not in (".", "..")
+                    for part in root_parts
+                ):
                     continue
 
                 for file in files:
@@ -879,6 +830,22 @@ class ParseHelper:
         # repo_details can be ParsingRequest in dev mode, which lacks these methods
         repo_metadata = ParseHelper.extract_repository_metadata(repo)
         repo_metadata["error_message"] = None
+        
+        # Include parse filters in properties, preserving existing filters if any
+        existing_project = self.db.query(Project).filter(Project.id == project_id).first()
+        if existing_project and existing_project.properties:
+            try:
+                existing_metadata = json.loads(existing_project.properties.decode("utf-8"))
+                existing_filters = existing_metadata.get("parse_filters", {})
+                if existing_filters:
+                    repo_metadata["parse_filters"] = existing_filters
+            except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+                pass
+        
+        # Override with new filters if provided
+        if hasattr(repo_details, 'filters') and repo_details.filters:
+            repo_metadata["parse_filters"] = repo_details.filters.model_dump()
+        
         project_metadata = json.dumps(repo_metadata).encode("utf-8")
         ProjectService.update_project(
             self.db,

@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 
 from fastapi import HTTPException
@@ -23,6 +24,19 @@ class ProjectNotFoundError(ProjectServiceError):
 class ProjectService:
     def __init__(self, db: Session):
         self.db = db
+    
+    @staticmethod
+    def _update_filters_in_properties(properties: bytes, filters: dict) -> bytes:
+        """Helper to update filters in properties BYTEA field."""
+        if not properties:
+            metadata = {"parse_filters": filters}
+        else:
+            try:
+                metadata = json.loads(properties.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+                metadata = {}
+            metadata["parse_filters"] = filters
+        return json.dumps(metadata).encode("utf-8")
 
     async def get_project_name(self, project_ids: list) -> str:
         try:
@@ -64,6 +78,7 @@ class ProjectService:
         project_id: str,
         commit_id: str = None,
         repo_path: str = None,
+        filters: dict = None,
     ):
         # Check if a project with this ID already exists
         existing_project = (
@@ -89,6 +104,10 @@ class ProjectService:
             existing_project.commit_id = commit_id
             existing_project.status = ProjectStatusEnum.SUBMITTED.value
             existing_project.updated_at = datetime.utcnow()
+            if filters:
+                existing_project.properties = ProjectService._update_filters_in_properties(
+                    existing_project.properties, filters
+                )
             try:
                 self.db.commit()
                 self.db.refresh(existing_project)
@@ -101,6 +120,10 @@ class ProjectService:
             return project_id
 
         # Create new project if it doesn't exist
+        properties = None
+        if filters:
+            properties = ProjectService._update_filters_in_properties(None, filters)
+        
         project = Project(
             id=project_id,
             repo_name=repo_name,
@@ -109,6 +132,7 @@ class ProjectService:
             repo_path=repo_path,
             commit_id=commit_id,
             status=ProjectStatusEnum.SUBMITTED.value,
+            properties=properties,
         )
         try:
             project = ProjectService.create_project(self.db, project)

@@ -1,6 +1,7 @@
 import os
 import shutil
 import traceback
+import fnmatch
 from asyncio import create_task
 from contextlib import contextmanager
 
@@ -24,7 +25,7 @@ from app.modules.utils.email_helper import EmailHelper
 from app.modules.utils.logger import log_context, setup_logger
 from app.modules.utils.parse_webhook_helper import ParseWebhookHelper
 
-from .parsing_schema import ParsingRequest
+from .parsing_schema import ParsingRequest, ParseFilters
 
 logger = setup_logger(__name__)
 
@@ -62,7 +63,6 @@ class ParsingService:
             try:
                 if cleanup_graph:
                     neo4j_config = config_provider.get_neo4j_config()
-
                     try:
                         code_graph_service = CodeGraphService(
                             neo4j_config["uri"],
@@ -70,7 +70,6 @@ class ParsingService:
                             neo4j_config["password"],
                             self.db,
                         )
-
                         code_graph_service.cleanup_graph(project_id)
                     except Exception:
                         logger.exception(
@@ -85,11 +84,9 @@ class ParsingService:
                 repo, owner, auth = await self.parse_helper.clone_or_copy_repository(
                     repo_details, user_id
                 )
+
                 if config_provider.get_is_development_mode():
-                    (
-                        extracted_dir,
-                        project_id,
-                    ) = await self.parse_helper.setup_project_directory(
+                    extracted_dir, project_id = await self.parse_helper.setup_project_directory(
                         repo,
                         repo_details.branch_name,
                         auth,
@@ -99,10 +96,7 @@ class ParsingService:
                         commit_id=repo_details.commit_id,
                     )
                 else:
-                    (
-                        extracted_dir,
-                        project_id,
-                    ) = await self.parse_helper.setup_project_directory(
+                    extracted_dir, project_id = await self.parse_helper.setup_project_directory(
                         repo,
                         repo_details.branch_name,
                         auth,
@@ -111,6 +105,10 @@ class ParsingService:
                         project_id,
                         commit_id=repo_details.commit_id,
                     )
+
+                # Apply filters to the extracted directory
+                if repo_details.filters:
+                    self.apply_filters_to_directory(extracted_dir, repo_details.filters)
 
                 if isinstance(repo, Repo):
                     language = self.parse_helper.detect_repo_language(extracted_dir)
@@ -201,6 +199,111 @@ class ParsingService:
                 CREATE LOOKUP INDEX relationship_type_lookup IF NOT EXISTS FOR ()-[r]->() ON EACH type(r)
                 """
             session.run(rel_type_query)
+
+    def apply_filters_to_directory(self, directory: str, filters: ParseFilters):
+        """
+        Walks through the directory and removes files/folders that match the exclusion filters.
+        """
+        logger.info(f"Applying filters to directory: {directory}")
+
+        # If no filters are set, don't skip anything
+        if (
+            not filters.excluded_directories
+            and not filters.excluded_files
+            and not filters.excluded_extensions
+        ):
+            return
+
+        for root, dirs, files in os.walk(directory, topdown=True):
+            rel_root = os.path.relpath(root, directory)
+            if rel_root == ".":
+                rel_root = ""
+
+            # Filter directories in-place to prevent walking into them
+            for d in list(dirs):
+                dir_path = os.path.join(root, d)
+                rel_path = os.path.join(rel_root, d) if rel_root else d
+
+                # Check if directory should be excluded
+                should_remove = False
+                path_parts = rel_path.split(os.sep)
+
+                for excluded_dir in filters.excluded_directories:
+                    # Handle both simple names (e.g., "deployment") and paths (e.g., "app/modules")
+                    if os.sep in excluded_dir or "/" in excluded_dir:
+                        # Normalize to use os.sep
+                        normalized_excluded = excluded_dir.replace("/", os.sep)
+                        # It's a path - check if rel_path equals it or starts with it
+                        if rel_path == normalized_excluded or rel_path.startswith(
+                            normalized_excluded + os.sep
+                        ):
+                            should_remove = True
+                            break
+                    else:
+                        # It's a simple directory name - check if it's in any part of the path
+                        if excluded_dir in path_parts:
+                            should_remove = True
+                            break
+
+                if should_remove:
+                    shutil.rmtree(dir_path)
+                    dirs.remove(d)
+                    logger.info(f"Removed excluded directory: {rel_path}")
+
+            # Filter files
+            for f in files:
+                file_path = os.path.join(root, f)
+                rel_path = os.path.join(rel_root, f) if rel_root else f
+
+                should_remove = False
+
+                # Check directory exclusions for file's path
+                path_parts = rel_path.split(os.sep)
+                dir_parts = path_parts[:-1]
+                dir_path_str = os.sep.join(dir_parts) if dir_parts else ""
+
+                for excluded_dir in filters.excluded_directories:
+                    # Handle both simple names (e.g., "deployment") and paths (e.g., "app/modules")
+                    if os.sep in excluded_dir or "/" in excluded_dir:
+                        # Normalize to use os.sep
+                        normalized_excluded = excluded_dir.replace("/", os.sep)
+                        # It's a path - check if file's directory equals or starts with it
+                        if (
+                            dir_path_str == normalized_excluded
+                            or dir_path_str.startswith(normalized_excluded + os.sep)
+                        ):
+                            should_remove = True
+                            break
+                    else:
+                        # It's a simple directory name - check if it's in any part of the path
+                        if excluded_dir in dir_parts:
+                            should_remove = True
+                            break
+
+                if not should_remove:
+                    # Check extension exclusions
+                    for ext in filters.excluded_extensions:
+                        if not ext.startswith("."):
+                            ext = "." + ext
+                        if file_path.endswith(ext):
+                            should_remove = True
+                            break
+
+                if not should_remove:
+                    # Check file pattern exclusions (glob matching)
+                    for excluded_pattern in filters.excluded_files:
+                        if fnmatch.fnmatch(
+                            rel_path, excluded_pattern
+                        ) or fnmatch.fnmatch(f, excluded_pattern):
+                            should_remove = True
+                            break
+
+                if should_remove:
+                    try:
+                        os.remove(file_path)
+                        logger.info(f"Removed excluded file: {rel_path}")
+                    except OSError as e:
+                        logger.error(f"Error removing file {file_path}: {e}")
 
     async def analyze_directory(
         self,
