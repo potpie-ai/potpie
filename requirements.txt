@@ -173,6 +173,7 @@ platformdirs==4.5.1
 pluggy==1.6.0
 ply==3.11
 postgres==4.0
+portalocker==3.1.0
 posthog==7.0.1
 pre-commit==4.5.0
 prometheus-client==0.23.1

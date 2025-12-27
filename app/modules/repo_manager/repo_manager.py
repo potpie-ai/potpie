@@ -8,6 +8,7 @@ Tracks repository metadata using the filesystem instead of Redis.
 import json
 import os
 import shutil
+import portalocker
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -150,9 +151,16 @@ class RepoManager(IRepoManager):
         path.parent.mkdir(parents=True, exist_ok=True)
 
         temp_path = path.with_suffix(path.suffix + ".tmp")
-        with temp_path.open("w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2, sort_keys=True)
-        os.replace(temp_path, path)
+        
+        # Ensure parent exists for the lock file
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lock_file_path = path.parent / ".lock"
+
+        # Use portalocker to prevent concurrent writes causing corruption
+        with portalocker.Lock(lock_file_path, timeout=10):
+            with temp_path.open("w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=2, sort_keys=True)
+            os.replace(temp_path, path)
 
     def _delete_metadata_entry(
         self,
