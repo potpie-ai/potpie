@@ -258,14 +258,14 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
    To start all Potpie services:
 
    ```bash
-   chmod +x start.sh
-   ./start.sh
+   chmod +x scripts/start.sh
+   ./scripts/start.sh
    ```
 
    **Windows**
 
     ```powershell
-    ./start.ps1
+   ./scripts/start.ps1
     ```
 
    This will:
@@ -288,7 +288,7 @@ Potpie supports multiple authentication methods for accessing GitHub repositorie
    To stop all Potpie services:
 
    ```bash
-   ./stop.sh
+   ./scripts/stop.sh
    ```
 
    **Windows**
