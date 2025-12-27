@@ -7,6 +7,7 @@ from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth
 from firebase_admin.exceptions import FirebaseError
+import firebase_admin
 
 load_dotenv(override=True)
 
@@ -53,51 +54,81 @@ class AuthService:
         ),
     ):
         logging.info("DEBUG: AuthService.check_auth called")
-        logging.info("DEBUG: Development mode: %s", os.getenv("isDevelopmentMode"))
-        logging.info("DEBUG: Credential provided: %s", credential is not None)
+        is_dev_mode = os.getenv("isDevelopmentMode") == "enabled"
+        logging.info(f"DEBUG: Development mode: {is_dev_mode}")
+        logging.info(f"DEBUG: Credential provided: {credential is not None}")
 
-        # Check if the application is in debug mode
-        if os.getenv("isDevelopmentMode") == "enabled" and credential is None:
+        # Check if Firebase is initialized
+        try:
+            firebase_app = firebase_admin.get_app()
+            firebase_initialized = True
+        except ValueError:
+            firebase_initialized = False
+
+        # In development mode, use mock authentication if Firebase is not initialized
+        if is_dev_mode and not firebase_initialized:
             request.state.user = {"user_id": os.getenv("defaultUsername")}
-            logging.info("DEBUG: Development mode enabled. Using Mock Authentication.")
+            logging.info(
+                "DEBUG: Development mode enabled and Firebase not initialized. Using Mock Authentication."
+            )
             return {
                 "user_id": os.getenv("defaultUsername"),
                 "email": "defaultuser@potpie.ai",
             }
-        else:
-            if credential is None:
+
+        # If no credential provided and not in dev mode (or Firebase is initialized), require auth
+        if credential is None:
+            if is_dev_mode and firebase_initialized:
+                # Dev mode but Firebase initialized - still require token
+                logging.error(
+                    "DEBUG: No credential provided in development mode with Firebase initialized"
+                )
+            else:
                 logging.error(
                     "DEBUG: No credential provided and not in development mode"
                 )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Bearer authentication is needed",
+                headers={"WWW-Authenticate": 'Bearer realm="auth_required"'},
+            )
+
+        # Verify token if Firebase is initialized
+        if not firebase_initialized:
+            logging.warning(
+                "DEBUG: Firebase not initialized but token provided. Skipping verification in dev mode."
+            )
+            if is_dev_mode:
+                request.state.user = {"user_id": os.getenv("defaultUsername")}
+                return {
+                    "user_id": os.getenv("defaultUsername"),
+                    "email": "defaultuser@potpie.ai",
+                }
+            else:
                 raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Bearer authentication is needed",
-                    headers={"WWW-Authenticate": 'Bearer realm="auth_required"'},
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Firebase authentication service is not available",
                 )
-            try:
-                logging.info(
-                    "DEBUG: Verifying Firebase token: %s...",
-                    credential.credentials[:20],
-                )
-                decoded_token = auth.verify_id_token(credential.credentials)
-                logging.info(
-                    "DEBUG: Successfully verified token for user: %s",
-                    decoded_token.get("user_id", "unknown"),
-                )
-                logging.info(
-                    "DEBUG: Token email: %s",
-                    decoded_token.get("email", "unknown"),
-                )
-                request.state.user = decoded_token
-            except Exception as err:
-                logging.error("DEBUG: Firebase token verification failed: %s", str(err))
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail=f"Invalid authentication from Firebase. {err}",
-                    headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
-                )
-            res.headers["WWW-Authenticate"] = 'Bearer realm="auth_required"'
-            return decoded_token
+
+        try:
+            logging.info(
+                f"DEBUG: Verifying Firebase token: {credential.credentials[:20]}..."
+            )
+            decoded_token = auth.verify_id_token(credential.credentials)
+            logging.info(
+                f"DEBUG: Successfully verified token for user: {decoded_token.get('user_id', 'unknown')}"
+            )
+            logging.info(f"DEBUG: Token email: {decoded_token.get('email', 'unknown')}")
+            request.state.user = decoded_token
+        except Exception as err:
+            logging.error(f"DEBUG: Firebase token verification failed: {str(err)}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Invalid authentication from Firebase. {err}",
+                headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
+            )
+        res.headers["WWW-Authenticate"] = 'Bearer realm="auth_required"'
+        return decoded_token
 
 
 auth_handler = AuthService()
