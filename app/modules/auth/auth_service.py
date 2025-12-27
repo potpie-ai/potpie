@@ -31,7 +31,7 @@ class AuthService:
             user_auth_response.raise_for_status()
             return user_auth_response.json()
         except Exception as e:
-            logging.exception(f"{log_prefix} {str(e)}")
+            logging.exception("%s %s", log_prefix, str(e))
             raise Exception(user_auth_response.json())
 
     def signup(self, email: str, password: str, name: str) -> tuple:
@@ -45,7 +45,6 @@ class AuthService:
         except Exception as e:
             return None, {"error": f"An unexpected error occurred: {str(e)}"}
 
-    @classmethod
     @staticmethod
     async def check_auth(
         request: Request,

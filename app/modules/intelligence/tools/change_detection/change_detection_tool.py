@@ -1,12 +1,14 @@
 import asyncio
-import logging
 import os
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 from typing import Dict, List, Optional
 
 from fastapi import HTTPException
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
-from tree_sitter_languages import get_parser
+from tree_sitter_language_pack import get_parser
 import pathspec
 
 from app.core.database import get_db
@@ -171,7 +173,7 @@ class ChangeDetectionTool:
                 # No matches found with any strategy
                 return None
         except Exception as e:
-            logging.error(
+            logger.error(
                 f"[CHANGE_DETECTION] Error searching for node by file and name: {e}",
                 exc_info=True,
             )
@@ -200,7 +202,7 @@ class ChangeDetectionTool:
                 pathspec.patterns.GitWildMatchPattern, gitignore_content.splitlines()
             )
         except Exception as e:
-            logging.warning(
+            logger.warning(
                 f"[CHANGE_DETECTION] Error reading .gitignore file: {str(e)}"
             )
             return None
@@ -291,7 +293,7 @@ class ChangeDetectionTool:
                     if any(start_line < line < end_line for line in lines):
                         result.append(node_name)
             except Exception as e:
-                logging.error(f"Exception {e}")
+                logger.error(f"Exception {e}")
         return result
 
     async def get_updated_function_list(self, patch_details, project_id):
@@ -354,23 +356,23 @@ class ChangeDetectionTool:
         return entry_points
 
     async def get_code_changes(self, project_id):
-        logging.info(
+        logger.info(
             f"[CHANGE_DETECTION] Starting get_code_changes for project_id: {project_id}"
         )
         patches_dict = {}
         project_details = await ProjectService(self.sql_db).get_project_from_db_by_id(
             project_id
         )
-        logging.info(f"[CHANGE_DETECTION] Retrieved project details: {project_details}")
+        logger.info(f"[CHANGE_DETECTION] Retrieved project details: {project_details}")
 
         if project_details is None:
-            logging.error(
+            logger.error(
                 f"[CHANGE_DETECTION] Project details not found for project_id: {project_id}"
             )
             raise HTTPException(status_code=400, detail="Project Details not found.")
 
         if project_details["user_id"] != self.user_id:
-            logging.error(
+            logger.error(
                 f"[CHANGE_DETECTION] User mismatch: project user_id={project_details['user_id']}, requesting user={self.user_id}"
             )
             raise ValueError(
@@ -380,13 +382,13 @@ class ChangeDetectionTool:
         repo_name = project_details["project_name"]
         branch_name = project_details["branch_name"]
         repo_path = project_details["repo_path"]
-        logging.info(
+        logger.info(
             f"[CHANGE_DETECTION] Project info - repo: {repo_name}, branch: {branch_name}, path: {repo_path}"
         )
 
         # Use CodeProviderService to get the appropriate service instance
         code_service = CodeProviderService(self.sql_db)
-        logging.info(
+        logger.info(
             f"[CHANGE_DETECTION] CodeProviderService created, service_instance type: {type(code_service.service_instance).__name__}"
         )
 
@@ -396,7 +398,7 @@ class ChangeDetectionTool:
         try:
             # Handle ProviderWrapper (new provider factory pattern)
             if isinstance(code_service.service_instance, ProviderWrapper):
-                logging.info("[CHANGE_DETECTION] Using ProviderWrapper for diff")
+                logger.info("[CHANGE_DETECTION] Using ProviderWrapper for diff")
 
                 # Get the actual repo name for API calls (handles GitBucket conversion)
                 from app.modules.parsing.utils.repo_name_normalizer import (
@@ -412,14 +414,14 @@ class ChangeDetectionTool:
                 # Use repo_path for local repos, otherwise normalize the repo_name
                 if repo_path:
                     actual_repo_name = repo_path
-                    logging.info(
+                    logger.info(
                         f"[CHANGE_DETECTION] Using local repo_path: {actual_repo_name}"
                     )
                 else:
                     actual_repo_name = get_actual_repo_name_for_lookup(
                         repo_name, provider_type
                     )
-                    logging.info(
+                    logger.info(
                         f"[CHANGE_DETECTION] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}"
                     )
 
@@ -446,7 +448,7 @@ class ChangeDetectionTool:
                             default_branch = git_repo.active_branch.name
 
                     current_branch = branch_name or git_repo.active_branch.name
-                    logging.info(
+                    logger.info(
                         f"[CHANGE_DETECTION] Local repo - comparing {default_branch}..{current_branch}"
                     )
 
@@ -480,7 +482,7 @@ class ChangeDetectionTool:
                                                 current_patch
                                             )
                                         else:
-                                            logging.debug(
+                                            logger.debug(
                                                 f"[CHANGE_DETECTION] Excluding ignored file: {current_file}"
                                             )
                                     # Extract filename
@@ -500,15 +502,15 @@ class ChangeDetectionTool:
                                         current_patch
                                     )
                                 else:
-                                    logging.debug(
+                                    logger.debug(
                                         f"[CHANGE_DETECTION] Excluding ignored file: {current_file}"
                                     )
 
-                        logging.info(
+                        logger.info(
                             f"[CHANGE_DETECTION] Local repo - found {len(patches_dict)} changed files (diff from {default_branch})"
                         )
                     except Exception as e:
-                        logging.error(
+                        logger.error(
                             f"[CHANGE_DETECTION] Error getting local changes: {e}"
                         )
                         patches_dict = {}
@@ -521,12 +523,12 @@ class ChangeDetectionTool:
                     github_client = provider.client
                     repo = github_client.get_repo(actual_repo_name)
                     default_branch = repo.default_branch
-                    logging.info(
+                    logger.info(
                         f"[CHANGE_DETECTION] Remote repo - default branch: {default_branch}, comparing with: {branch_name}"
                     )
 
                     # Use provider's compare_branches method
-                    logging.info(
+                    logger.info(
                         "[CHANGE_DETECTION] Using provider's compare_branches method"
                     )
                     comparison_result = provider.compare_branches(
@@ -539,16 +541,16 @@ class ChangeDetectionTool:
                         for file in comparison_result["files"]
                         if "patch" in file
                     }
-                    logging.info(
+                    logger.info(
                         f"[CHANGE_DETECTION] Comparison complete: {len(patches_dict)} files with patches, {comparison_result['commits']} commits"
                     )
 
             elif isinstance(code_service.service_instance, GithubService):
-                logging.info("[CHANGE_DETECTION] Using GithubService for diff")
+                logger.info("[CHANGE_DETECTION] Using GithubService for diff")
                 github, _, _ = code_service.service_instance.get_github_repo_details(
                     repo_name
                 )
-                logging.info("[CHANGE_DETECTION] Got github client from service")
+                logger.info("[CHANGE_DETECTION] Got github client from service")
 
                 # Get the actual repo name for API calls (handles GitBucket conversion)
                 from app.modules.parsing.utils.repo_name_normalizer import (
@@ -560,14 +562,14 @@ class ChangeDetectionTool:
                 actual_repo_name = get_actual_repo_name_for_lookup(
                     repo_name, provider_type
                 )
-                logging.info(
+                logger.info(
                     f"[CHANGE_DETECTION] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}"
                 )
 
                 repo = github.get_repo(actual_repo_name)
-                logging.info(f"[CHANGE_DETECTION] Got repo object: {repo.name}")
+                logger.info(f"[CHANGE_DETECTION] Got repo object: {repo.name}")
                 default_branch = repo.default_branch
-                logging.info(
+                logger.info(
                     f"[CHANGE_DETECTION] Default branch: {default_branch}, comparing with: {branch_name}"
                 )
 
@@ -579,7 +581,7 @@ class ChangeDetectionTool:
 
                     try:
                         # Get commits on the branch
-                        logging.info(
+                        logger.info(
                             f"[CHANGE_DETECTION] Getting commits for branch: {branch_name}"
                         )
                         commits = repo.get_commits(sha=branch_name)
@@ -598,7 +600,7 @@ class ChangeDetectionTool:
                                 default_commit_shas = [c.sha for c in default_commits]
 
                                 if commit.sha in default_commit_shas:
-                                    logging.info(
+                                    logger.info(
                                         f"[CHANGE_DETECTION] Reached common ancestor at commit {commit.sha[:7]}"
                                     )
                                     break
@@ -606,29 +608,29 @@ class ChangeDetectionTool:
                                 pass
 
                             # Get the commit details with files
-                            logging.info(
+                            logger.info(
                                 f"[CHANGE_DETECTION] Processing commit {commit.sha[:7]}: {commit.commit.message.split(chr(10))[0]}"
                             )
 
                             for file in commit.files:
                                 if file.patch and file.filename not in patches_dict:
                                     patches_dict[file.filename] = file.patch
-                                    logging.info(
+                                    logger.info(
                                         f"[CHANGE_DETECTION] Added patch for file: {file.filename}"
                                     )
 
                             # Limit to reasonable number of commits
                             if commit_count >= 50:
-                                logging.warning(
+                                logger.warning(
                                     "[CHANGE_DETECTION] Reached commit limit of 50, stopping"
                                 )
                                 break
 
-                        logging.info(
+                        logger.info(
                             f"[CHANGE_DETECTION] GitBucket diff complete: {len(patches_dict)} files with patches from {commit_count} commits"
                         )
                     except Exception as api_error:
-                        logging.error(
+                        logger.error(
                             f"[CHANGE_DETECTION] GitBucket commits API error: {type(api_error).__name__}: {str(api_error)}",
                             exc_info=True,
                         )
@@ -636,7 +638,7 @@ class ChangeDetectionTool:
                 else:
                     # Use PyGithub for GitHub
                     git_diff = repo.compare(default_branch, branch_name)
-                    logging.info(
+                    logger.info(
                         f"[CHANGE_DETECTION] Comparison complete, files changed: {len(git_diff.files)}"
                     )
                     patches_dict = {
@@ -644,19 +646,19 @@ class ChangeDetectionTool:
                         for file in git_diff.files
                         if file.patch
                     }
-                    logging.info(
+                    logger.info(
                         f"[CHANGE_DETECTION] Patches extracted: {len(patches_dict)} files with patches"
                     )
             elif isinstance(code_service.service_instance, LocalRepoService):
-                logging.info("[CHANGE_DETECTION] Using LocalRepoService for diff")
+                logger.info("[CHANGE_DETECTION] Using LocalRepoService for diff")
                 patches_dict = code_service.service_instance.get_local_repo_diff(
                     repo_path, branch_name
                 )
-                logging.info(
+                logger.info(
                     f"[CHANGE_DETECTION] Local diff complete: {len(patches_dict)} files"
                 )
         except Exception as e:
-            logging.error(
+            logger.error(
                 f"[CHANGE_DETECTION] Exception during diff: {type(e).__name__}: {str(e)}",
                 exc_info=True,
             )
@@ -665,7 +667,7 @@ class ChangeDetectionTool:
             )
         finally:
             if project_details is not None:
-                logging.info(
+                logger.info(
                     f"[CHANGE_DETECTION] Processing patches: {len(patches_dict)} files"
                 )
                 identifiers = []
@@ -674,7 +676,7 @@ class ChangeDetectionTool:
                     identifiers = await self.get_updated_function_list(
                         patches_dict, project_id
                     )
-                    logging.info(
+                    logger.info(
                         f"[CHANGE_DETECTION] Found {len(identifiers)} changed functions: {identifiers}"
                     )
                     for identifier in identifiers:
@@ -709,7 +711,7 @@ class ChangeDetectionTool:
 
                                     # Check if result has an error or missing node_id
                                     if "error" in fallback_result:
-                                        logging.warning(
+                                        logger.warning(
                                             f"[CHANGE_DETECTION] Could not find node for identifier '{identifier}': {fallback_result['error']}"
                                         )
                                         continue
@@ -727,7 +729,7 @@ class ChangeDetectionTool:
 
                         # Check for errors in the response
                         if "error" in node_code:
-                            logging.warning(
+                            logger.warning(
                                 f"[CHANGE_DETECTION] Error getting code for node {node_id}: {node_code['error']}"
                             )
                             continue
@@ -737,7 +739,7 @@ class ChangeDetectionTool:
                             "code_content" not in node_code
                             or "file_path" not in node_code
                         ):
-                            logging.warning(
+                            logger.warning(
                                 f"[CHANGE_DETECTION] Missing required fields for node {node_id}"
                             )
                             continue
@@ -755,7 +757,7 @@ class ChangeDetectionTool:
                     for node, entry_point in entry_points.items():
                         # Skip if node is not in node_code_dict (was filtered out due to errors)
                         if node not in node_code_dict:
-                            logging.warning(
+                            logger.warning(
                                 f"[CHANGE_DETECTION] Skipping node {node} - not in node_code_dict"
                             )
                             continue
@@ -766,7 +768,7 @@ class ChangeDetectionTool:
 
                         # Check for errors in entry_point_code
                         if "error" in entry_point_code:
-                            logging.warning(
+                            logger.warning(
                                 f"[CHANGE_DETECTION] Error getting entry point code for {entry_point[0]}: {entry_point_code['error']}"
                             )
                             continue
@@ -776,7 +778,7 @@ class ChangeDetectionTool:
                             "code_content" not in entry_point_code
                             or "file_path" not in entry_point_code
                         ):
-                            logging.warning(
+                            logger.warning(
                                 f"[CHANGE_DETECTION] Missing required fields in entry point code: {entry_point_code}"
                             )
                             continue
@@ -795,7 +797,7 @@ class ChangeDetectionTool:
                     # For local repos with too many changes, return only file names instead of full patches
                     # to avoid context length issues
                     if len(patches_dict) > 50:
-                        logging.warning(
+                        logger.warning(
                             f"[CHANGE_DETECTION] Too many patches ({len(patches_dict)}), returning file names only"
                         )
                         # Convert patches to just file names with line counts
@@ -810,18 +812,18 @@ class ChangeDetectionTool:
                         result = ChangeDetectionResponse(
                             patches=patches_dict, changes=changes_list
                         )
-                    logging.info(
+                    logger.info(
                         f"[CHANGE_DETECTION] Returning result with {len(patches_dict)} patches and {len(changes_list)} changes"
                     )
                     return result
                 except Exception as e:
-                    logging.error(
+                    logger.error(
                         f"[CHANGE_DETECTION] Exception in finally block - project_id: {project_id}, error: {type(e).__name__}: {str(e)}",
                         exc_info=True,
                     )
 
                 if len(identifiers) == 0:
-                    logging.info(
+                    logger.info(
                         "[CHANGE_DETECTION] No identifiers found, returning empty list"
                     )
                     return []

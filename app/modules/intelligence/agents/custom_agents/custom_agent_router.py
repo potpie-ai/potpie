@@ -39,9 +39,9 @@ async def create_custom_agent(
         )
     except HTTPException as he:
         raise he
-    except Exception as e:
-        logger.error(f"Error creating custom agent: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+    except Exception:
+        logger.exception("Error creating custom agent", user_id=user_id)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/share", response_model=Agent)
@@ -62,9 +62,11 @@ async def share_agent(
         )
     except HTTPException as he:
         raise he
-    except Exception as e:
-        logger.error(f"Error sharing agent: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+    except Exception:
+        logger.exception(
+            "Error sharing agent", agent_id=request.agent_id, user_id=user_id
+        )
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/revoke-access", response_model=Agent)
@@ -84,9 +86,11 @@ async def revoke_agent_access(
         )
     except HTTPException as he:
         raise he
-    except Exception as e:
-        logger.error(f"Error revoking agent access: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+    except Exception:
+        logger.exception(
+            "Error revoking agent access", agent_id=request.agent_id, user_id=user_id
+        )
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/", response_model=list[Agent])
@@ -106,9 +110,9 @@ async def list_agents(
         )
     except HTTPException as he:
         raise he
-    except Exception as e:
-        logger.error(f"Error listing agents: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+    except Exception:
+        logger.exception("Error listing agents", user_id=user_id)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.delete("/{agent_id}", response_model=dict)
@@ -124,9 +128,11 @@ async def delete_custom_agent(
         return await custom_agent_controller.delete_agent(agent_id, user["user_id"])
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve)) from ve
-    except Exception as e:
-        logger.error(f"Error deleting custom agent: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+    except Exception:
+        logger.exception(
+            "Error deleting custom agent", agent_id=agent_id, user_id=user_id
+        )
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.put("/{agent_id}", response_model=Agent)
@@ -145,9 +151,11 @@ async def update_custom_agent(
         )
     except HTTPException as he:
         raise he
-    except Exception as e:
-        logger.error(f"Error updating custom agent: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+    except Exception:
+        logger.exception(
+            "Error updating custom agent", agent_id=agent_id, user_id=user_id
+        )
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{agent_id}", response_model=Agent)
@@ -164,9 +172,11 @@ async def get_custom_agent_info(
         return await custom_agent_controller.get_agent(agent_id, user["user_id"])
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve)) from ve
-    except Exception as e:
-        logger.error(f"Error retrieving custom agent info: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+    except Exception:
+        logger.exception(
+            "Error retrieving custom agent info", agent_id=agent_id, user_id=user_id
+        )
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{agent_id}/shares", response_model=AgentSharesResponse)
@@ -188,9 +198,11 @@ async def get_agent_shares(
         raise HTTPException(status_code=404, detail=str(ve)) from ve
     except HTTPException as he:
         raise he
-    except Exception as e:
-        logger.error(f"Error retrieving agent shares: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+    except Exception:
+        logger.exception(
+            "Error retrieving agent shares", agent_id=agent_id, user_id=user_id
+        )
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post("/auto/", response_model=Agent)
@@ -209,6 +221,6 @@ async def create_agent_from_prompt(
         )
     except HTTPException as he:
         raise he
-    except Exception as e:
-        logger.error(f"Error creating agent from prompt: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+    except Exception:
+        logger.exception("Error creating agent from prompt", user_id=user_id)
+        raise HTTPException(status_code=500, detail="Internal server error")

@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import os
 from typing import Any, Dict, Optional
 
@@ -7,6 +6,10 @@ from firecrawl import FirecrawlApp
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 
 class WebpageExtractorInput(BaseModel):
@@ -48,7 +51,7 @@ class WebpageExtractorTool:
                 }
             return content
         except Exception as e:
-            logging.exception(f"An unexpected error occurred: {str(e)}")
+            logger.exception("An unexpected error occurred")
             return {
                 "success": False,
                 "error": f"An unexpected error occurred: {str(e)}",
@@ -88,7 +91,7 @@ class WebpageExtractorTool:
 
 def webpage_extractor_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool]:
     if not os.getenv("FIRECRAWL_API_KEY"):
-        logging.warning(
+        logger.warning(
             "FIRECRAWL_API_KEY not set, webpage extractor tool will not be initialized"
         )
         return None

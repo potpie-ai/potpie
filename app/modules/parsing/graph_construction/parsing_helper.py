@@ -1,5 +1,4 @@
 import json
-import logging
 import os
 import shutil
 import tarfile
@@ -11,7 +10,7 @@ from urllib.parse import urlparse, urlunparse
 import requests
 import requests.auth
 from fastapi import HTTPException
-from git import GitCommandError, Repo
+from git import GitCommandError, InvalidGitRepositoryError, Repo
 from sqlalchemy.orm import Session
 
 from app.modules.code_provider.code_provider_service import CodeProviderService
@@ -19,8 +18,9 @@ from app.modules.parsing.graph_construction.parsing_schema import RepoDetails
 from app.modules.parsing.utils.repo_name_normalizer import normalize_repo_name
 from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class ParsingServiceError(Exception):
@@ -97,8 +97,8 @@ class ParseHelper:
                     )
             except HTTPException as he:
                 raise he
-            except Exception as e:
-                logger.error(f"Failed to fetch repository: {str(e)}")
+            except Exception:
+                logger.exception("Failed to fetch repository")
                 raise HTTPException(
                     status_code=404,
                     detail="Repository not found or inaccessible on GitHub",
@@ -365,10 +365,10 @@ class ParseHelper:
                         repo, branch, target_dir, user_id
                     )
 
-            logger.error(f"ParsingHelper: Failed to download repository archive: {e}")
+            logger.exception("ParsingHelper: Failed to download repository archive")
             raise ParsingFailedError("Failed to download repository archive") from e
         except requests.exceptions.RequestException as e:
-            logger.error(f"ParsingHelper: Error fetching tarball: {e}")
+            logger.exception("ParsingHelper: Error fetching tarball")
             raise ParsingFailedError("Failed to download repository archive") from e
         except Exception as e:
             logger.exception("ParsingHelper: Unexpected error in tarball download")
@@ -455,9 +455,10 @@ class ParseHelper:
                                     )
                                     shutil.copy2(file_path, dest_path)
                                     text_files_count += 1
-                                except (shutil.Error, OSError) as e:
-                                    logger.error(
-                                        f"ParsingHelper: Error copying file {file_path}: {e}"
+                                except (shutil.Error, OSError):
+                                    logger.exception(
+                                        "ParsingHelper: Error copying file",
+                                        file_path=file_path,
                                     )
 
                     logger.info(
@@ -466,8 +467,8 @@ class ParseHelper:
                     # Remove the temporary directory
                     try:
                         shutil.rmtree(temp_dir)
-                    except OSError as e:
-                        logger.error(f"Error removing temporary directory: {e}")
+                    except OSError:
+                        logger.exception("Error removing temporary directory")
                         pass
             except tarfile.TarError as e:
                 error_msg = f"Failed to extract tarball: {e}. The archive may be corrupted or invalid."
@@ -475,7 +476,7 @@ class ParseHelper:
                 raise ParsingFailedError(error_msg) from e
 
         except (IOError, tarfile.TarError, shutil.Error) as e:
-            logger.error(f"Error handling tarball: {e}")
+            logger.exception("Error handling tarball")
             raise ParsingFailedError("Failed to process repository archive") from e
         finally:
             if os.path.exists(tarball_path):
@@ -555,7 +556,7 @@ class ParseHelper:
 
         try:
             # Clone the repository to temporary directory with shallow clone for faster download
-            repo_obj = Repo.clone_from(
+            _ = Repo.clone_from(
                 clone_url_with_auth, temp_clone_dir, branch=branch, depth=1
             )
             logger.info(
@@ -621,7 +622,7 @@ class ParseHelper:
             return final_dir
 
         except GitCommandError as e:
-            logger.error(f"ParsingHelper: Git clone failed: {e}")
+            logger.exception("ParsingHelper: Git clone failed")
             # Clean up temp directory on error
             if os.path.exists(temp_clone_dir):
                 try:
@@ -630,7 +631,7 @@ class ParseHelper:
                     pass
             raise ParsingFailedError(f"Failed to clone repository: {e}") from e
         except Exception as e:
-            logger.error(f"ParsingHelper: Unexpected error during git clone: {e}")
+            logger.exception("ParsingHelper: Unexpected error during git clone")
             # Clean up temp directory on error
             if os.path.exists(temp_clone_dir):
                 try:
@@ -738,8 +739,8 @@ class ParseHelper:
                             f"Could not read file with any encoding: {file_path}"
                         )
                         continue
-        except (TypeError, FileNotFoundError, PermissionError) as e:
-            logger.error(f"Error accessing directory '{repo_dir}': {e}")
+        except (TypeError, FileNotFoundError, PermissionError):
+            logger.exception("Error accessing directory", repo_dir=repo_dir)
 
         # Determine the predominant language based on counts
         predominant_language = max(lang_count, key=lang_count.get)
@@ -842,7 +843,7 @@ class ParseHelper:
                     extracted_dir = await self.download_and_extract_tarball(
                         repo,
                         commit_id,
-                        os.getenv("PROJECT_PATH"),
+                        str(Path(os.getenv("PROJECT_PATH", "projects/")).absolute()),
                         auth,
                         repo_details,
                         user_id,
@@ -852,7 +853,7 @@ class ParseHelper:
                     extracted_dir = await self.download_and_extract_tarball(
                         repo,
                         branch,
-                        os.getenv("PROJECT_PATH"),
+                        str(Path(os.getenv("PROJECT_PATH", "projects/")).absolute()),
                         auth,
                         repo_details,
                         user_id,
@@ -975,8 +976,8 @@ class ParseHelper:
             logger.info(
                 f"Registered repo {repo_name}@{ref} with repo manager at {worktree_path}"
             )
-        except Exception as e:
-            logger.error(f"Error creating worktree for repo manager: {e}")
+        except Exception:
+            logger.exception("Error creating worktree for repo manager")
             raise
 
     def _initialize_base_repo(self, base_repo_path: Path, extracted_dir: str) -> Repo:
@@ -986,7 +987,6 @@ class ParseHelper:
         If the base repo doesn't exist, initialize it and copy the extracted repo.
         If it exists, return the existing repo.
         """
-        from git import Repo, InvalidGitRepositoryError
 
         # Check if base repo already exists and is a valid git repo
         if base_repo_path.exists():
@@ -1315,9 +1315,11 @@ class ParseHelper:
             )
 
             return is_up_to_date
-        except Exception as e:
-            logger.error(
-                f"check_commit_status: Error fetching latest commit for {repo_name}/{branch_name}: {e}",
-                exc_info=True,
+        except Exception:
+            logger.exception(
+                "check_commit_status: Error fetching latest commit",
+                repo_name=repo_name,
+                branch_name=branch_name,
+                project_id=project_id,
             )
             return False

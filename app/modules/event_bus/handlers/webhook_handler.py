@@ -4,14 +4,14 @@ Webhook Event Handler
 Handler for processing webhook events from integrations.
 """
 
-import logging
 from typing import Any, Dict
 
 from sqlalchemy.orm import Session
 
 from app.modules.integrations.integrations_service import IntegrationsService
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class WebhookEventHandler:

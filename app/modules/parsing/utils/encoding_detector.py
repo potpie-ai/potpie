@@ -5,10 +5,10 @@ This module provides utilities to detect and read files that may use
 different encodings (UTF-8, UTF-16, Windows-1252, etc.)
 """
 
-import logging
 from typing import Optional, Tuple
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class EncodingDetector:

@@ -1,5 +1,7 @@
-import logging
 import os
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 import random
 from typing import Dict, Any, List, Optional, Type
 from pydantic import BaseModel, Field
@@ -51,7 +53,7 @@ class CodeProviderCreateBranchTool:
             raise ValueError(
                 "GitHub token list is empty or not set in environment variables"
             )
-        logging.info(f"Initialized {len(cls.gh_token_list)} GitHub tokens")
+        logger.info(f"Initialized {len(cls.gh_token_list)} GitHub tokens")
 
     @classmethod
     def get_public_github_instance(cls):
@@ -63,17 +65,17 @@ class CodeProviderCreateBranchTool:
     def _get_github_client(self, repo_name: str) -> Github:
         """Get code provider client using provider factory."""
         try:
-            logging.info(f"[CREATE_BRANCH] Creating provider for repo: {repo_name}")
+            logger.info(f"[CREATE_BRANCH] Creating provider for repo: {repo_name}")
             provider = CodeProviderFactory.create_provider_with_fallback(repo_name)
-            logging.info(
+            logger.info(
                 f"[CREATE_BRANCH] Provider created successfully, type: {type(provider).__name__}"
             )
-            logging.info(
+            logger.info(
                 f"[CREATE_BRANCH] Client object: {type(provider.client).__name__}"
             )
             return provider.client
         except Exception as e:
-            logging.error(
+            logger.error(
                 f"[CREATE_BRANCH] Failed to get client: {type(e).__name__}: {str(e)}",
                 exc_info=True,
             )
@@ -98,7 +100,7 @@ class CodeProviderCreateBranchTool:
         Returns:
             Dict containing the result of the branch creation operation
         """
-        logging.info(
+        logger.info(
             f"[CREATE_BRANCH] Starting branch creation: repo={repo_name}, base={base_branch}, new={new_branch_name}"
         )
         try:
@@ -123,24 +125,24 @@ class CodeProviderCreateBranchTool:
             )
             g = provider.client
 
-            logging.info(
+            logger.info(
                 f"[CREATE_BRANCH] Provider type: {provider_type}, Original repo: {repo_name}, Normalized: {normalized_input}, Actual repo for API: {actual_repo_name}"
             )
 
             repo = g.get_repo(actual_repo_name)
-            logging.info(f"[CREATE_BRANCH] Successfully got repo object: {repo.name}")
+            logger.info(f"[CREATE_BRANCH] Successfully got repo object: {repo.name}")
 
             # Get the base branch reference
             try:
-                logging.info(
+                logger.info(
                     f"[CREATE_BRANCH] Attempting to get ref for base branch: heads/{base_branch}"
                 )
                 base_ref = repo.get_git_ref(f"heads/{base_branch}")
-                logging.info(
+                logger.info(
                     f"[CREATE_BRANCH] Successfully got base branch ref: {base_ref.ref}, sha: {base_ref.object.sha}"
                 )
             except GithubException as e:
-                logging.error(
+                logger.error(
                     f"[CREATE_BRANCH] Failed to get base branch '{base_branch}': status={e.status}, data={e.data}, message={str(e)}"
                 )
                 return {
@@ -152,11 +154,11 @@ class CodeProviderCreateBranchTool:
 
             # Check if the new branch already exists
             try:
-                logging.info(
+                logger.info(
                     f"[CREATE_BRANCH] Checking if new branch already exists: heads/{new_branch_name}"
                 )
                 repo.get_git_ref(f"heads/{new_branch_name}")
-                logging.warning(
+                logger.warning(
                     f"[CREATE_BRANCH] Branch '{new_branch_name}' already exists"
                 )
                 return {
@@ -166,7 +168,7 @@ class CodeProviderCreateBranchTool:
             except GithubException as e:
                 if e.status != 404:
                     # If error is not "Not Found", it's an unexpected error
-                    logging.error(
+                    logger.error(
                         f"[CREATE_BRANCH] Unexpected error checking branch existence: status={e.status}, data={e.data}"
                     )
                     return {
@@ -175,18 +177,18 @@ class CodeProviderCreateBranchTool:
                         "status_code": e.status,
                     }
                 # 404 means the branch doesn't exist, which is what we want
-                logging.info(
+                logger.info(
                     f"[CREATE_BRANCH] Branch '{new_branch_name}' does not exist (404), proceeding with creation"
                 )
 
             # Create the new branch
-            logging.info(
+            logger.info(
                 f"[CREATE_BRANCH] Creating new branch: refs/heads/{new_branch_name} from sha: {base_ref.object.sha}"
             )
             new_ref = repo.create_git_ref(
                 ref=f"refs/heads/{new_branch_name}", sha=base_ref.object.sha
             )
-            logging.info(
+            logger.info(
                 f"[CREATE_BRANCH] Successfully created branch: {new_ref.ref}, sha: {new_ref.object.sha}"
             )
 
@@ -216,11 +218,11 @@ class CodeProviderCreateBranchTool:
                 "sha": new_ref.object.sha,
                 "url": branch_url,
             }
-            logging.info(f"[CREATE_BRANCH] Returning success result: {result}")
+            logger.info(f"[CREATE_BRANCH] Returning success result: {result}")
             return result
 
         except GithubException as e:
-            logging.error(
+            logger.error(
                 f"[CREATE_BRANCH] GithubException caught: status={e.status}, data={e.data}, message={str(e)}"
             )
             return {
@@ -230,7 +232,7 @@ class CodeProviderCreateBranchTool:
                 "data": e.data if hasattr(e, "data") else None,
             }
         except Exception as e:
-            logging.error(
+            logger.error(
                 f"[CREATE_BRANCH] Unexpected exception: {type(e).__name__}: {str(e)}",
                 exc_info=True,
             )
@@ -256,7 +258,7 @@ def code_provider_create_branch_tool(
     from app.modules.code_provider.provider_factory import has_code_provider_credentials
 
     if not has_code_provider_credentials():
-        logging.warning(
+        logger.warning(
             "No code provider credentials configured. Please set CODE_PROVIDER_TOKEN, "
             "GH_TOKEN_LIST, GITHUB_APP_ID, or CODE_PROVIDER_USERNAME/PASSWORD."
         )

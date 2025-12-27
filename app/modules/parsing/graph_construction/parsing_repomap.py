@@ -1,4 +1,3 @@
-import logging
 import math
 import os
 import warnings
@@ -11,12 +10,16 @@ from pygments.lexers import guess_lexer_for_filename
 from pygments.token import Token
 from pygments.util import ClassNotFound
 from tqdm import tqdm
-from tree_sitter_languages import get_language, get_parser
+from tree_sitter import Query, QueryCursor
+from tree_sitter_language_pack import get_language, get_parser
 
 from app.core.database import get_db
 from app.modules.parsing.graph_construction.parsing_helper import (  # noqa: E402
     ParseHelper,
 )
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 # tree_sitter is throwing a FutureWarning
 warnings.simplefilter("ignore", category=FutureWarning)
@@ -157,9 +160,23 @@ class RepoMap:
         tree = parser.parse(bytes(code, "utf-8"))
 
         # Run the tags queries
-        query = language.query(query_scm)
-        captures = query.captures(tree.root_node)
-        captures = list(captures)
+        try:
+            query = Query(language, query_scm)
+            cursor = QueryCursor(query)
+        except Exception as e:
+            logger.warning(f"Failed to create query for {fname}: {e}")
+            return
+
+        captures = []
+        try:
+            for _, capture_dict in cursor.matches(tree.root_node):
+                for capture_name, nodes in capture_dict.items():
+                    for node in nodes:
+                        captures.append((node, capture_name))
+        except Exception as e:
+            logger.warning(f"Failed to execute query matches for {fname}: {e}")
+            return
+
         saw = set()
 
         for node, tag in captures:
@@ -242,10 +259,22 @@ class RepoMap:
         tree = parser.parse(bytes(code, "utf-8"))
 
         # Run the tags queries
-        query = language.query(query_scm)
-        captures = query.captures(tree.root_node)
+        try:
+            query = Query(language, query_scm)
+            cursor = QueryCursor(query)
+        except Exception as e:
+            logger.warning(f"Failed to create query for {fname}: {e}")
+            return
 
-        captures = list(captures)
+        captures = []
+        try:
+            for _, capture_dict in cursor.matches(tree.root_node):
+                for capture_name, nodes in capture_dict.items():
+                    for node in nodes:
+                        captures.append((node, capture_name))
+        except Exception as e:
+            logger.warning(f"Failed to execute query matches for {fname}: {e}")
+            return
 
         saw = set()
         for node, tag in captures:
@@ -596,7 +625,7 @@ class RepoMap:
                 if not self.parse_helper.is_text_file(file_path):
                     continue
 
-                logging.info(f"\nProcessing file: {rel_path}")
+                logger.info(f"\nProcessing file: {rel_path}")
 
                 # Add file node
                 file_node_name = rel_path

@@ -34,11 +34,37 @@ What gets traced:
 import os
 from typing import Optional
 from app.modules.utils.logger import setup_logger
+import httpx
 
 logger = setup_logger(__name__)
 
 # Global flag to track if Phoenix is initialized
 _PHOENIX_INITIALIZED = False
+
+
+def check_phoenix_health(endpoint: str, timeout: float = 2.0) -> bool:
+    """
+    Check if Phoenix is running and reachable.
+
+    Args:
+        endpoint: Phoenix endpoint URL (e.g., http://localhost:6006)
+        timeout: Timeout in seconds for the health check
+
+    Returns:
+        bool: True if Phoenix is running and reachable, False otherwise
+    """
+    try:
+        # Try to reach Phoenix's healthcheck endpoint or root
+        # Phoenix typically responds on its root endpoint
+        response = httpx.get(endpoint, timeout=timeout, follow_redirects=True)
+        return response.status_code in (200, 301, 302, 307, 308)
+    except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError):
+        # Connection failed - Phoenix is not running
+        return False
+    except Exception as e:
+        # Other errors - log but treat as not running
+        logger.debug("Phoenix health check failed", error=str(e))
+        return False
 
 
 def initialize_phoenix_tracing(
@@ -106,17 +132,22 @@ def initialize_phoenix_tracing(
         # Get the environment/source from ENV variable (defaults to "local" if not set)
         source = os.getenv("ENV", "local")
 
-        logger.info(
-            "Initializing Phoenix tracing:\n"
-            "  Project: %s\n"
-            "  Endpoint: %s\n"
-            "  Source: %s\n"
-            "  Auto-instrument: %s",
-            project_name,
-            endpoint,
-            source,
-            auto_instrument,
+        logger.debug(
+            "Initializing Phoenix tracing",
+            project=project_name,
+            endpoint=endpoint,
+            source=source,
+            auto_instrument=auto_instrument,
         )
+
+        # Check if Phoenix is actually running
+        if not check_phoenix_health(endpoint):
+            logger.warning(
+                "Phoenix is not running or not reachable. "
+                "Tracing is disabled. To enable tracing, start Phoenix with: phoenix serve",
+                endpoint=endpoint,
+            )
+            return False
 
         # STEP 1: Create and set up the tracer provider with resource attributes
         resource = Resource.create(
@@ -141,35 +172,51 @@ def initialize_phoenix_tracing(
         tracer_provider.add_span_processor(OpenInferenceSpanProcessor())
         # SimpleSpanProcessor to export spans to Phoenix
         tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
-        logger.info("✅ Added OpenInference span processor for Pydantic AI tracing")
+        logger.debug("Added OpenInference span processor for Pydantic AI tracing")
 
         # STEP 4: Conditionally instrument LiteLLM (for underlying LLM API calls)
         if auto_instrument:
             litellm_instrumentor = LiteLLMInstrumentor()
             litellm_instrumentor.instrument(tracer_provider=tracer_provider)
-            logger.info("✅ Instrumented LiteLLM for Phoenix tracing")
+            logger.debug("Instrumented LiteLLM for Phoenix tracing")
         else:
-            logger.debug("Skipped LiteLLM instrumentation: auto_instrument=False")
+            logger.debug("Skipped LiteLLM instrumentation", auto_instrument=False)
 
-        _PHOENIX_INITIALIZED = True
+        # STEP 5: Verify we can actually send traces by testing the exporter
+        try:
+            # Force a flush to verify connection works
+            tracer_provider.force_flush(timeout_millis=1000)
+            _PHOENIX_INITIALIZED = True
 
-        logger.info(
-            "✅ Phoenix tracing initialized successfully!\n" "   View traces at: %s",
-            endpoint,
-        )
+            logger.info(
+                "Phoenix tracing initialized successfully. View traces at: {}",
+                endpoint,
+            )
+        except Exception as e:
+            logger.warning(
+                "Phoenix tracing setup completed but cannot send traces. "
+                "Phoenix may not be running. Start it with: phoenix serve",
+                endpoint=endpoint,
+                error=str(e),
+            )
+            return False
 
         return True
 
     except ImportError as e:
         logger.warning(
-            "Phoenix tracing not available (missing dependencies): %s\n"
-            "Install with: pip install arize-phoenix arize-phoenix-otel openinference-instrumentation-pydantic-ai openinference-instrumentation-litellm",
-            e,
+            "Phoenix tracing not available (missing dependencies). "
+            "Install with: pip install arize-phoenix arize-phoenix-otel "
+            "openinference-instrumentation-pydantic-ai openinference-instrumentation-litellm",
+            error=str(e),
         )
         return False
 
     except Exception as e:
-        logger.error("Failed to initialize Phoenix tracing: %s", e, exc_info=True)
+        logger.warning(
+            "Failed to initialize Phoenix tracing (non-fatal)",
+            error=str(e),
+        )
         return False
 
 
@@ -230,4 +277,4 @@ def shutdown_phoenix_tracing():
         _PHOENIX_INITIALIZED = False
 
     except Exception as e:
-        logger.error("Error shutting down Phoenix tracing: %s", e)
+        logger.warning("Error shutting down Phoenix tracing", error=str(e))

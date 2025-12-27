@@ -3,7 +3,9 @@
 Allows agents to create new Confluence pages in a space.
 """
 
-import logging
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 import asyncio
 from typing import Any, Dict, Optional
 from langchain_core.tools import StructuredTool
@@ -158,7 +160,7 @@ class CreateConfluencePageTool:
                 await client.close()
 
         except Exception as e:
-            logging.error(f"Error creating Confluence page: {str(e)}")
+            logger.error(f"Error creating Confluence page: {str(e)}")
             return {"success": False, "error": str(e)}
 
     def run(

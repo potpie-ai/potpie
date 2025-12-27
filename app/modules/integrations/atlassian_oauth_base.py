@@ -15,8 +15,11 @@ from abc import ABC, abstractmethod
 from starlette.config import Config
 import httpx
 import urllib.parse
-import logging
 import time
+from app.modules.utils.logger import setup_logger
+from app.modules.integrations import hash_user_id
+
+logger = setup_logger(__name__)
 
 
 class AtlassianOAuthStore:
@@ -73,7 +76,7 @@ class AtlassianOAuthBase(ABC):
         )
 
         if not self.client_id or not self.client_secret:
-            logging.warning(
+            logger.warning(
                 f"{self.product_name.capitalize()} OAuth credentials not configured"
             )
 
@@ -147,7 +150,7 @@ class AtlassianOAuthBase(ABC):
         query_string = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
         auth_url = f"{self.AUTH_BASE_URL}/authorize?{query_string}"
 
-        logging.info(
+        logger.info(
             f"Generated {self.product_name.capitalize()} authorization URL: %s",
             auth_url,
         )
@@ -180,7 +183,7 @@ class AtlassianOAuthBase(ABC):
             "redirect_uri": redirect_uri,
         }
 
-        logging.info(
+        logger.info(
             f"Calling {self.product_name.capitalize()} token endpoint at %s", token_url
         )
 
@@ -192,7 +195,7 @@ class AtlassianOAuthBase(ABC):
             )
 
         if response.status_code != 200:
-            logging.error(
+            logger.error(
                 f"{self.product_name.capitalize()} token exchange failed: %s - %s",
                 response.status_code,
                 response.text,
@@ -213,7 +216,7 @@ class AtlassianOAuthBase(ABC):
             "expires_at": expires_at,
         }
 
-        logging.info(
+        logger.info(
             f"Received {self.product_name.capitalize()} tokens: %s", list(tokens.keys())
         )
         return tokens
@@ -241,7 +244,7 @@ class AtlassianOAuthBase(ABC):
             "refresh_token": refresh_token,
         }
 
-        logging.info(f"Refreshing {self.product_name.capitalize()} access token")
+        logger.info(f"Refreshing {self.product_name.capitalize()} access token")
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
@@ -251,7 +254,7 @@ class AtlassianOAuthBase(ABC):
             )
 
         if response.status_code != 200:
-            logging.error(
+            logger.error(
                 f"{self.product_name.capitalize()} token refresh failed: %s - %s",
                 response.status_code,
                 response.text,
@@ -272,7 +275,7 @@ class AtlassianOAuthBase(ABC):
             "expires_at": expires_at,
         }
 
-        logging.info(
+        logger.info(
             f"Successfully refreshed {self.product_name.capitalize()} access token"
         )
         return tokens
@@ -297,7 +300,7 @@ class AtlassianOAuthBase(ABC):
             response = await client.get(url, headers=headers)
 
         if response.status_code != 200:
-            logging.error(
+            logger.error(
                 "Failed to fetch accessible resources: %s - %s",
                 response.status_code,
                 response.text,
@@ -325,7 +328,7 @@ class AtlassianOAuthBase(ABC):
         error_description = request.query_params.get("error_description")
 
         if error:
-            logging.error(
+            logger.error(
                 f"{self.product_name.capitalize()} OAuth returned error: %s - %s",
                 error,
                 error_description,
@@ -338,7 +341,7 @@ class AtlassianOAuthBase(ABC):
             }
 
         if not code:
-            logging.error(
+            logger.error(
                 f"{self.product_name.capitalize()} OAuth callback missing authorization code"
             )
             return {
@@ -347,7 +350,7 @@ class AtlassianOAuthBase(ABC):
                 "user_id": user_id or "unknown",
             }
 
-        logging.info(
+        logger.info(
             f"{self.product_name.capitalize()} OAuth callback received code for state %s",
             state,
         )
@@ -367,14 +370,13 @@ class AtlassianOAuthBase(ABC):
         """Remove cached tokens for a user"""
         try:
             self.token_store.remove_tokens(user_id)
-            logging.info(
+            logger.info(
                 f"Revoked {self.product_name.capitalize()} OAuth tokens for user %s",
-                user_id,
+                hash_user_id(user_id),
             )
             return True
-        except Exception as exc:
-            logging.error(
-                f"Failed to revoke {self.product_name.capitalize()} OAuth tokens: %s",
-                exc,
+        except Exception:
+            logger.exception(
+                f"Failed to revoke {self.product_name.capitalize()} OAuth tokens"
             )
             return False

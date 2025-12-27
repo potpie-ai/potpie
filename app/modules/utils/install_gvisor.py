@@ -16,11 +16,12 @@ import sys
 import platform
 import subprocess
 import shutil
-import logging
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger(__name__)
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 
 # gVisor release URL base
 GVISOR_RELEASE_BASE = "https://storage.googleapis.com/gvisor/releases/release/latest"
@@ -264,8 +265,8 @@ def install_gvisor(force: bool = False) -> bool:
             logger.error("Installation completed but verification failed")
             return False
 
-    except Exception as e:
-        logger.error(f"Error during gVisor installation: {e}", exc_info=True)
+    except Exception:
+        logger.exception("Error during gVisor installation")
         if temp_path.exists():
             temp_path.unlink()
         return False
@@ -294,10 +295,9 @@ def get_runsc_path() -> Optional[Path]:
 
 def main():
     """Main entry point for command-line usage."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+    from app.modules.utils.logger import configure_logging
+
+    configure_logging(level="INFO")
 
     force = "--force" in sys.argv
 

@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from typing import Any, Dict
 
 from langchain_core.tools import StructuredTool
@@ -10,8 +9,9 @@ from sqlalchemy.orm import Session
 from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_model import Project
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class GetCodeFromNodeIdInput(BaseModel):
@@ -73,9 +73,14 @@ class GetCodeFromNodeIdTool:
                 )
 
             return self._process_result(node_data, project, node_id)
-        except Exception as e:
-            logger.error(f"Unexpected error in GetCodeFromNodeIdTool: {str(e)}")
-            return {"error": f"An unexpected error occurred: {str(e)}"}
+        except Exception:
+            logger.exception(
+                "Unexpected error in GetCodeFromNodeIdTool",
+                project_id=project_id,
+                node_id=node_id,
+                user_id=self.user_id,
+            )
+            return {"error": "An unexpected error occurred"}
 
     def _get_node_data(self, project_id: str, node_id: str) -> Dict[str, Any]:
         query = """

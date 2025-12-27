@@ -1,10 +1,10 @@
-import logging
 import asyncio
 from celery import Task
 from contextlib import asynccontextmanager
 from app.core.database import SessionLocal
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class BaseTask(Task):
@@ -37,18 +37,16 @@ class BaseTask(Task):
         except (AttributeError, TypeError):
             task_id = "test"
 
-        logger.debug(f"[Task {task_id}] Creating fresh async DB connection")
+        logger.debug("Creating fresh async DB connection", task_id=task_id)
         async_session, engine = create_celery_async_session()
 
         try:
             yield async_session
             logger.debug(
-                f"[Task {task_id}] Async DB session operation completed successfully"
+                "Async DB session operation completed successfully", task_id=task_id
             )
-        except Exception as e:
-            logger.error(
-                f"[Task {task_id}] Error during async DB operation: {e}", exc_info=True
-            )
+        except Exception:
+            logger.exception("Error during async DB operation", task_id=task_id)
             raise
         finally:
             try:
@@ -56,13 +54,10 @@ class BaseTask(Task):
                 if engine is not None:
                     await engine.dispose()
                 logger.debug(
-                    f"[Task {task_id}] Async DB connection closed and engine disposed"
+                    "Async DB connection closed and engine disposed", task_id=task_id
                 )
-            except Exception as cleanup_error:
-                logger.error(
-                    f"[Task {task_id}] Error during connection cleanup: {cleanup_error}",
-                    exc_info=True,
-                )
+            except Exception:
+                logger.exception("Error during connection cleanup", task_id=task_id)
 
     def _get_event_loop(self):
         """
@@ -84,7 +79,7 @@ class BaseTask(Task):
     def on_success(self, retval, task_id, args, kwargs):
         try:
             status = "cancelled" if retval is False else "completed successfully"
-            logger.info(f"Task {task_id} {status}")
+            logger.info("Task completed", task_id=task_id, status=status)
         finally:
             if self._db:
                 self._db.close()  # Returns to pool
@@ -92,11 +87,17 @@ class BaseTask(Task):
 
     def on_failure(self, exc, task_id, args, kwargs, einfo):
         """Called on task failure."""
-        logger.error(f"Task {task_id} failed: {exc}")
+        # exc is already an exception object from on_failure
+        logger.error(
+            "Task failed",
+            task_id=task_id,
+            error=str(exc),
+            exc_info=einfo.exc_info if einfo else None,
+        )
         if self._db:
             self._db.close()
             self._db = None
 
     def on_retry(self, exc, task_id, args, kwargs, einfo):
         """Called on task retry."""
-        logger.warning(f"Task {task_id} retrying: {exc}")
+        logger.warning("Task retrying", task_id=task_id, error=str(exc))

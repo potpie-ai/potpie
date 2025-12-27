@@ -3,7 +3,9 @@
 Allows agents to fetch content of a specific Confluence page by ID.
 """
 
-import logging
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 import asyncio
 from typing import Any, Dict
 from langchain_core.tools import StructuredTool
@@ -165,7 +167,7 @@ class GetConfluencePageTool:
                 await client.close()
 
         except Exception as e:
-            logging.error(f"Error getting Confluence page: {str(e)}")
+            logger.exception(f"Error getting Confluence page: {str(e)}")
             return {"success": False, "error": str(e)}
 
     def run(

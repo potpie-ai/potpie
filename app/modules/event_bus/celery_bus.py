@@ -4,15 +4,15 @@ Celery-based Event Bus Implementation
 Implementation of EventBusInterface using Celery and Redis.
 """
 
-import logging
 from typing import Any, Dict, Optional
 
 from celery import Celery
 
 from .interfaces import EventBusInterface
 from .schemas import CustomEvent, EventMetadata, WebhookEvent
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class CeleryEventBus(EventBusInterface):

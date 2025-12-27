@@ -6,9 +6,9 @@ from sqlalchemy.orm import selectinload
 from app.core.base_store import BaseStore
 from .conversation_model import Conversation
 from ..message.message_model import Message, MessageType
-import logging
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class StoreError(Exception):

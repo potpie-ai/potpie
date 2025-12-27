@@ -1,6 +1,8 @@
 import asyncio
-import logging
 import os
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 import random
 from typing import Any, Dict, List, Optional
 
@@ -55,7 +57,7 @@ class CodeProviderTool:
             raise ValueError(
                 "GitHub token list is empty or not set in environment variables"
             )
-        logging.info(f"Initialized {len(cls.gh_token_list)} GitHub tokens")
+        logger.info(f"Initialized {len(cls.gh_token_list)} GitHub tokens")
 
     def __init__(self, sql_db: Session, user_id: str):
         self.sql_db = sql_db
@@ -92,7 +94,7 @@ class CodeProviderTool:
                 }
             return content
         except Exception as e:
-            logging.exception(f"An unexpected error occurred: {str(e)}")
+            logger.exception(f"An unexpected error occurred: {str(e)}")
             return {
                 "success": False,
                 "error": f"An unexpected error occurred: {str(e)}",
@@ -113,7 +115,7 @@ class CodeProviderTool:
             provider = CodeProviderFactory.create_provider()
             return provider.client
         except Exception as e:
-            logging.error(f"Failed to get GitHub client: {str(e)}")
+            logger.error(f"Failed to get GitHub client: {str(e)}")
             raise Exception(f"Repository {repo_name} not found or inaccessible")
 
     def _fetch_github_content(
@@ -136,7 +138,7 @@ class CodeProviderTool:
             actual_repo_name = get_actual_repo_name_for_lookup(
                 normalized_input, provider_type
             )
-            logging.info(
+            logger.info(
                 f"[CODE_PROVIDER_TOOL] Provider type: {provider_type}, Original repo: {repo_name}, Actual repo for API: {actual_repo_name}"
             )
 
@@ -220,7 +222,7 @@ class CodeProviderTool:
                     }
 
         except Exception as e:
-            logging.error(f"Error fetching GitHub content: {str(e)}")
+            logger.error(f"Error fetching GitHub content: {str(e)}")
             return None
 
 
@@ -228,7 +230,7 @@ def code_provider_tool(sql_db: Session, user_id: str) -> Optional[StructuredTool
     from app.modules.code_provider.provider_factory import has_code_provider_credentials
 
     if not has_code_provider_credentials():
-        logging.warning(
+        logger.warning(
             "No code provider credentials configured. Please set CODE_PROVIDER_TOKEN, "
             "GH_TOKEN_LIST, GITHUB_APP_ID, or CODE_PROVIDER_USERNAME/PASSWORD."
         )

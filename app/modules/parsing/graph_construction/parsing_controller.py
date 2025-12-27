@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import os
 from asyncio import create_task
 from typing import Any, Dict
@@ -27,8 +26,9 @@ from app.modules.utils.posthog_helper import PostHogClient
 from app.modules.conversations.conversation.conversation_model import Conversation
 from app.modules.conversations.conversation.conversation_model import Visibility
 from app.modules.projects.projects_model import Project
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 load_dotenv(override=True)
 

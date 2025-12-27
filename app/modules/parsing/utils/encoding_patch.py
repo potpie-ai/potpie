@@ -5,9 +5,9 @@ This module patches the file reading operations in blar_graph to use
 multi-encoding detection instead of hardcoded UTF-8.
 """
 
-import logging
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 # Store original builtin open
 _original_open = open

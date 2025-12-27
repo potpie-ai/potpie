@@ -1,5 +1,4 @@
 import json
-import logging
 from typing import Any, AsyncGenerator, Generator, List, Optional, Union, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -9,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db, get_async_db
 from app.modules.auth.auth_service import AuthService
+from app.modules.utils.logger import setup_logger, log_context
 from app.modules.conversations.access.access_schema import (
     RemoveAccessRequest,
     ShareChatRequest,
@@ -39,7 +39,7 @@ from .session.session_service import SessionService
 from app.modules.users.user_schema import UserConversationListResponse
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 def _normalize_run_id(
@@ -245,149 +245,161 @@ class ConversationAPI:
 
         user_id = user["user_id"]
         user_email = user["email"]
-        checked = await UsageService.check_usage_limit(user_id)
-        if not checked:
-            raise HTTPException(
-                status_code=402,
-                detail="Subscription required to create a conversation.",
+
+        # Set up logging context with domain IDs
+        with log_context(conversation_id=conversation_id, user_id=user_id):
+            checked = await UsageService.check_usage_limit(user_id)
+            if not checked:
+                raise HTTPException(
+                    status_code=402,
+                    detail="Subscription required to create a conversation.",
+                )
+
+            # Process images if present
+            attachment_ids = []
+            if images:
+                media_service = MediaService(db)
+                for _i, image in enumerate(images):
+                    # Check if image has content by checking filename and content_type
+                    if image.filename and image.content_type:
+                        try:
+                            # Read file data first and pass as bytes to avoid UploadFile issues
+                            file_content = await image.read()
+                            upload_result = await media_service.upload_image(
+                                file=file_content,
+                                file_name=image.filename,
+                                mime_type=image.content_type,
+                                message_id=None,  # Will be linked after message creation
+                            )
+                            attachment_ids.append(upload_result.id)
+                        except Exception as e:
+                            logger.exception(
+                                "Failed to upload image",
+                                filename=image.filename,
+                                conversation_id=conversation_id,
+                                user_id=user_id,
+                            )
+                            # Clean up any successfully uploaded attachments
+                            for uploaded_id in attachment_ids:
+                                try:
+                                    await media_service.delete_attachment(uploaded_id)
+                                except Exception as cleanup_exc:
+                                    logger.warning(
+                                        f"Failed to cleanup attachment {uploaded_id} after image upload error: {str(cleanup_exc)}",
+                                        conversation_id=conversation_id,
+                                        user_id=user_id,
+                                        attachment_id=uploaded_id,
+                                    )
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"Failed to upload image {image.filename}: {str(e)}",
+                            ) from e
+
+            # Parse node_ids if provided
+            parsed_node_ids = None
+            if node_ids:
+                try:
+                    parsed_node_ids = json.loads(node_ids)
+                except json.JSONDecodeError as err:
+                    raise HTTPException(
+                        status_code=400, detail="Invalid node_ids format"
+                    ) from err
+
+            # Create message request
+            message = MessageRequest(
+                content=content,
+                node_ids=parsed_node_ids,
+                attachment_ids=attachment_ids if attachment_ids else None,
             )
 
-        # Process images if present
-        attachment_ids = []
-        if images:
-            media_service = MediaService(db)
-            for i, image in enumerate(images):
-                # Check if image has content by checking filename and content_type
-                if image.filename and image.content_type:
-                    try:
-                        # Read file data first and pass as bytes to avoid UploadFile issues
-                        file_content = await image.read()
-                        upload_result = await media_service.upload_image(
-                            file=file_content,
-                            file_name=image.filename,
-                            mime_type=image.content_type,
-                            message_id=None,  # Will be linked after message creation
-                        )
-                        attachment_ids.append(upload_result.id)
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to upload image {image.filename}: {str(e)}"
-                        )
-                        # Clean up any successfully uploaded attachments
-                        for uploaded_id in attachment_ids:
-                            try:
-                                await media_service.delete_attachment(uploaded_id)
-                            except:
-                                pass
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"Failed to upload image {image.filename}: {str(e)}",
-                        )
+            controller = ConversationController(db, async_db, user_id, user_email)
 
-        # Parse node_ids if provided
-        parsed_node_ids = None
-        if node_ids:
-            try:
-                parsed_node_ids = json.loads(node_ids)
-            except json.JSONDecodeError:
-                raise HTTPException(status_code=400, detail="Invalid node_ids format")
+            if not stream:
+                # Non-streaming behavior unchanged
+                message_stream = controller.post_message(
+                    conversation_id, message, stream
+                )
+                async for chunk in message_stream:
+                    return chunk
 
-        # Create message request
-        message = MessageRequest(
-            content=content,
-            node_ids=parsed_node_ids,
-            attachment_ids=attachment_ids if attachment_ids else None,
-        )
-
-        controller = ConversationController(db, async_db, user_id, user_email)
-
-        if not stream:
-            # Non-streaming behavior unchanged
-            message_stream = controller.post_message(conversation_id, message, stream)
-            async for chunk in message_stream:
-                return chunk
-
-        # Streaming with session management
-        run_id = _normalize_run_id(
-            conversation_id, user_id, session_id, prev_human_message_id
-        )
-
-        # For fresh requests without cursor, ensure we get a unique stream
-        # by checking if the stream already exists and modifying run_id if needed
-        if not cursor:
-            from app.modules.conversations.utils.redis_streaming import (
-                RedisStreamManager,
+            # Streaming with session management
+            run_id = _normalize_run_id(
+                conversation_id, user_id, session_id, prev_human_message_id
             )
 
+            # For fresh requests without cursor, ensure we get a unique stream
+            # by checking if the stream already exists and modifying run_id if needed
+            if not cursor:
+                from app.modules.conversations.utils.redis_streaming import (
+                    RedisStreamManager,
+                )
+
+                redis_manager = RedisStreamManager()
+                original_run_id = run_id
+                counter = 1
+
+                # Find a unique run_id if the original already has an active stream
+                while redis_manager.redis_client.exists(
+                    redis_manager.stream_key(conversation_id, run_id)
+                ):
+                    run_id = f"{original_run_id}-{counter}"
+                    counter += 1
+
+            # Start background agent execution (non-blocking)
+            from app.celery.tasks.agent_tasks import execute_agent_background
+
+            # Use parsed node_ids
+            node_ids_list = parsed_node_ids or []
+
+            # Set initial "queued" status before starting the task
             redis_manager = RedisStreamManager()
-            original_run_id = run_id
-            counter = 1
+            redis_manager.set_task_status(conversation_id, run_id, "queued")
 
-            # Find a unique run_id if the original already has an active stream
-            while redis_manager.redis_client.exists(
-                redis_manager.stream_key(conversation_id, run_id)
-            ):
-                run_id = f"{original_run_id}-{counter}"
-                counter += 1
-
-        # Start background agent execution (non-blocking)
-        from app.celery.tasks.agent_tasks import execute_agent_background
-
-        # Extract agent_id from conversation (will be handled in background task)
-        agent_id = message.agent_id if hasattr(message, "agent_id") else None
-
-        # Use parsed node_ids
-        node_ids_list = parsed_node_ids or []
-
-        # Set initial "queued" status before starting the task
-        redis_manager = RedisStreamManager()
-        redis_manager.set_task_status(conversation_id, run_id, "queued")
-
-        # Publish a queued event so the client knows the task is accepted
-        redis_manager.publish_event(
-            conversation_id,
-            run_id,
-            "queued",
-            {
-                "status": "queued",
-                "message": "Task queued for processing",
-            },
-        )
-
-        # Start background task
-        task_result = execute_agent_background.delay(
-            conversation_id=conversation_id,
-            run_id=run_id,
-            user_id=user_id,
-            query=content,
-            agent_id=agent_id,
-            node_ids=node_ids_list,
-            attachment_ids=attachment_ids or [],
-        )
-
-        # Store the Celery task ID for later revocation
-        redis_manager.set_task_id(conversation_id, run_id, task_result.id)
-        logger.info(
-            f"Started agent task {task_result.id} for {conversation_id}:{run_id}"
-        )
-
-        # Wait for background task to start (with health check)
-        # Increased timeout to 30 seconds to handle queued tasks
-        task_started = redis_manager.wait_for_task_start(
-            conversation_id, run_id, timeout=30
-        )
-
-        if not task_started:
-            logger.warning(
-                f"Background task failed to start within 30s for {conversation_id}:{run_id} - may still be queued"
+            # Publish a queued event so the client knows the task is accepted
+            redis_manager.publish_event(
+                conversation_id,
+                run_id,
+                "queued",
+                {
+                    "status": "queued",
+                    "message": "Task queued for processing",
+                },
             )
-            # Don't fail - the stream consumer will wait up to 120 seconds
 
-        # Return Redis stream response
-        return StreamingResponse(
-            redis_stream_generator(conversation_id, run_id, cursor),
-            media_type="text/event-stream",
-        )
+            # Start background task
+            task_result = execute_agent_background.delay(
+                conversation_id=conversation_id,
+                run_id=run_id,
+                user_id=user_id,
+                query=content,
+                agent_id=None,
+                node_ids=node_ids_list,
+                attachment_ids=attachment_ids or [],
+            )
+
+            # Store the Celery task ID for later revocation
+            redis_manager.set_task_id(conversation_id, run_id, task_result.id)
+            logger.info(
+                f"Started agent task {task_result.id} for {conversation_id}:{run_id}"
+            )
+
+            # Wait for background task to start (with health check)
+            # Increased timeout to 30 seconds to handle queued tasks
+            task_started = redis_manager.wait_for_task_start(
+                conversation_id, run_id, timeout=30
+            )
+
+            if not task_started:
+                logger.warning(
+                    f"Background task failed to start within 30s for {conversation_id}:{run_id} - may still be queued"
+                )
+                # Don't fail - the stream consumer will wait up to 120 seconds
+
+            # Return Redis stream response
+            return StreamingResponse(
+                redis_stream_generator(conversation_id, run_id, cursor),
+                media_type="text/event-stream",
+            )
 
     @staticmethod
     @router.post("/conversations/{conversation_id}/regenerate/")

@@ -1,4 +1,3 @@
-import logging
 import time
 from typing import Union
 from app.modules.conversations.utils.redis_streaming import RedisStreamManager
@@ -8,8 +7,9 @@ from app.modules.conversations.conversation.conversation_schema import (
     TaskStatusResponse,
     TaskStatusErrorResponse,
 )
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class SessionService:

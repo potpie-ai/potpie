@@ -4,7 +4,6 @@ Event Bus Celery Tasks
 Celery tasks for processing webhook and custom events.
 """
 
-import logging
 from typing import Any, Dict
 
 from celery import Task
@@ -12,8 +11,9 @@ from celery import Task
 from app.celery.celery_app import celery_app
 from app.core.database import SessionLocal
 from app.modules.event_bus.handlers import WebhookEventHandler, CustomEventHandler
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class EventTask(Task):

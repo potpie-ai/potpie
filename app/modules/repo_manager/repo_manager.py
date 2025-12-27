@@ -6,7 +6,6 @@ Tracks repository metadata using the filesystem instead of Redis.
 """
 
 import json
-import logging
 import os
 import shutil
 from datetime import datetime, timedelta
@@ -14,8 +13,9 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from app.modules.repo_manager.repo_manager_interface import IRepoManager
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class RepoManager(IRepoManager):
@@ -108,7 +108,7 @@ class RepoManager(IRepoManager):
         try:
             return datetime.fromisoformat(dt_str)
         except ValueError:
-            logger.warning("Failed to parse datetime '%s'; defaulting to now()", dt_str)
+            logger.warning(f"Failed to parse datetime '{dt_str}'; defaulting to now()")
             return datetime.utcnow()
 
     def _load_metadata_entry(
@@ -126,11 +126,11 @@ class RepoManager(IRepoManager):
             with path.open("r", encoding="utf-8") as fh:
                 data = json.load(fh)
         except (OSError, json.JSONDecodeError) as exc:
-            logger.warning("Failed to read repo metadata at %s: %s", path, exc)
+            logger.warning(f"Failed to read repo metadata at {path}: {exc}")
             return None
 
         if not isinstance(data, dict):
-            logger.warning("Metadata at %s is not a JSON object", path)
+            logger.warning(f"Metadata at {path} is not a JSON object")
             return None
 
         data.setdefault("repo_name", repo_name)
@@ -166,7 +166,7 @@ class RepoManager(IRepoManager):
             if path.exists():
                 path.unlink()
         except OSError as exc:
-            logger.warning("Failed to delete metadata file %s: %s", path, exc)
+            logger.warning(f"Failed to delete metadata file {path}: {exc}")
 
         # Remove empty parents up to metadata root
         current = path.parent
@@ -193,11 +193,11 @@ class RepoManager(IRepoManager):
                 with meta_file.open("r", encoding="utf-8") as fh:
                     raw_data = json.load(fh)
             except (OSError, json.JSONDecodeError) as exc:
-                logger.warning("Skipping corrupt metadata file %s: %s", meta_file, exc)
+                logger.warning(f"Skipping corrupt metadata file {meta_file}: {exc}")
                 continue
 
             if not isinstance(raw_data, dict):
-                logger.warning("Unexpected metadata format in %s", meta_file)
+                logger.warning(f"Unexpected metadata format in {meta_file}")
                 continue
 
             entry = self._format_repo_info(repo_name, raw_data)
@@ -313,7 +313,7 @@ class RepoManager(IRepoManager):
 
         self._write_metadata_entry(repo_name, branch, commit_id, data)
         repo_key = self._get_repo_key(repo_name, branch, commit_id, user_id)
-        logger.info("Registered repo %s at %s", repo_key, local_path)
+        logger.info(f"Registered repo {repo_key} at {local_path}")
         return repo_key
 
     def get_repo_path(
@@ -416,9 +416,9 @@ class RepoManager(IRepoManager):
                     shutil.rmtree(local_path)
                 else:
                     os.remove(local_path)
-                logger.info("Deleted local repo copy at %s", local_path)
+                logger.info(f"Deleted local repo copy at {local_path}")
             except OSError:
-                logger.exception("Failed to delete local repo copy at %s", local_path)
+                logger.exception(f"Failed to delete local repo copy at {local_path}")
 
         logger.info(
             "Evicted repo %s (branch=%s, commit=%s)",
@@ -483,7 +483,7 @@ class RepoManager(IRepoManager):
                     except (FileNotFoundError, OSError):
                         continue
         except OSError as exc:
-            logger.warning("Error calculating repo size for %s: %s", local_path, exc)
+            logger.warning(f"Error calculating repo size for {local_path}: {exc}")
             return None
 
         return total_size

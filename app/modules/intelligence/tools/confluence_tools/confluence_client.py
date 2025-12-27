@@ -7,7 +7,9 @@ OAuth 2.0 (3LO) requires using api.atlassian.com endpoints with the cloud ID.
 API Reference: https://developer.atlassian.com/cloud/confluence/rest/v2/intro/
 """
 
-import logging
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 import httpx
@@ -40,7 +42,7 @@ async def check_confluence_integration_exists(user_id: str, db: Session) -> bool
         )
         return integration is not None
     except Exception as e:
-        logging.error(
+        logger.error(
             f"Error checking Confluence integration for user {user_id}: {str(e)}"
         )
         return False
@@ -77,7 +79,7 @@ class ConfluenceClient:
             },
             timeout=30.0,
         )
-        logging.info(
+        logger.info(
             f"Initialized Confluence OAuth 2.0 client for {server} (cloud_id: {cloud_id})"
         )
 
@@ -116,11 +118,11 @@ class ConfluenceClient:
         if type:
             params["type"] = type
 
-        logging.info(
+        logger.info(
             f"Calling Confluence API: GET /wiki/api/v2/spaces with params {params}"
         )
-        logging.info(f"Full URL: {self.api_base_url}/wiki/api/v2/spaces")
-        logging.info(
+        logger.info(f"Full URL: {self.api_base_url}/wiki/api/v2/spaces")
+        logger.info(
             f"Access token length: {len(self.access_token) if self.access_token else 0}"
         )
         response = await self.client.get("/wiki/api/v2/spaces", params=params)
@@ -372,7 +374,7 @@ async def get_confluence_client_for_user(
         )
 
         if not integration:
-            logging.warning(f"No Confluence integration found for user {user_id}")
+            logger.warning(f"No Confluence integration found for user {user_id}")
             return None
 
         # Extract metadata
@@ -381,22 +383,22 @@ async def get_confluence_client_for_user(
         cloud_id = metadata.get("site_id", "")
 
         if not site_url or not cloud_id:
-            logging.error("Confluence integration missing site_url or site_id")
+            logger.error("Confluence integration missing site_url or site_id")
             return None
 
         # Extract and decrypt access token
         auth_data = getattr(integration, "auth_data", {}) or {}
-        logging.info(f"Auth data keys for user {user_id}: {list(auth_data.keys())}")
+        logger.info(f"Auth data keys for user {user_id}: {list(auth_data.keys())}")
         encrypted_token = auth_data.get("access_token")
 
         if not encrypted_token:
-            logging.error("Confluence integration missing access token")
-            logging.error(f"Available auth_data keys: {list(auth_data.keys())}")
+            logger.error("Confluence integration missing access token")
+            logger.error(f"Available auth_data keys: {list(auth_data.keys())}")
             return None
 
-        logging.info(f"Decrypting access token for user {user_id}")
+        logger.info(f"Decrypting access token for user {user_id}")
         access_token = decrypt_token(encrypted_token)
-        logging.info(f"Successfully decrypted access token for user {user_id}")
+        logger.info(f"Successfully decrypted access token for user {user_id}")
 
         # Check if token needs refresh
         expires_at = auth_data.get("expires_at")
@@ -406,7 +408,7 @@ async def get_confluence_client_for_user(
             if isinstance(expires_at, datetime):
                 # Add 5-minute buffer
                 if expires_at < datetime.now(timezone.utc) + timedelta(minutes=5):
-                    logging.info("Confluence access token expired, need to refresh")
+                    logger.info("Confluence access token expired, need to refresh")
                     # Token refresh would be handled by integration service
                     # For now, try with current token
                     pass
@@ -417,5 +419,5 @@ async def get_confluence_client_for_user(
         )
 
     except Exception as e:
-        logging.error(f"Error creating Confluence client for user {user_id}: {str(e)}")
+        logger.error(f"Error creating Confluence client for user {user_id}: {str(e)}")
         return None

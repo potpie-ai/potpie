@@ -1,4 +1,3 @@
-import logging
 from typing import Any, Dict, List, Optional, Set
 import chardet
 from github import Github
@@ -8,8 +7,9 @@ from app.modules.code_provider.base.code_provider_interface import (
     ICodeProvider,
     AuthMethod,
 )
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class GitBucketProvider(ICodeProvider):
@@ -160,9 +160,10 @@ class GitBucketProvider(ICodeProvider):
             logger.debug(f"GitBucket: Repository data for '{repo_name}': {repo_data}")
             return repo_data
         except GithubException as e:
-            logger.error(f"GitBucket: Failed to get repository '{repo_name}': {e}")
-            logger.error(
-                f"GitBucket: Exception details - Status: {getattr(e, 'status', 'Unknown')}, Message: {str(e)}"
+            logger.exception(
+                f"GitBucket: Failed to get repository '{repo_name}'",
+                repo_name=repo_name,
+                status=getattr(e, "status", "Unknown"),
             )
 
             # Handle specific GitBucket API differences
@@ -237,12 +238,12 @@ class GitBucketProvider(ICodeProvider):
 
         try:
             repo = self._get_repo(repo_name)
-        except GithubException as e:
-            logger.error(f"GitBucket: Failed to get repository '{repo_name}': {e}")
+        except GithubException:
+            logger.exception("GitBucket: Failed to get repository", repo_name=repo_name)
             raise
-        except Exception as e:
-            logger.error(
-                f"GitBucket: Unexpected error getting repository '{repo_name}': {e}"
+        except Exception:
+            logger.exception(
+                "GitBucket: Unexpected error getting repository", repo_name=repo_name
             )
             raise
 
@@ -344,10 +345,11 @@ class GitBucketProvider(ICodeProvider):
                             logger.info(
                                 f"GitBucket: Raw API fallback succeeded for '{current_path}', found {len(contents)} items"
                             )
-                        except Exception as fallback_error:
-                            logger.error(
-                                f"GitBucket: Raw API fallback also failed for '{current_path}': {fallback_error}",
-                                exc_info=True,
+                        except Exception:
+                            logger.exception(
+                                "GitBucket: Raw API fallback also failed",
+                                current_path=current_path,
+                                repo_name=repo_name,
                             )
                             raise
                     else:
@@ -418,28 +420,33 @@ class GitBucketProvider(ICodeProvider):
                             logger.debug(
                                 f"GitBucket: Directory '{item_path}' returned {len(children)} children"
                             )
-                        except GithubException as e:
-                            logger.error(
-                                f"GitBucket: GithubException recursing into directory '{item_path}': {e}"
+                        except GithubException:
+                            logger.exception(
+                                "GitBucket: GithubException recursing into directory",
+                                item_path=item_path,
+                                repo_name=repo_name,
                             )
                             entry["children"] = []
-                        except Exception as e:
-                            logger.error(
-                                f"GitBucket: Unexpected exception recursing into directory '{item_path}': {e}",
-                                exc_info=True,
+                        except Exception:
+                            logger.exception(
+                                "GitBucket: Unexpected exception recursing into directory",
+                                item_path=item_path,
+                                repo_name=repo_name,
                             )
                             entry["children"] = []
 
-            except GithubException as e:
-                logger.error(
-                    f"GitBucket: GithubException getting contents for '{current_path}': {e}",
-                    exc_info=True,
+            except GithubException:
+                logger.exception(
+                    "GitBucket: GithubException getting contents",
+                    current_path=current_path,
+                    repo_name=repo_name,
                 )
                 # Return empty result instead of failing completely
-            except Exception as e:
-                logger.error(
-                    f"GitBucket: Unexpected error getting contents for '{current_path}': {e}",
-                    exc_info=True,
+            except Exception:
+                logger.exception(
+                    "GitBucket: Unexpected error getting contents",
+                    current_path=current_path,
+                    repo_name=repo_name,
                 )
 
             return result
@@ -491,11 +498,11 @@ class GitBucketProvider(ICodeProvider):
             logger.debug(f"GitBucket: Branch data for '{branch_name}': {branch_data}")
             return branch_data
         except GithubException as e:
-            logger.error(
-                f"GitBucket: Failed to get branch '{branch_name}' for repository '{repo_name}': {e}"
-            )
-            logger.error(
-                f"GitBucket: Exception details - Status: {getattr(e, 'status', 'Unknown')}, Message: {str(e)}"
+            logger.exception(
+                "GitBucket: Failed to get branch",
+                branch_name=branch_name,
+                repo_name=repo_name,
+                status=getattr(e, "status", "Unknown"),
             )
 
             # Handle specific GitBucket API differences
@@ -573,7 +580,7 @@ class GitBucketProvider(ICodeProvider):
             repo = self._get_repo(repo_name)
 
             # Get commits on the head branch
-            logging.info(f"[GITBUCKET] Getting commits for branch: {head_branch}")
+            logger.info(f"[GITBUCKET] Getting commits for branch: {head_branch}")
             head_commits = repo.get_commits(sha=head_branch)
 
             max_commits = 50  # Safety limit
@@ -592,13 +599,13 @@ class GitBucketProvider(ICodeProvider):
             # Iterate through head branch commits until we find common ancestor
             for commit in head_commits:
                 if commit.sha in base_commit_shas:
-                    logging.info(
+                    logger.info(
                         f"[GITBUCKET] Reached common ancestor at commit {commit.sha[:7]}"
                     )
                     break
 
                 commit_count += 1
-                logging.info(
+                logger.info(
                     f"[GITBUCKET] Processing commit {commit.sha[:7]}: {commit.commit.message.split(chr(10))[0]}"
                 )
 
@@ -616,11 +623,11 @@ class GitBucketProvider(ICodeProvider):
                         if file.patch:
                             file_data["patch"] = file.patch
                         files_dict[file.filename] = file_data
-                        logging.info(f"[GITBUCKET] Added file: {file.filename}")
+                        logger.info(f"[GITBUCKET] Added file: {file.filename}")
 
                 # Safety check
                 if commit_count >= max_commits:
-                    logging.warning(
+                    logger.warning(
                         f"[GITBUCKET] Reached commit limit of {max_commits}, stopping"
                     )
                     break
@@ -628,7 +635,7 @@ class GitBucketProvider(ICodeProvider):
             # Convert dict to list
             files = list(files_dict.values())
 
-            logging.info(
+            logger.info(
                 f"[GITBUCKET] Compared branches {base_branch}...{head_branch}: {len(files)} files, {commit_count} commits"
             )
 
@@ -637,8 +644,13 @@ class GitBucketProvider(ICodeProvider):
                 "commits": commit_count,
             }
 
-        except GithubException as e:
-            logging.error(f"[GITBUCKET] Error comparing branches: {str(e)}")
+        except GithubException:
+            logger.exception(
+                "[GITBUCKET] Error comparing branches",
+                base_branch=base_branch,
+                head_branch=head_branch,
+                repo_name=repo_name,
+            )
             raise
 
     # ============ Pull Request Operations ============
@@ -1099,11 +1111,10 @@ class GitBucketProvider(ICodeProvider):
                 return archive_url
 
         except GithubException as e:
-            logger.error(
-                f"GitBucket: Failed to get archive link for '{repo_name}': {e}"
-            )
-            logger.error(
-                f"GitBucket: Exception details - Status: {getattr(e, 'status', 'Unknown')}, Message: {str(e)}"
+            logger.exception(
+                "GitBucket: Failed to get archive link",
+                repo_name=repo_name,
+                status=getattr(e, "status", "Unknown"),
             )
 
             # Handle specific GitBucket API differences
@@ -1117,12 +1128,9 @@ class GitBucketProvider(ICodeProvider):
                 logger.error("  4. Repository name format issue")
 
             raise
-        except Exception as e:
-            logger.error(
-                f"GitBucket: Unexpected error getting archive link for '{repo_name}': {e}"
-            )
-            logger.error(
-                "GitBucket: This might be due to GitBucket API compatibility issues or network problems"
+        except Exception:
+            logger.exception(
+                "GitBucket: Unexpected error getting archive link", repo_name=repo_name
             )
             raise
 

@@ -36,9 +36,9 @@ class CodeProviderController:
         Returns:
             Dictionary containing branch information
         """
-        import logging
+        from app.modules.utils.logger import setup_logger
 
-        logger = logging.getLogger(__name__)
+        logger = setup_logger(__name__)
 
         try:
             # Use fallback provider that tries PAT first, then GitHub App for private repos
