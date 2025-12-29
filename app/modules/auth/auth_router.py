@@ -44,52 +44,52 @@ load_dotenv(override=True)
 # Blocked email domains (generic/personal email providers)
 BLOCKED_DOMAINS = {
     # Google
-    'gmail.com',
-    'googlemail.com',
+    "gmail.com",
+    "googlemail.com",
     # Microsoft
-    'outlook.com',
-    'hotmail.com',
-    'live.com',
-    'msn.com',
+    "outlook.com",
+    "hotmail.com",
+    "live.com",
+    "msn.com",
     # Yahoo
-    'yahoo.com',
-    'yahoo.co.uk',
-    'yahoo.co.in',
-    'yahoo.fr',
-    'yahoo.de',
-    'ymail.com',
-    'rocketmail.com',
+    "yahoo.com",
+    "yahoo.co.uk",
+    "yahoo.co.in",
+    "yahoo.fr",
+    "yahoo.de",
+    "ymail.com",
+    "rocketmail.com",
     # Apple
-    'icloud.com',
-    'me.com',
-    'mac.com',
+    "icloud.com",
+    "me.com",
+    "mac.com",
     # Other Popular Providers
-    'aol.com',
-    'protonmail.com',
-    'proton.me',
-    'mail.com',
-    'zoho.com',
-    'yandex.com',
-    'yandex.ru',
-    'gmx.com',
-    'gmx.de',
-    'mail.ru',
-    'fastmail.com',
-    'hushmail.com',
-    'tutanota.com',
-    'tutanota.de',
-    'rediffmail.com',
-    'inbox.com',
+    "aol.com",
+    "protonmail.com",
+    "proton.me",
+    "mail.com",
+    "zoho.com",
+    "yandex.com",
+    "yandex.ru",
+    "gmx.com",
+    "gmx.de",
+    "mail.ru",
+    "fastmail.com",
+    "hushmail.com",
+    "tutanota.com",
+    "tutanota.de",
+    "rediffmail.com",
+    "inbox.com",
     # Temporary/Disposable Email Services
-    'tempmail.com',
-    '10minutemail.com',
-    'guerrillamail.com',
-    'mailinator.com',
-    'maildrop.cc',
-    'throwaway.email',
-    'temp-mail.org',
-    'getnada.com',
-    'minuteinbox.com',
+    "tempmail.com",
+    "10minutemail.com",
+    "guerrillamail.com",
+    "mailinator.com",
+    "maildrop.cc",
+    "throwaway.email",
+    "temp-mail.org",
+    "getnada.com",
+    "minuteinbox.com",
 }
 
 
@@ -97,54 +97,54 @@ def extract_domain(email: str) -> str:
     """
     Extracts the domain from an email address (case-insensitive).
     Handles subdomains correctly - only checks root domain.
-    
+
     Args:
         email: User's email address
-        
+
     Returns:
         The domain in lowercase, or empty string if invalid
-        
+
     Example:
         extract_domain('user@GmAiL.CoM') -> 'gmail.com'
         extract_domain('user@eng.company.com') -> 'company.com'
     """
     if not email or not isinstance(email, str):
-        return ''
-    
-    parts = email.lower().strip().split('@')
+        return ""
+
+    parts = email.lower().strip().split("@")
     if len(parts) != 2:
-        return ''
-    
+        return ""
+
     domain = parts[1]
-    
+
     # For subdomains, we only check the root domain
     # e.g., eng.company.com -> company.com
     # This allows work email subdomains
-    domain_parts = domain.split('.')
+    domain_parts = domain.split(".")
     if len(domain_parts) >= 2:
         # Take the last two parts (e.g., 'company.com')
-        return '.'.join(domain_parts[-2:])
-    
+        return ".".join(domain_parts[-2:])
+
     return domain
 
 
 def is_generic_email(email: str) -> bool:
     """
     Checks if an email domain is from a generic/personal email provider.
-    
+
     Args:
         email: User's email address
-        
+
     Returns:
         True if generic email, False if work email
     """
     if not email:
         return False
-    
+
     domain = extract_domain(email)
     if not domain:
         return False
-    
+
     return domain in BLOCKED_DOMAINS
 
 
@@ -599,7 +599,7 @@ class AuthAPI:
             # Check if user already exists by email (legacy user check)
             user_service = UserService(db)
             existing_user = user_service.get_user_by_email(verified_email)
-            
+
             if is_generic_email(verified_email):
                 if not existing_user:
                     # New user with generic email - block them
