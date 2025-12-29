@@ -44,59 +44,59 @@ load_dotenv(override=True)
 # Blocked email domains (generic/personal email providers)
 BLOCKED_DOMAINS = {
     # Google
-    'gmail.com',
-    'googlemail.com',
+    "gmail.com",
+    "googlemail.com",
     # Microsoft
-    'outlook.com',
-    'hotmail.com',
-    'live.com',
-    'msn.com',
+    "outlook.com",
+    "hotmail.com",
+    "live.com",
+    "msn.com",
     # Yahoo
-    'yahoo.com',
-    'yahoo.co.uk',
-    'yahoo.co.in',
-    'yahoo.fr',
-    'yahoo.de',
-    'yahoo.es',
-    'yahoo.it',
-    'yahoo.ca',
-    'yahoo.com.au',
-    'yahoo.com.br',
-    'yahoo.com.mx',
-    'yahoo.com.sg',
-    'ymail.com',
-    'rocketmail.com',
+    "yahoo.com",
+    "yahoo.co.uk",
+    "yahoo.co.in",
+    "yahoo.fr",
+    "yahoo.de",
+    "yahoo.es",
+    "yahoo.it",
+    "yahoo.ca",
+    "yahoo.com.au",
+    "yahoo.com.br",
+    "yahoo.com.mx",
+    "yahoo.com.sg",
+    "ymail.com",
+    "rocketmail.com",
     # Apple
-    'icloud.com',
-    'me.com',
-    'mac.com',
+    "icloud.com",
+    "me.com",
+    "mac.com",
     # Other Popular Providers
-    'aol.com',
-    'protonmail.com',
-    'proton.me',
-    'mail.com',
-    'zoho.com',
-    'yandex.com',
-    'yandex.ru',
-    'gmx.com',
-    'gmx.de',
-    'mail.ru',
-    'fastmail.com',
-    'hushmail.com',
-    'tutanota.com',
-    'tutanota.de',
-    'rediffmail.com',
-    'inbox.com',
+    "aol.com",
+    "protonmail.com",
+    "proton.me",
+    "mail.com",
+    "zoho.com",
+    "yandex.com",
+    "yandex.ru",
+    "gmx.com",
+    "gmx.de",
+    "mail.ru",
+    "fastmail.com",
+    "hushmail.com",
+    "tutanota.com",
+    "tutanota.de",
+    "rediffmail.com",
+    "inbox.com",
     # Temporary/Disposable Email Services
-    'tempmail.com',
-    '10minutemail.com',
-    'guerrillamail.com',
-    'mailinator.com',
-    'maildrop.cc',
-    'throwaway.email',
-    'temp-mail.org',
-    'getnada.com',
-    'minuteinbox.com',
+    "tempmail.com",
+    "10minutemail.com",
+    "guerrillamail.com",
+    "mailinator.com",
+    "maildrop.cc",
+    "throwaway.email",
+    "temp-mail.org",
+    "getnada.com",
+    "minuteinbox.com",
 }
 
 
@@ -117,12 +117,12 @@ def extract_domain(email: str) -> str:
         extract_domain('user@gmail.co.uk') -> 'gmail.co.uk' (not 'co.uk')
     """
     if not email or not isinstance(email, str):
-        return ''
-    
-    parts = email.lower().strip().split('@')
+        return ""
+
+    parts = email.lower().strip().split("@")
     if len(parts) != 2:
-        return ''
-    
+        return ""
+
     domain = parts[1]
     
     # Use publicsuffix2 library to get the registrable domain (second-level domain)
@@ -149,20 +149,20 @@ def extract_domain(email: str) -> str:
 def is_generic_email(email: str) -> bool:
     """
     Checks if an email domain is from a generic/personal email provider.
-    
+
     Args:
         email: User's email address
-        
+
     Returns:
         True if generic email, False if work email
     """
     if not email:
         return False
-    
+
     domain = extract_domain(email)
     if not domain:
         return False
-    
+
     return domain in BLOCKED_DOMAINS
 
 
@@ -617,7 +617,7 @@ class AuthAPI:
             # Check if user already exists by email (legacy user check)
             user_service = UserService(db)
             existing_user = user_service.get_user_by_email(verified_email)
-            
+
             if is_generic_email(verified_email):
                 if not existing_user:
                     # New user with generic email - block them
