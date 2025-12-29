@@ -57,6 +57,13 @@ BLOCKED_DOMAINS = {
     'yahoo.co.in',
     'yahoo.fr',
     'yahoo.de',
+    'yahoo.es',
+    'yahoo.it',
+    'yahoo.ca',
+    'yahoo.com.au',
+    'yahoo.com.br',
+    'yahoo.com.mx',
+    'yahoo.com.sg',
     'ymail.com',
     'rocketmail.com',
     # Apple
@@ -95,18 +102,19 @@ BLOCKED_DOMAINS = {
 
 def extract_domain(email: str) -> str:
     """
-    Extracts the domain from an email address (case-insensitive).
-    Handles subdomains correctly - only checks root domain.
+    Extracts the registrable domain from an email address using public suffix list.
+    Handles multi-part TLDs correctly (e.g., .co.uk, .com.au).
     
     Args:
         email: User's email address
         
     Returns:
-        The domain in lowercase, or empty string if invalid
+        The registrable domain in lowercase, or empty string if invalid
         
     Example:
         extract_domain('user@GmAiL.CoM') -> 'gmail.com'
         extract_domain('user@eng.company.com') -> 'company.com'
+        extract_domain('user@gmail.co.uk') -> 'gmail.co.uk' (not 'co.uk')
     """
     if not email or not isinstance(email, str):
         return ''
@@ -117,15 +125,25 @@ def extract_domain(email: str) -> str:
     
     domain = parts[1]
     
-    # For subdomains, we only check the root domain
-    # e.g., eng.company.com -> company.com
-    # This allows work email subdomains
-    domain_parts = domain.split('.')
-    if len(domain_parts) >= 2:
-        # Take the last two parts (e.g., 'company.com')
-        return '.'.join(domain_parts[-2:])
-    
-    return domain
+    # Use publicsuffix2 library to get the registrable domain (second-level domain)
+    # This properly handles multi-part TLDs like .co.uk, .com.au, etc.
+    try:
+        from publicsuffix2 import get_sld
+        registrable_domain = get_sld(domain)
+        # If get_sld returns None or empty, fall back to the domain itself
+        return registrable_domain if registrable_domain else domain
+    except ImportError:
+        # Fallback to simple logic if publicsuffix2 is not available
+        # This is less accurate but won't break if the library isn't installed
+        domain_parts = domain.split('.')
+        if len(domain_parts) >= 2:
+            # Take the last two parts (e.g., 'company.com')
+            # Note: This will fail for multi-part TLDs like .co.uk
+            return '.'.join(domain_parts[-2:])
+        return domain
+    except Exception:
+        # If get_sld fails for any reason, fall back to the domain
+        return domain
 
 
 def is_generic_email(email: str) -> bool:
