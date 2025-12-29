@@ -673,22 +673,6 @@ class AuthAPI:
                 user_agent=user_agent,
             )
 
-            # Additional validation: If user was just created and has generic email, block them
-            # This is a double-check in case the above check didn't catch it
-            if response.status == "new_user" and is_generic_email(verified_email):
-                logger.warning(
-                    f"Blocked new user creation with generic email: {verified_email} via {sso_request.sso_provider}"
-                )
-                # Note: User might already be created in DB, but we'll return error
-                # In production, you might want to delete the user here
-                return JSONResponse(
-                    content={
-                        "error": "Personal email addresses are not allowed. Please use your work/corporate email to sign in.",
-                        "details": "Generic email providers (Gmail, Yahoo, Outlook, etc.) cannot be used for new signups.",
-                    },
-                    status_code=403,  # Forbidden
-                )
-
             # Send Slack notification for new users
             if response.status == "new_user":
                 await send_slack_message(
