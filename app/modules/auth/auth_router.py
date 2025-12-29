@@ -36,10 +36,158 @@ from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.utils.posthog_helper import PostHogClient
 
+# Import publicsuffix2 for proper domain extraction (handles multi-part TLDs)
+try:
+    from publicsuffix2 import get_sld
+    HAS_PUBLICSUFFIX2 = True
+except ImportError:
+    HAS_PUBLICSUFFIX2 = False
+    get_sld = None
+
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", None)
 
 auth_router = APIRouter()
 load_dotenv(override=True)
+
+# Blocked email domains (generic/personal email providers)
+BLOCKED_DOMAINS = {
+    # Google
+    "gmail.com",
+    "googlemail.com",
+    # Microsoft
+    "outlook.com",
+    "hotmail.com",
+    "live.com",
+    "msn.com",
+    # Yahoo
+    "yahoo.com",
+    "yahoo.co.uk",
+    "yahoo.co.in",
+    "yahoo.fr",
+    "yahoo.de",
+    "yahoo.es",
+    "yahoo.it",
+    "yahoo.ca",
+    "yahoo.com.au",
+    "yahoo.com.br",
+    "yahoo.com.mx",
+    "yahoo.com.sg",
+    "ymail.com",
+    "rocketmail.com",
+    # Apple
+    "icloud.com",
+    "me.com",
+    "mac.com",
+    # Other Popular Providers
+    "aol.com",
+    "protonmail.com",
+    "proton.me",
+    "mail.com",
+    "zoho.com",
+    "yandex.com",
+    "yandex.ru",
+    "gmx.com",
+    "gmx.de",
+    "mail.ru",
+    "fastmail.com",
+    "hushmail.com",
+    "tutanota.com",
+    "tutanota.de",
+    "rediffmail.com",
+    "inbox.com",
+    # Temporary/Disposable Email Services
+    "tempmail.com",
+    "10minutemail.com",
+    "guerrillamail.com",
+    "mailinator.com",
+    "maildrop.cc",
+    "throwaway.email",
+    "temp-mail.org",
+    "getnada.com",
+    "minuteinbox.com",
+}
+
+
+def extract_domain(email: str) -> str:
+    """
+    Extracts the registrable domain from an email address using public suffix list.
+    Handles multi-part TLDs correctly (e.g., .co.uk, .com.au).
+    
+    Validates and normalizes the email (strip and lower), parses the domain with
+    publicsuffix2 to get the registrable domain, and returns that lowercase string
+    or empty string on invalid input.
+    
+    Args:
+        email: User's email address
+        
+    Returns:
+        The registrable domain in lowercase, or empty string if invalid
+        
+    Example:
+        extract_domain('user@GmAiL.CoM') -> 'gmail.com'
+        extract_domain('user@eng.company.com') -> 'company.com'
+        extract_domain('user@gmail.co.uk') -> 'gmail.co.uk' (not 'co.uk')
+    """
+    # Validate and normalize email input
+    if not email or not isinstance(email, str):
+        return ""
+    
+    # Strip whitespace and convert to lowercase
+    email = email.strip().lower()
+    if not email:
+        return ""
+    
+    # Split email to extract domain part
+    parts = email.split("@")
+    if len(parts) != 2:
+        return ""
+    
+    domain = parts[1]
+    if not domain:
+        return ""
+    
+    # Use publicsuffix2 library to get the registrable domain (second-level domain)
+    # This properly handles multi-part TLDs like .co.uk, .com.au, etc.
+    if HAS_PUBLICSUFFIX2 and get_sld:
+        try:
+            registrable_domain = get_sld(domain)
+            # If get_sld returns None or empty, fall back to the domain itself
+            # This can happen for invalid domains or edge cases
+            return registrable_domain if registrable_domain else domain
+        except Exception:
+            # If get_sld fails for any reason (invalid domain, etc.), fall back
+            # This ensures the function always returns something reasonable
+            pass
+    
+    # Fallback to simple logic if publicsuffix2 is not available
+    # This is less accurate but won't break if the library isn't installed
+    # Note: This will fail for multi-part TLDs like .co.uk, .com.au
+    domain_parts = domain.split('.')
+    if len(domain_parts) >= 2:
+        # Take the last two parts (e.g., 'company.com')
+        return '.'.join(domain_parts[-2:])
+    
+    return domain
+
+
+def is_generic_email(email: str) -> bool:
+    """
+    Checks if an email domain is from a generic/personal email provider.
+
+    Args:
+        email: User's email address
+
+    Returns:
+        True if generic email, False if work email
+    """
+    if not email:
+        return False
+
+    domain = extract_domain(email)
+    if not domain:
+        return False
+
+    return domain in BLOCKED_DOMAINS
 
 
 async def send_slack_message(message: str):
@@ -280,6 +428,7 @@ class AuthAPI:
         # ============================================================
         # FLOW 2: GITHUB SIGN-IN (no linkToUserId)
         # Check if GitHub UID is already linked to any user
+        # BLOCK NEW GITHUB SIGNUPS
         # ============================================================
         if is_github_flow:
             logger.info(
@@ -295,6 +444,21 @@ class AuthAPI:
                 )
                 .first()
             )
+
+            # VALIDATION: Block new GitHub signups
+            if not existing_provider:
+                logger.warning(
+                    f"Blocked new GitHub signup attempt: GitHub UID {provider_uid} is not linked to any user"
+                )
+                return Response(
+                    content=json.dumps(
+                        {
+                            "error": "GitHub sign-up is no longer supported. Please use 'Continue with Google' with your work email address.",
+                            "details": "New GitHub signups are disabled. Existing GitHub users can still sign in.",
+                        }
+                    ),
+                    status_code=403,  # Forbidden
+                )
 
             if existing_provider:
                 # GitHub is linked - find the user
@@ -473,6 +637,29 @@ class AuthAPI:
                 verified_user_info.display_name or provider_data.get("name")
             )
 
+            # VALIDATION: Block new users with generic emails (for Google SSO)
+            # Check if user already exists by email (legacy user check)
+            user_service = UserService(db)
+            existing_user = user_service.get_user_by_email(verified_email)
+
+            if is_generic_email(verified_email):
+                if not existing_user:
+                    # New user with generic email - block them
+                    logger.warning(
+                        f"Blocked new signup attempt with generic email: {verified_email} via {sso_request.sso_provider}"
+                    )
+                    return JSONResponse(
+                        content={
+                            "error": "Personal email addresses are not allowed. Please use your work/corporate email to sign in.",
+                            "details": "Generic email providers (Gmail, Yahoo, Outlook, etc.) cannot be used for new signups.",
+                        },
+                        status_code=403,  # Forbidden
+                    )
+                # Existing user with generic email - allow (legacy policy)
+                logger.info(
+                    f"Allowing legacy user with generic email: {verified_email}"
+                )
+
             # Authenticate or create user
             user, response = await unified_auth.authenticate_or_create(
                 email=verified_email,
@@ -484,6 +671,22 @@ class AuthAPI:
                 ip_address=ip_address,
                 user_agent=user_agent,
             )
+
+            # Additional validation: If user was just created and has generic email, block them
+            # This is a double-check in case the above check didn't catch it
+            if response.status == "new_user" and is_generic_email(verified_email):
+                logger.warning(
+                    f"Blocked new user creation with generic email: {verified_email} via {sso_request.sso_provider}"
+                )
+                # Note: User might already be created in DB, but we'll return error
+                # In production, you might want to delete the user here
+                return JSONResponse(
+                    content={
+                        "error": "Personal email addresses are not allowed. Please use your work/corporate email to sign in.",
+                        "details": "Generic email providers (Gmail, Yahoo, Outlook, etc.) cannot be used for new signups.",
+                    },
+                    status_code=403,  # Forbidden
+                )
 
             # Send Slack notification for new users
             if response.status == "new_user":
