@@ -35,15 +35,7 @@ from app.modules.auth.unified_auth_service import (
 from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.utils.posthog_helper import PostHogClient
-
-# Import publicsuffix2 for proper domain extraction (handles multi-part TLDs)
-try:
-    from publicsuffix2 import get_sld
-
-    HAS_PUBLICSUFFIX2 = True
-except ImportError:
-    HAS_PUBLICSUFFIX2 = False
-    get_sld = None
+from app.modules.utils.email_helper import extract_registrable_domain
 
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", None)
 
@@ -114,9 +106,8 @@ def extract_domain(email: str) -> str:
     Extracts the registrable domain from an email address using public suffix list.
     Handles multi-part TLDs correctly (e.g., .co.uk, .com.au).
 
-    Validates and normalizes the email (strip and lower), parses the domain with
-    publicsuffix2 to get the registrable domain, and returns that lowercase string
-    or empty string on invalid input.
+    This function delegates to extract_registrable_domain in email_helper module,
+    which uses tldextract library for proper domain extraction.
 
     Args:
         email: User's email address
@@ -129,46 +120,7 @@ def extract_domain(email: str) -> str:
         extract_domain('user@eng.company.com') -> 'company.com'
         extract_domain('user@gmail.co.uk') -> 'gmail.co.uk' (not 'co.uk')
     """
-    # Validate and normalize email input
-    if not email or not isinstance(email, str):
-        return ""
-
-    # Strip whitespace and convert to lowercase
-    email = email.strip().lower()
-    if not email:
-        return ""
-
-    # Split email to extract domain part
-    parts = email.split("@")
-    if len(parts) != 2:
-        return ""
-
-    domain = parts[1]
-    if not domain:
-        return ""
-
-    # Use publicsuffix2 library to get the registrable domain (second-level domain)
-    # This properly handles multi-part TLDs like .co.uk, .com.au, etc.
-    if HAS_PUBLICSUFFIX2 and get_sld:
-        try:
-            registrable_domain = get_sld(domain)
-            # If get_sld returns None or empty, fall back to the domain itself
-            # This can happen for invalid domains or edge cases
-            return registrable_domain if registrable_domain else domain
-        except Exception:
-            # If get_sld fails for any reason (invalid domain, etc.), fall back
-            # This ensures the function always returns something reasonable
-            pass
-
-    # Fallback to simple logic if publicsuffix2 is not available
-    # This is less accurate but won't break if the library isn't installed
-    # Note: This will fail for multi-part TLDs like .co.uk, .com.au
-    domain_parts = domain.split(".")
-    if len(domain_parts) >= 2:
-        # Take the last two parts (e.g., 'company.com')
-        return ".".join(domain_parts[-2:])
-
-    return domain
+    return extract_registrable_domain(email)
 
 
 def is_generic_email(email: str) -> bool:
