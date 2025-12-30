@@ -35,112 +35,13 @@ from app.modules.auth.unified_auth_service import (
 from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.utils.posthog_helper import PostHogClient
-from app.modules.utils.email_helper import extract_registrable_domain
+from app.modules.utils.email_helper import is_personal_email_domain
 
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", None)
 
 auth_router = APIRouter()
 load_dotenv(override=True)
 
-# Blocked email domains (generic/personal email providers)
-BLOCKED_DOMAINS = {
-    # Google
-    "gmail.com",
-    "googlemail.com",
-    # Microsoft
-    "outlook.com",
-    "hotmail.com",
-    "live.com",
-    "msn.com",
-    # Yahoo
-    "yahoo.com",
-    "yahoo.co.uk",
-    "yahoo.co.in",
-    "yahoo.fr",
-    "yahoo.de",
-    "yahoo.es",
-    "yahoo.it",
-    "yahoo.ca",
-    "yahoo.com.au",
-    "yahoo.com.br",
-    "yahoo.com.mx",
-    "yahoo.com.sg",
-    "ymail.com",
-    "rocketmail.com",
-    # Apple
-    "icloud.com",
-    "me.com",
-    "mac.com",
-    # Other Popular Providers
-    "aol.com",
-    "protonmail.com",
-    "proton.me",
-    "mail.com",
-    "zoho.com",
-    "yandex.com",
-    "yandex.ru",
-    "gmx.com",
-    "gmx.de",
-    "mail.ru",
-    "fastmail.com",
-    "hushmail.com",
-    "tutanota.com",
-    "tutanota.de",
-    "rediffmail.com",
-    "inbox.com",
-    # Temporary/Disposable Email Services
-    "tempmail.com",
-    "10minutemail.com",
-    "guerrillamail.com",
-    "mailinator.com",
-    "maildrop.cc",
-    "throwaway.email",
-    "temp-mail.org",
-    "getnada.com",
-    "minuteinbox.com",
-}
-
-
-def extract_domain(email: str) -> str:
-    """
-    Extracts the registrable domain from an email address using public suffix list.
-    Handles multi-part TLDs correctly (e.g., .co.uk, .com.au).
-
-    This function delegates to extract_registrable_domain in email_helper module,
-    which uses tldextract library for proper domain extraction.
-
-    Args:
-        email: User's email address
-
-    Returns:
-        The registrable domain in lowercase, or empty string if invalid
-
-    Example:
-        extract_domain('user@GmAiL.CoM') -> 'gmail.com'
-        extract_domain('user@eng.company.com') -> 'company.com'
-        extract_domain('user@gmail.co.uk') -> 'gmail.co.uk' (not 'co.uk')
-    """
-    return extract_registrable_domain(email)
-
-
-def is_generic_email(email: str) -> bool:
-    """
-    Checks if an email domain is from a generic/personal email provider.
-
-    Args:
-        email: User's email address
-
-    Returns:
-        True if generic email, False if work email
-    """
-    if not email:
-        return False
-
-    domain = extract_domain(email)
-    if not domain:
-        return False
-
-    return domain in BLOCKED_DOMAINS
 
 
 async def send_slack_message(message: str):
@@ -595,7 +496,7 @@ class AuthAPI:
             user_service = UserService(db)
             existing_user = user_service.get_user_by_email(verified_email)
 
-            if is_generic_email(verified_email):
+            if is_personal_email_domain(verified_email):
                 if not existing_user:
                     # New user with generic email - block them
                     logger.warning(
