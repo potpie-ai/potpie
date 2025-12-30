@@ -43,7 +43,6 @@ auth_router = APIRouter()
 load_dotenv(override=True)
 
 
-
 async def send_slack_message(message: str):
     payload = {"text": message}
     if SLACK_WEBHOOK_URL:
