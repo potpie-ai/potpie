@@ -52,7 +52,7 @@ class RuntimeCustomAgent(ChatAgent):
         self.tools_provider = tools_provider
         self.agent_config = CustomAgentConfig(**agent_config)
 
-    def _build_agent(self) -> ChatAgent:
+    def _build_agent(self, ctx: ChatContext = None) -> ChatAgent:
         agent_config = AgentConfig(
             role=self.agent_config.role,
             goal=self.agent_config.goal,
@@ -65,7 +65,17 @@ class RuntimeCustomAgent(ChatAgent):
             ],
         )
 
-        tools = self.tools_provider.get_tools(self.agent_config.tasks[0].tools)
+        # Exclude embedding-dependent tools during INFERRING status
+        exclude_embedding_tools = ctx.is_inferring() if ctx else False
+        if exclude_embedding_tools:
+            logger.info(
+                "Project is in INFERRING status - excluding embedding-dependent tools for custom agent"
+            )
+
+        tools = self.tools_provider.get_tools(
+            self.agent_config.tasks[0].tools,
+            exclude_embedding_tools=exclude_embedding_tools,
+        )
 
         # Extract MCP servers from the first task with graceful error handling
         mcp_servers = []
@@ -133,13 +143,14 @@ class RuntimeCustomAgent(ChatAgent):
         return ctx
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
-        return await self._build_agent().run(await self._enriched_context(ctx))
+        enriched_ctx = await self._enriched_context(ctx)
+        return await self._build_agent(enriched_ctx).run(enriched_ctx)
 
     async def run_stream(
         self, ctx: ChatContext
     ) -> AsyncGenerator[ChatAgentResponse, None]:
-        ctx = await self._enriched_context(ctx)
-        async for chunk in self._build_agent().run_stream(ctx):
+        enriched_ctx = await self._enriched_context(ctx)
+        async for chunk in self._build_agent(enriched_ctx).run_stream(enriched_ctx):
             yield chunk
 
 

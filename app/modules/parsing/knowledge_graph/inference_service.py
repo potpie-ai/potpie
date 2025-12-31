@@ -22,6 +22,7 @@ from app.modules.parsing.utils.content_hash import (
     generate_content_hash,
     is_content_cacheable,
 )
+from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
 from app.modules.utils.logger import setup_logger
@@ -290,7 +291,7 @@ class InferenceService:
             # Combine multiple chunk descriptions intelligently
             consolidated_text = f"This is a large code component split across {len(all_docstrings)} sections: "
             consolidated_text += " | ".join(
-                [f"Section {i+1}: {doc}" for i, doc in enumerate(all_docstrings)]
+                [f"Section {i + 1}: {doc}" for i, doc in enumerate(all_docstrings)]
             )
 
         # Create single consolidated docstring for parent node
@@ -1091,13 +1092,31 @@ class InferenceService:
             )
 
     async def run_inference(self, repo_id: str):
-        docstrings = await self.generate_docstrings(repo_id)
-        logger.info(
-            f"DEBUGNEO4J: After generate docstrings, Repo ID: {repo_id}, Docstrings: {len(docstrings)}"
-        )
-        self.log_graph_stats(repo_id)
+        try:
+            # Set status to INFERRING at the beginning
+            await self.project_manager.update_project_status(
+                repo_id, ProjectStatusEnum.INFERRING
+            )
 
-        self.create_vector_index()
+            docstrings = await self.generate_docstrings(repo_id)
+            logger.info(
+                f"DEBUGNEO4J: After generate docstrings, Repo ID: {repo_id}, Docstrings: {len(docstrings)}"
+            )
+            self.log_graph_stats(repo_id)
+
+            self.create_vector_index()
+
+            # Set status to READY after successful completion
+            await self.project_manager.update_project_status(
+                repo_id, ProjectStatusEnum.READY
+            )
+        except Exception as e:
+            logger.error(f"Inference failed for project {repo_id}: {e}")
+            # Set status to ERROR on failure
+            await self.project_manager.update_project_status(
+                repo_id, ProjectStatusEnum.ERROR
+            )
+            raise
 
     def query_vector_index(
         self,
@@ -1106,65 +1125,78 @@ class InferenceService:
         node_ids: Optional[List[str]] = None,
         top_k: int = 5,
     ) -> List[Dict]:
+        """
+        Query the vector index for similar nodes.
+
+        Note: This may fail if called during INFERRING status when embeddings/index
+        are not yet ready. The calling tool (ask_knowledge_graph_queries) handles
+        these errors gracefully by returning empty results.
+        """
         embedding = self.generate_embedding(query)
 
         with self.driver.session() as session:
-            if node_ids:
-                # Fetch context node IDs
-                result_neighbors = session.run(
-                    """
-                    MATCH (n:NODE)
-                    WHERE n.repoId = $project_id AND n.node_id IN $node_ids
-                    CALL {
-                        WITH n
-                        MATCH (n)-[*1..4]-(neighbor:NODE)
-                        RETURN COLLECT(DISTINCT neighbor.node_id) AS neighbor_ids
-                    }
-                    RETURN COLLECT(DISTINCT n.node_id) + REDUCE(acc = [], neighbor_ids IN COLLECT(neighbor_ids) | acc + neighbor_ids) AS context_node_ids
-                    """,
-                    project_id=project_id,
-                    node_ids=node_ids,
-                )
-                context_node_ids = result_neighbors.single()["context_node_ids"]
+            try:
+                if node_ids:
+                    # Fetch context node IDs
+                    result_neighbors = session.run(
+                        """
+                        MATCH (n:NODE)
+                        WHERE n.repoId = $project_id AND n.node_id IN $node_ids
+                        CALL {
+                            WITH n
+                            MATCH (n)-[*1..4]-(neighbor:NODE)
+                            RETURN COLLECT(DISTINCT neighbor.node_id) AS neighbor_ids
+                        }
+                        RETURN COLLECT(DISTINCT n.node_id) + REDUCE(acc = [], neighbor_ids IN COLLECT(neighbor_ids) | acc + neighbor_ids) AS context_node_ids
+                        """,
+                        project_id=project_id,
+                        node_ids=node_ids,
+                    )
+                    context_node_ids = result_neighbors.single()["context_node_ids"]
 
-                # Use vector index and filter by context_node_ids
-                result = session.run(
-                    """
-                    CALL db.index.vector.queryNodes('docstring_embedding', $initial_k, $embedding)
-                    YIELD node, score
-                    WHERE node.repoId = $project_id AND node.node_id IN $context_node_ids
-                    RETURN node.node_id AS node_id,
-                        node.docstring AS docstring,
-                        node.file_path AS file_path,
-                        node.start_line AS start_line,
-                        node.end_line AS end_line,
-                        score AS similarity
-                    ORDER BY similarity DESC
-                    LIMIT $top_k
-                    """,
-                    project_id=project_id,
-                    embedding=embedding,
-                    context_node_ids=context_node_ids,
-                    initial_k=top_k * 10,  # Adjust as needed
-                    top_k=top_k,
-                )
-            else:
-                result = session.run(
-                    """
-                    CALL db.index.vector.queryNodes('docstring_embedding', $top_k, $embedding)
-                    YIELD node, score
-                    WHERE node.repoId = $project_id
-                    RETURN node.node_id AS node_id,
-                        node.docstring AS docstring,
-                        node.file_path AS file_path,
-                        node.start_line AS start_line,
-                        node.end_line AS end_line,
-                        score AS similarity
-                    """,
-                    project_id=project_id,
-                    embedding=embedding,
-                    top_k=top_k,
-                )
+                    # Use vector index and filter by context_node_ids
+                    result = session.run(
+                        """
+                        CALL db.index.vector.queryNodes('docstring_embedding', $initial_k, $embedding)
+                        YIELD node, score
+                        WHERE node.repoId = $project_id AND node.node_id IN $context_node_ids
+                        RETURN node.node_id AS node_id,
+                            node.docstring AS docstring,
+                            node.file_path AS file_path,
+                            node.start_line AS start_line,
+                            node.end_line AS end_line,
+                            score AS similarity
+                        ORDER BY similarity DESC
+                        LIMIT $top_k
+                        """,
+                        project_id=project_id,
+                        embedding=embedding,
+                        context_node_ids=context_node_ids,
+                        initial_k=top_k * 10,  # Adjust as needed
+                        top_k=top_k,
+                    )
+                else:
+                    result = session.run(
+                        """
+                        CALL db.index.vector.queryNodes('docstring_embedding', $top_k, $embedding)
+                        YIELD node, score
+                        WHERE node.repoId = $project_id
+                        RETURN node.node_id AS node_id,
+                            node.docstring AS docstring,
+                            node.file_path AS file_path,
+                            node.start_line AS start_line,
+                            node.end_line AS end_line,
+                            score AS similarity
+                        """,
+                        project_id=project_id,
+                        embedding=embedding,
+                        top_k=top_k,
+                    )
 
-            # Ensure all fields are included in the final output
-            return [dict(record) for record in result]
+                # Ensure all fields are included in the final output
+                return [dict(record) for record in result]
+            except Exception as e:
+                logger.warning(
+                    f"Error querying vector index for project {project_id}: {e}"
+                )
+                return []
