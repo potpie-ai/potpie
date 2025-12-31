@@ -1127,7 +1127,7 @@ class InferenceService:
     ) -> List[Dict]:
         """
         Query the vector index for similar nodes.
-        
+
         Note: This may fail if called during INFERRING status when embeddings/index
         are not yet ready. The calling tool (ask_knowledge_graph_queries) handles
         these errors gracefully by returning empty results.
@@ -1196,5 +1196,7 @@ class InferenceService:
                 # Ensure all fields are included in the final output
                 return [dict(record) for record in result]
             except Exception as e:
-                logger.warning(f"Error querying vector index for project {project_id}: {e}")
+                logger.warning(
+                    f"Error querying vector index for project {project_id}: {e}"
+                )
                 return []

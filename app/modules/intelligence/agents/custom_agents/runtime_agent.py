@@ -74,7 +74,7 @@ class RuntimeCustomAgent(ChatAgent):
 
         tools = self.tools_provider.get_tools(
             self.agent_config.tasks[0].tools,
-            exclude_embedding_tools=exclude_embedding_tools
+            exclude_embedding_tools=exclude_embedding_tools,
         )
 
         # Extract MCP servers from the first task with graceful error handling

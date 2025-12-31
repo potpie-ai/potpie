@@ -103,7 +103,10 @@ class GetNodesFromTags:
             ).query_graph(query)
         except Exception as e:
             import logging
-            logging.warning(f"Error querying graph for tags for project {project_id}: {e}")
+
+            logging.warning(
+                f"Error querying graph for tags for project {project_id}: {e}"
+            )
             return []
         return nodes
 
