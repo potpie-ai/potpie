@@ -22,10 +22,11 @@ def upgrade() -> None:
     op.drop_constraint("check_status", "projects", type_="check")
 
     # Create the new check constraint with 'inferring' status
+    # Note: 'processing' is included to match ProjectStatusEnum.PROCESSING
     op.create_check_constraint(
         "check_status",
         "projects",
-        "status IN ('submitted', 'cloned', 'parsed', 'inferring', 'ready', 'error')",
+        "status IN ('submitted', 'cloned', 'parsed', 'processing', 'inferring', 'ready', 'error')",
     )
 
 
@@ -34,8 +35,9 @@ def downgrade() -> None:
     op.drop_constraint("check_status", "projects", type_="check")
 
     # Restore the original constraint without 'inferring'
+    # Note: 'processing' is included to match ProjectStatusEnum.PROCESSING
     op.create_check_constraint(
         "check_status",
         "projects",
-        "status IN ('submitted', 'cloned', 'parsed', 'ready', 'error')",
+        "status IN ('submitted', 'cloned', 'parsed', 'processing', 'ready', 'error')",
     )

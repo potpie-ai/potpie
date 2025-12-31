@@ -93,13 +93,17 @@ class GetNodesFromTags:
         RETURN n.file_path AS file_path, COALESCE(n.docstring, substring(n.text, 0, 500)) AS docstring, n.text AS text, n.node_id AS node_id, n.name AS name
         """
         nodes = []
+        # Properly manage the DB generator to ensure cleanup
+        gen = get_db()
+        db = None
         try:
+            db = next(gen)
             neo4j_config = ConfigProvider().get_neo4j_config()
             nodes = CodeGraphService(
                 neo4j_config["uri"],
                 neo4j_config["username"],
                 neo4j_config["password"],
-                next(get_db()),
+                db,
             ).query_graph(query)
         except Exception as e:
             import logging
@@ -108,6 +112,15 @@ class GetNodesFromTags:
                 f"Error querying graph for tags for project {project_id}: {e}"
             )
             return []
+        finally:
+            # Close the generator to trigger its finally block, which closes the DB session
+            if gen:
+                try:
+                    gen.close()
+                except (GeneratorExit, StopIteration):
+                    # GeneratorExit is expected when closing a generator
+                    # StopIteration may occur if generator is already exhausted
+                    pass
         return nodes
 
 
