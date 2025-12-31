@@ -670,6 +670,12 @@ class ConversationService:
                 project_ids=[project_id]
             )
 
+            # Get project status to conditionally enable/disable tools
+            project_info = await self.project_service.get_project_from_db_by_id(
+                project_id
+            )
+            project_status = project_info.get("status") if project_info else None
+
             # Prepare multimodal context - use current message attachments if available
             image_attachments = None
             if attachment_ids:
@@ -702,6 +708,7 @@ class ConversationService:
                             history=validated_history[-12:],
                             node_ids=[node.node_id for node in node_ids],
                             query=query,
+                            project_status=project_status,
                         ),
                     )
                 )
@@ -733,6 +740,7 @@ class ConversationService:
                     history=validated_history[-8:],
                     node_ids=nodes,
                     query=query,
+                    project_status=project_status,
                     image_attachments=image_attachments,
                     context_images=context_images,
                 )

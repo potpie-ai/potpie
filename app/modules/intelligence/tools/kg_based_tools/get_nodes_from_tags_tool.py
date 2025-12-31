@@ -90,15 +90,21 @@ class GetNodesFromTags:
         tag_conditions = " OR ".join([f"'{tag}' IN n.tags" for tag in tags])
         query = f"""MATCH (n:NODE)
         WHERE ({tag_conditions}) AND n.repoId = '{project_id}'
-        RETURN n.file_path AS file_path, n.docstring AS docstring, n.text AS text, n.node_id AS node_id, n.name AS name
+        RETURN n.file_path AS file_path, COALESCE(n.docstring, substring(n.text, 0, 500)) AS docstring, n.text AS text, n.node_id AS node_id, n.name AS name
         """
-        neo4j_config = ConfigProvider().get_neo4j_config()
-        nodes = CodeGraphService(
-            neo4j_config["uri"],
-            neo4j_config["username"],
-            neo4j_config["password"],
-            next(get_db()),
-        ).query_graph(query)
+        nodes = []
+        try:
+            neo4j_config = ConfigProvider().get_neo4j_config()
+            nodes = CodeGraphService(
+                neo4j_config["uri"],
+                neo4j_config["username"],
+                neo4j_config["password"],
+                next(get_db()),
+            ).query_graph(query)
+        except Exception as e:
+            import logging
+            logging.warning(f"Error querying graph for tags for project {project_id}: {e}")
+            return []
         return nodes
 
 
