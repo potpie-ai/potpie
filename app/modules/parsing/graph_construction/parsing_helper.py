@@ -1270,14 +1270,20 @@ class ParseHelper:
         # We need to compare the stored commit with the latest branch commit
 
         if not repo_name:
-            logger.error(
-                f"Repository name or branch name not found for project ID {project_id}"
+            # Project doesn't have a repository selected yet (e.g., created via /projects/ endpoint)
+            # This is a valid state, not an error
+            logger.info(
+                f"Project {project_id} does not have a repository selected yet. "
+                f"Skipping commit status check."
             )
             return False
 
         if not branch_name:
-            logger.error(
-                f"Branch is empty so sticking to commit and not updating it for: {project_id}"
+            # Branch name is empty - this can happen for projects without repositories
+            # or projects that were created with only a commit_id
+            logger.info(
+                f"Branch name is empty for project {project_id}. "
+                f"Using commit-based check only."
             )
             return True
 
