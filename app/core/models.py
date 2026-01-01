@@ -23,3 +23,8 @@ from app.modules.auth.auth_provider_model import (  # noqa
     OrganizationSSOConfig,
     AuthAuditLog,
 )
+from app.modules.parsing.models.kg_ingest_model import (  # noqa
+    KgIngestRun,
+    KgArtifactRecord,
+    KgLatestSuccessfulRun,
+)

@@ -132,6 +132,15 @@ class ConfigProvider:
     def get_is_development_mode(self):
         return self.is_development_mode == "enabled"
 
+    def get_kg_incremental_ingest_enabled(self) -> bool:
+        """
+        Feature flag for incremental KG ingest.
+
+        Accepts common truthy values ("true", "1", "yes", "on", "enabled"), case-insensitive.
+        """
+        raw_value = os.getenv("KG_INCREMENTAL_INGEST", "false")
+        return raw_value.strip().lower() in {"1", "true", "yes", "on", "enabled"}
+
     def get_is_multimodal_enabled(self) -> bool:
         """
         Determine if multimodal functionality is enabled.

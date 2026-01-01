@@ -59,6 +59,11 @@ class ParsingService:
         with log_context(project_id=str(project_id), user_id=user_id):
             project_manager = ProjectService(self.db)
             extracted_dir = None
+            incremental_ingest_enabled = config_provider.get_kg_incremental_ingest_enabled()
+            if incremental_ingest_enabled:
+                logger.info(
+                    f"ParsingService: KG incremental ingest enabled (KG_INCREMENTAL_INGEST) for project {project_id}"
+                )
             try:
                 if cleanup_graph:
                     neo4j_config = config_provider.get_neo4j_config()
@@ -122,7 +127,13 @@ class ParsingService:
                         language = self.parse_helper.detect_repo_language(extracted_dir)
 
                 await self.analyze_directory(
-                    extracted_dir, project_id, user_id, self.db, language, user_email
+                    extracted_dir,
+                    project_id,
+                    user_id,
+                    self.db,
+                    language,
+                    user_email,
+                    use_incremental_ingest=incremental_ingest_enabled,
                 )
                 message = "The project has been parsed successfully"
                 return {"message": message, "id": project_id}
@@ -210,6 +221,7 @@ class ParsingService:
         db,
         language: str,
         user_email: str,
+        use_incremental_ingest: bool = False,
     ):
         logger.info(
             f"ParsingService: Parsing project {project_id}: Analyzing directory: {extracted_dir}"
@@ -237,6 +249,7 @@ class ParsingService:
         if project_details:
             repo_name = project_details.get("project_name")
             branch_name = project_details.get("branch_name")
+            commit_id = project_details.get("commit_id")
         else:
             error_msg = f"Project with ID {project_id} not found."
             logger.bind(project_id=project_id, user_id=user_id).error(error_msg)
@@ -252,7 +265,12 @@ class ParsingService:
                     db,
                 )
 
-                service.create_and_store_graph(extracted_dir, project_id, user_id)
+                if use_incremental_ingest:
+                    self._create_and_store_graph_incremental_v0(
+                        service, extracted_dir, project_id, user_id, commit_id
+                    )
+                else:
+                    service.create_and_store_graph(extracted_dir, project_id, user_id)
 
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.PARSED
@@ -284,6 +302,33 @@ class ParsingService:
                 "Repository doesn't consist of a language currently supported."
             )
 
+    def _create_and_store_graph_incremental_v0(
+        self,
+        service: CodeGraphService,
+        extracted_dir: str,
+        project_id: int,
+        user_id: str,
+        commit_id: str | None,
+    ) -> None:
+        """
+        Incremental KG ingest entrypoint (v0).
+
+        For now this is a thin wrapper over the existing full ingest path so the
+        feature flag can be wired end-to-end while the diff/applier is built in
+        subsequent steps.
+        """
+        logger.info(
+            f"ParsingService: Incremental KG ingest (v0) enabled for project {project_id}; "
+            "using existing full ingest path (TODO: apply JSONL deltas)"
+        )
+        service.create_and_store_graph(
+            extracted_dir,
+            project_id,
+            user_id,
+            persist_artifacts=True,
+            commit_id=commit_id,
+        )
+
     async def duplicate_graph(self, old_repo_id: str, new_repo_id: str):
         await self.search_service.clone_search_indices(old_repo_id, new_repo_id)
         node_batch_size = 3000  # Fixed batch size for nodes
@@ -297,6 +342,7 @@ class ParsingService:
                     MATCH (n:NODE {repoId: $old_repo_id})
                     RETURN n.node_id AS node_id, n.text AS text, n.file_path AS file_path,
                            n.start_line AS start_line, n.end_line AS end_line, n.name AS name,
+                           n.raw_node_id AS raw_node_id,
                            COALESCE(n.docstring, '') AS docstring,
                            COALESCE(n.embedding, []) AS embedding,
                            labels(n) AS labels
@@ -319,6 +365,7 @@ class ParsingService:
                     CALL apoc.create.node(node.labels, {
                         repoId: $new_repo_id,
                         node_id: node.node_id,
+                        raw_node_id: node.raw_node_id,
                         text: node.text,
                         file_path: node.file_path,
                         start_line: node.start_line,
