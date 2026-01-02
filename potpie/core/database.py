@@ -54,7 +54,7 @@ class DatabaseManager:
         try:
             # Import all SQLAlchemy models to register them and resolve forward references
             # This must be done before creating any sessions
-            import app.core.models  # noqa
+            import potpie.core.models  # noqa
 
             # Create sync engine
             self._engine = create_engine(
