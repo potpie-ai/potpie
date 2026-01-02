@@ -1,4 +1,3 @@
-from app.modules.utils.logger import setup_logger, log_context
 import os
 import shutil
 import traceback
@@ -22,6 +21,7 @@ from app.modules.projects.projects_schema import ProjectStatusEnum
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
 from app.modules.utils.email_helper import EmailHelper
+from app.modules.utils.logger import log_context, setup_logger
 from app.modules.utils.parse_webhook_helper import ParseWebhookHelper
 
 from .parsing_schema import ParsingRequest
