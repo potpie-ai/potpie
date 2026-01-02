@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from typing import Any, Dict, List
 
 from langchain_core.tools import StructuredTool
@@ -11,8 +10,9 @@ from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_model import Project
 from app.modules.intelligence.tools.tool_utils import truncate_dict_response
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class GetCodeFromMultipleNodeIdsInput(BaseModel):
@@ -80,7 +80,7 @@ class GetCodeFromMultipleNodeIdsTool:
             result = {
                 node_id: result for node_id, result in zip(node_ids, completed_tasks)
             }
-            
+
             # Truncate response if it exceeds character limits
             truncated_result = truncate_dict_response(result)
             if len(str(result)) > 80000:
@@ -88,11 +88,14 @@ class GetCodeFromMultipleNodeIdsTool:
                     f"get_code_from_multiple_node_ids output truncated for {len(node_ids)} nodes, project_id={project_id}"
                 )
             return truncated_result
-        except Exception as e:
-            logger.error(
-                f"Unexpected error in GetCodeFromMultipleNodeIdsTool: {str(e)}"
+        except Exception:
+            logger.exception(
+                "Unexpected error in GetCodeFromMultipleNodeIdsTool",
+                project_id=project_id,
+                node_ids=node_ids,
+                user_id=self.user_id,
             )
-            return {"error": f"An unexpected error occurred: {str(e)}"}
+            return {"error": "An unexpected error occurred"}
 
     async def _retrieve_node_data(
         self, project_id: str, node_id: str, project: Project

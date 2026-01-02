@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from typing import Any, Dict, List
 
 from langchain_core.tools import StructuredTool
@@ -13,8 +12,9 @@ from app.modules.projects.projects_model import Project
 from app.modules.projects.projects_service import ProjectService
 from app.modules.search.search_service import SearchService
 from app.modules.intelligence.tools.tool_utils import truncate_dict_response
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class GetCodeFromProbableNodeNameInput(BaseModel):
@@ -75,11 +75,14 @@ class GetCodeFromProbableNodeNameTool:
                 }
 
             return await self.execute(project_id, node_id)
-        except Exception as e:
-            logger.error(
-                f"Unexpected error in GetCodeFromProbableNodeNameTool: {str(e)}"
+        except Exception:
+            logger.exception(
+                "Unexpected error in GetCodeFromProbableNodeNameTool",
+                project_id=project_id,
+                probable_node_name=probable_node_name,
+                user_id=self.user_id,
             )
-            return {"error": f"An unexpected error occurred: {str(e)}"}
+            return {"error": "An unexpected error occurred"}
 
     async def find_node_from_probable_name(
         self, project_id: str, probable_node_names: List[str]
@@ -142,11 +145,14 @@ class GetCodeFromProbableNodeNameTool:
                 }
 
             return self._process_result(node_data, project, node_id)
-        except Exception as e:
-            logger.warning(
-                f"Unexpected error in GetCodeFromProbableNodeNameTool: {str(e)}"
+        except Exception:
+            logger.exception(
+                "Unexpected error in GetCodeFromProbableNodeNameTool",
+                project_id=project_id,
+                node_id=node_id,
+                user_id=self.user_id,
             )
-            return {"error": f"An unexpected error occurred: {str(e)}"}
+            return {"error": "An unexpected error occurred"}
 
     def _get_node_data(self, project_id: str, node_id: str) -> Dict[str, Any]:
         query = """
@@ -194,7 +200,7 @@ class GetCodeFromProbableNodeNameTool:
             "code_content": code_content,
             "docstring": docstring,
         }
-        
+
         # Truncate response if it exceeds character limits
         truncated_result = truncate_dict_response(result)
         if len(str(result)) > 80000:

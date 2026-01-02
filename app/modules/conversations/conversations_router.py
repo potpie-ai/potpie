@@ -1,5 +1,4 @@
 import json
-import logging
 from typing import Any, AsyncGenerator, Generator, List, Optional, Union, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -9,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db, get_async_db
 from app.modules.auth.auth_service import AuthService
+from app.modules.utils.logger import setup_logger, log_context
 from app.modules.conversations.access.access_schema import (
     RemoveAccessRequest,
     ShareChatRequest,
@@ -39,7 +39,7 @@ from .session.session_service import SessionService
 from app.modules.users.user_schema import UserConversationListResponse
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 from app.modules.conversations.utils.conversation_routing import (
@@ -184,94 +184,106 @@ class ConversationAPI:
 
         user_id = user["user_id"]
         user_email = user["email"]
-        checked = await UsageService.check_usage_limit(user_id)
-        if not checked:
-            raise HTTPException(
-                status_code=402,
-                detail="Subscription required to create a conversation.",
+
+        # Set up logging context with domain IDs
+        with log_context(conversation_id=conversation_id, user_id=user_id):
+            checked = await UsageService.check_usage_limit(user_id)
+            if not checked:
+                raise HTTPException(
+                    status_code=402,
+                    detail="Subscription required to create a conversation.",
+                )
+
+            # Process images if present
+            attachment_ids = []
+            if images:
+                media_service = MediaService(db)
+                for _i, image in enumerate(images):
+                    # Check if image has content by checking filename and content_type
+                    if image.filename and image.content_type:
+                        try:
+                            # Read file data first and pass as bytes to avoid UploadFile issues
+                            file_content = await image.read()
+                            upload_result = await media_service.upload_image(
+                                file=file_content,
+                                file_name=image.filename,
+                                mime_type=image.content_type,
+                                message_id=None,  # Will be linked after message creation
+                            )
+                            attachment_ids.append(upload_result.id)
+                        except Exception as e:
+                            logger.exception(
+                                "Failed to upload image",
+                                filename=image.filename,
+                                conversation_id=conversation_id,
+                                user_id=user_id,
+                            )
+                            # Clean up any successfully uploaded attachments
+                            for uploaded_id in attachment_ids:
+                                try:
+                                    await media_service.delete_attachment(uploaded_id)
+                                except Exception as cleanup_exc:
+                                    logger.warning(
+                                        f"Failed to cleanup attachment {uploaded_id} after image upload error: {str(cleanup_exc)}",
+                                        conversation_id=conversation_id,
+                                        user_id=user_id,
+                                        attachment_id=uploaded_id,
+                                    )
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"Failed to upload image {image.filename}: {str(e)}",
+                            ) from e
+
+            # Parse node_ids if provided
+            parsed_node_ids = None
+            if node_ids:
+                try:
+                    parsed_node_ids = json.loads(node_ids)
+                except json.JSONDecodeError as err:
+                    raise HTTPException(
+                        status_code=400, detail="Invalid node_ids format"
+                    ) from err
+
+            # Create message request
+            message = MessageRequest(
+                content=content,
+                node_ids=parsed_node_ids,
+                attachment_ids=attachment_ids if attachment_ids else None,
             )
 
-        # Process images if present
-        attachment_ids = []
-        if images:
-            media_service = MediaService(db)
-            for i, image in enumerate(images):
-                # Check if image has content by checking filename and content_type
-                if image.filename and image.content_type:
-                    try:
-                        # Read file data first and pass as bytes to avoid UploadFile issues
-                        file_content = await image.read()
-                        upload_result = await media_service.upload_image(
-                            file=file_content,
-                            file_name=image.filename,
-                            mime_type=image.content_type,
-                            message_id=None,  # Will be linked after message creation
-                        )
-                        attachment_ids.append(upload_result.id)
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to upload image {image.filename}: {str(e)}"
-                        )
-                        # Clean up any successfully uploaded attachments
-                        for uploaded_id in attachment_ids:
-                            try:
-                                await media_service.delete_attachment(uploaded_id)
-                            except:
-                                pass
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"Failed to upload image {image.filename}: {str(e)}",
-                        )
+            controller = ConversationController(db, async_db, user_id, user_email)
 
-        # Parse node_ids if provided
-        parsed_node_ids = None
-        if node_ids:
-            try:
-                parsed_node_ids = json.loads(node_ids)
-            except json.JSONDecodeError:
-                raise HTTPException(status_code=400, detail="Invalid node_ids format")
+            if not stream:
+                # Non-streaming behavior unchanged
+                message_stream = controller.post_message(
+                    conversation_id, message, stream
+                )
+                async for chunk in message_stream:
+                    return chunk
 
-        # Create message request
-        message = MessageRequest(
-            content=content,
-            node_ids=parsed_node_ids,
-            attachment_ids=attachment_ids if attachment_ids else None,
-        )
+            # Streaming with session management
+            run_id = normalize_run_id(
+                conversation_id, user_id, session_id, prev_human_message_id
+            )
 
-        controller = ConversationController(db, async_db, user_id, user_email)
+            # For fresh requests without cursor, ensure we get a unique stream
+            if not cursor:
+                run_id = ensure_unique_run_id(conversation_id, run_id)
 
-        if not stream:
-            # Non-streaming behavior unchanged
-            message_stream = controller.post_message(conversation_id, message, stream)
-            async for chunk in message_stream:
-                return chunk
+            # Use parsed node_ids
+            node_ids_list = parsed_node_ids or []
 
-        # Streaming with session management
-        run_id = normalize_run_id(
-            conversation_id, user_id, session_id, prev_human_message_id
-        )
-
-        # For fresh requests without cursor, ensure we get a unique stream
-        if not cursor:
-            run_id = ensure_unique_run_id(conversation_id, run_id)
-
-        # Extract agent_id from conversation (will be handled in background task)
-        agent_id = None
-
-        # Use parsed node_ids
-        node_ids_list = parsed_node_ids or []
-
-        # Start background task and return streaming response
-        return start_celery_task_and_stream(
-            conversation_id=conversation_id,
-            run_id=run_id,
-            user_id=user_id,
-            query=content,
-            agent_id=agent_id,
-            node_ids=node_ids_list,
-            attachment_ids=attachment_ids or [],
-            cursor=cursor,
-        )
+            # Start background task and return streaming response
+            return start_celery_task_and_stream(
+                conversation_id=conversation_id,
+                run_id=run_id,
+                user_id=user_id,
+                query=content,
+                agent_id=None,
+                node_ids=node_ids_list,
+                attachment_ids=attachment_ids or [],
+                cursor=cursor,
+            )
 
     @staticmethod
     @router.post("/conversations/{conversation_id}/regenerate/")

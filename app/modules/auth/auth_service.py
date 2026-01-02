@@ -30,7 +30,7 @@ class AuthService:
             user_auth_response.raise_for_status()
             return user_auth_response.json()
         except Exception as e:
-            logging.exception(f"{log_prefix} {str(e)}")
+            logging.exception("%s %s", log_prefix, str(e))
             raise Exception(user_auth_response.json())
 
     def signup(self, email: str, password: str, name: str) -> tuple:
@@ -44,7 +44,6 @@ class AuthService:
         except Exception as e:
             return None, {"error": f"An unexpected error occurred: {str(e)}"}
 
-    @classmethod
     @staticmethod
     async def check_auth(
         request: Request,
@@ -54,8 +53,8 @@ class AuthService:
         ),
     ):
         logging.info("DEBUG: AuthService.check_auth called")
-        logging.info(f"DEBUG: Development mode: {os.getenv('isDevelopmentMode')}")
-        logging.info(f"DEBUG: Credential provided: {credential is not None}")
+        logging.info("DEBUG: Development mode: %s", os.getenv("isDevelopmentMode"))
+        logging.info("DEBUG: Credential provided: %s", credential is not None)
 
         # Check if the application is in debug mode
         if os.getenv("isDevelopmentMode") == "enabled" and credential is None:
@@ -77,18 +76,21 @@ class AuthService:
                 )
             try:
                 logging.info(
-                    f"DEBUG: Verifying Firebase token: {credential.credentials[:20]}..."
+                    "DEBUG: Verifying Firebase token: %s...",
+                    credential.credentials[:20],
                 )
                 decoded_token = auth.verify_id_token(credential.credentials)
                 logging.info(
-                    f"DEBUG: Successfully verified token for user: {decoded_token.get('user_id', 'unknown')}"
+                    "DEBUG: Successfully verified token for user: %s",
+                    decoded_token.get("user_id", "unknown"),
                 )
                 logging.info(
-                    f"DEBUG: Token email: {decoded_token.get('email', 'unknown')}"
+                    "DEBUG: Token email: %s",
+                    decoded_token.get("email", "unknown"),
                 )
                 request.state.user = decoded_token
             except Exception as err:
-                logging.error(f"DEBUG: Firebase token verification failed: {str(err)}")
+                logging.error("DEBUG: Firebase token verification failed: %s", str(err))
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail=f"Invalid authentication from Firebase. {err}",

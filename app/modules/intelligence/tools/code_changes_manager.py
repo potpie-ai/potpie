@@ -817,8 +817,9 @@ class CodeChangesManager:
                 "context_end_line": context_end_line,
             }
         except Exception as e:
-            logger.error(
-                f"CodeChangesManager.update_file_lines: Error updating lines in '{file_path}': {str(e)}"
+            logger.exception(
+                "CodeChangesManager.update_file_lines: Error updating lines",
+                file_path=file_path,
             )
             return {"success": False, "error": str(e)}
 
@@ -939,8 +940,9 @@ class CodeChangesManager:
                 "match_locations": match_locations,
             }
         except Exception as e:
-            logger.error(
-                f"CodeChangesManager.replace_in_file: Error replacing pattern in '{file_path}': {str(e)}"
+            logger.exception(
+                "CodeChangesManager.replace_in_file: Error replacing pattern",
+                file_path=file_path,
             )
             return {"success": False, "error": str(e)}
 
@@ -1088,8 +1090,9 @@ class CodeChangesManager:
                 "context_end_line": context_end_line,
             }
         except Exception as e:
-            logger.error(
-                f"CodeChangesManager.insert_lines: Error inserting lines in '{file_path}': {str(e)}"
+            logger.exception(
+                "CodeChangesManager.insert_lines: Error inserting lines",
+                file_path=file_path,
             )
             return {"success": False, "error": str(e)}
 
@@ -1203,8 +1206,9 @@ class CodeChangesManager:
                 "deleted_content": deleted_content,
             }
         except Exception as e:
-            logger.error(
-                f"CodeChangesManager.delete_lines: Error deleting lines from '{file_path}': {str(e)}"
+            logger.exception(
+                "CodeChangesManager.delete_lines: Error deleting lines",
+                file_path=file_path,
             )
             return {"success": False, "error": str(e)}
 
@@ -1459,10 +1463,8 @@ class CodeChangesManager:
                 f"CodeChangesManager.deserialize: Successfully deserialized {len(self.changes)} file changes"
             )
             return True
-        except (json.JSONDecodeError, KeyError, ValueError) as e:
-            logger.error(
-                f"CodeChangesManager.deserialize: Error deserializing JSON: {str(e)}"
-            )
+        except (json.JSONDecodeError, KeyError, ValueError):
+            logger.exception("CodeChangesManager.deserialize: Error deserializing JSON")
             return False
 
     def _read_file_from_codebase(self, file_path: str) -> Optional[str]:
@@ -2108,8 +2110,11 @@ def add_file_tool(input_data: AddFileInput) -> str:
             return f"✅ Added file '{input_data.file_path}'\n\nTotal files in changes: {summary['total_files']}"
         else:
             return f"❌ File '{input_data.file_path}' already exists in changes. Use update_file to modify it."
-    except Exception as e:
-        return f"❌ Error adding file: {str(e)}"
+    except Exception:
+        logger.exception(
+            "Tool add_file_tool: Error adding file", file_path=input_data.file_path
+        )
+        return "❌ Error adding file"
 
 
 def update_file_tool(input_data: UpdateFileInput) -> str:
@@ -2129,8 +2134,11 @@ def update_file_tool(input_data: UpdateFileInput) -> str:
             return f"✅ Updated file '{input_data.file_path}'\n\nTotal files in changes: {summary['total_files']}"
         else:
             return f"❌ Error updating file '{input_data.file_path}'"
-    except Exception as e:
-        return f"❌ Error updating file: {str(e)}"
+    except Exception:
+        logger.exception(
+            "Tool update_file_tool: Error updating file", file_path=input_data.file_path
+        )
+        return "❌ Error updating file"
 
 
 def delete_file_tool(input_data: DeleteFileInput) -> str:
@@ -2151,8 +2159,11 @@ def delete_file_tool(input_data: DeleteFileInput) -> str:
             return f"✅ Marked file '{input_data.file_path}' for deletion\n\nTotal files in changes: {summary['total_files']}"
         else:
             return f"❌ Error deleting file '{input_data.file_path}'"
-    except Exception as e:
-        return f"❌ Error deleting file: {str(e)}"
+    except Exception:
+        logger.exception(
+            "Tool delete_file_tool: Error deleting file", file_path=input_data.file_path
+        )
+        return "❌ Error deleting file"
 
 
 def get_file_tool(input_data: GetFileInput) -> str:
@@ -2210,8 +2221,11 @@ def get_file_tool(input_data: GetFileInput) -> str:
             return result
         else:
             return f"❌ File '{input_data.file_path}' not found in changes"
-    except Exception as e:
-        return f"❌ Error retrieving file: {str(e)}"
+    except Exception:
+        logger.exception(
+            "Tool get_file_tool: Error retrieving file", file_path=input_data.file_path
+        )
+        return "❌ Error retrieving file"
 
 
 def list_files_tool(input_data: ListFilesInput) -> str:
@@ -2256,8 +2270,9 @@ def list_files_tool(input_data: ListFilesInput) -> str:
             result += f"   Updated: {file_data['updated_at']}\n\n"
 
         return result
-    except Exception as e:
-        return f"❌ Error listing files: {str(e)}"
+    except Exception:
+        logger.exception("Tool list_files_tool: Error listing files")
+        return "❌ Error listing files"
 
 
 def search_content_tool(input_data: SearchContentInput) -> str:
@@ -2303,8 +2318,12 @@ def search_content_tool(input_data: SearchContentInput) -> str:
             result += "\n"
 
         return result
-    except Exception as e:
-        return f"❌ Error searching content: {str(e)}"
+    except Exception:
+        logger.exception(
+            "Tool search_content_tool: Error searching content",
+            pattern=input_data.pattern,
+        )
+        return "❌ Error searching content"
 
 
 def clear_file_tool(input_data: ClearFileInput) -> str:
@@ -2319,8 +2338,11 @@ def clear_file_tool(input_data: ClearFileInput) -> str:
             return f"✅ Cleared changes for '{input_data.file_path}'\n\nTotal files in changes: {summary['total_files']}"
         else:
             return f"❌ File '{input_data.file_path}' not found in changes"
-    except Exception as e:
-        return f"❌ Error clearing file: {str(e)}"
+    except Exception:
+        logger.exception(
+            "Tool clear_file_tool: Error clearing file", file_path=input_data.file_path
+        )
+        return "❌ Error clearing file"
 
 
 def clear_all_changes_tool() -> str:
@@ -2330,8 +2352,9 @@ def clear_all_changes_tool() -> str:
         manager = _get_code_changes_manager()
         count = manager.clear_all()
         return f"✅ Cleared all changes ({count} files removed)"
-    except Exception as e:
-        return f"❌ Error clearing all changes: {str(e)}"
+    except Exception:
+        logger.exception("Tool clear_all_changes_tool: Error clearing all changes")
+        return "❌ Error clearing all changes"
 
 
 def get_changes_summary_tool() -> str:
@@ -2362,8 +2385,9 @@ def get_changes_summary_tool() -> str:
                 result += f"... and {len(summary['files']) - 10} more files\n"
 
         return result
-    except Exception as e:
-        return f"❌ Error getting summary: {str(e)}"
+    except Exception:
+        logger.exception("Tool get_summary_tool: Error getting summary")
+        return "❌ Error getting summary"
 
 
 def update_file_lines_tool(input_data: UpdateFileLinesInput) -> str:
@@ -2413,8 +2437,12 @@ def update_file_lines_tool(input_data: UpdateFileLinesInput) -> str:
             )
         else:
             return f"❌ Error updating lines: {result.get('error', 'Unknown error')}"
-    except Exception as e:
-        return f"❌ Error updating file lines: {str(e)}"
+    except Exception:
+        logger.exception(
+            "Tool update_file_lines_tool: Error updating file lines",
+            file_path=input_data.file_path,
+        )
+        return "❌ Error updating file lines"
 
 
 def replace_in_file_tool(input_data: ReplaceInFileInput) -> str:
@@ -2465,8 +2493,13 @@ def replace_in_file_tool(input_data: ReplaceInFileInput) -> str:
             )
         else:
             return f"❌ Error replacing pattern: {result.get('error', 'Unknown error')}"
-    except Exception as e:
-        return f"❌ Error replacing in file: {str(e)}"
+    except Exception:
+        logger.exception(
+            "Tool replace_in_file_tool: Error replacing in file",
+            file_path=input_data.file_path,
+            pattern=input_data.pattern,
+        )
+        return "❌ Error replacing in file"
 
 
 def insert_lines_tool(input_data: InsertLinesInput) -> str:
@@ -2516,8 +2549,13 @@ def insert_lines_tool(input_data: InsertLinesInput) -> str:
             return f"✅ Inserted {result['lines_inserted']} line(s) {position} line {input_data.line_number} in '{input_data.file_path}'{context_str}"
         else:
             return f"❌ Error inserting lines: {result.get('error', 'Unknown error')}"
-    except Exception as e:
-        return f"❌ Error inserting lines: {str(e)}"
+    except Exception:
+        logger.exception(
+            "Tool insert_lines_tool: Error inserting lines",
+            file_path=input_data.file_path,
+            line_number=input_data.line_number,
+        )
+        return "❌ Error inserting lines"
 
 
 def delete_lines_tool(input_data: DeleteLinesInput) -> str:
@@ -2555,8 +2593,12 @@ def delete_lines_tool(input_data: DeleteLinesInput) -> str:
             )
         else:
             return f"❌ Error deleting lines: {result.get('error', 'Unknown error')}"
-    except Exception as e:
-        return f"❌ Error deleting lines: {str(e)}"
+    except Exception:
+        logger.exception(
+            "Tool delete_lines_tool: Error deleting lines",
+            file_path=input_data.file_path,
+        )
+        return "❌ Error deleting lines"
 
 
 class ShowUpdatedFileInput(BaseModel):
@@ -2649,11 +2691,11 @@ def show_updated_file_tool(input_data: ShowUpdatedFileInput) -> str:
         )
 
         return result
-    except Exception as e:
-        logger.error(
-            f"Tool show_updated_file_tool: Error showing updated files: {str(e)}"
+    except Exception:
+        logger.exception(
+            "Tool show_updated_file_tool: Error showing updated files",
         )
-        return f"❌ Error showing updated files: {str(e)}"
+        return "❌ Error showing updated files"
 
 
 def show_diff_tool(input_data: ShowDiffInput) -> str:
@@ -2843,9 +2885,12 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
         result += "\n```\n\n--generated diff--\n"
 
         return result
-    except Exception as e:
-        logger.error(f"Tool show_diff_tool: Error displaying diff: {str(e)}")
-        return f"❌ Error displaying diff: {str(e)}"
+    except Exception:
+        project_id = getattr(input_data, "project_id", None)
+        logger.exception(
+            "Tool show_diff_tool: Error displaying diff", project_id=project_id
+        )
+        return "❌ Error displaying diff"
 
 
 class GetFileDiffInput(BaseModel):
@@ -2909,12 +2954,23 @@ def get_file_diff_tool(input_data: GetFileDiffInput) -> str:
         result += "\n```\n"
 
         return result
-    except Exception as e:
-        logger.error(f"Tool get_file_diff_tool: Error getting file diff: {str(e)}")
-        return f"❌ Error getting file diff: {str(e)}"
+    except Exception:
+        logger.exception(
+            "Tool get_file_diff_tool: Error getting file diff",
+            project_id=input_data.project_id,
+            file_path=input_data.file_path,
+        )
+        return "❌ Error getting file diff"
 
 
-def get_comprehensive_metadata_tool() -> str:
+class GetComprehensiveMetadataInput(BaseModel):
+    project_id: Optional[str] = Field(
+        default=None,
+        description="Optional project ID for logging purposes. Use project_id from conversation context.",
+    )
+
+
+def get_comprehensive_metadata_tool(input_data: GetComprehensiveMetadataInput) -> str:
     """
     Get comprehensive metadata about all code changes in the current session.
     This shows the complete state of all files being managed, including timestamps,
@@ -2974,11 +3030,12 @@ def get_comprehensive_metadata_tool() -> str:
         result += "or `get_file_diff` to see the diff for a file against the repository branch."
 
         return result
-    except Exception as e:
-        logger.error(
-            f"Tool get_comprehensive_metadata_tool: Error getting metadata: {str(e)}"
+    except Exception:
+        logger.exception(
+            "Tool get_comprehensive_metadata_tool: Error getting metadata",
+            project_id=input_data.project_id,
         )
-        return f"❌ Error getting metadata: {str(e)}"
+        return "❌ Error getting metadata"
 
 
 def export_changes_tool(input_data: ExportChangesInput) -> str:
@@ -3031,8 +3088,12 @@ def export_changes_tool(input_data: ExportChangesInput) -> str:
             if len(exported) > 5:
                 result += f"... and {len(exported) - 5} more files\n"
             return result
-    except Exception as e:
-        return f"❌ Error exporting changes: {str(e)}"
+    except Exception:
+        logger.exception(
+            "Tool export_changes_tool: Error exporting changes",
+            format=input_data.format,
+        )
+        return "❌ Error exporting changes"
 
 
 # Create the structured tools
@@ -3156,7 +3217,7 @@ def create_code_changes_management_tools() -> List[SimpleTool]:
             name="get_session_metadata",
             description="Get comprehensive metadata about all code changes in the current session. Shows complete state of all files being managed, including timestamps, descriptions, change types, and line counts. Use this to review your session progress and understand what files have been modified. This is your session state - all your work is tracked here.",
             func=get_comprehensive_metadata_tool,
-            args_schema=None,
+            args_schema=GetComprehensiveMetadataInput,
         ),
     ]
 

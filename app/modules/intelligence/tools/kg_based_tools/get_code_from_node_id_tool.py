@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from typing import Any, Dict
 
 from langchain_core.tools import StructuredTool
@@ -11,8 +10,9 @@ from app.core.config_provider import config_provider
 from app.modules.code_provider.code_provider_service import CodeProviderService
 from app.modules.projects.projects_model import Project
 from app.modules.intelligence.tools.tool_utils import truncate_dict_response
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class GetCodeFromNodeIdInput(BaseModel):
@@ -42,9 +42,14 @@ class GetCodeFromNodeIdTool:
 
     def _create_neo4j_driver(self) -> GraphDatabase.driver:
         neo4j_config = config_provider.get_neo4j_config()
+        uri = neo4j_config.get("uri")
+        username = neo4j_config.get("username")
+        password = neo4j_config.get("password")
+        if not uri or not username or not password:
+            raise ValueError("Neo4j configuration is incomplete")
         return GraphDatabase.driver(
-            neo4j_config["uri"],
-            auth=(neo4j_config["username"], neo4j_config["password"]),
+            uri,
+            auth=(username, password),
         )
 
     async def arun(self, project_id: str, node_id: str) -> Dict[str, Any]:
@@ -74,9 +79,14 @@ class GetCodeFromNodeIdTool:
                 )
 
             return self._process_result(node_data, project, node_id)
-        except Exception as e:
-            logger.error(f"Unexpected error in GetCodeFromNodeIdTool: {str(e)}")
-            return {"error": f"An unexpected error occurred: {str(e)}"}
+        except Exception:
+            logger.exception(
+                "Unexpected error in GetCodeFromNodeIdTool",
+                project_id=project_id,
+                node_id=node_id,
+                user_id=self.user_id,
+            )
+            return {"error": "An unexpected error occurred"}
 
     def _get_node_data(self, project_id: str, node_id: str) -> Dict[str, Any]:
         query = """
@@ -88,7 +98,10 @@ class GetCodeFromNodeIdTool:
             return result.single()
 
     def _get_project(self, project_id: str) -> Project:
-        return self.sql_db.query(Project).filter(Project.id == project_id).first()
+        project = self.sql_db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            raise ValueError(f"Project with ID '{project_id}' not found")
+        return project
 
     def _process_result(
         self, node_data: Dict[str, Any], project: Project, node_id: str
@@ -132,12 +145,12 @@ class GetCodeFromNodeIdTool:
             "code_content": code_content,
             "docstring": docstring,
         }
-        
+
         # Truncate response if it exceeds character limits
         truncated_result = truncate_dict_response(result)
         if len(str(result)) > 80000:
             logger.warning(
-                f"get_code_from_node_id output truncated for node_id={node_id}, project_id={project_id}"
+                f"get_code_from_node_id output truncated for node_id={node_id}, project_id={project.id}"
             )
         return truncated_result
 

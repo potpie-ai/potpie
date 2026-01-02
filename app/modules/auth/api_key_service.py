@@ -10,9 +10,9 @@ from sqlalchemy.orm import Session
 
 from app.modules.users.user_model import User
 from app.modules.users.user_preferences_model import UserPreferences
-import logging
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class APIKeyService:

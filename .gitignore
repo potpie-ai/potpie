@@ -78,3 +78,6 @@ worktrees/
 .repos_local/
 .data/
 .debug/
+
+.ruff_cache/
+.pytest_cache/

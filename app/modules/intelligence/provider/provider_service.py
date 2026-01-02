@@ -1,4 +1,3 @@
-import logging
 import os
 from typing import List, Dict, Any, Union, AsyncGenerator, Optional
 from pydantic import BaseModel
@@ -10,8 +9,7 @@ from app.core.config_provider import config_provider
 from app.modules.key_management.secret_manager import SecretManager
 from app.modules.users.user_preferences_model import UserPreferences
 from app.modules.utils.posthog_helper import PostHogClient
-
-logger = logging.getLogger(__name__)
+from app.modules.utils.logger import setup_logger
 
 from .provider_schema import (
     ProviderInfo,
@@ -38,20 +36,21 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 from app.modules.intelligence.provider.anthropic_caching_model import (
     CachingAnthropicModel,
 )
-import litellm
 
 import random
 import time
 import asyncio
 from functools import wraps
 
+logger = setup_logger(__name__)
+
 litellm.num_retries = 5  # Number of retries for rate limited requests
 
 # Enable debug logging if LITELLM_DEBUG environment variable is set
 _litellm_debug = os.getenv("LITELLM_DEBUG", "false").lower() in ("true", "1", "yes")
 if _litellm_debug:
-    litellm.set_verbose = True
-    litellm._turn_on_debug()
+    litellm.set_verbose = True  # type: ignore
+    litellm._turn_on_debug()  # type: ignore
     logger.info("LiteLLM debug logging ENABLED (LITELLM_DEBUG=true)")
 
 OVERLOAD_ERROR_PATTERNS = {
@@ -183,7 +182,7 @@ def custom_litellm_retry_handler(retry_count: int, exception: Exception) -> bool
     This gets registered with litellm.custom_retry_fn
     """
     # Default settings for litellm's built-in retry
-    settings = RetrySettings(max_retries=litellm.num_retries)
+    settings = RetrySettings(max_retries=litellm.num_retries or 5)
 
     if not is_recoverable_error(exception, settings):
         # If it's not a recoverable error, don't retry
@@ -192,7 +191,7 @@ def custom_litellm_retry_handler(retry_count: int, exception: Exception) -> bool
     delay = calculate_backoff_time(retry_count, settings)
 
     provider = identify_provider_from_error(exception)
-    logging.warning(
+    logger.warning(
         f"{provider.capitalize()} API error: {str(exception)}. "
         f"Retry {retry_count}/{settings.max_retries}, "
         f"waiting {delay:.2f}s before next attempt..."
@@ -229,15 +228,17 @@ def robust_llm_call(settings: Optional[RetrySettings] = None):
                     provider = identify_provider_from_error(e)
 
                     if retries >= settings.max_retries:
-                        logging.error(
-                            f"Max retries ({settings.max_retries}) exceeded for {provider} API call. "
-                            f"Last error: {str(e)}"
+                        logger.exception(
+                            "Max retries exceeded for API call",
+                            provider=provider,
+                            retries=retries,
+                            max_retries=settings.max_retries,
                         )
                         raise
 
                     delay = calculate_backoff_time(retries, settings)
 
-                    logging.warning(
+                    logger.warning(
                         f"{provider.capitalize()} API error: {str(e)}. "
                         f"Retry {retries+1}/{settings.max_retries}, "
                         f"waiting {delay:.2f}s before next attempt..."
@@ -248,7 +249,9 @@ def robust_llm_call(settings: Optional[RetrySettings] = None):
 
             # This should never be reached due to the raise in the loop,
             # but included for clarity
-            raise last_exception
+            if last_exception is not None:
+                raise last_exception
+            raise RuntimeError("Unexpected error: retries exhausted without exception")
 
         return wrapper
 
@@ -275,7 +278,7 @@ def sanitize_messages_for_tracing(messages: list) -> list:
                 # Convert None content to empty string for OpenTelemetry compatibility
                 if "content" in sanitized_msg and sanitized_msg["content"] is None:
                     sanitized_msg["content"] = ""
-                    logging.debug(
+                    logger.debug(
                         f"Sanitized message {idx}: converted None content to empty string"
                     )
                 # Handle nested content structures (e.g., multimodal messages)
@@ -286,7 +289,7 @@ def sanitize_messages_for_tracing(messages: list) -> list:
                     for item_idx, item in enumerate(sanitized_msg["content"]):
                         if item is None:
                             # Skip None items in content list
-                            logging.debug(
+                            logger.debug(
                                 f"Sanitized message {idx}: skipping None item at index {item_idx} in content list"
                             )
                             continue
@@ -296,7 +299,7 @@ def sanitize_messages_for_tracing(messages: list) -> list:
                             for key, value in sanitized_item.items():
                                 if value is None:
                                     sanitized_item[key] = ""
-                                    logging.debug(
+                                    logger.debug(
                                         f"Sanitized message {idx}: converted None value for key '{key}' to empty string"
                                     )
                             sanitized_content.append(sanitized_item)
@@ -307,7 +310,7 @@ def sanitize_messages_for_tracing(messages: list) -> list:
                 for key, value in sanitized_msg.items():
                     if value is None and key != "content":
                         sanitized_msg[key] = ""
-                        logging.debug(
+                        logger.debug(
                             f"Sanitized message {idx}: converted None value for key '{key}' to empty string"
                         )
                 sanitized.append(sanitized_msg)
@@ -315,7 +318,7 @@ def sanitize_messages_for_tracing(messages: list) -> list:
                 sanitized.append(msg)
         except Exception as e:
             # Log error but continue processing - don't break on one bad message
-            logging.warning(
+            logger.warning(
                 f"Error sanitizing message {idx}: {e}. Message will be included as-is.",
                 exc_info=True,
             )
@@ -697,7 +700,7 @@ class ProviderService:
                 ),
             )
         except Exception as e:
-            logging.error(f"Error getting global AI provider: {e}")
+            logger.exception("Error getting global AI provider")
             raise e
 
     def supports_pydantic(self, config_type: str = "chat") -> bool:
@@ -797,8 +800,10 @@ class ProviderService:
                     response = await acompletion(messages=messages, **params)
                     return response.choices[0].message.content
         except Exception as e:
-            logging.error(
-                f"Error calling LLM with model {model_identifier}: {e}, provider: {routing_provider}"
+            logger.exception(
+                "Error calling LLM",
+                model_identifier=model_identifier,
+                provider=routing_provider,
             )
             raise e
 
@@ -833,7 +838,7 @@ class ProviderService:
                 response = await acompletion(messages=messages, **params)
                 return response.choices[0].message.content
         except Exception as e:
-            logging.error(f"Error calling LLM: {e}, provider: {routing_provider}")
+            logger.exception("Error calling LLM", provider=routing_provider)
             raise e
 
     @robust_llm_call()
@@ -900,7 +905,7 @@ class ProviderService:
                 )
             return response
         except Exception as e:
-            logging.error(f"LLM call with structured output failed: {e}")
+            logger.exception("LLM call with structured output failed")
             raise e
 
     @robust_llm_call()
@@ -964,9 +969,7 @@ class ProviderService:
                 response = await acompletion(messages=messages, **params)
                 return response.choices[0].message.content
         except Exception as e:
-            logging.error(
-                f"Error calling multimodal LLM: {e}, provider: {routing_provider}"
-            )
+            logger.exception("Error calling multimodal LLM", provider=routing_provider)
             raise e
 
     def _format_multimodal_messages(
@@ -1130,8 +1133,8 @@ class ProviderService:
                     f"Image {img_id} passed validation ({len(base64_data)} chars, {mime_type})"
                 )
 
-            except Exception as e:
-                logger.error(f"Error validating image {img_id}: {str(e)}")
+            except Exception:
+                logger.exception("Error validating image", img_id=img_id)
                 continue
 
         logger.info(

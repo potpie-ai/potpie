@@ -1,4 +1,3 @@
-import logging
 import os
 import subprocess
 
@@ -37,11 +36,11 @@ from app.modules.usage.usage_router import router as usage_router
 from app.modules.users.user_router import router as user_router
 from app.modules.users.user_service import UserService
 from app.modules.utils.firebase_setup import FirebaseSetup
+from app.modules.utils.logger import configure_logging, setup_logger
+from app.modules.utils.logging_middleware import LoggingContextMiddleware
 
-logging.basicConfig(
-    level=logging.DEBUG if os.getenv("LOG_LEVEL") == "DEBUG" else logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
+configure_logging()
+logger = setup_logger(__name__)
 
 
 class MainApp:
@@ -51,7 +50,7 @@ class MainApp:
             os.getenv("isDevelopmentMode") == "enabled"
             and os.getenv("ENV") != "development"
         ):
-            logging.error(
+            logger.error(
                 "Development mode enabled but ENV is not set to development. Exiting."
             )
             exit(1)
@@ -59,6 +58,7 @@ class MainApp:
         self.setup_phoenix_tracing()
         self.app = FastAPI()
         self.setup_cors()
+        self.setup_logging_middleware()
         self.include_routers()
 
     def setup_sentry(self):
@@ -81,8 +81,10 @@ class MainApp:
                         StdlibIntegration(),
                     ],
                 )
-            except Exception as e:
-                logging.warning(f"Sentry initialization failed (non-fatal): {e}")
+            except Exception:
+                logger.exception(
+                    "Sentry initialization failed (non-fatal but should be investigated)"
+                )
 
     def setup_phoenix_tracing(self):
         try:
@@ -91,11 +93,17 @@ class MainApp:
             )
 
             initialize_phoenix_tracing()
-        except Exception as e:
-            logging.warning(f"Phoenix tracing initialization failed (non-fatal): {e}")
+        except Exception:
+            logger.exception(
+                "Phoenix tracing initialization failed (non-fatal but should be investigated)"
+            )
 
     def setup_cors(self):
-        origins = ["*"]
+        # Get allowed origins from environment variable, default to localhost:3000 for development
+        allowed_origins_env = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
+        # Split by comma if multiple origins are provided
+        origins = [origin.strip() for origin in allowed_origins_env.split(",")]
+
         self.app.add_middleware(
             CORSMiddleware,
             allow_origins=origins,
@@ -103,16 +111,32 @@ class MainApp:
             allow_methods=["*"],
             allow_headers=["*"],
         )
+        logger.info(f"CORS configured with allowed origins: {origins}")
+
+    def setup_logging_middleware(self):
+        """
+        Add logging context middleware to automatically inject request-level context.
+
+        This ensures all logs within a request automatically include:
+        - request_id: Unique identifier for tracing
+        - path: API endpoint path
+        - user_id: Authenticated user (if available)
+
+        Domain-specific IDs (conversation_id, project_id) should be added
+        manually using log_context() in routes where available.
+        """
+        self.app.add_middleware(LoggingContextMiddleware)
+        logger.info("Logging context middleware configured")
 
     def setup_data(self):
         if os.getenv("isDevelopmentMode") == "enabled":
-            logging.info("Development mode enabled. Skipping Firebase setup.")
+            logger.info("Development mode enabled. Skipping Firebase setup.")
             # Setup dummy user for development mode
             db = SessionLocal()
             user_service = UserService(db)
             user_service.setup_dummy_user()
             db.close()
-            logging.info("Dummy user created")
+            logger.info("Dummy user created")
         else:
             FirebaseSetup.firebase_init()
 
@@ -160,23 +184,23 @@ class MainApp:
 
     async def startup_event(self):
         # Database initialization moved here (runs on app start, not import)
-        logging.info("Initializing database...")
+        logger.info("Initializing database...")
         self.initialize_database()
-        logging.info("Database initialized successfully")
+        logger.info("Database initialized successfully")
 
         # Setup data (Firebase or dummy user)
-        logging.info("Setting up application data...")
+        logger.info("Setting up application data...")
         self.setup_data()
-        logging.info("Application data setup complete")
+        logger.info("Application data setup complete")
 
         # System prompts initialization
         db = SessionLocal()
         try:
             system_prompt_setup = SystemPromptSetup(db)
             await system_prompt_setup.initialize_system_prompts()
-            logging.info("System prompts initialized successfully")
-        except Exception as e:
-            logging.error(f"Failed to initialize system prompts: {str(e)}")
+            logger.info("System prompts initialized successfully")
+        except Exception:
+            logger.exception("Failed to initialize system prompts")
             raise
         finally:
             db.close()

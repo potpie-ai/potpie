@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -12,8 +11,9 @@ from app.modules.conversations.message.message_model import (
     MessageStatus,
     MessageType,
 )
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class MessageServiceError(Exception):
@@ -72,15 +72,18 @@ class MessageService:
             raise
 
         except IntegrityError as e:
-            logger.error(
-                f"Database integrity error in create_message: {e}", exc_info=True
+            logger.exception(
+                "Database integrity error in create_message",
+                conversation_id=conversation_id,
             )
             raise MessageServiceError(
                 "Failed to create message due to a database integrity error"
             ) from e
 
         except Exception as e:
-            logger.error(f"Unexpected error in create_message: {e}", exc_info=True)
+            logger.exception(
+                "Unexpected error in create_message", conversation_id=conversation_id
+            )
             raise MessageServiceError(
                 "An unexpected error occurred while creating the message"
             ) from e
@@ -105,13 +108,15 @@ class MessageService:
             logger.warning(str(e))
             raise
         except SQLAlchemyError as e:
-            logger.error(f"Database error in mark_message_archived: {e}", exc_info=True)
+            logger.exception(
+                "Database error in mark_message_archived", message_id=message_id
+            )
             raise MessageServiceError(
                 f"Failed to archive message {message_id} due to a database error"
             ) from e
         except Exception as e:
-            logger.error(
-                f"Unexpected error in mark_message_archived: {e}", exc_info=True
+            logger.exception(
+                "Unexpected error in mark_message_archived", message_id=message_id
             )
             raise MessageServiceError(
                 f"An unexpected error occurred while archiving message {message_id}"

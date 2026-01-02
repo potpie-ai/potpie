@@ -15,9 +15,9 @@ from app.modules.intelligence.agents.chat_agents.agent_config import (
 from app.modules.intelligence.tools.tool_service import ToolService
 from ...chat_agent import ChatAgent, ChatAgentResponse, ChatContext
 from typing import AsyncGenerator
-import logging
+from app.modules.utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class CodeGenAgent(ChatAgent):

@@ -1,4 +1,6 @@
-import logging
+from app.modules.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
 from typing import Optional, Type, Dict, Any
 from pydantic import BaseModel, Field
 from redis import Redis
@@ -23,8 +25,7 @@ class FetchFileToolInput(BaseModel):
 
 class FetchFileTool:
     name: str = "fetch_file"
-    description: str = (
-        """Fetch file content from a repository using the project_id and file path.
+    description: str = """Fetch file content from a repository using the project_id and file path.
         Returns the content between optional start_line and end_line.
         Make sure the file exists before querying for it, confirm it by checking the file structure.
         File content is hashed for caching purposes. Cache won't be used if start_line or end_line are different.
@@ -69,7 +70,6 @@ class FetchFileTool:
         4:hello_world()
 
         """
-    )
     args_schema: Type[BaseModel] = FetchFileToolInput
 
     def __init__(self, sql_db: Session, user_id: str, internal_call: bool = False):
@@ -214,7 +214,7 @@ class FetchFileTool:
                 "content": content,
             }
         except Exception as e:
-            logging.exception(f"Failed to fetch file content for {file_path}: {str(e)}")
+            logger.exception(f"Failed to fetch file content for {file_path}")
             return {"success": False, "error": str(e), "content": None}
 
     async def _arun(

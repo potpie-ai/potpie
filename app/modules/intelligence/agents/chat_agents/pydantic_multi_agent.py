@@ -222,4 +222,3 @@ class PydanticMultiAgent(ChatAgent):
             # Use standard PydanticAI multi-agent streaming for text-only
             async for chunk in self._streaming_flow.run_stream(ctx):
                 yield chunk
-
