@@ -193,9 +193,11 @@ class LocalProvider(ICodeProvider):
             ValueError: If ref is invalid
         """
         from app.modules.code_provider.git_safe import safe_git_repo_operation
-        
-        expanded_path = os.path.abspath(os.path.expanduser(repo_name or self.default_repo_path))
-        
+
+        expanded_path = os.path.abspath(
+            os.path.expanduser(repo_name or self.default_repo_path)
+        )
+
         def _get_content(repo):
             # Use active branch if no ref specified
             actual_ref = ref
@@ -228,12 +230,16 @@ class LocalProvider(ICodeProvider):
                 file_content = "\n".join(lines[start_idx:end_idx])
 
             return file_content
-        
+
         operation_name = f"get_file_content({file_path}@{ref or 'default'})"
+        # Use explicit timeout to prevent blocking when called from within an outer timeout
+        # The outer timeout (e.g., 20s in _get_current_content) must be longer than this
+        # to prevent orphaned threads from nested ThreadPoolExecutors
         return safe_git_repo_operation(
             expanded_path,
             _get_content,
-            max_retries=2,
+            max_retries=1,  # Reduced retries for faster failure
+            timeout=15.0,  # Explicit timeout shorter than typical outer timeouts
             operation_name=operation_name,
         )
 

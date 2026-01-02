@@ -13,9 +13,11 @@ import os
 import inspect
 import functools
 import difflib
+import time
+import threading
 from contextvars import ContextVar
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, Callable, TypeVar
 from enum import Enum
 from dataclasses import dataclass, asdict
 from pydantic import BaseModel, Field
@@ -24,9 +26,67 @@ from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+T = TypeVar("T")
+
 # Maximum file size to read into memory (10MB)
 # This prevents OOM kills when processing very large files
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10MB
+
+# Database query timeout in seconds - prevents deadlocks in forked workers
+DB_QUERY_TIMEOUT = 15.0  # 15 seconds max for any database query
+DB_SESSION_CREATE_TIMEOUT = 10.0  # 10 seconds max for creating a new session
+
+
+def _execute_with_timeout(
+    operation: Callable[[], T],
+    timeout: float,
+    operation_name: str = "operation",
+) -> T:
+    """
+    Execute an operation with a timeout using threading.
+    
+    This prevents deadlocks when database queries or other operations hang
+    in forked Celery workers.
+    
+    Args:
+        operation: The operation to execute
+        timeout: Maximum time in seconds to wait
+        operation_name: Name of the operation for logging
+        
+    Returns:
+        The result of the operation
+        
+    Raises:
+        TimeoutError: If the operation exceeds the timeout
+        Exception: Any exception raised by the operation
+    """
+    result_container = {"value": None, "exception": None, "completed": False}
+    
+    def _run_operation():
+        try:
+            result_container["value"] = operation()
+            result_container["completed"] = True
+        except Exception as e:
+            result_container["exception"] = e
+            result_container["completed"] = True
+    
+    thread = threading.Thread(target=_run_operation, daemon=True)
+    thread.start()
+    thread.join(timeout=timeout)
+    
+    if not result_container["completed"]:
+        logger.error(
+            f"Operation '{operation_name}' timed out after {timeout} seconds. "
+            f"This may indicate a deadlock or hung operation."
+        )
+        raise TimeoutError(
+            f"Operation '{operation_name}' timed out after {timeout} seconds"
+        )
+    
+    if result_container["exception"]:
+        raise result_container["exception"]
+    
+    return result_container["value"]
 
 
 class ChangeType(str, Enum):
@@ -102,8 +162,9 @@ class CodeChangesManager:
         db: Optional[Session] = None,
     ) -> str:
         """Get current content of a file (from changes, repository via code provider, filesystem, or empty if new)"""
+        start_time = time.time()
         logger.info(
-            f"CodeChangesManager._get_current_content: Getting content for '{file_path}' "
+            f"CodeChangesManager._get_current_content: [START] Getting content for '{file_path}' "
             f"(project_id={project_id}, db={'provided' if db else 'None'})"
         )
 
@@ -115,16 +176,17 @@ class CodeChangesManager:
                 )
                 return ""  # Deleted file has no content
             content = existing.content or ""
+            elapsed = time.time() - start_time
             logger.info(
-                f"CodeChangesManager._get_current_content: Retrieved '{file_path}' from changes "
-                f"({len(content)} chars, {len(content.split(chr(10)))} lines)"
+                f"CodeChangesManager._get_current_content: [SUCCESS] Retrieved '{file_path}' from changes "
+                f"({len(content)} chars, {len(content.split(chr(10)))} lines) in {elapsed:.3f}s"
             )
             return content
 
         # If file not in changes, try to fetch from repository using code provider
         if project_id and db:
             logger.info(
-                f"CodeChangesManager._get_current_content: Attempting to fetch '{file_path}' "
+                f"CodeChangesManager._get_current_content: [STEP 1] Attempting to fetch '{file_path}' "
                 f"from repository using project_id={project_id}"
             )
             try:
@@ -136,13 +198,29 @@ class CodeChangesManager:
 
                 # Project.id is Text (string) in the database, so query directly with the string project_id
                 # Note: get_project_from_db_by_id_sync has incorrect type hint (int), but actually accepts string
-                logger.debug(
-                    f"CodeChangesManager._get_current_content: Fetching project details for project_id={project_id} (type: {type(project_id).__name__})"
+                query_start = time.time()
+                logger.info(
+                    f"CodeChangesManager._get_current_content: [STEP 1.1] Fetching project details for project_id={project_id} "
+                    f"(type: {type(project_id).__name__}, session_id={id(db)})"
                 )
+                project_details = None
                 try:
                     # Query directly - Project.id is Text column, so string works fine
                     # The method type hint says int, but the actual column accepts strings
-                    project = db.query(Project).filter(Project.id == project_id).first()
+                    # Wrap in timeout to prevent deadlocks
+                    logger.debug(
+                        f"CodeChangesManager._get_current_content: [STEP 1.1.1] Executing database query with timeout={DB_QUERY_TIMEOUT}s"
+                    )
+                    project = _execute_with_timeout(
+                        lambda: db.query(Project).filter(Project.id == project_id).first(),
+                        timeout=DB_QUERY_TIMEOUT,
+                        operation_name=f"db_query_project_{project_id}",
+                    )
+                    query_elapsed = time.time() - query_start
+                    logger.info(
+                        f"CodeChangesManager._get_current_content: [STEP 1.1.2] Database query completed in {query_elapsed:.3f}s"
+                    )
+                    
                     if project:
                         project_details = {
                             "project_name": project.repo_name,
@@ -153,18 +231,30 @@ class CodeChangesManager:
                             "repo_path": project.repo_path,
                             "user_id": project.user_id,
                         }
-                        logger.debug(
-                            f"CodeChangesManager._get_current_content: Project details retrieved: "
+                        logger.info(
+                            f"CodeChangesManager._get_current_content: [STEP 1.1.3] Project details retrieved: "
                             f"repo={project_details.get('project_name')}, branch={project_details.get('branch_name')}"
                         )
                     else:
                         logger.warning(
-                            f"CodeChangesManager._get_current_content: Project not found in database for project_id={project_id}"
+                            f"CodeChangesManager._get_current_content: [STEP 1.1.3] Project not found in database for project_id={project_id}"
                         )
                         project_details = None
+                except TimeoutError as timeout_err:
+                    query_elapsed = time.time() - query_start
+                    logger.error(
+                        f"CodeChangesManager._get_current_content: [STEP 1.1.ERROR] Database query TIMED OUT after {query_elapsed:.3f}s "
+                        f"for project_id={project_id}. This indicates a potential deadlock or hung database connection. "
+                        f"Error: {timeout_err}"
+                    )
+                    project_details = None
                 except Exception as e:
+                    query_elapsed = time.time() - query_start
                     # Database session might be invalid in forked workers - try creating a new one
                     error_str = str(e).lower()
+                    logger.warning(
+                        f"CodeChangesManager._get_current_content: [STEP 1.1.ERROR] Database query failed after {query_elapsed:.3f}s: {e}"
+                    )
                     if any(
                         keyword in error_str
                         for keyword in [
@@ -176,23 +266,56 @@ class CodeChangesManager:
                         ]
                     ):
                         logger.warning(
-                            f"CodeChangesManager._get_current_content: Database session error (likely from forked worker): {e}. "
+                            f"CodeChangesManager._get_current_content: [STEP 1.2] Database session error (likely from forked worker): {e}. "
                             f"Creating new session for project_id={project_id}"
                         )
                         try:
                             from app.core.database import SessionLocal
 
+                            session_create_start = time.time()
+                            logger.info(
+                                f"CodeChangesManager._get_current_content: [STEP 1.2.1] Attempting to close old session and create new one"
+                            )
                             try:
                                 db.close()  # Close invalid session if possible
-                            except Exception:
+                                logger.debug(
+                                    f"CodeChangesManager._get_current_content: [STEP 1.2.1.1] Old session closed"
+                                )
+                            except Exception as close_err:
+                                logger.debug(
+                                    f"CodeChangesManager._get_current_content: [STEP 1.2.1.1] Error closing old session (ignored): {close_err}"
+                                )
                                 pass  # Ignore errors when closing invalid session
-                            db = SessionLocal()
-                            # Retry the query with new session
-                            project = (
-                                db.query(Project)
-                                .filter(Project.id == project_id)
-                                .first()
+                            
+                            # Create new session with timeout protection
+                            logger.debug(
+                                f"CodeChangesManager._get_current_content: [STEP 1.2.2] Creating new session with timeout={DB_SESSION_CREATE_TIMEOUT}s"
                             )
+                            db = _execute_with_timeout(
+                                lambda: SessionLocal(),
+                                timeout=DB_SESSION_CREATE_TIMEOUT,
+                                operation_name="create_new_db_session",
+                            )
+                            session_create_elapsed = time.time() - session_create_start
+                            logger.info(
+                                f"CodeChangesManager._get_current_content: [STEP 1.2.3] New session created in {session_create_elapsed:.3f}s (session_id={id(db)})"
+                            )
+                            
+                            # Retry the query with new session
+                            retry_query_start = time.time()
+                            logger.info(
+                                f"CodeChangesManager._get_current_content: [STEP 1.2.4] Retrying database query with new session"
+                            )
+                            project = _execute_with_timeout(
+                                lambda: db.query(Project).filter(Project.id == project_id).first(),
+                                timeout=DB_QUERY_TIMEOUT,
+                                operation_name=f"db_query_project_retry_{project_id}",
+                            )
+                            retry_query_elapsed = time.time() - retry_query_start
+                            logger.info(
+                                f"CodeChangesManager._get_current_content: [STEP 1.2.5] Retry query completed in {retry_query_elapsed:.3f}s"
+                            )
+                            
                             if project:
                                 project_details = {
                                     "project_name": project.repo_name,
@@ -203,21 +326,30 @@ class CodeChangesManager:
                                     "repo_path": project.repo_path,
                                     "user_id": project.user_id,
                                 }
-                                logger.debug(
-                                    f"CodeChangesManager._get_current_content: Project details retrieved with new session: "
+                                logger.info(
+                                    f"CodeChangesManager._get_current_content: [STEP 1.2.6] Project details retrieved with new session: "
                                     f"repo={project_details.get('project_name')}, branch={project_details.get('branch_name')}"
                                 )
                             else:
+                                logger.warning(
+                                    f"CodeChangesManager._get_current_content: [STEP 1.2.6] Project not found with new session for project_id={project_id}"
+                                )
                                 project_details = None
+                        except TimeoutError as timeout_err:
+                            logger.error(
+                                f"CodeChangesManager._get_current_content: [STEP 1.2.ERROR] Session creation or retry query TIMED OUT: {timeout_err}. "
+                                f"This indicates a potential deadlock. Falling back to filesystem."
+                            )
+                            project_details = None
                         except Exception as retry_error:
                             logger.error(
-                                f"CodeChangesManager._get_current_content: Failed to create new session and retry: {retry_error}",
+                                f"CodeChangesManager._get_current_content: [STEP 1.2.ERROR] Failed to create new session and retry: {retry_error}",
                                 exc_info=True,
                             )
                             project_details = None
                     else:
                         logger.warning(
-                            f"CodeChangesManager._get_current_content: Error querying project for project_id '{project_id}': {e}",
+                            f"CodeChangesManager._get_current_content: [STEP 1.1.ERROR] Error querying project for project_id '{project_id}': {e}",
                             exc_info=True,
                         )
                         project_details = None
@@ -225,9 +357,25 @@ class CodeChangesManager:
                 if project_details and "project_name" in project_details:
                     repo_content = None  # Initialize before try block
                     try:
-                        cp_service = CodeProviderService(db)
-                        logger.debug(
-                            f"CodeChangesManager._get_current_content: Fetching file content from repository "
+                        service_init_start = time.time()
+                        logger.info(
+                            f"CodeChangesManager._get_current_content: [STEP 2] Initializing CodeProviderService "
+                            f"for repo '{project_details['project_name']}'"
+                        )
+                        # Initialize CodeProviderService with timeout protection
+                        cp_service = _execute_with_timeout(
+                            lambda: CodeProviderService(db),
+                            timeout=DB_QUERY_TIMEOUT,  # Service init might query DB
+                            operation_name="CodeProviderService_init",
+                        )
+                        service_init_elapsed = time.time() - service_init_start
+                        logger.info(
+                            f"CodeChangesManager._get_current_content: [STEP 2.1] CodeProviderService initialized in {service_init_elapsed:.3f}s"
+                        )
+                        
+                        file_fetch_start = time.time()
+                        logger.info(
+                            f"CodeChangesManager._get_current_content: [STEP 3] Fetching file content from repository "
                             f"for '{file_path}' in repo '{project_details['project_name']}'"
                         )
                         # Wrap git operations in safe handler to prevent SIGSEGV and timeouts
@@ -237,20 +385,40 @@ class CodeChangesManager:
                         )
 
                         def _fetch_file_content():
-                            return cp_service.get_file_content(
-                                repo_name=project_details["project_name"],
-                                file_path=file_path,
-                                branch_name=project_details.get("branch_name"),
-                                start_line=None,
-                                end_line=None,
-                                project_id=project_id,
-                                commit_id=project_details.get("commit_id"),
+                            fetch_start = time.time()
+                            logger.debug(
+                                f"CodeChangesManager._get_current_content: [STEP 3.1] Inside _fetch_file_content, calling cp_service.get_file_content"
                             )
+                            try:
+                                result = cp_service.get_file_content(
+                                    repo_name=project_details["project_name"],
+                                    file_path=file_path,
+                                    branch_name=project_details.get("branch_name"),
+                                    start_line=None,
+                                    end_line=None,
+                                    project_id=project_id,
+                                    commit_id=project_details.get("commit_id"),
+                                )
+                                fetch_elapsed = time.time() - fetch_start
+                                logger.debug(
+                                    f"CodeChangesManager._get_current_content: [STEP 3.1.1] cp_service.get_file_content completed in {fetch_elapsed:.3f}s"
+                                )
+                                return result
+                            except Exception as fetch_err:
+                                fetch_elapsed = time.time() - fetch_start
+                                logger.error(
+                                    f"CodeChangesManager._get_current_content: [STEP 3.1.ERROR] cp_service.get_file_content failed after {fetch_elapsed:.3f}s: {fetch_err}",
+                                    exc_info=True,
+                                )
+                                raise
 
                         try:
                             # Use max_total_timeout to prevent operations from running indefinitely
                             # Even with 2 retries at 20s each, cap total time at 40s to prevent worker hangs
                             # Reduced timeouts to fail faster and prevent worker crashes
+                            logger.debug(
+                                f"CodeChangesManager._get_current_content: [STEP 3.2] Calling safe_git_operation with timeout=20.0s, max_retries=1"
+                            )
                             repo_content = safe_git_operation(
                                 _fetch_file_content,
                                 max_retries=1,  # Reduced to 1 retry to fail faster
@@ -258,40 +426,55 @@ class CodeChangesManager:
                                 max_total_timeout=40.0,  # Maximum 40 seconds total (reduced from 60s)
                                 operation_name=f"get_file_content({file_path})",
                             )
+                            file_fetch_elapsed = time.time() - file_fetch_start
+                            logger.info(
+                                f"CodeChangesManager._get_current_content: [STEP 3.3] File fetch completed in {file_fetch_elapsed:.3f}s"
+                            )
                         except GitOperationError as git_error:
+                            file_fetch_elapsed = time.time() - file_fetch_start
                             # If safe wrapper fails after retries, log and continue to filesystem fallback
                             logger.warning(
-                                f"CodeChangesManager._get_current_content: Safe git operation failed after retries: {git_error}. "
+                                f"CodeChangesManager._get_current_content: [STEP 3.ERROR] Safe git operation failed after {file_fetch_elapsed:.3f}s: {git_error}. "
                                 f"Falling back to filesystem for '{file_path}'"
                             )
                             repo_content = None
                         except MemoryError as mem_error:
+                            file_fetch_elapsed = time.time() - file_fetch_start
                             # Handle memory errors gracefully - this can happen with very large files
                             logger.error(
-                                f"CodeChangesManager._get_current_content: Memory error fetching '{file_path}' from repository: {mem_error}. "
+                                f"CodeChangesManager._get_current_content: [STEP 3.ERROR] Memory error fetching '{file_path}' from repository after {file_fetch_elapsed:.3f}s: {mem_error}. "
                                 f"This may indicate the file is too large or system memory is low. "
                                 f"Falling back to filesystem."
                             )
                             repo_content = None
                         except (SystemExit, KeyboardInterrupt) as e:
+                            file_fetch_elapsed = time.time() - file_fetch_start
                             # Don't re-raise - catch and fallback to prevent worker crash
                             logger.error(
-                                f"CodeChangesManager._get_current_content: System exit/interrupt during git operation for '{file_path}': {e}. "
+                                f"CodeChangesManager._get_current_content: [STEP 3.ERROR] System exit/interrupt during git operation for '{file_path}' after {file_fetch_elapsed:.3f}s: {e}. "
                                 f"Falling back to filesystem to prevent worker crash."
                             )
                             repo_content = None
                         except BaseException as e:
+                            file_fetch_elapsed = time.time() - file_fetch_start
                             # Catch any other exceptions (including segfault-related errors) to prevent worker crash
                             logger.error(
-                                f"CodeChangesManager._get_current_content: Unexpected error during git operation for '{file_path}': {type(e).__name__}: {e}. "
+                                f"CodeChangesManager._get_current_content: [STEP 3.ERROR] Unexpected error during git operation for '{file_path}' after {file_fetch_elapsed:.3f}s: {type(e).__name__}: {e}. "
                                 f"This may indicate a crash or resource issue. Falling back to filesystem.",
                                 exc_info=True,
                             )
                             repo_content = None
+                    except TimeoutError as timeout_err:
+                        logger.error(
+                            f"CodeChangesManager._get_current_content: [STEP 2.ERROR] CodeProviderService initialization TIMED OUT: {timeout_err}. "
+                            f"This indicates a potential deadlock. Falling back to filesystem.",
+                            exc_info=True,
+                        )
+                        repo_content = None
                     except Exception as service_error:
                         # Catch errors creating CodeProviderService or any other service-related errors
                         logger.error(
-                            f"CodeChangesManager._get_current_content: Error creating CodeProviderService or fetching file '{file_path}': {service_error}. "
+                            f"CodeChangesManager._get_current_content: [STEP 2.ERROR] Error creating CodeProviderService or fetching file '{file_path}': {service_error}. "
                             f"Falling back to filesystem.",
                             exc_info=True,
                         )
@@ -302,39 +485,42 @@ class CodeChangesManager:
                         content_size_bytes = len(repo_content.encode("utf-8"))
                         if content_size_bytes > MAX_FILE_SIZE_BYTES:
                             logger.warning(
-                                f"CodeChangesManager._get_current_content: File '{file_path}' "
+                                f"CodeChangesManager._get_current_content: [STEP 3.4] File '{file_path}' "
                                 f"from repository is too large ({content_size_bytes} bytes, max {MAX_FILE_SIZE_BYTES} bytes). "
                                 f"Skipping to prevent memory issues. Falling back to filesystem."
                             )
                             repo_content = None
                         else:
                             lines = repo_content.split("\n")
+                            total_elapsed = time.time() - start_time
                             logger.info(
-                                f"CodeChangesManager._get_current_content: Successfully retrieved '{file_path}' "
-                                f"from repository via code provider ({len(repo_content)} chars, {len(lines)} lines)"
+                                f"CodeChangesManager._get_current_content: [SUCCESS] Successfully retrieved '{file_path}' "
+                                f"from repository via code provider ({len(repo_content)} chars, {len(lines)} lines) in {total_elapsed:.3f}s"
                             )
                             return repo_content
 
                     if not repo_content:
                         logger.warning(
-                            f"CodeChangesManager._get_current_content: Repository returned empty or oversized content for '{file_path}'"
+                            f"CodeChangesManager._get_current_content: [STEP 3.4] Repository returned empty or oversized content for '{file_path}'"
                         )
                 else:
                     logger.warning(
-                        f"CodeChangesManager._get_current_content: Cannot fetch from repository - "
+                        f"CodeChangesManager._get_current_content: [STEP 1.3] Cannot fetch from repository - "
                         f"project_details={'missing project_name' if project_details else 'None'}"
                     )
             except MemoryError as mem_error:
+                elapsed = time.time() - start_time
                 # Handle memory errors gracefully
                 logger.error(
-                    f"CodeChangesManager._get_current_content: Memory error fetching '{file_path}' from repository: {mem_error}. "
+                    f"CodeChangesManager._get_current_content: [ERROR] Memory error fetching '{file_path}' from repository after {elapsed:.3f}s: {mem_error}. "
                     f"This may indicate the file is too large or system memory is low. "
                     f"Falling back to filesystem."
                 )
                 # Fall through to try filesystem
             except Exception as e:
+                elapsed = time.time() - start_time
                 logger.warning(
-                    f"CodeChangesManager._get_current_content: Error fetching '{file_path}' from repository: {str(e)}",
+                    f"CodeChangesManager._get_current_content: [ERROR] Error fetching '{file_path}' from repository after {elapsed:.3f}s: {str(e)}",
                     exc_info=True,
                 )
                 # Fall through to try filesystem
@@ -342,15 +528,18 @@ class CodeChangesManager:
         # If not available via code provider, try to read from filesystem
         # WARNING: This fallback can cause issues if file should be in changes but isn't found
         # (e.g., due to path mismatch). This returns ORIGINAL file content, which may overwrite changes.
-        logger.debug(
-            f"CodeChangesManager._get_current_content: Attempting to read '{file_path}' from filesystem"
+        filesystem_start = time.time()
+        logger.info(
+            f"CodeChangesManager._get_current_content: [STEP 4] Attempting to read '{file_path}' from filesystem"
         )
         codebase_content = self._read_file_from_codebase(file_path)
+        filesystem_elapsed = time.time() - filesystem_start
         if codebase_content is not None:
             lines = codebase_content.split("\n")
+            total_elapsed = time.time() - start_time
             logger.warning(
-                f"CodeChangesManager._get_current_content: ⚠️ WARNING - Retrieved '{file_path}' from filesystem "
-                f"({len(codebase_content)} chars, {len(lines)} lines). "
+                f"CodeChangesManager._get_current_content: [SUCCESS] ⚠️ WARNING - Retrieved '{file_path}' from filesystem "
+                f"({len(codebase_content)} chars, {len(lines)} lines) in {filesystem_elapsed:.3f}s (total: {total_elapsed:.3f}s). "
                 f"This may be the ORIGINAL file content, not the current changes. "
                 f"If this file should have pending changes, they may be overwritten. "
                 f"Consider providing project_id/db for proper repository access."
@@ -358,12 +547,13 @@ class CodeChangesManager:
             return codebase_content
         else:
             logger.warning(
-                f"CodeChangesManager._get_current_content: File '{file_path}' not found in filesystem"
+                f"CodeChangesManager._get_current_content: [STEP 4.1] File '{file_path}' not found in filesystem (checked in {filesystem_elapsed:.3f}s)"
             )
 
         # File doesn't exist in changes, repository, or filesystem - treat as new file
+        total_elapsed = time.time() - start_time
         logger.warning(
-            f"CodeChangesManager._get_current_content: File '{file_path}' not found anywhere - treating as new file (empty content). "
+            f"CodeChangesManager._get_current_content: [END] File '{file_path}' not found anywhere - treating as new file (empty content) after {total_elapsed:.3f}s. "
             f"This may be intentional for creating new files, but verify the file path is correct."
         )
         return ""
@@ -1412,6 +1602,10 @@ class CodeChangesManager:
                         from app.modules.code_provider.code_provider_service import (
                             CodeProviderService,
                         )
+                        from app.modules.code_provider.git_safe import (
+                            safe_git_operation,
+                            GitOperationError,
+                        )
                         from app.modules.projects.projects_model import Project
 
                         project = (
@@ -1419,15 +1613,32 @@ class CodeChangesManager:
                         )
                         if project:
                             cp_service = CodeProviderService(db)
-                            repo_content = cp_service.get_file_content(
-                                repo_name=project.repo_name,
-                                file_path=fp,
-                                branch_name=project.branch_name,
-                                start_line=None,
-                                end_line=None,
-                                project_id=project_id,
-                                commit_id=project.commit_id,
-                            )
+
+                            def _fetch_repo_content():
+                                return cp_service.get_file_content(
+                                    repo_name=project.repo_name,
+                                    file_path=fp,
+                                    branch_name=project.branch_name,
+                                    start_line=None,
+                                    end_line=None,
+                                    project_id=project_id,
+                                    commit_id=project.commit_id,
+                                )
+
+                            try:
+                                repo_content = safe_git_operation(
+                                    _fetch_repo_content,
+                                    max_retries=1,
+                                    timeout=20.0,
+                                    max_total_timeout=25.0,
+                                    operation_name=f"generate_diff_get_content({fp})",
+                                )
+                            except GitOperationError as git_error:
+                                logger.warning(
+                                    f"CodeChangesManager.generate_diff: Git operation timed out for {fp}: {git_error}"
+                                )
+                                repo_content = None
+
                             if repo_content:
                                 old_content = repo_content
                     except Exception as e:
@@ -1588,10 +1799,14 @@ class CodeChangesManager:
                     if change.previous_content is not None:
                         old_content = change.previous_content
                     elif project_id and db:
-                        # Try repository
+                        # Try repository with timeout protection
                         try:
                             from app.modules.code_provider.code_provider_service import (
                                 CodeProviderService,
+                            )
+                            from app.modules.code_provider.git_safe import (
+                                safe_git_operation,
+                                GitOperationError,
                             )
                             from app.modules.projects.projects_model import Project
 
@@ -1602,15 +1817,29 @@ class CodeChangesManager:
                             )
                             if project:
                                 cp_service = CodeProviderService(db)
-                                repo_content = cp_service.get_file_content(
-                                    repo_name=project.repo_name,
-                                    file_path=file_path,
-                                    branch_name=project.branch_name,
-                                    start_line=None,
-                                    end_line=None,
-                                    project_id=project_id,
-                                    commit_id=project.commit_id,
-                                )
+
+                                def _fetch_content_for_format():
+                                    return cp_service.get_file_content(
+                                        repo_name=project.repo_name,
+                                        file_path=file_path,
+                                        branch_name=project.branch_name,
+                                        start_line=None,
+                                        end_line=None,
+                                        project_id=project_id,
+                                        commit_id=project.commit_id,
+                                    )
+
+                                try:
+                                    repo_content = safe_git_operation(
+                                        _fetch_content_for_format,
+                                        max_retries=1,
+                                        timeout=20.0,
+                                        max_total_timeout=25.0,
+                                        operation_name=f"format_diff_get_content({file_path})",
+                                    )
+                                except GitOperationError:
+                                    repo_content = None
+
                                 old_content = repo_content or ""
                             else:
                                 old_content = ""
@@ -2490,6 +2719,10 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
                             from app.modules.code_provider.code_provider_service import (
                                 CodeProviderService,
                             )
+                            from app.modules.code_provider.git_safe import (
+                                safe_git_operation,
+                                GitOperationError,
+                            )
                             from app.modules.projects.projects_model import Project
 
                             project = (
@@ -2499,15 +2732,33 @@ def show_diff_tool(input_data: ShowDiffInput) -> str:
                             )
                             if project:
                                 cp_service = CodeProviderService(db)
-                                repo_content = cp_service.get_file_content(
-                                    repo_name=project.repo_name,
-                                    file_path=file_path,
-                                    branch_name=project.branch_name,
-                                    start_line=None,
-                                    end_line=None,
-                                    project_id=input_data.project_id,
-                                    commit_id=project.commit_id,
-                                )
+
+                                def _fetch_old_content():
+                                    return cp_service.get_file_content(
+                                        repo_name=project.repo_name,
+                                        file_path=file_path,
+                                        branch_name=project.branch_name,
+                                        start_line=None,
+                                        end_line=None,
+                                        project_id=input_data.project_id,
+                                        commit_id=project.commit_id,
+                                    )
+
+                                try:
+                                    # Use timeout to prevent blocking worker
+                                    repo_content = safe_git_operation(
+                                        _fetch_old_content,
+                                        max_retries=1,
+                                        timeout=20.0,
+                                        max_total_timeout=25.0,
+                                        operation_name=f"show_diff_get_old_content({file_path})",
+                                    )
+                                except GitOperationError as git_error:
+                                    logger.warning(
+                                        f"Tool show_diff_tool: Git operation timed out: {git_error}"
+                                    )
+                                    repo_content = None
+
                                 if repo_content:
                                     old_content = repo_content
                         except Exception as e:

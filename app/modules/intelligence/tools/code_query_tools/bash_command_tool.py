@@ -538,7 +538,8 @@ class BashCommandTool:
 
     def _get_project_details(self, project_id: str) -> Dict[str, str]:
         """Get project details and validate user access."""
-        details = self.project_service.get_project_from_db_by_id_sync(project_id)
+        # Note: get_project_from_db_by_id_sync type hint says int, but Project.id is Text (string)
+        details = self.project_service.get_project_from_db_by_id_sync(project_id)  # type: ignore[arg-type]
         if not details or "project_name" not in details:
             raise ValueError(f"Cannot find repo details for project_id: {project_id}")
         if details["user_id"] != self.user_id:
@@ -548,30 +549,36 @@ class BashCommandTool:
         return details
 
     def _get_worktree_path(
-        self, repo_name: str, branch: Optional[str], commit_id: Optional[str]
+        self,
+        repo_name: str,
+        branch: Optional[str],
+        commit_id: Optional[str],
+        user_id: Optional[str],
     ) -> Optional[str]:
         """Get the worktree path for the project."""
         if not self.repo_manager:
             return None
 
-        # Try to get worktree path
+        # Try to get worktree path with user_id for security
         worktree_path = self.repo_manager.get_repo_path(
-            repo_name, branch=branch, commit_id=commit_id
+            repo_name, branch=branch, commit_id=commit_id, user_id=user_id
         )
         if worktree_path and os.path.exists(worktree_path):
             return worktree_path
 
-        # Try with just commit_id
+        # Try with just commit_id (with user_id)
         if commit_id:
             worktree_path = self.repo_manager.get_repo_path(
-                repo_name, commit_id=commit_id
+                repo_name, commit_id=commit_id, user_id=user_id
             )
             if worktree_path and os.path.exists(worktree_path):
                 return worktree_path
 
-        # Try with just branch
+        # Try with just branch (with user_id)
         if branch:
-            worktree_path = self.repo_manager.get_repo_path(repo_name, branch=branch)
+            worktree_path = self.repo_manager.get_repo_path(
+                repo_name, branch=branch, user_id=user_id
+            )
             if worktree_path and os.path.exists(worktree_path):
                 return worktree_path
 
@@ -599,9 +606,12 @@ class BashCommandTool:
             repo_name = details["project_name"]
             branch = details.get("branch_name")
             commit_id = details.get("commit_id")
+            user_id = details.get("user_id")
 
-            # Get worktree path
-            worktree_path = self._get_worktree_path(repo_name, branch, commit_id)
+            # Get worktree path (with user_id for security)
+            worktree_path = self._get_worktree_path(
+                repo_name, branch, commit_id, user_id
+            )
             if not worktree_path:
                 return {
                     "success": False,
@@ -609,6 +619,16 @@ class BashCommandTool:
                     "output": "",
                     "exit_code": -1,
                 }
+
+            # Update last accessed time for usage tracking
+            try:
+                self.repo_manager.update_last_accessed(
+                    repo_name, branch=branch, commit_id=commit_id, user_id=user_id
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[BASH_COMMAND] Failed to update last_accessed for {repo_name}: {e}"
+                )
 
             # SECURITY: Normalize paths to prevent directory traversal
             # Only the specific project's worktree will be accessible

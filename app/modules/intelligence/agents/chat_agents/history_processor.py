@@ -1879,12 +1879,20 @@ Conversation history to summarize:
         """
         Process message history based on token usage.
 
+        SIMPLIFIED APPROACH: This processor now only logs token counts and returns
+        messages unchanged to avoid breaking tool_call/tool_result pairing required
+        by OpenAI and Anthropic APIs.
+
+        The previous implementation tried to remove/modify messages to stay under
+        token limits, but this was causing "tool messages must follow tool_calls"
+        errors. It's better to exceed token limits than to send malformed messages.
+
         Args:
             ctx: RunContext containing usage information and model access
             messages: Current message history
 
         Returns:
-            Processed message history
+            Original message history (unchanged)
         """
         # Get model name from context if available
         model_name = self._get_model_name_from_context(ctx)
@@ -1900,20 +1908,29 @@ Conversation history to summarize:
             f"(system + tools + messages, using tiktoken{model_info})"
         )
 
-        # If we're under the limit, still write debug file and return messages as-is
-        if total_tokens < self.token_limit:
-            logger.debug(
-                f"Token count {total_tokens} < limit {self.token_limit}, no summarization needed"
+        # SIMPLIFIED: Always return original messages to preserve message structure
+        # The previous complex logic was breaking tool_call/tool_result pairing
+        if total_tokens >= self.token_limit:
+            logger.warning(
+                f"[History Processor] Token count {total_tokens} exceeds limit {self.token_limit}, "
+                f"but returning original messages to preserve message structure. "
+                f"Message count: {len(messages)}"
             )
-            # Still write debug file even when under limit (for debugging)
-            # Commented out - not needed right now
-            # self._write_messages_to_debug_file(
-            #     messages,
-            #     model_name,
-            #     total_tokens,
-            #     ctx,
-            # )
-            return messages
+        else:
+            logger.debug(
+                f"Token count {total_tokens} < limit {self.token_limit}, no action needed"
+            )
+
+        return messages
+
+        # ============================================================================
+        # DISABLED: The complex message processing below was causing errors like:
+        # "An assistant message with 'tool_calls' must be followed by tool messages
+        #  responding to each 'tool_call_id'"
+        #
+        # The logic tried to remove old tool calls/results to save tokens, but this
+        # broke the tool_call/tool_result pairing required by OpenAI and Anthropic.
+        # ============================================================================
 
         # We need to summarize - split messages into old (to summarize) and recent (to keep)
         logger.info(

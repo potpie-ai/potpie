@@ -75,3 +75,6 @@ thoughts/
 .codex/
 worktrees/
 .repos/
+.repos_local/
+.data/
+.debug/

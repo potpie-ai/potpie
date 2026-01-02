@@ -194,20 +194,22 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
         """Delegate to wrapped provider."""
         return self._provider.get_rate_limit_info()
 
+    def get_client(self) -> Optional[Any]:
+        """
+        Get the underlying provider client by delegating to wrapped provider.
+        
+        Uses the interface method to respect abstraction.
+        """
+        return self._provider.get_client()
+
     @property
     def client(self):
         """
-        Delegate client access to wrapped provider.
-
-        This allows access to provider-specific clients (e.g., PyGithub client)
-        for backward compatibility with code that directly accesses provider.client
+        Property for backward compatibility with code that directly accesses provider.client.
+        
+        Delegates to get_client() method which uses the interface abstraction.
         """
-        client = getattr(self._provider, "client", None)
-        if client is not None:
-            return client
-        raise AttributeError(
-            f"Wrapped provider {type(self._provider).__name__} does not have a 'client' attribute"
-        )
+        return self.get_client()
 
     # ============ Override methods to use local copies ============
 
@@ -518,10 +520,14 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                 # Get or create worktree for this ref
                 return self._ensure_worktree(repo, ref, commit_id is not None)
 
+            # Use a short timeout to avoid blocking the caller
+            # This is often called from within an outer timeout (e.g., 20s in _get_current_content)
+            # so we need a shorter timeout here to prevent orphaned threads
             worktree_path = safe_git_repo_operation(
                 base_path,
                 _setup_worktree,
-                max_retries=2,
+                max_retries=1,  # Reduced retries for faster failure
+                timeout=10.0,  # Short timeout - worktree setup should be fast
                 operation_name=f"setup_worktree({repo_name}@{ref})",
             )
             logger.debug(
