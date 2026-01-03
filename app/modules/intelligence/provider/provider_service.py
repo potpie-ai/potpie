@@ -23,6 +23,8 @@ from .llm_config import (
     LLMProviderConfig,
     build_llm_provider_config,
     get_config_for_model,
+    DEFAULT_CHAT_MODEL,
+    DEFAULT_INFERENCE_MODEL,
 )
 from .exceptions import UnsupportedProviderError
 
@@ -498,6 +500,85 @@ class ProviderService:
     def create(cls, db, user_id: str):
         return cls(db, user_id)
 
+    @classmethod
+    def create_from_config(
+        cls,
+        db,
+        user_id: str,
+        *,
+        provider: str = "openai",
+        api_key: Optional[str] = None,
+        chat_model: Optional[str] = None,
+        inference_model: Optional[str] = None,
+        base_url: Optional[str] = None,
+    ) -> "ProviderService":
+        """Factory method that accepts explicit config for library usage.
+
+        This bypasses environment variables and user preferences,
+        using only the explicitly provided configuration.
+
+        Args:
+            db: Database session
+            user_id: User identifier
+            provider: LLM provider name (openai, anthropic, ollama, etc.)
+            api_key: API key for the provider
+            chat_model: Model to use for chat (e.g., "openai/gpt-4o")
+            inference_model: Model to use for inference (e.g., "openai/gpt-4.1-mini")
+            base_url: Optional base URL for self-hosted models
+
+        Returns:
+            Configured ProviderService instance
+        """
+        instance = object.__new__(cls)
+        litellm.modify_params = True
+        instance.db = db
+        instance.user_id = user_id
+
+        resolved_chat_model = (
+            chat_model or f"{provider}/gpt-4o"
+            if provider == "openai"
+            else chat_model or DEFAULT_CHAT_MODEL
+        )
+        resolved_inference_model = (
+            inference_model or f"{provider}/gpt-4.1-mini"
+            if provider == "openai"
+            else inference_model or DEFAULT_INFERENCE_MODEL
+        )
+
+        chat_config_data = get_config_for_model(resolved_chat_model)
+        inference_config_data = get_config_for_model(resolved_inference_model)
+
+        instance.chat_config = LLMProviderConfig(
+            provider=chat_config_data.get("provider", provider),
+            model=resolved_chat_model,
+            default_params=dict(
+                chat_config_data.get("default_params", {"temperature": 0.3})
+            ),
+            capabilities=chat_config_data.get("capabilities", {}),
+            base_url=base_url or chat_config_data.get("base_url"),
+            api_version=chat_config_data.get("api_version"),
+            auth_provider=chat_config_data.get("auth_provider", provider),
+        )
+
+        instance.inference_config = LLMProviderConfig(
+            provider=inference_config_data.get("provider", provider),
+            model=resolved_inference_model,
+            default_params=dict(
+                inference_config_data.get("default_params", {"temperature": 0.3})
+            ),
+            capabilities=inference_config_data.get("capabilities", {}),
+            base_url=base_url or inference_config_data.get("base_url"),
+            api_version=inference_config_data.get("api_version"),
+            auth_provider=inference_config_data.get("auth_provider", provider),
+        )
+
+        instance._explicit_api_key = api_key
+        instance.retry_settings = RetrySettings(
+            max_retries=8, base_delay=2.0, max_delay=120.0
+        )
+
+        return instance
+
     async def list_available_llms(self) -> List[ProviderInfo]:
         # Get unique providers from available models
         providers = {
@@ -564,6 +645,10 @@ class ProviderService:
 
     def _get_api_key(self, provider: str) -> str:
         """Get API key for the specified provider. Caches the result per provider for the session."""
+        # Check explicit API key first (for library usage via create_from_config)
+        if hasattr(self, "_explicit_api_key") and self._explicit_api_key:
+            return self._explicit_api_key
+
         # Check cache first
         if provider in self._api_key_cache:
             cached_key = self._api_key_cache[provider]

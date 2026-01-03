@@ -31,13 +31,64 @@ logger = setup_logger(__name__)
 
 
 class ParsingService:
-    def __init__(self, db: Session, user_id: str):
+    def __init__(
+        self,
+        db: Session,
+        user_id: str,
+        *,
+        neo4j_config: dict | None = None,
+        raise_library_exceptions: bool = False,
+    ):
+        """Initialize ParsingService.
+
+        Args:
+            db: Database session
+            user_id: User identifier
+            neo4j_config: Optional Neo4j config dict for library usage.
+                          If None, uses config_provider.
+            raise_library_exceptions: If True, raise ParsingServiceError
+                                      instead of HTTPException
+        """
         self.db = db
         self.parse_helper = ParseHelper(db)
         self.project_service = ProjectService(db)
         self.inference_service = InferenceService(db, user_id)
         self.search_service = SearchService(db)
         self.github_service = CodeProviderService(db)
+        self._neo4j_config = neo4j_config
+        self._raise_library_exceptions = raise_library_exceptions
+
+    @classmethod
+    def create_from_config(
+        cls,
+        db: Session,
+        user_id: str,
+        neo4j_config: dict,
+        raise_library_exceptions: bool = True,
+    ) -> "ParsingService":
+        """Factory method for library usage with explicit Neo4j config.
+
+        Args:
+            db: Database session
+            user_id: User identifier
+            neo4j_config: Dict with 'uri', 'username', 'password' keys
+            raise_library_exceptions: Whether to raise library exceptions
+
+        Returns:
+            Configured ParsingService instance
+        """
+        return cls(
+            db,
+            user_id,
+            neo4j_config=neo4j_config,
+            raise_library_exceptions=raise_library_exceptions,
+        )
+
+    def _get_neo4j_config(self) -> dict:
+        """Get Neo4j config, preferring injected config over config_provider."""
+        if self._neo4j_config is not None:
+            return self._neo4j_config
+        return config_provider.get_neo4j_config()
 
     @contextmanager
     def change_dir(self, path):
@@ -85,7 +136,7 @@ class ParsingService:
                             }
 
                 if cleanup_graph:
-                    neo4j_config = config_provider.get_neo4j_config()
+                    neo4j_config = self._get_neo4j_config()
 
                     try:
                         code_graph_service = CodeGraphService(
@@ -102,6 +153,8 @@ class ParsingService:
                             project_id=project_id,
                             user_id=user_id,
                         )
+                        if self._raise_library_exceptions:
+                            raise ParsingServiceError("Failed to cleanup graph")
                         raise HTTPException(
                             status_code=500, detail="Internal server error"
                         )
@@ -163,8 +216,12 @@ class ParsingService:
                 await project_manager.update_project_status(
                     project_id, ProjectStatusEnum.ERROR
                 )
-                await ParseWebhookHelper().send_slack_notification(project_id, message)
-                raise HTTPException(status_code=500, detail=message)
+                if not self._raise_library_exceptions:
+                    await ParseWebhookHelper().send_slack_notification(
+                        project_id, message
+                    )
+                    raise HTTPException(status_code=500, detail=message)
+                raise
 
             except Exception as e:
                 # Log the full traceback server-side for debugging
@@ -192,6 +249,10 @@ class ParsingService:
                         project_id=project_id,
                         user_id=user_id,
                     )
+                if self._raise_library_exceptions:
+                    raise ParsingServiceError(
+                        f"Parsing failed for project {project_id}: {e}"
+                    ) from e
                 await ParseWebhookHelper().send_slack_notification(project_id, str(e))
                 # Raise generic error with correlation ID for client
                 raise HTTPException(
@@ -273,12 +334,14 @@ class ParsingService:
         else:
             error_msg = f"Project with ID {project_id} not found."
             logger.bind(project_id=project_id, user_id=user_id).error(error_msg)
+            if self._raise_library_exceptions:
+                raise ParsingServiceError(error_msg)
             raise HTTPException(status_code=404, detail="Project not found.")
 
         service = None
         if language != "other":
             try:
-                neo4j_config = config_provider.get_neo4j_config()
+                neo4j_config = self._get_neo4j_config()
                 service = CodeGraphService(
                     neo4j_config["uri"],
                     neo4j_config["username"],
@@ -298,9 +361,10 @@ class ParsingService:
                 await self.project_service.update_project_status(
                     project_id, ProjectStatusEnum.READY
                 )
-                create_task(
-                    EmailHelper().send_email(user_email, repo_name, branch_name)
-                )
+                if not self._raise_library_exceptions and user_email:
+                    create_task(
+                        EmailHelper().send_email(user_email, repo_name, branch_name)
+                    )
                 logger.info(f"DEBUGNEO4J: After update project status {project_id}")
                 self.inference_service.log_graph_stats(project_id)
             finally:
@@ -312,7 +376,8 @@ class ParsingService:
             await self.project_service.update_project_status(
                 project_id, ProjectStatusEnum.ERROR
             )
-            await ParseWebhookHelper().send_slack_notification(project_id, "Other")
+            if not self._raise_library_exceptions:
+                await ParseWebhookHelper().send_slack_notification(project_id, "Other")
             logger.info(f"DEBUGNEO4J: After update project status {project_id}")
             self.inference_service.log_graph_stats(project_id)
             raise ParsingFailedError(

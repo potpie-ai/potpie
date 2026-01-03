@@ -17,6 +17,8 @@ class MediaServiceConfigError(Exception):
 
 
 class ConfigProvider:
+    _neo4j_override: dict | None = None  # Class-level override for library usage
+
     def __init__(self):
         self.neo4j_config = {
             "uri": os.getenv("NEO4J_URI"),
@@ -47,7 +49,27 @@ class ConfigProvider:
             "azure": AzureStorageStrategy(),
         }
 
-    def get_neo4j_config(self):
+    @classmethod
+    def set_neo4j_override(cls, config: dict | None) -> None:
+        """Set a global Neo4j config override for library usage.
+
+        This allows the PotpieRuntime library to inject Neo4j config
+        without relying on environment variables.
+
+        Args:
+            config: Dict with 'uri', 'username', 'password' keys, or None to clear
+        """
+        cls._neo4j_override = config
+
+    @classmethod
+    def clear_neo4j_override(cls) -> None:
+        """Clear the Neo4j config override."""
+        cls._neo4j_override = None
+
+    def get_neo4j_config(self) -> dict:
+        """Get Neo4j config, preferring override if set."""
+        if ConfigProvider._neo4j_override is not None:
+            return ConfigProvider._neo4j_override
         return self.neo4j_config
 
     def get_github_key(self):
