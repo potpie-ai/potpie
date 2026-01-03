@@ -73,6 +73,13 @@ class CodeGraphService:
         if node_type == "UNKNOWN":
             return None
 
+        text = node_data.get("text", "") or ""
+        if not isinstance(text, str):
+            text = str(text)
+        # Postgres TEXT/JSONB cannot contain NUL bytes; also treat them as binary noise.
+        if "\x00" in text:
+            text = text.replace("\x00", "")
+
         labels = ["NODE"]
         if node_type in ["FILE", "CLASS", "FUNCTION", "INTERFACE"]:
             labels.append(node_type)
@@ -87,7 +94,7 @@ class CodeGraphService:
             "raw_node_id": raw_node_id,
             "entityId": user_id,
             "type": node_type,
-            "text": node_data.get("text", ""),
+            "text": text,
             "labels": labels,
         }
 
@@ -159,6 +166,17 @@ class CodeGraphService:
             self.db.add(
                 KgLatestSuccessfulRun(repo_id=repo_id, user_id=user_id, run_id=run_id)
             )
+
+    def get_latest_successful_run_id(self, repo_id: str, user_id: str):
+        latest = (
+            self.db.query(KgLatestSuccessfulRun)
+            .filter(
+                KgLatestSuccessfulRun.repo_id == repo_id,
+                KgLatestSuccessfulRun.user_id == user_id,
+            )
+            .one_or_none()
+        )
+        return latest.run_id if latest else None
 
     def _persist_artifacts(
         self, nx_graph, project_id: str, user_id: str, commit_id: Optional[str]

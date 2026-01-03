@@ -1,6 +1,6 @@
 """add kg ingest artifact tables
 
-Revision ID: 20251218120000_add_kg_artifact_tables
+Revision ID: 20251218120000
 Revises: 20251217190000
 Create Date: 2025-12-18 12:00:00.000000
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = "20251218120000_add_kg_artifact_tables"
+revision = "20251218120000"
 down_revision = "20251217190000"
 branch_labels = None
 depends_on = None

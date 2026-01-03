@@ -60,19 +60,20 @@ class UserService:
             f"Creating user with email: {user_details.email} | display_name:"
             f" {user_details.display_name}"
         )
-        new_user = User(
-            uid=user_details.uid,
-            email=user_details.email,
-            display_name=user_details.display_name,
-            email_verified=user_details.email_verified,
-            created_at=user_details.created_at,
-            last_login_at=user_details.last_login_at,
-            provider_info=user_details.provider_info,
-            provider_username=user_details.provider_username,
-        )
         message: str = ""
         error: bool = False
+        uid = ""
         try:
+            new_user = User(
+                uid=user_details.uid,
+                email=user_details.email,
+                display_name=user_details.display_name,
+                email_verified=user_details.email_verified,
+                created_at=user_details.created_at,
+                last_login_at=user_details.last_login_at,
+                provider_info=user_details.provider_info,
+                provider_username=user_details.provider_username,
+            )
             self.db.add(new_user)
             self.db.commit()
             self.db.refresh(new_user)
@@ -81,34 +82,47 @@ class UserService:
             uid = new_user.uid
 
         except Exception as e:
+            self.db.rollback()
             logger.error(f"Error creating user: {e}")
             message = "error creating user"
             error = True
-            uid = ""
 
         return uid, message, error
 
     def setup_dummy_user(self):
-        defaultUserId = os.getenv("defaultUsername")
-        user_service = UserService(self.db)
-        user = user_service.get_user_by_uid(defaultUserId)
-        if user:
-            print("Dummy user already exists")
-            return
-        else:
-            user = CreateUser(
-                uid=defaultUserId,
-                email="defaultuser@potpie.ai",
-                display_name="Dummy User",
-                email_verified=True,
-                created_at=datetime.utcnow(),
-                last_login_at=datetime.utcnow(),
-                provider_info={"access_token": "dummy_token"},
-                provider_username="self",
+        default_user_id = os.getenv("defaultUsername")
+        if not default_user_id:
+            logger.warning(
+                "defaultUsername env var is not set; skipping dummy user setup"
             )
-            uid, message, error = user_service.create_user(user)
+            return
 
-        uid, _, _ = user_service.create_user(user)
+        existing_user = self.get_user_by_uid(default_user_id)
+        if existing_user:
+            logger.info(f"Dummy user already exists: {default_user_id}")
+            return
+
+        user = CreateUser(
+            uid=default_user_id,
+            email="defaultuser@potpie.ai",
+            display_name="Dummy User",
+            email_verified=True,
+            created_at=datetime.utcnow(),
+            last_login_at=datetime.utcnow(),
+            provider_info={"access_token": "dummy_token"},
+            provider_username="self",
+        )
+        uid, _, error = self.create_user(user)
+        if error:
+            # If a parallel startup created the user, we can safely continue.
+            if self.get_user_by_uid(default_user_id):
+                logger.info(
+                    f"Dummy user created concurrently; continuing: {default_user_id}"
+                )
+                return
+            logger.error(f"Failed to create dummy user: {default_user_id}")
+            return
+
         logger.info(f"Created dummy user with uid: {uid}")
 
     def get_user_by_uid(self, uid: str):

@@ -155,10 +155,10 @@ class ParsingService:
                     user_id=user_id,
                 )
                 # Log the formatted traceback string explicitly for detailed debugging
-                logger.error(
-                    f"Full traceback:\n{tb_str}",
-                    project_id=project_id,
-                    user_id=user_id,
+                # Use Loguru formatting safely: avoid passing the traceback string as the
+                # format template (it may contain braces from SQL/JSON).
+                logger.bind(project_id=project_id, user_id=user_id).error(
+                    "Full traceback:\n{}", tb_str
                 )
                 # Rollback the database session to clear any pending transactions
                 self.db.rollback()
@@ -321,6 +321,17 @@ class ParsingService:
             f"ParsingService: Incremental KG ingest (v0) enabled for project {project_id}; "
             "using existing full ingest path (TODO: apply JSONL deltas)"
         )
+        latest_run_id = service.get_latest_successful_run_id(project_id, user_id)
+        if not latest_run_id:
+            logger.info(
+                "ParsingService: No latest successful KG ingest run found; "
+                f"performing baseline ingest for project {project_id}"
+            )
+        else:
+            logger.info(
+                "ParsingService: Latest successful KG ingest run found; "
+                f"run_id={latest_run_id}, using full ingest fallback until diffing is implemented"
+            )
         service.create_and_store_graph(
             extracted_dir,
             project_id,
