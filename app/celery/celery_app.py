@@ -372,13 +372,27 @@ def log_worker_memory_config(sender, **kwargs):
         process = psutil.Process()
         memory_info = process.memory_info()
         max_memory_kb = int(os_module.getenv("CELERY_WORKER_MAX_MEMORY_KB", "2000000"))
+        max_memory_mb = max_memory_kb / 1024
+        baseline_mb = memory_info.rss / 1024 / 1024
         logger.info(
             f"Worker process {process.pid} initialized. "
-            f"Baseline memory (RSS): {memory_info.rss / 1024 / 1024:.2f} MB "
+            f"Baseline memory (RSS): {baseline_mb:.2f} MB "
             f"(includes Python runtime + imported modules). "
-            f"Max memory limit: {max_memory_kb / 1024:.2f} MB. "
-            f"File size limit: {10} MB (configured in CodeChangesManager)"
+            f"Max memory limit: {max_memory_mb:.2f} MB. "
+            f"Memory pressure threshold: {max_memory_mb * 0.80:.2f} MB (80%). "
+            f"File size limit: {8} MB (configured in CodeChangesManager, reduced from 10MB)"
         )
+
+        # Log system memory info if available
+        try:
+            system_memory = psutil.virtual_memory()
+            logger.info(
+                f"System memory: {system_memory.total / 1024 / 1024 / 1024:.2f} GB total, "
+                f"{system_memory.available / 1024 / 1024 / 1024:.2f} GB available, "
+                f"{system_memory.percent:.1f}% used"
+            )
+        except Exception:
+            pass
     except ImportError:
         # psutil not available, skip detailed logging
         logger.info(

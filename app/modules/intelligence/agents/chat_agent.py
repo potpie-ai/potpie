@@ -29,6 +29,14 @@ class ToolCallResponse(BaseModel):
         ...,
         description="Details of the tool call",
     )
+    stream_part: Optional[str] = Field(
+        default=None,
+        description="Partial stream update for this tool call. When set, this is a chunk of the streaming response.",
+    )
+    is_complete: bool = Field(
+        default=True,
+        description="Whether this tool call response is complete (False for streaming parts)",
+    )
 
 
 class ChatAgentResponse(BaseModel):

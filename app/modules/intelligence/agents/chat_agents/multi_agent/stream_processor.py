@@ -21,7 +21,12 @@ from .utils.delegation_utils import (
     create_delegation_cache_key,
 )
 from .utils.tool_utils import create_tool_call_response, create_tool_result_response
-from app.modules.intelligence.agents.chat_agent import ChatAgentResponse
+from .utils.tool_call_stream_manager import ToolCallStreamManager
+from app.modules.intelligence.agents.chat_agent import (
+    ChatAgentResponse,
+    ToolCallResponse,
+    ToolCallEventType,
+)
 from app.modules.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -47,6 +52,7 @@ class StreamProcessor:
         """
         self.delegation_manager = delegation_manager
         self.create_error_response = create_error_response
+        self.tool_call_stream_manager = ToolCallStreamManager()
 
     @staticmethod
     async def yield_text_stream_events(
@@ -288,6 +294,8 @@ class StreamProcessor:
                 output_queues: Dict[str, asyncio.Queue] = {}
                 # Track which streams have been fully drained (to prevent duplicate draining)
                 drained_streams: set = set()
+                # Track Redis stream consumer tasks for tool call streaming
+                redis_stream_tasks: Dict[str, asyncio.Task] = {}
 
                 # Track event counts for debugging
                 tool_call_event_count = 0
@@ -340,40 +348,55 @@ class StreamProcessor:
                     # Yield any chunks from active delegation streams immediately
                     # This ensures real-time streaming even when main stream is idle
                     # Only process streams that haven't been fully drained yet
-                    for tool_call_id in list(output_queues.keys()):
-                        if tool_call_id in drained_streams:
+                    for queue_key in list(output_queues.keys()):
+                        if queue_key in drained_streams:
                             continue  # Skip streams that have already been fully drained
-                        output_queue = output_queues[tool_call_id]
+                        output_queue = output_queues[queue_key]
                         # Consume all available chunks from output queue
                         while True:
                             try:
                                 chunk = output_queue.get_nowait()
                                 if chunk is None:
                                     # Stream completed, mark as drained and clean up
-                                    drained_streams.add(tool_call_id)
-                                    active_streams.pop(tool_call_id, None)
-                                    output_queues.pop(tool_call_id, None)
-                                    self.delegation_manager.remove_active_stream(
-                                        tool_call_id
-                                    )
-                                    # Cancel and wait for consumer task
-                                    if tool_call_id in queue_consumer_tasks:
-                                        task = queue_consumer_tasks.pop(tool_call_id)
-                                        if not task.done():
-                                            task.cancel()
-                                            try:
-                                                await task
-                                            except asyncio.CancelledError:
-                                                pass
-                                    # Cancel the streaming task if it's still running
-                                    if tool_call_id in streaming_tasks:
-                                        task = streaming_tasks.pop(tool_call_id)
-                                        if not task.done():
-                                            task.cancel()
-                                            try:
-                                                await task
-                                            except asyncio.CancelledError:
-                                                pass
+                                    drained_streams.add(queue_key)
+                                    output_queues.pop(queue_key, None)
+                                    # Only cleanup active_streams and tasks for non-Redis queues
+                                    if not queue_key.endswith("_redis"):
+                                        active_streams.pop(queue_key, None)
+                                        self.delegation_manager.remove_active_stream(
+                                            queue_key
+                                        )
+                                        # Cancel and wait for consumer task
+                                        if queue_key in queue_consumer_tasks:
+                                            task = queue_consumer_tasks.pop(queue_key)
+                                            if not task.done():
+                                                task.cancel()
+                                                try:
+                                                    await task
+                                                except asyncio.CancelledError:
+                                                    pass
+                                        # Cancel the streaming task if it's still running
+                                        if queue_key in streaming_tasks:
+                                            task = streaming_tasks.pop(queue_key)
+                                            if not task.done():
+                                                task.cancel()
+                                                try:
+                                                    await task
+                                                except asyncio.CancelledError:
+                                                    pass
+                                    else:
+                                        # Clean up Redis stream task
+                                        actual_call_id = queue_key.replace("_redis", "")
+                                        if actual_call_id in redis_stream_tasks:
+                                            task = redis_stream_tasks.pop(
+                                                actual_call_id
+                                            )
+                                            if not task.done():
+                                                task.cancel()
+                                                try:
+                                                    await task
+                                                except asyncio.CancelledError:
+                                                    pass
                                     break
                                 yield chunk
                             except asyncio.QueueEmpty:
@@ -442,9 +465,99 @@ class StreamProcessor:
                                         input_queue,
                                         cache_key,
                                         current_context,
+                                        call_id=tool_call_id,  # Pass call_id for Redis streaming
                                     )
                                 )
                                 streaming_tasks[tool_call_id] = streaming_task
+
+                                # Start Redis stream consumer task for tool call streaming
+                                async def consume_redis_stream_to_queue(
+                                    call_id: str,
+                                    tool_name: str,
+                                    redis_queue: asyncio.Queue,
+                                ):
+                                    """Consume Redis stream for tool call and put updates in queue"""
+                                    try:
+                                        async for (
+                                            stream_event
+                                        ) in self.tool_call_stream_manager.consume_stream(
+                                            call_id
+                                        ):
+                                            if (
+                                                stream_event.get("type")
+                                                == "tool_call_stream_part"
+                                            ):
+                                                stream_part = stream_event.get(
+                                                    "stream_part", ""
+                                                )
+                                                is_complete = (
+                                                    stream_event.get(
+                                                        "is_complete", "false"
+                                                    )
+                                                    == "true"
+                                                )
+                                                tool_response = stream_event.get(
+                                                    "tool_response", ""
+                                                )
+                                                tool_call_details = stream_event.get(
+                                                    "tool_call_details", {}
+                                                )
+
+                                                # Create tool call response with stream_part
+                                                stream_tool_response = ToolCallResponse(
+                                                    call_id=call_id,
+                                                    event_type=(
+                                                        ToolCallEventType.DELEGATION_RESULT
+                                                        if is_delegation_tool(tool_name)
+                                                        else ToolCallEventType.RESULT
+                                                    ),
+                                                    tool_name=tool_name,
+                                                    tool_response=tool_response
+                                                    or stream_part,
+                                                    tool_call_details=tool_call_details,
+                                                    stream_part=stream_part,
+                                                    is_complete=is_complete,
+                                                )
+
+                                                await redis_queue.put(
+                                                    ChatAgentResponse(
+                                                        response="",
+                                                        tool_calls=[
+                                                            stream_tool_response
+                                                        ],
+                                                        citations=[],
+                                                    )
+                                                )
+
+                                                if is_complete:
+                                                    await redis_queue.put(None)
+                                                    break
+
+                                            elif (
+                                                stream_event.get("type")
+                                                == "tool_call_stream_end"
+                                            ):
+                                                await redis_queue.put(None)
+                                                break
+
+                                    except Exception as e:
+                                        logger.warning(
+                                            f"Error consuming Redis stream for call_id {call_id}: {e}"
+                                        )
+                                        await redis_queue.put(None)
+
+                                # Create a queue for Redis stream updates
+                                redis_stream_queue: asyncio.Queue = asyncio.Queue()
+                                redis_stream_task = asyncio.create_task(
+                                    consume_redis_stream_to_queue(
+                                        tool_call_id, tool_name, redis_stream_queue
+                                    )
+                                )
+                                redis_stream_tasks[tool_call_id] = redis_stream_task
+                                # Store the queue for consumption in the main loop
+                                output_queues[f"{tool_call_id}_redis"] = (
+                                    redis_stream_queue
+                                )
 
                                 # Start a background task to continuously consume from input_queue
                                 # and forward to output_queue for real-time streaming
@@ -549,6 +662,9 @@ class StreamProcessor:
                             # Clean up streams and tasks
                             active_streams.pop(tool_call_id, None)
                             output_queues.pop(tool_call_id, None)
+                            output_queues.pop(
+                                f"{tool_call_id}_redis", None
+                            )  # Clean up Redis queue
                             self.delegation_manager.remove_active_stream(tool_call_id)
 
                             # Cancel and wait for consumer task
@@ -572,20 +688,32 @@ class StreamProcessor:
                                         pass
                                 streaming_tasks.pop(tool_call_id, None)
 
+                            # Cancel Redis stream task if it's still running
+                            if tool_call_id in redis_stream_tasks:
+                                task = redis_stream_tasks.pop(tool_call_id)
+                                if not task.done():
+                                    task.cancel()
+                                    try:
+                                        await task
+                                    except asyncio.CancelledError:
+                                        pass
+
                         async for response in self.yield_tool_result_event(event):
                             yield response
 
                 # After all events are processed, drain any remaining chunks from output queues
                 # Use output_queues (not active_streams) since that's where chunks are actually stored
                 # Only drain streams that haven't been fully drained yet
-                for tool_call_id in list(output_queues.keys()):
-                    if tool_call_id in drained_streams:
+                for queue_key in list(output_queues.keys()):
+                    if queue_key in drained_streams:
                         # Already fully drained, just clean up
-                        output_queues.pop(tool_call_id, None)
-                        active_streams.pop(tool_call_id, None)
-                        self.delegation_manager.remove_active_stream(tool_call_id)
+                        output_queues.pop(queue_key, None)
+                        # Only cleanup active_streams and delegation_manager for non-Redis queues
+                        if not queue_key.endswith("_redis"):
+                            active_streams.pop(queue_key, None)
+                            self.delegation_manager.remove_active_stream(queue_key)
                         continue
-                    output_queue = output_queues[tool_call_id]
+                    output_queue = output_queues[queue_key]
                     # Wait longer for final chunks
                     for _ in range(20):  # Try up to 20 times
                         chunks, completed = await self.consume_queue_chunks(
@@ -594,12 +722,25 @@ class StreamProcessor:
                         for chunk in chunks:
                             yield chunk
                         if completed:
-                            drained_streams.add(tool_call_id)
+                            drained_streams.add(queue_key)
                             break
                         await asyncio.sleep(0.05)
-                    output_queues.pop(tool_call_id, None)
-                    active_streams.pop(tool_call_id, None)
-                    self.delegation_manager.remove_active_stream(tool_call_id)
+                    output_queues.pop(queue_key, None)
+                    # Only cleanup active_streams and delegation_manager for non-Redis queues
+                    if not queue_key.endswith("_redis"):
+                        active_streams.pop(queue_key, None)
+                        self.delegation_manager.remove_active_stream(queue_key)
+                    else:
+                        # Clean up Redis stream task for Redis queues
+                        actual_call_id = queue_key.replace("_redis", "")
+                        if actual_call_id in redis_stream_tasks:
+                            task = redis_stream_tasks.pop(actual_call_id)
+                            if not task.done():
+                                task.cancel()
+                                try:
+                                    await task
+                                except asyncio.CancelledError:
+                                    pass
 
                 # Cancel any remaining streaming tasks
                 for tool_call_id, task in list(streaming_tasks.items()):

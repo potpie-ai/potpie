@@ -38,7 +38,7 @@ class SWEBDebugAgent(ChatAgent):
                 """,
             tasks=[
                 TaskConfig(
-                    description=qna_task_prompt,
+                    description=sweb_task_prompt,
                     expected_output="Markdown formatted chat response to user's query grounded in provided code context and tool results",
                 )
             ],
@@ -123,7 +123,7 @@ class SWEBDebugAgent(ChatAgent):
             yield chunk
 
 
-qna_task_prompt = """
+sweb_task_prompt = """
 # Debugging Process
 
 ## Core Principles - these are extremely important. Stick to these principles as much as possible. Plan accordingly and add these as part of requirements and todos

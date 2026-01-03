@@ -71,7 +71,7 @@ class AutoRouterAgent(ChatAgent):
         #     )
         #     selected_agent_id = ctx.curr_agent_id
 
-        return self.agents["sweb_debug_agent"].agent
+        return self.agents[ctx.curr_agent_id].agent
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         agent = await self._run_classification(ctx, self.agent_descriptions)

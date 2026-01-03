@@ -39,10 +39,6 @@ import httpx
 
 logger = setup_logger(__name__)
 
-from langfuse import get_client
-
-langfuse = get_client()
-
 # Global flag to track if Phoenix is initialized
 _PHOENIX_INITIALIZED = False
 

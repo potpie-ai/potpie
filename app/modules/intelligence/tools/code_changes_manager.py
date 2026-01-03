@@ -28,13 +28,17 @@ logger = setup_logger(__name__)
 
 T = TypeVar("T")
 
-# Maximum file size to read into memory (10MB)
+# Maximum file size to read into memory (8MB - reduced from 10MB for safety margin)
 # This prevents OOM kills when processing very large files
-MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10MB
+# Reduced to 8MB to leave headroom for Python object overhead and memory spikes
+MAX_FILE_SIZE_BYTES = 8 * 1024 * 1024  # 8MB
 
 # Database query timeout in seconds - prevents deadlocks in forked workers
 DB_QUERY_TIMEOUT = 15.0  # 15 seconds max for any database query
 DB_SESSION_CREATE_TIMEOUT = 10.0  # 10 seconds max for creating a new session
+
+# Memory pressure threshold - skip non-critical operations if memory usage exceeds this
+MEMORY_PRESSURE_THRESHOLD = 0.80  # 80% of worker memory limit
 
 
 def _execute_with_timeout(
@@ -87,6 +91,90 @@ def _execute_with_timeout(
         raise result_container["exception"]
     
     return result_container["value"]
+
+
+def _check_memory_pressure() -> tuple[bool, Optional[float]]:
+    """
+    Check if worker is under memory pressure.
+    
+    Returns:
+        Tuple of (is_under_pressure: bool, memory_usage_percent: float or None)
+        Returns (False, None) if memory check fails or psutil not available
+    """
+    try:
+        import psutil
+        import os as os_module
+        
+        process = psutil.Process()
+        memory_info = process.memory_info()
+        rss_mb = memory_info.rss / 1024 / 1024
+        
+        # Get worker memory limit from environment
+        max_memory_kb = int(os_module.getenv("CELERY_WORKER_MAX_MEMORY_KB", "2000000"))
+        max_memory_mb = max_memory_kb / 1024
+        
+        if max_memory_mb <= 0:
+            return False, None
+            
+        memory_usage_percent = rss_mb / max_memory_mb
+        is_under_pressure = memory_usage_percent >= MEMORY_PRESSURE_THRESHOLD
+        
+        if is_under_pressure:
+            logger.warning(
+                f"Memory pressure detected: {memory_usage_percent:.1%} ({rss_mb:.1f}MB / {max_memory_mb:.1f}MB). "
+                f"Skipping non-critical operations."
+            )
+        
+        return is_under_pressure, memory_usage_percent
+    except ImportError:
+        # psutil not available - can't check memory
+        return False, None
+    except Exception as e:
+        logger.debug(f"Failed to check memory pressure: {e}")
+        return False, None
+
+
+def _get_git_file_size(repo_path: str, file_path: str, ref: Optional[str] = None) -> Optional[int]:
+    """
+    Get file size from git repository without loading content.
+    Uses 'git cat-file -s' which is very efficient.
+    
+    Args:
+        repo_path: Path to git repository
+        file_path: Relative path to file
+        ref: Branch/commit reference (defaults to HEAD)
+        
+    Returns:
+        File size in bytes, or None if unable to determine
+    """
+    try:
+        from app.modules.code_provider.git_safe import safe_git_repo_operation
+        
+        def _get_size(repo):
+            from git.exc import GitCommandError
+            
+            actual_ref = ref or repo.active_branch.name
+            try:
+                # Use git cat-file -s to get object size without loading content
+                # Format: ref:path
+                blob_sha = repo.git.rev_parse(f"{actual_ref}:{file_path}")
+                size_str = repo.git.cat_file("-s", blob_sha)
+                return int(size_str.strip())
+            except GitCommandError as e:
+                if "does not exist" in str(e) or "path not in" in str(e):
+                    return None
+                raise
+        
+        return safe_git_repo_operation(
+            repo_path,
+            _get_size,
+            max_retries=1,
+            timeout=5.0,  # Quick operation, short timeout
+            operation_name=f"get_file_size({file_path})",
+        )
+    except Exception as e:
+        logger.debug(f"Could not get file size for {file_path}: {e}")
+        return None
 
 
 class ChangeType(str, Enum):
@@ -276,8 +364,9 @@ class CodeChangesManager:
                             logger.info(
                                 f"CodeChangesManager._get_current_content: [STEP 1.2.1] Attempting to close old session and create new one"
                             )
+                            old_db = db  # Keep reference to old session for cleanup
                             try:
-                                db.close()  # Close invalid session if possible
+                                old_db.close()  # Close invalid session if possible
                                 logger.debug(
                                     f"CodeChangesManager._get_current_content: [STEP 1.2.1.1] Old session closed"
                                 )
@@ -341,12 +430,24 @@ class CodeChangesManager:
                                 f"This indicates a potential deadlock. Falling back to filesystem."
                             )
                             project_details = None
+                            # Ensure new session is closed if created
+                            if 'db' in locals() and 'old_db' in locals() and db != old_db:
+                                try:
+                                    db.close()
+                                except Exception:
+                                    pass
                         except Exception as retry_error:
                             logger.error(
                                 f"CodeChangesManager._get_current_content: [STEP 1.2.ERROR] Failed to create new session and retry: {retry_error}",
                                 exc_info=True,
                             )
                             project_details = None
+                            # Ensure new session is closed if created
+                            if 'db' in locals() and 'old_db' in locals() and db != old_db:
+                                try:
+                                    db.close()
+                                except Exception:
+                                    pass
                     else:
                         logger.warning(
                             f"CodeChangesManager._get_current_content: [STEP 1.1.ERROR] Error querying project for project_id '{project_id}': {e}",
@@ -355,130 +456,171 @@ class CodeChangesManager:
                         project_details = None
 
                 if project_details and "project_name" in project_details:
-                    repo_content = None  # Initialize before try block
-                    try:
-                        service_init_start = time.time()
-                        logger.info(
-                            f"CodeChangesManager._get_current_content: [STEP 2] Initializing CodeProviderService "
-                            f"for repo '{project_details['project_name']}'"
+                    # Check memory pressure before expensive operations
+                    is_pressure, mem_percent = _check_memory_pressure()
+                    if mem_percent is not None:
+                        logger.debug(
+                            f"CodeChangesManager._get_current_content: [STEP 2.MEMORY] Memory usage: {mem_percent:.1%} "
+                            f"for file '{file_path}'"
                         )
-                        # Initialize CodeProviderService with timeout protection
-                        cp_service = _execute_with_timeout(
-                            lambda: CodeProviderService(db),
-                            timeout=DB_QUERY_TIMEOUT,  # Service init might query DB
-                            operation_name="CodeProviderService_init",
+                    if is_pressure:
+                        logger.warning(
+                            f"CodeChangesManager._get_current_content: [STEP 2.MEMORY] Memory pressure detected ({mem_percent:.1%}). "
+                            f"Skipping repository fetch for '{file_path}' to prevent OOM kill. Falling back to filesystem."
                         )
-                        service_init_elapsed = time.time() - service_init_start
-                        logger.info(
-                            f"CodeChangesManager._get_current_content: [STEP 2.1] CodeProviderService initialized in {service_init_elapsed:.3f}s"
-                        )
-                        
-                        file_fetch_start = time.time()
-                        logger.info(
-                            f"CodeChangesManager._get_current_content: [STEP 3] Fetching file content from repository "
-                            f"for '{file_path}' in repo '{project_details['project_name']}'"
-                        )
-                        # Wrap git operations in safe handler to prevent SIGSEGV and timeouts
-                        from app.modules.code_provider.git_safe import (
-                            safe_git_operation,
-                            GitOperationError,
-                        )
-
-                        def _fetch_file_content():
-                            fetch_start = time.time()
-                            logger.debug(
-                                f"CodeChangesManager._get_current_content: [STEP 3.1] Inside _fetch_file_content, calling cp_service.get_file_content"
-                            )
-                            try:
-                                result = cp_service.get_file_content(
-                                    repo_name=project_details["project_name"],
-                                    file_path=file_path,
-                                    branch_name=project_details.get("branch_name"),
-                                    start_line=None,
-                                    end_line=None,
-                                    project_id=project_id,
-                                    commit_id=project_details.get("commit_id"),
-                                )
-                                fetch_elapsed = time.time() - fetch_start
-                                logger.debug(
-                                    f"CodeChangesManager._get_current_content: [STEP 3.1.1] cp_service.get_file_content completed in {fetch_elapsed:.3f}s"
-                                )
-                                return result
-                            except Exception as fetch_err:
-                                fetch_elapsed = time.time() - fetch_start
-                                logger.error(
-                                    f"CodeChangesManager._get_current_content: [STEP 3.1.ERROR] cp_service.get_file_content failed after {fetch_elapsed:.3f}s: {fetch_err}",
-                                    exc_info=True,
-                                )
-                                raise
-
+                        repo_content = None
+                    else:
+                        repo_content = None  # Initialize before try block
                         try:
-                            # Use max_total_timeout to prevent operations from running indefinitely
-                            # Even with 2 retries at 20s each, cap total time at 40s to prevent worker hangs
-                            # Reduced timeouts to fail faster and prevent worker crashes
-                            logger.debug(
-                                f"CodeChangesManager._get_current_content: [STEP 3.2] Calling safe_git_operation with timeout=20.0s, max_retries=1"
-                            )
-                            repo_content = safe_git_operation(
-                                _fetch_file_content,
-                                max_retries=1,  # Reduced to 1 retry to fail faster
-                                timeout=20.0,  # 20 second timeout per attempt (reduced from 30s)
-                                max_total_timeout=40.0,  # Maximum 40 seconds total (reduced from 60s)
-                                operation_name=f"get_file_content({file_path})",
-                            )
-                            file_fetch_elapsed = time.time() - file_fetch_start
+                            # Pre-check file size for local git repositories before loading
+                            repo_path = project_details.get("repo_path")
+                            if repo_path and os.path.exists(repo_path):
+                                file_size = _get_git_file_size(
+                                    repo_path,
+                                    file_path,
+                                    project_details.get("branch_name")
+                                )
+                                if file_size is not None:
+                                    if file_size > MAX_FILE_SIZE_BYTES:
+                                        logger.warning(
+                                            f"CodeChangesManager._get_current_content: [STEP 2.SIZE] File '{file_path}' "
+                                            f"is too large ({file_size} bytes, max {MAX_FILE_SIZE_BYTES} bytes). "
+                                            f"Skipping to prevent memory issues. Falling back to filesystem."
+                                        )
+                                        repo_content = None
+                                    else:
+                                        logger.debug(
+                                            f"CodeChangesManager._get_current_content: [STEP 2.SIZE] File '{file_path}' "
+                                            f"size check passed: {file_size} bytes"
+                                        )
+                            
+                            service_init_start = time.time()
                             logger.info(
-                                f"CodeChangesManager._get_current_content: [STEP 3.3] File fetch completed in {file_fetch_elapsed:.3f}s"
+                                f"CodeChangesManager._get_current_content: [STEP 2] Initializing CodeProviderService "
+                                f"for repo '{project_details['project_name']}'"
                             )
-                        except GitOperationError as git_error:
-                            file_fetch_elapsed = time.time() - file_fetch_start
-                            # If safe wrapper fails after retries, log and continue to filesystem fallback
-                            logger.warning(
-                                f"CodeChangesManager._get_current_content: [STEP 3.ERROR] Safe git operation failed after {file_fetch_elapsed:.3f}s: {git_error}. "
-                                f"Falling back to filesystem for '{file_path}'"
+                            # Initialize CodeProviderService with timeout protection
+                            cp_service = _execute_with_timeout(
+                                lambda: CodeProviderService(db),
+                                timeout=DB_QUERY_TIMEOUT,  # Service init might query DB
+                                operation_name="CodeProviderService_init",
                             )
-                            repo_content = None
-                        except MemoryError as mem_error:
-                            file_fetch_elapsed = time.time() - file_fetch_start
-                            # Handle memory errors gracefully - this can happen with very large files
+                            service_init_elapsed = time.time() - service_init_start
+                            logger.info(
+                                f"CodeChangesManager._get_current_content: [STEP 2.1] CodeProviderService initialized in {service_init_elapsed:.3f}s"
+                            )
+                            
+                            # Skip file fetch if we already determined it's too large or memory pressure
+                            if repo_content is not None:
+                                # This means size check failed - skip to filesystem
+                                pass
+                            else:
+                                file_fetch_start = time.time()
+                                logger.info(
+                                    f"CodeChangesManager._get_current_content: [STEP 3] Fetching file content from repository "
+                                    f"for '{file_path}' in repo '{project_details['project_name']}'"
+                                )
+                                # Wrap git operations in safe handler to prevent SIGSEGV and timeouts
+                                from app.modules.code_provider.git_safe import (
+                                    safe_git_operation,
+                                    GitOperationError,
+                                )
+
+                                def _fetch_file_content():
+                                    fetch_start = time.time()
+                                    logger.debug(
+                                        f"CodeChangesManager._get_current_content: [STEP 3.1] Inside _fetch_file_content, calling cp_service.get_file_content"
+                                    )
+                                    try:
+                                        result = cp_service.get_file_content(
+                                            repo_name=project_details["project_name"],
+                                            file_path=file_path,
+                                            branch_name=project_details.get("branch_name"),
+                                            start_line=None,
+                                            end_line=None,
+                                            project_id=project_id,
+                                            commit_id=project_details.get("commit_id"),
+                                        )
+                                        fetch_elapsed = time.time() - fetch_start
+                                        logger.debug(
+                                            f"CodeChangesManager._get_current_content: [STEP 3.1.1] cp_service.get_file_content completed in {fetch_elapsed:.3f}s"
+                                        )
+                                        return result
+                                    except Exception as fetch_err:
+                                        fetch_elapsed = time.time() - fetch_start
+                                        logger.error(
+                                            f"CodeChangesManager._get_current_content: [STEP 3.1.ERROR] cp_service.get_file_content failed after {fetch_elapsed:.3f}s: {fetch_err}",
+                                            exc_info=True,
+                                        )
+                                        raise
+
+                                try:
+                                    # Use max_total_timeout to prevent operations from running indefinitely
+                                    # Even with 2 retries at 20s each, cap total time at 40s to prevent worker hangs
+                                    # Reduced timeouts to fail faster and prevent worker crashes
+                                    logger.debug(
+                                        f"CodeChangesManager._get_current_content: [STEP 3.2] Calling safe_git_operation with timeout=20.0s, max_retries=1"
+                                    )
+                                    repo_content = safe_git_operation(
+                                        _fetch_file_content,
+                                        max_retries=1,  # Reduced to 1 retry to fail faster
+                                        timeout=20.0,  # 20 second timeout per attempt (reduced from 30s)
+                                        max_total_timeout=40.0,  # Maximum 40 seconds total (reduced from 60s)
+                                        operation_name=f"get_file_content({file_path})",
+                                    )
+                                    file_fetch_elapsed = time.time() - file_fetch_start
+                                    logger.info(
+                                        f"CodeChangesManager._get_current_content: [STEP 3.3] File fetch completed in {file_fetch_elapsed:.3f}s"
+                                    )
+                                except GitOperationError as git_error:
+                                    file_fetch_elapsed = time.time() - file_fetch_start
+                                    # If safe wrapper fails after retries, log and continue to filesystem fallback
+                                    logger.warning(
+                                        f"CodeChangesManager._get_current_content: [STEP 3.ERROR] Safe git operation failed after {file_fetch_elapsed:.3f}s: {git_error}. "
+                                        f"Falling back to filesystem for '{file_path}'"
+                                    )
+                                    repo_content = None
+                                except MemoryError as mem_error:
+                                    file_fetch_elapsed = time.time() - file_fetch_start
+                                    # Handle memory errors gracefully - this can happen with very large files
+                                    logger.error(
+                                        f"CodeChangesManager._get_current_content: [STEP 3.ERROR] Memory error fetching '{file_path}' from repository after {file_fetch_elapsed:.3f}s: {mem_error}. "
+                                        f"This may indicate the file is too large or system memory is low. "
+                                        f"Falling back to filesystem."
+                                    )
+                                    repo_content = None
+                                except (SystemExit, KeyboardInterrupt) as e:
+                                    file_fetch_elapsed = time.time() - file_fetch_start
+                                    # Don't re-raise - catch and fallback to prevent worker crash
+                                    logger.error(
+                                        f"CodeChangesManager._get_current_content: [STEP 3.ERROR] System exit/interrupt during git operation for '{file_path}' after {file_fetch_elapsed:.3f}s: {e}. "
+                                        f"Falling back to filesystem to prevent worker crash."
+                                    )
+                                    repo_content = None
+                                except BaseException as e:
+                                    file_fetch_elapsed = time.time() - file_fetch_start
+                                    # Catch any other exceptions (including segfault-related errors) to prevent worker crash
+                                    logger.error(
+                                        f"CodeChangesManager._get_current_content: [STEP 3.ERROR] Unexpected error during git operation for '{file_path}' after {file_fetch_elapsed:.3f}s: {type(e).__name__}: {e}. "
+                                        f"This may indicate a crash or resource issue. Falling back to filesystem.",
+                                        exc_info=True,
+                                    )
+                                    repo_content = None
+                        except TimeoutError as timeout_err:
                             logger.error(
-                                f"CodeChangesManager._get_current_content: [STEP 3.ERROR] Memory error fetching '{file_path}' from repository after {file_fetch_elapsed:.3f}s: {mem_error}. "
-                                f"This may indicate the file is too large or system memory is low. "
-                                f"Falling back to filesystem."
-                            )
-                            repo_content = None
-                        except (SystemExit, KeyboardInterrupt) as e:
-                            file_fetch_elapsed = time.time() - file_fetch_start
-                            # Don't re-raise - catch and fallback to prevent worker crash
-                            logger.error(
-                                f"CodeChangesManager._get_current_content: [STEP 3.ERROR] System exit/interrupt during git operation for '{file_path}' after {file_fetch_elapsed:.3f}s: {e}. "
-                                f"Falling back to filesystem to prevent worker crash."
-                            )
-                            repo_content = None
-                        except BaseException as e:
-                            file_fetch_elapsed = time.time() - file_fetch_start
-                            # Catch any other exceptions (including segfault-related errors) to prevent worker crash
-                            logger.error(
-                                f"CodeChangesManager._get_current_content: [STEP 3.ERROR] Unexpected error during git operation for '{file_path}' after {file_fetch_elapsed:.3f}s: {type(e).__name__}: {e}. "
-                                f"This may indicate a crash or resource issue. Falling back to filesystem.",
+                                f"CodeChangesManager._get_current_content: [STEP 2.ERROR] CodeProviderService initialization TIMED OUT: {timeout_err}. "
+                                f"This indicates a potential deadlock. Falling back to filesystem.",
                                 exc_info=True,
                             )
                             repo_content = None
-                    except TimeoutError as timeout_err:
-                        logger.error(
-                            f"CodeChangesManager._get_current_content: [STEP 2.ERROR] CodeProviderService initialization TIMED OUT: {timeout_err}. "
-                            f"This indicates a potential deadlock. Falling back to filesystem.",
-                            exc_info=True,
-                        )
-                        repo_content = None
-                    except Exception as service_error:
-                        # Catch errors creating CodeProviderService or any other service-related errors
-                        logger.error(
-                            f"CodeChangesManager._get_current_content: [STEP 2.ERROR] Error creating CodeProviderService or fetching file '{file_path}': {service_error}. "
-                            f"Falling back to filesystem.",
-                            exc_info=True,
-                        )
-                        repo_content = None
+                        except Exception as service_error:
+                            # Catch errors creating CodeProviderService or any other service-related errors
+                            logger.error(
+                                f"CodeChangesManager._get_current_content: [STEP 2.ERROR] Error creating CodeProviderService or fetching file '{file_path}': {service_error}. "
+                                f"Falling back to filesystem.",
+                                exc_info=True,
+                            )
+                            repo_content = None
 
                     if repo_content:
                         # Check content size to prevent memory issues
@@ -528,12 +670,25 @@ class CodeChangesManager:
         # If not available via code provider, try to read from filesystem
         # WARNING: This fallback can cause issues if file should be in changes but isn't found
         # (e.g., due to path mismatch). This returns ORIGINAL file content, which may overwrite changes.
-        filesystem_start = time.time()
-        logger.info(
-            f"CodeChangesManager._get_current_content: [STEP 4] Attempting to read '{file_path}' from filesystem"
-        )
-        codebase_content = self._read_file_from_codebase(file_path)
-        filesystem_elapsed = time.time() - filesystem_start
+        # Skip filesystem fallback if under memory pressure to prevent OOM
+        is_pressure, mem_percent = _check_memory_pressure()
+        if is_pressure:
+            logger.warning(
+                f"CodeChangesManager._get_current_content: [STEP 4.MEMORY] Memory pressure detected ({mem_percent:.1%}). "
+                f"Skipping filesystem fallback for '{file_path}' to prevent OOM kill."
+            )
+            codebase_content = None
+        else:
+            filesystem_start = time.time()
+            logger.info(
+                f"CodeChangesManager._get_current_content: [STEP 4] Attempting to read '{file_path}' from filesystem"
+            )
+            codebase_content = self._read_file_from_codebase(file_path)
+            filesystem_elapsed = time.time() - filesystem_start
+        
+        if codebase_content is not None:
+            if 'filesystem_elapsed' not in locals():
+                filesystem_elapsed = 0
         if codebase_content is not None:
             lines = codebase_content.split("\n")
             total_elapsed = time.time() - start_time

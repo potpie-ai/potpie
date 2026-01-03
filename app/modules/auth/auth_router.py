@@ -356,6 +356,7 @@ class AuthAPI:
                     status_code=201,
                 )
             except Exception as e:
+                db.rollback()
                 logger.error(f"Failed to create user: {e}", exc_info=True)
                 return Response(
                     content=json.dumps({"error": f"Signup failed: {str(e)}"}),
@@ -411,6 +412,7 @@ class AuthAPI:
                     status_code=201,
                 )
             except Exception as e:
+                db.rollback()
                 logger.error(f"Email/password signup failed: {e}", exc_info=True)
                 return Response(
                     content=json.dumps({"error": str(e)}),
@@ -629,9 +631,11 @@ class AuthAPI:
 
             response = UserAuthProvidersResponse(
                 providers=[AuthProviderResponse.from_orm(p) for p in providers],
-                primary_provider=AuthProviderResponse.from_orm(primary_provider)
-                if primary_provider
-                else None,
+                primary_provider=(
+                    AuthProviderResponse.from_orm(primary_provider)
+                    if primary_provider
+                    else None
+                ),
             )
 
             return JSONResponse(

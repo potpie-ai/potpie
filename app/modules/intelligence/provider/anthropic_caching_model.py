@@ -534,7 +534,9 @@ class CachingAnthropicModel(AnthropicModel):
         )
 
     def _get_tools(
-        self, model_request_parameters: ModelRequestParameters
+        self,
+        model_settings: AnthropicModelSettings,
+        model_request_parameters: ModelRequestParameters,
     ) -> list[BetaToolParam]:
         """
         Override to add cache_control to the last tool, enabling caching of all tool definitions.
@@ -542,7 +544,12 @@ class CachingAnthropicModel(AnthropicModel):
         Anthropic caches all content UP TO AND INCLUDING the block with cache_control.
         By placing cache_control on the last tool, we cache all tools.
         """
-        tools = super()._get_tools(model_request_parameters)
+        # Ensure model_request_parameters is a ModelRequestParameters object, not a dict
+        # This can happen if pydantic-ai passes it as a dict in some cases
+        if isinstance(model_request_parameters, dict):
+            model_request_parameters = ModelRequestParameters(**model_request_parameters)
+        
+        tools = super()._get_tools(model_settings, model_request_parameters)
 
         if tools and self._enable_tool_caching:
             # Add cache_control to the last tool to cache all tools
@@ -570,7 +577,12 @@ class CachingAnthropicModel(AnthropicModel):
         This method adds a cache_control breakpoint to the system prompt,
         enabling Anthropic to cache the instructions across requests.
         """
-        tools = self._get_tools(model_request_parameters)
+        # Ensure model_request_parameters is a ModelRequestParameters object, not a dict
+        # This can happen if pydantic-ai passes it as a dict in some cases
+        if isinstance(model_request_parameters, dict):
+            model_request_parameters = ModelRequestParameters(**model_request_parameters)
+        
+        tools = self._get_tools(model_settings, model_request_parameters)
         tool_choice: BetaToolChoiceParam | None
 
         if not tools:

@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 
 from pydantic_ai.messages import ToolCallPart, ModelMessage, ModelResponse
 from pydantic_ai.models.openai import OpenAIModel, chat
+from pydantic_ai.models import ModelRequestParameters
 
 
 class OpenRouterGeminiModel(OpenAIModel):
@@ -89,8 +90,17 @@ class OpenRouterGeminiModel(OpenAIModel):
             function_payload["thought_signature"] = signature
         return tool_call_param
 
-    async def _map_messages(self, messages: List[ModelMessage]) -> List[chat.ChatCompletionMessageParam]:
+    async def _map_messages(
+        self,
+        messages: List[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
+    ) -> List[chat.ChatCompletionMessageParam]:
         """Override to ensure all tool calls have thought_signature before mapping."""
+        # Ensure model_request_parameters is a ModelRequestParameters object, not a dict
+        # This can happen if pydantic-ai passes it as a dict in some cases
+        if isinstance(model_request_parameters, dict):
+            model_request_parameters = ModelRequestParameters(**model_request_parameters)
+        
         # First, ensure all ToolCallParts in message history have signatures
         for message in messages:
             if isinstance(message, ModelResponse):
@@ -106,4 +116,4 @@ class OpenRouterGeminiModel(OpenAIModel):
                             setattr(part, "thought_signature", signature)
         
         # Now call the parent implementation which will use our _map_tool_call override
-        return await super()._map_messages(messages)
+        return await super()._map_messages(messages, model_request_parameters)

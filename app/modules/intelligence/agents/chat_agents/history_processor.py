@@ -2440,7 +2440,7 @@ def create_history_processor(
             while preserving critical context, key decisions, important findings, and information
             needed for continuation. Be concise but comprehensive.
             """,
-            result_type=str,
+            output_type=str,
         )
 
         logger.info("Created summarization agent for history processor")

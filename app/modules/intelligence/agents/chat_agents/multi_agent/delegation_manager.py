@@ -11,6 +11,7 @@ from .utils.delegation_utils import (
     extract_task_result_from_response,
 )
 from .utils.context_utils import create_project_context_info
+from .utils.tool_call_stream_manager import ToolCallStreamManager
 from app.modules.intelligence.agents.chat_agent import ChatContext, ChatAgentResponse
 from app.modules.utils.logger import setup_logger
 
@@ -36,6 +37,7 @@ class DelegationManager:
         self.create_delegate_agent = create_delegate_agent
         self.delegation_streamer = delegation_streamer
         self.create_error_response = create_error_response
+        self.tool_call_stream_manager = ToolCallStreamManager()
 
         # Track active streaming tasks for delegation tools (tool_call_id -> queue)
         self._active_delegation_streams: Dict[str, asyncio.Queue] = {}
@@ -138,15 +140,21 @@ class DelegationManager:
         stream_queue: asyncio.Queue,
         cache_key: str,
         current_context: ChatContext,
+        call_id: Optional[str] = None,
     ):
-        """Stream subagent response to a queue for real-time streaming.
+        """Stream subagent response to a queue for real-time streaming and Redis streams.
 
         This is the ONLY place where the subagent actually executes.
         The result is cached so delegate_function can return it without re-executing.
 
-        NOTE: Due to pydantic_ai's architecture, streaming during tool execution is limited.
-        We collect all chunks and store them for yielding when the tool completes.
-        The chunks are stored in _delegation_streamed_content for the tool result handler.
+        Args:
+            agent_type_str: Type of agent to delegate to
+            task_description: Task description for the subagent
+            context: Context string for the subagent
+            stream_queue: AsyncIO queue for backward compatibility
+            cache_key: Cache key for this delegation
+            current_context: Current chat context
+            call_id: Optional tool call ID for Redis streaming (if provided, streams to Redis)
         """
         full_response = ""
         collected_chunks: List[ChatAgentResponse] = []
@@ -182,14 +190,40 @@ class DelegationManager:
             ):
                 # Store chunk for later yielding when tool completes
                 collected_chunks.append(chunk)
-                # Also put in queue for any real-time consumers
+                # Also put in queue for any real-time consumers (backward compatibility)
                 await stream_queue.put(chunk)
+
+                # Publish to Redis stream if call_id is provided
+                if call_id and chunk.response:
+                    try:
+                        self.tool_call_stream_manager.publish_stream_part(
+                            call_id=call_id,
+                            stream_part=chunk.response,
+                            is_complete=False,
+                        )
+                    except Exception as redis_error:
+                        logger.warning(
+                            f"Failed to publish to Redis stream for call_id {call_id}: {redis_error}"
+                        )
+
                 # Collect text for the final result
                 if chunk.response:
                     full_response += chunk.response
 
-            # Signal completion
+            # Signal completion to queue
             await stream_queue.put(None)
+
+            # Publish final complete response to Redis stream if call_id is provided
+            if call_id:
+                try:
+                    self.tool_call_stream_manager.publish_complete(
+                        call_id=call_id,
+                        tool_response=full_response,
+                    )
+                except Exception as redis_error:
+                    logger.warning(
+                        f"Failed to publish final response to Redis stream for call_id {call_id}: {redis_error}"
+                    )
 
             # Store all collected chunks for yielding when tool result comes
             self._delegation_streamed_content[cache_key] = collected_chunks
@@ -215,6 +249,26 @@ class DelegationManager:
             collected_chunks.append(error_chunk)
             await stream_queue.put(error_chunk)
             await stream_queue.put(None)
+
+            # Publish error to Redis stream if call_id is provided
+            if call_id:
+                try:
+                    error_message = f"*Error in subagent execution: {str(e)}*"
+                    self.tool_call_stream_manager.publish_stream_part(
+                        call_id=call_id,
+                        stream_part=error_message,
+                        is_complete=True,
+                        tool_response=error_message,
+                    )
+                    self.tool_call_stream_manager.publish_complete(
+                        call_id=call_id,
+                        tool_response=error_message,
+                    )
+                except Exception as redis_error:
+                    logger.warning(
+                        f"Failed to publish error to Redis stream for call_id {call_id}: {redis_error}"
+                    )
+
             # Store collected chunks (including error)
             self._delegation_streamed_content[cache_key] = collected_chunks
             # Cache error result

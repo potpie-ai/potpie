@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from sqlalchemy.orm import Session
 
@@ -131,8 +131,8 @@ class ToolService:
                 tools.append(self.tools[tool_name])
         return tools
 
-    def _initialize_tools(self) -> Dict[str, StructuredTool]:
-        tools = {
+    def _initialize_tools(self) -> Dict[str, Any]:
+        tools: Dict[str, Any] = {
             "get_code_from_probable_node_name": get_code_from_probable_node_name_tool(
                 self.db, self.user_id
             ),

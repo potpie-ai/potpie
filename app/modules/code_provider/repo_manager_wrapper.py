@@ -593,10 +593,49 @@ class RepoManagerCodeProviderWrapper(ICodeProvider):
                 # Checkout branch (create if doesn't exist)
                 try:
                     repo.git.worktree("add", worktree_dir, ref)
-                except GitCommandError:
-                    # Branch might not exist locally, fetch and create
-                    repo.git.fetch("origin", f"{ref}:{ref}")
-                    repo.git.worktree("add", worktree_dir, ref)
+                except GitCommandError as worktree_error:
+                    # Branch might not exist locally, try to fetch and create
+                    # First check if origin remote exists
+                    remotes = [r.name for r in repo.remotes]
+                    if "origin" in remotes:
+                        try:
+                            # Try to fetch the branch from origin
+                            repo.git.fetch("origin", f"{ref}:{ref}")
+                            repo.git.worktree("add", worktree_dir, ref)
+                        except GitCommandError as fetch_error:
+                            # Fetch failed, try local branch creation
+                            logger.warning(
+                                f"Failed to fetch {ref} from origin: {fetch_error}. "
+                                f"Trying to create from local branches."
+                            )
+                            # Check if branch exists locally
+                            local_branches = [branch.name for branch in repo.heads]
+                            if ref in local_branches:
+                                # Branch exists locally, try worktree again
+                                repo.git.worktree("add", worktree_dir, ref)
+                            else:
+                                # Branch doesn't exist, create it from HEAD without checking out
+                                # Use worktree add with -b flag to create branch in worktree
+                                current_head = repo.head.commit.hexsha
+                                repo.git.worktree("add", "-b", ref, worktree_dir, current_head)
+                    else:
+                        # No origin remote, work with local branches only
+                        logger.info(
+                            f"No 'origin' remote found, working with local branches only for {ref}"
+                        )
+                        # Check if branch exists locally
+                        local_branches = [branch.name for branch in repo.heads]
+                        if ref in local_branches:
+                            # Branch exists locally, create worktree
+                            repo.git.worktree("add", worktree_dir, ref)
+                        else:
+                            # Branch doesn't exist, create it in the worktree from current HEAD
+                            # This creates the branch in the worktree without affecting the main repo
+                            current_head = repo.head.commit.hexsha
+                            repo.git.worktree("add", "-b", ref, worktree_dir, current_head)
+                            logger.info(
+                                f"Created new branch '{ref}' in worktree from HEAD ({current_head[:8]})"
+                            )
 
             logger.info(f"Created worktree for {ref} at {worktree_dir}")
             return worktree_dir
