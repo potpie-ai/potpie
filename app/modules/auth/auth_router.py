@@ -946,10 +946,14 @@ class AuthAPI:
                     # If Firebase email doesn't match work email, update it
                     if firebase_email and firebase_email.lower() != work_email.lower():
                         logger.info(
-                            f"Updating Firebase user {user_id} email from {firebase_email} to {work_email}"
+                            "Updating Firebase user email for user_id=%s (domains may differ)",
+                            user_id,
                         )
                         firebase_auth.update_user(user_id, email=work_email)
-                        logger.info(f"Successfully updated Firebase user email to {work_email}")
+                        logger.info(
+                            "Successfully updated Firebase user email for user_id=%s",
+                            user_id,
+                        )
                 except firebase_auth.UserNotFoundError:
                     return JSONResponse(
                         content={"error": "Firebase user not found"},
