@@ -29,6 +29,14 @@ class ToolCallResponse(BaseModel):
         ...,
         description="Details of the tool call",
     )
+    stream_part: Optional[str] = Field(
+        default=None,
+        description="Partial stream update for this tool call. When set, this is a chunk of the streaming response.",
+    )
+    is_complete: bool = Field(
+        default=True,
+        description="Whether this tool call response is complete (False for streaming parts)",
+    )
 
 
 class ChatAgentResponse(BaseModel):
@@ -51,6 +59,7 @@ class ChatContext(BaseModel):
     node_ids: Optional[List[str]] = None
     additional_context: str = ""
     query: str
+    user_id: Optional[str] = None
     # Multimodal support - images attached to the current message
     image_attachments: Optional[Dict[str, Dict[str, Union[str, int]]]] = (
         None  # attachment_id -> {base64, mime_type, file_size, etc}

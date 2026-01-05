@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from sqlalchemy.orm import Session
 
@@ -91,9 +91,9 @@ from app.modules.intelligence.tools.confluence_tools import (
 from app.modules.intelligence.tools.web_tools.web_search_tool import web_search_tool
 from app.modules.intelligence.provider.provider_service import ProviderService
 from langchain_core.tools import StructuredTool
-from .think_tool import think_tool
 from .todo_management_tool import create_todo_management_tools
 from .code_changes_manager import create_code_changes_management_tools
+from .requirement_verification_tool import create_requirement_verification_tools
 
 
 class ToolService:
@@ -131,8 +131,8 @@ class ToolService:
                 tools.append(self.tools[tool_name])
         return tools
 
-    def _initialize_tools(self) -> Dict[str, StructuredTool]:
-        tools = {
+    def _initialize_tools(self) -> Dict[str, Any]:
+        tools: Dict[str, Any] = {
             "get_code_from_probable_node_name": get_code_from_probable_node_name_tool(
                 self.db, self.user_id
             ),
@@ -186,7 +186,6 @@ class ToolService:
             "intelligent_code_graph": get_intelligent_code_graph_tool(
                 self.db, self.provider_service, self.user_id
             ),
-            "think": think_tool(self.db, self.user_id),
             "fetch_file": fetch_file_tool(self.db, self.user_id),
             "analyze_code_structure": universal_analyze_code_tool(
                 self.db, self.user_id
@@ -205,6 +204,11 @@ class ToolService:
         # Add code changes management tools
         code_changes_tools = create_code_changes_management_tools()
         for tool in code_changes_tools:
+            tools[tool.name] = tool
+
+        # Add requirement verification tools
+        requirement_tools = create_requirement_verification_tools()
+        for tool in requirement_tools:
             tools[tool.name] = tool
 
         if self.webpage_extractor_tool:

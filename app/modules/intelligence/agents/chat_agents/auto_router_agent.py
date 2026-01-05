@@ -34,45 +34,44 @@ class AutoRouterAgent(ChatAgent):
     async def _run_classification(
         self, ctx: ChatContext, agent_descriptions: str
     ) -> ChatAgent:
-        # classify the query into agent needed or not
-        prompt = classification_prompt.format(
-            agent_id=ctx.curr_agent_id,
-            agent_descriptions=agent_descriptions,
-            query=ctx.query,
-            history=" ,".join(message for message in ctx.history),
-        )
-        messages = [
-            {
-                "role": "system",
-                "content": "You are an expert agent classifier that helps route queries to the most appropriate agent. Agents have full access to the users code repository",
-            },
-            {"role": "user", "content": prompt},
-        ]
+        # # classify the query into agent needed or not
+        # prompt = classification_prompt.format(
+        #     agent_id=ctx.curr_agent_id,
+        #     agent_descriptions=agent_descriptions,
+        #     query=ctx.query,
+        #     history=" ,".join(message for message in ctx.history),
+        # )
+        # messages = [
+        #     {
+        #         "role": "system",
+        #         "content": "You are an expert agent classifier that helps route queries to the most appropriate agent. Agents have full access to the users code repository",
+        #     },
+        #     {"role": "user", "content": prompt},
+        # ]
 
-        try:
-            classification: ClassificationResponse = (
-                await self.llm_provider.call_llm_with_structured_output(
-                    messages=messages,
-                    output_schema=ClassificationResponse,  # type: ignore
-                )
-            )
+        # try:
+        #     classification: ClassificationResponse = (
+        #         await self.llm_provider.call_llm_with_structured_output(
+        #             messages=messages,
+        #             output_schema=ClassificationResponse,  # type: ignore
+        #         )
+        #     )
+        #     agent_id = classification.agent_id
+        #     confidence = float(classification.confidence_score)
+        #     selected_agent_id = (
+        #         agent_id
+        #         if confidence >= 0.5 and self.agents[agent_id]
+        #         else ctx.curr_agent_id
+        #     )
+        #     logger.info(f"Classification successful: using {selected_agent_id} agent")
+        # except (ValueError, TypeError, KeyError, Exception):
+        #     logger.exception(
+        #         "Classification error, falling back to current agent",
+        #         agent_id=ctx.curr_agent_id,
+        #     )
+        #     selected_agent_id = ctx.curr_agent_id
 
-            agent_id = classification.agent_id
-            confidence = float(classification.confidence_score)
-            selected_agent_id = (
-                agent_id
-                if confidence >= 0.5 and self.agents[agent_id]
-                else ctx.curr_agent_id
-            )
-            logger.info(f"Classification successful: using {selected_agent_id} agent")
-        except (ValueError, TypeError, KeyError, Exception):
-            logger.exception(
-                "Classification error, falling back to current agent",
-                agent_id=ctx.curr_agent_id,
-            )
-            selected_agent_id = ctx.curr_agent_id
-
-        return self.agents[selected_agent_id].agent
+        return self.agents[ctx.curr_agent_id].agent
 
     async def run(self, ctx: ChatContext) -> ChatAgentResponse:
         agent = await self._run_classification(ctx, self.agent_descriptions)

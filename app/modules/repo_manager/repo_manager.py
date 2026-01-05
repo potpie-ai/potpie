@@ -1,13 +1,15 @@
 """
 Repository Manager Implementation
 
-Manages local copies of repositories stored in `.repos`.
+Manages local copies of repositories stored in `.repos` (or path specified by
+REPOS_BASE_PATH environment variable).
 Tracks repository metadata using the filesystem instead of Redis.
 """
 
 import json
 import os
 import shutil
+import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -34,24 +36,47 @@ class RepoManager(IRepoManager):
         Initialize the repository manager.
 
         Args:
-            repos_base_path: Base path for storing repositories. Defaults to `.repos`
-                at the project root (parent of the `app` directory).
+            repos_base_path: Base path for storing repositories. If not provided,
+                checks REPOS_BASE_PATH environment variable. Defaults to `.repos`
+                at the project root (parent of the `app` directory) if neither is set.
         """
         if repos_base_path:
             self.repos_base_path = Path(repos_base_path).resolve()
         else:
-            project_root = Path(__file__).parent.parent.parent.parent
-            self.repos_base_path = project_root / ".repos"
+            # Check environment variable
+            env_path = os.getenv("REPOS_BASE_PATH")
+            if env_path:
+                self.repos_base_path = Path(env_path).resolve()
+            else:
+                # Default to .repos at project root
+                project_root = Path(__file__).parent.parent.parent.parent
+                self.repos_base_path = project_root / ".repos"
 
         self.metadata_base_path = self.repos_base_path / self._METADATA_ROOT_NAME
 
         self.repos_base_path.mkdir(parents=True, exist_ok=True)
         self.metadata_base_path.mkdir(parents=True, exist_ok=True)
 
+        # Volume limit configuration (in bytes)
+        # Default: 100GB if not specified
+        volume_limit_str = os.getenv("REPOS_VOLUME_LIMIT_BYTES")
+        if volume_limit_str:
+            try:
+                self.volume_limit_bytes = int(volume_limit_str)
+            except ValueError:
+                logger.warning(
+                    f"Invalid REPOS_VOLUME_LIMIT_BYTES value '{volume_limit_str}', using default 100GB"
+                )
+                self.volume_limit_bytes = 100 * 1024 * 1024 * 1024  # 100GB
+        else:
+            self.volume_limit_bytes = 100 * 1024 * 1024 * 1024  # 100GB default
+
         logger.info(
-            "RepoManager initialized with base path %s and metadata path %s",
+            "RepoManager initialized with base path %s, metadata path %s, volume limit %d bytes (%.2f GB)",
             self.repos_base_path,
             self.metadata_base_path,
+            self.volume_limit_bytes,
+            self.volume_limit_bytes / (1024**3),
         )
 
     # ------------------------------------------------------------------ #
@@ -206,6 +231,48 @@ class RepoManager(IRepoManager):
 
             yield entry
 
+    def _calculate_volume_bytes(self, path: str) -> Optional[int]:
+        """
+        Calculate the disk usage of a directory in bytes using 'du' command.
+
+        Args:
+            path: Path to the directory
+
+        Returns:
+            Size in bytes, or None if calculation fails
+        """
+        if not os.path.exists(path):
+            return None
+
+        try:
+            # Use 'du -sb' to get size in bytes (summary, bytes)
+            # This is more accurate and faster than walking the directory tree
+            result = subprocess.run(
+                ["du", "-sb", path],
+                capture_output=True,
+                text=True,
+                timeout=60,  # 60 second timeout for large directories
+            )
+
+            if result.returncode == 0:
+                # du output format: "size_bytes\tpath"
+                size_str = result.stdout.split()[0]
+                return int(size_str)
+            else:
+                logger.warning(
+                    f"Failed to calculate volume for {path}: {result.stderr}"
+                )
+                return None
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Timeout calculating volume for {path}")
+            return None
+        except (ValueError, IndexError) as e:
+            logger.warning(f"Error parsing du output for {path}: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"Unexpected error calculating volume for {path}: {e}")
+            return None
+
     def _format_repo_info(
         self,
         repo_name: str,
@@ -239,6 +306,9 @@ class RepoManager(IRepoManager):
             "registered_at": registered_at,
             "last_accessed": last_accessed,
             "metadata": metadata,
+            "volume_bytes": raw_data.get(
+                "volume_bytes"
+            ),  # Include volume in formatted info
         }
 
     # ------------------------------------------------------------------ #
@@ -274,18 +344,27 @@ class RepoManager(IRepoManager):
         commit_id: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> bool:
+        # First, try to find via metadata entry
         entry = self._load_metadata_entry(repo_name, branch, commit_id)
-        if not entry:
-            return False
+        if entry:
+            if user_id and entry.get("user_id") != user_id:
+                return False
 
-        if user_id and entry.get("user_id") != user_id:
-            return False
+            local_path = entry.get("local_path")
+            if local_path and os.path.exists(local_path):
+                return True
 
-        local_path = entry.get("local_path")
-        if not local_path or not os.path.exists(local_path):
-            return False
+        # Fallback: Check if repository exists in expected filesystem location
+        # This handles cases where repo exists but wasn't registered in metadata
+        if not branch and not commit_id:  # Only for base repo lookups
+            expected_path = self._get_repo_local_path(repo_name)
+            if expected_path.exists() and expected_path.is_dir():
+                # Check if it's a valid git repository
+                git_dir = expected_path / ".git"
+                if git_dir.exists():
+                    return True
 
-        return True
+        return False
 
     def register_repo(
         self,
@@ -299,6 +378,35 @@ class RepoManager(IRepoManager):
         if not os.path.exists(local_path):
             raise ValueError(f"Local path does not exist: {local_path}")
 
+        # Calculate volume before registration
+        volume_bytes = self._calculate_volume_bytes(local_path)
+        if volume_bytes is None:
+            logger.warning(
+                f"Failed to calculate volume for {local_path}, proceeding without volume tracking"
+            )
+
+        # Check if we need to evict repos to make space
+        if volume_bytes:
+            current_total = self.get_total_volume_bytes()
+            if current_total + volume_bytes > self.volume_limit_bytes:
+                logger.info(
+                    f"Volume limit would be exceeded (current: {current_total:,}, new: {volume_bytes:,}, limit: {self.volume_limit_bytes:,}). Evicting LRU repos..."
+                )
+                evicted = self._evict_lru_repos_until_space_available(volume_bytes)
+                # Check if we freed enough space
+                new_total = self.get_total_volume_bytes()
+                if new_total + volume_bytes > self.volume_limit_bytes:
+                    logger.warning(
+                        f"Could not free enough space. Current: {new_total:,}, new repo: {volume_bytes:,}, "
+                        f"limit: {self.volume_limit_bytes:,}. Proceeding anyway (will exceed limit by "
+                        f"{(new_total + volume_bytes - self.volume_limit_bytes):,} bytes)"
+                    )
+                else:
+                    logger.info(
+                        f"Freed enough space. New total: {new_total:,}, after adding repo: {new_total + volume_bytes:,}, "
+                        f"limit: {self.volume_limit_bytes:,}"
+                    )
+
         now = datetime.utcnow()
         data = {
             "repo_name": repo_name,
@@ -309,11 +417,17 @@ class RepoManager(IRepoManager):
             "registered_at": self._serialize_datetime(now),
             "last_accessed": self._serialize_datetime(now),
             "metadata": metadata or {},
+            "volume_bytes": volume_bytes,  # Store volume in metadata
         }
 
         self._write_metadata_entry(repo_name, branch, commit_id, data)
         repo_key = self._get_repo_key(repo_name, branch, commit_id, user_id)
-        logger.info(f"Registered repo {repo_key} at {local_path}")
+        logger.info(
+            "Registered repo %s at %s (volume: %s bytes)",
+            repo_key,
+            local_path,
+            f"{volume_bytes:,}" if volume_bytes else "unknown",
+        )
         return repo_key
 
     def get_repo_path(
@@ -323,16 +437,28 @@ class RepoManager(IRepoManager):
         commit_id: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> Optional[str]:
+        # First, try to find via metadata entry
         entry = self._load_metadata_entry(repo_name, branch, commit_id)
-        if not entry:
-            return None
+        if entry:
+            if user_id and entry.get("user_id") != user_id:
+                return None
 
-        if user_id and entry.get("user_id") != user_id:
-            return None
+            local_path = entry.get("local_path")
+            if local_path and os.path.exists(local_path):
+                return local_path
 
-        local_path = entry.get("local_path")
-        if local_path and os.path.exists(local_path):
-            return local_path
+        # Fallback: Check if repository exists in expected filesystem location
+        # This handles cases where repo exists but wasn't registered in metadata
+        if not branch and not commit_id:  # Only for base repo lookups
+            expected_path = self._get_repo_local_path(repo_name)
+            if expected_path.exists() and expected_path.is_dir():
+                # Check if it's a valid git repository
+                git_dir = expected_path / ".git"
+                if git_dir.exists():
+                    logger.debug(
+                        f"[REPO_MANAGER] Found unregistered repo at filesystem path: {expected_path}"
+                    )
+                    return str(expected_path)
 
         return None
 
@@ -408,6 +534,7 @@ class RepoManager(IRepoManager):
             return False
 
         local_path = entry.get("local_path")
+        volume_bytes = entry.get("volume_bytes")
         self._delete_metadata_entry(repo_name, branch, commit_id)
 
         if local_path and os.path.exists(local_path):
@@ -416,17 +543,63 @@ class RepoManager(IRepoManager):
                     shutil.rmtree(local_path)
                 else:
                     os.remove(local_path)
-                logger.info(f"Deleted local repo copy at {local_path}")
+                logger.info(
+                    "Deleted local repo copy at %s (volume: %s bytes)",
+                    local_path,
+                    f"{volume_bytes:,}" if volume_bytes else "unknown",
+                )
             except OSError:
                 logger.exception(f"Failed to delete local repo copy at {local_path}")
 
         logger.info(
-            "Evicted repo %s (branch=%s, commit=%s)",
+            "Evicted repo %s (branch=%s, commit=%s, volume=%s bytes)",
             repo_name,
             branch,
             commit_id,
+            f"{volume_bytes:,}" if volume_bytes else "unknown",
         )
         return True
+
+    def recalculate_repo_volume(
+        self,
+        repo_name: str,
+        branch: Optional[str] = None,
+        commit_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> Optional[int]:
+        """
+        Recalculate and update the volume for a specific repository.
+        Useful if the repository size has changed significantly.
+
+        Args:
+            repo_name: Repository name
+            branch: Branch name (optional)
+            commit_id: Commit ID (optional)
+            user_id: User ID (optional)
+
+        Returns:
+            Updated volume in bytes, or None if calculation failed
+        """
+        entry = self._load_metadata_entry(repo_name, branch, commit_id)
+        if not entry:
+            return None
+
+        if user_id and entry.get("user_id") != user_id:
+            return None
+
+        local_path = entry.get("local_path")
+        if not local_path or not os.path.exists(local_path):
+            return None
+
+        volume_bytes = self._calculate_volume_bytes(local_path)
+        if volume_bytes is not None:
+            entry["volume_bytes"] = volume_bytes
+            self._write_metadata_entry(repo_name, branch, commit_id, entry)
+            logger.info(
+                f"Recalculated volume for {repo_name}@{branch or commit_id}: {volume_bytes:,} bytes"
+            )
+
+        return volume_bytes
 
     def evict_stale_repos(
         self,
@@ -487,3 +660,98 @@ class RepoManager(IRepoManager):
             return None
 
         return total_size
+
+    def get_total_volume_bytes(self, user_id: Optional[str] = None) -> int:
+        """
+        Get total volume used by all registered repositories in bytes.
+
+        Args:
+            user_id: Optional user ID to filter by user
+
+        Returns:
+            Total volume in bytes
+        """
+        total = 0
+        for repo_info in self.list_available_repos(user_id=user_id):
+            volume = repo_info.get("volume_bytes")
+            if volume:
+                total += volume
+        return total
+
+    def get_volume_percentage(self, user_id: Optional[str] = None) -> float:
+        """
+        Get the percentage of volume limit currently used.
+
+        Args:
+            user_id: Optional user ID to filter by user
+
+        Returns:
+            Percentage used (0.0 to 100.0)
+        """
+        total_bytes = self.get_total_volume_bytes(user_id=user_id)
+        if self.volume_limit_bytes == 0:
+            return 0.0
+        percentage = (total_bytes / self.volume_limit_bytes) * 100.0
+        return min(percentage, 100.0)  # Cap at 100%
+
+    def _evict_lru_repos_until_space_available(
+        self, required_bytes: int, user_id: Optional[str] = None
+    ) -> List[str]:
+        """
+        Evict least recently used repos until enough space is available.
+
+        Args:
+            required_bytes: Number of bytes that need to be freed
+            user_id: Optional user ID to filter evictions by user
+
+        Returns:
+            List of repo keys that were evicted
+        """
+        evicted: List[str] = []
+        current_total = self.get_total_volume_bytes(user_id=user_id)
+        target_total = current_total + required_bytes - self.volume_limit_bytes
+
+        if target_total <= 0:
+            # Already have enough space
+            return evicted
+
+        # Get all repos sorted by last_accessed (oldest first)
+        repos = self.list_available_repos(user_id=user_id)
+        repos.sort(key=lambda r: r.get("last_accessed", datetime.min))
+
+        freed_bytes = 0
+        for repo_info in repos:
+            if freed_bytes >= target_total:
+                break
+
+            repo_name = repo_info["repo_name"]
+            branch = repo_info.get("branch")
+            commit_id = repo_info.get("commit_id")
+            repo_user_id = repo_info.get("user_id")
+            volume = repo_info.get("volume_bytes", 0)
+
+            if self.evict_repo(
+                repo_name,
+                branch=branch,
+                commit_id=commit_id,
+                user_id=repo_user_id,
+            ):
+                evicted.append(repo_info["repo_key"])
+                freed_bytes += volume
+                logger.info(
+                    f"Evicted repo {repo_info['repo_key']} to free {volume} bytes "
+                    f"(freed: {freed_bytes}/{target_total} bytes)"
+                )
+
+        if evicted:
+            logger.info(
+                f"Evicted {len(evicted)} repos, freed {freed_bytes} bytes "
+                f"(target was {target_total} bytes)"
+            )
+        else:
+            logger.warning(
+                f"Could not free enough space. Required: {required_bytes} bytes, "
+                f"current usage: {current_total} bytes, limit: {self.volume_limit_bytes} bytes"
+            )
+
+        return evicted
