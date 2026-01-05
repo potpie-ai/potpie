@@ -4,6 +4,7 @@ import os
 
 import requests
 import time
+from cachetools import TTLCache
 from dotenv import load_dotenv
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse, Response
@@ -61,7 +62,8 @@ class ResendRateLimiter:
         self.ttl = ttl_seconds
         self.max_attempts = max_attempts
         self.redis = None
-        self._memory_cache = {}
+        # TTL-aware in-memory cache to avoid unbounded growth
+        self._memory_cache = TTLCache(maxsize=1024, ttl=self.ttl)
 
         try:
             from redis import Redis
@@ -73,14 +75,11 @@ class ResendRateLimiter:
             self.redis = None
 
     def _memory_increment(self, key: str) -> int:
-        now = time.time()
-        entry = self._memory_cache.get(key)
-        if entry and entry["expires_at"] > now:
-            entry["count"] += 1
-        else:
-            entry = {"count": 1, "expires_at": now + self.ttl}
-        self._memory_cache[key] = entry
-        return entry["count"]
+        # TTLCache handles expiry automatically on access/set
+        current = self._memory_cache.get(key, 0)
+        new_count = current + 1
+        self._memory_cache[key] = new_count
+        return new_count
 
     def increment(self, user_id: str) -> int:
         key = f"resend_verif:{user_id}"
