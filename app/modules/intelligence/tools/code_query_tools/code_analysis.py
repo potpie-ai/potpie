@@ -421,7 +421,7 @@ class UniversalAnalyzeCodeTool:
 
         Extracts detailed information about:
         - All classes, structs, interfaces, enums with their docstrings and line ranges
-        
+
         ⚠️ IMPORTANT: Large files with many elements may result in truncated responses (max 80,000 characters).
         If the response is truncated, a notice will be included indicating the truncation occurred.
         - All functions and methods with signatures and docstrings
@@ -551,6 +551,7 @@ class UniversalAnalyzeCodeTool:
 
             # Truncate response if it exceeds character limits
             from app.modules.intelligence.tools.tool_utils import truncate_dict_response
+
             truncated_result = truncate_dict_response(result)
             if len(json.dumps(result)) > 80000:
                 logging.warning(

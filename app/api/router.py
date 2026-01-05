@@ -204,9 +204,6 @@ async def post_message(
         )
 
     # Streaming: use Celery with streaming response
-    from app.modules.conversations.utils.conversation_routing import (
-        start_celery_task_and_stream,
-    )
 
     return start_celery_task_and_stream(
         conversation_id=conversation_id,

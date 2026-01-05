@@ -817,7 +817,7 @@ class UnifiedAuthService:
     ) -> str:
         """Create a pending provider link (expires in 15 minutes)"""
         from sqlalchemy.exc import IntegrityError, InternalError
-        
+
         try:
             token = secrets.token_urlsafe(LINKING_TOKEN_LENGTH)
             expires_at = datetime.now(timezone.utc) + timedelta(
@@ -1174,7 +1174,9 @@ class UnifiedAuthService:
             self.db.flush()  # Get the user ID
 
             # Encrypt token before storing
-            encrypted_access_token = encrypt_token(access_token) if access_token else None
+            encrypted_access_token = (
+                encrypt_token(access_token) if access_token else None
+            )
 
             # Create provider
             provider = UserAuthProvider(
@@ -1194,7 +1196,9 @@ class UnifiedAuthService:
             self.db.commit()
             self.db.refresh(new_user)
 
-            logger.info("Created new user %s with provider %s", new_user.uid, provider_type)
+            logger.info(
+                "Created new user %s with provider %s", new_user.uid, provider_type
+            )
             return new_user
         except (IntegrityError, InternalError) as e:
             # Rollback the transaction on database errors

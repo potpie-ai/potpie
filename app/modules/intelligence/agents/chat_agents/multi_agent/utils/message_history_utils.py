@@ -13,7 +13,7 @@ from typing import Set
 
 def _is_llm_response_with_text(msg: ModelMessage) -> bool:
     """Check if a message is an LLM response with text content.
-    
+
     CRITICAL: LLM responses should NEVER be removed from history.
     The LLM needs to see what it already said to avoid repeating itself.
     """
@@ -30,22 +30,22 @@ def _strip_problematic_tool_calls(
     msg: ModelResponse, problematic_ids: Set[str]
 ) -> Optional[ModelResponse]:
     """Strip problematic tool calls from a ModelResponse while preserving text content.
-    
+
     CRITICAL: This preserves the LLM's conversational text while removing orphaned
     tool_use blocks that would cause Anthropic API to reject the request.
-    
+
     Args:
         msg: The ModelResponse to process
         problematic_ids: Set of tool_call_ids that are orphaned/problematic
-        
+
     Returns:
         A new ModelResponse with only non-problematic parts, or None if no parts remain
     """
     if not isinstance(msg, ModelResponse):
         return None
-    
+
     kept_parts = []
-    
+
     for part in msg.parts:
         # Always keep TextPart
         if isinstance(part, TextPart):
@@ -59,11 +59,12 @@ def _strip_problematic_tool_calls(
         else:
             # Keep any other part types
             kept_parts.append(part)
-    
+
     if not kept_parts:
         return None
-    
+
     return ModelResponse(parts=kept_parts, model_name=msg.model_name)
+
 
 from app.modules.intelligence.agents.chat_agent import ChatContext
 from app.modules.utils.logger import setup_logger
@@ -73,23 +74,23 @@ logger = setup_logger(__name__)
 
 def _remove_duplicate_tool_results(messages: List[ModelMessage]) -> List[ModelMessage]:
     """Remove duplicate tool_result blocks with the same tool_call_id.
-    
+
     Handles duplicates both within a single message and across messages.
     Anthropic API requires each tool_use to have exactly one tool_result.
     """
     seen_tool_result_ids: Set[str] = set()
     filtered_messages: List[ModelMessage] = []
-    
+
     for i, msg in enumerate(messages):
         if isinstance(msg, ModelRequest):
             seen_in_message: Set[str] = set()
             filtered_parts = []
             parts_removed = False
-            
+
             for part in msg.parts:
                 tool_call_id = None
                 is_tool_result_part = False
-                
+
                 if hasattr(part, "__dict__"):
                     part_dict = part.__dict__
                     if part_dict.get("part_kind") == "tool-return":
@@ -100,10 +101,13 @@ def _remove_duplicate_tool_results(messages: List[ModelMessage]) -> List[ModelMe
                     ):
                         is_tool_result_part = True
                         tool_call_id = part_dict.get("tool_call_id")
-                
+
                 if is_tool_result_part and tool_call_id:
                     # Check for duplicate within message or across messages
-                    if tool_call_id in seen_in_message or tool_call_id in seen_tool_result_ids:
+                    if (
+                        tool_call_id in seen_in_message
+                        or tool_call_id in seen_tool_result_ids
+                    ):
                         parts_removed = True
                         logger.warning(
                             f"[Message History] Removing duplicate tool_result: {tool_call_id}"
@@ -111,17 +115,17 @@ def _remove_duplicate_tool_results(messages: List[ModelMessage]) -> List[ModelMe
                         continue
                     seen_in_message.add(tool_call_id)
                     seen_tool_result_ids.add(tool_call_id)
-                
+
                 filtered_parts.append(part)
-            
+
             if parts_removed:
                 if filtered_parts:
                     msg = ModelRequest(parts=filtered_parts)
                 else:
                     continue  # Skip message if all parts were duplicates
-        
+
         filtered_messages.append(msg)
-    
+
     return filtered_messages
 
 
@@ -305,7 +309,7 @@ def validate_and_fix_message_history(
         for i, msg in enumerate(messages):
             if i in messages_to_skip:
                 continue
-            
+
             # Strip problematic tool calls from LLM responses
             if i in messages_to_strip and isinstance(msg, ModelResponse):
                 stripped_msg = _strip_problematic_tool_calls(msg, problematic_ids)
@@ -316,7 +320,7 @@ def validate_and_fix_message_history(
                         f"message {i}, kept text content"
                     )
                 continue
-            
+
             filtered_messages.append(msg)
 
         # Safety check

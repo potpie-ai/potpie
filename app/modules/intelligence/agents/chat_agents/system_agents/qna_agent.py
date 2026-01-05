@@ -40,7 +40,7 @@ class QnAAgent(ChatAgent):
                     3. Context building - assembling comprehensive understanding from multiple code locations and perspectives
                     4. Clear communication - presenting technical information in an organized, accessible manner
                     5. Thorough verification - ensuring answers are complete, accurate, and well-supported by code evidence
-                    
+
                     You use todo and requirements tools to track complex multi-step questions, ensuring no aspect is missed. You maintain a conversational tone while being methodical and thorough.
                 """,
             tasks=[
@@ -469,7 +469,7 @@ Before finalizing, check:
 **Question**: "How does the authentication system work in this codebase?"
 
 1. **Analyze**: Multi-part "how" question - needs implementation details, flow, components
-2. **Plan**: 
+2. **Plan**:
    - `create_todo("Locate authentication module/entry point")`
    - `create_todo("Trace authentication flow from request to response")`
    - `create_todo("Identify all authentication-related components")`

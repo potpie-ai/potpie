@@ -99,21 +99,31 @@ class OpenRouterGeminiModel(OpenAIModel):
         # Ensure model_request_parameters is a ModelRequestParameters object, not a dict
         # This can happen if pydantic-ai passes it as a dict in some cases
         if isinstance(model_request_parameters, dict):
-            model_request_parameters = ModelRequestParameters(**model_request_parameters)
-        
+            model_request_parameters = ModelRequestParameters(
+                **model_request_parameters
+            )
+
         # First, ensure all ToolCallParts in message history have signatures
         for message in messages:
             if isinstance(message, ModelResponse):
                 for part in message.parts:
                     if isinstance(part, ToolCallPart):
                         # Ensure the ToolCallPart has a signature attribute
-                        if not hasattr(part, "thought_signature") or not getattr(part, "thought_signature"):
+                        if not hasattr(part, "thought_signature") or not getattr(
+                            part, "thought_signature"
+                        ):
                             # Try to get from cache, or generate a new one
-                            signature = self._tool_call_signatures.get(part.tool_call_id)
+                            signature = self._tool_call_signatures.get(
+                                part.tool_call_id
+                            )
                             if not signature:
-                                signature = f"{part.tool_call_id}-{uuid.uuid4().hex[:8]}"
-                                self._tool_call_signatures[part.tool_call_id] = signature
+                                signature = (
+                                    f"{part.tool_call_id}-{uuid.uuid4().hex[:8]}"
+                                )
+                                self._tool_call_signatures[part.tool_call_id] = (
+                                    signature
+                                )
                             setattr(part, "thought_signature", signature)
-        
+
         # Now call the parent implementation which will use our _map_tool_call override
         return await super()._map_messages(messages, model_request_parameters)

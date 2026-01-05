@@ -14,7 +14,7 @@ class ThinkTool:
     """Tool for thinking and processing thoughts."""
 
     name = "think"
-    description = """Use this tool to pause, recollect your thoughts, and figure out the problem at hand. 
+    description = """Use this tool to pause, recollect your thoughts, and figure out the problem at hand.
 
 When calling this tool, include in your thought:
 - What you've learned so far from tool results and conversation

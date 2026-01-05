@@ -847,9 +847,9 @@ Conversation history to summarize:
         tool_call_ids_without_result: Set[str] = set()
 
         # Build a map of all tool_call_ids and where they appear
-        tool_call_id_locations: Dict[str, List[Tuple[int, bool]]] = (
-            {}
-        )  # tool_call_id -> [(message_index, is_result), ...]
+        tool_call_id_locations: Dict[
+            str, List[Tuple[int, bool]]
+        ] = {}  # tool_call_id -> [(message_index, is_result), ...]
 
         for i, msg in enumerate(messages):
             call_ids = self._extract_tool_call_ids_from_message(msg)
@@ -1581,7 +1581,7 @@ Conversation history to summarize:
 
             # Write content with metadata
             with open(filepath, "w", encoding="utf-8") as f:
-                f.write(f"=== Tokenizer Debug File ===\n")
+                f.write("=== Tokenizer Debug File ===\n")
                 f.write(f"Section: {section}\n")
                 f.write(f"Model: {model_name or 'cl100k_base'}\n")
                 if token_count is not None:
@@ -1592,7 +1592,7 @@ Conversation history to summarize:
                 # Log RunContext information if provided
                 if ctx is not None:
                     f.write(f"\n{'='*50}\n")
-                    f.write(f"RunContext Information:\n")
+                    f.write("RunContext Information:\n")
                     f.write(f"{'='*50}\n")
                     try:
                         # Try to extract useful information from RunContext
@@ -1635,7 +1635,7 @@ Conversation history to summarize:
                         f.write(f"RunContext repr: {repr(ctx)[:500]}\n")
 
                 f.write(f"\n{'='*50}\n")
-                f.write(f"CONTENT:\n")
+                f.write("CONTENT:\n")
                 f.write(f"{'='*50}\n\n")
                 f.write(content)
 
@@ -1668,7 +1668,7 @@ Conversation history to summarize:
 
             # Write content with metadata
             with open(filepath, "w", encoding="utf-8") as f:
-                f.write(f"=== Messages Sent to LLM ===\n")
+                f.write("=== Messages Sent to LLM ===\n")
                 f.write(f"Model: {model_name or 'cl100k_base'}\n")
                 if token_count is not None:
                     f.write(f"Total Token Count: {token_count}\n")
@@ -1678,7 +1678,7 @@ Conversation history to summarize:
                 # Log RunContext information if provided
                 if ctx is not None:
                     f.write(f"\n{'='*50}\n")
-                    f.write(f"RunContext Information:\n")
+                    f.write("RunContext Information:\n")
                     f.write(f"{'='*50}\n")
                     try:
                         ctx_info = {}
@@ -1720,13 +1720,13 @@ Conversation history to summarize:
                         f.write(f"RunContext repr: {repr(ctx)[:500]}\n")
 
                 f.write(f"\n{'='*50}\n")
-                f.write(f"MESSAGE CONTENT (as sent to LLM):\n")
+                f.write("MESSAGE CONTENT (as sent to LLM):\n")
                 f.write(f"{'='*50}\n\n")
                 f.write(message_text)
 
                 # Also write a detailed breakdown of each message
                 f.write(f"\n\n{'='*50}\n")
-                f.write(f"DETAILED MESSAGE BREAKDOWN:\n")
+                f.write("DETAILED MESSAGE BREAKDOWN:\n")
                 f.write(f"{'='*50}\n\n")
                 for i, msg in enumerate(messages):
                     f.write(f"--- Message {i} ---\n")
@@ -1739,7 +1739,7 @@ Conversation history to summarize:
 
                     # Check if it's a tool call or result
                     if self._is_tool_call_message(msg):
-                        f.write(f"Message Type: TOOL_CALL\n")
+                        f.write("Message Type: TOOL_CALL\n")
                         call_info = self._extract_tool_call_info_from_message(msg)
                         if call_info:
                             tool_name, tool_args, tool_call_id = call_info
@@ -1751,7 +1751,7 @@ Conversation history to summarize:
                                 else f"  Args: {tool_args}\n"
                             )
                     elif self._is_tool_result_message(msg):
-                        f.write(f"Message Type: TOOL_RESULT\n")
+                        f.write("Message Type: TOOL_RESULT\n")
                         result_info = self._extract_tool_info_from_message(msg)
                         if result_info:
                             tool_name, result_content, tool_call_id = result_info
@@ -1764,9 +1764,9 @@ Conversation history to summarize:
                                 else f"  Result: {result_content}\n"
                             )
                     elif self._is_user_message(msg):
-                        f.write(f"Message Type: USER\n")
+                        f.write("Message Type: USER\n")
                     else:
-                        f.write(f"Message Type: OTHER\n")
+                        f.write("Message Type: OTHER\n")
 
                     # Write message representation
                     try:
@@ -1777,7 +1777,7 @@ Conversation history to summarize:
                     except Exception as e:
                         f.write(f"Error getting message repr: {e}\n")
 
-                    f.write(f"\n")
+                    f.write("\n")
 
             logger.info(
                 f"[History Processor] Wrote messages to LLM debug file: {filepath} "
@@ -1946,9 +1946,9 @@ Conversation history to summarize:
         other_messages: List[ModelMessage] = []
 
         # Message metadata: (message, token_count, is_user, is_tool_call, is_tool_result, tool_call_ids)
-        message_metadata: List[Tuple[ModelMessage, int, bool, bool, bool, Set[str]]] = (
-            []
-        )
+        message_metadata: List[
+            Tuple[ModelMessage, int, bool, bool, bool, Set[str]]
+        ] = []
 
         for msg in messages:
             is_user = self._is_user_message(msg)
@@ -2034,9 +2034,9 @@ Conversation history to summarize:
 
         # Collect metadata about removed tool calls for creating summary messages
         # Process in forward order to collect both calls and results
-        removed_tool_metadata: Dict[str, Tuple[str, str, str]] = (
-            {}
-        )  # tool_call_id -> (tool_name, tool_args, result_summary)
+        removed_tool_metadata: Dict[
+            str, Tuple[str, str, str]
+        ] = {}  # tool_call_id -> (tool_name, tool_args, result_summary)
 
         # First pass: collect metadata for all tool calls/results to be removed
         for (
