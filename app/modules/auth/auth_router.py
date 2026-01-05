@@ -35,6 +35,7 @@ from app.modules.auth.unified_auth_service import (
 from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.utils.posthog_helper import PostHogClient
+from app.modules.utils.email_helper import EmailHelper
 
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", None)
 
@@ -757,8 +758,13 @@ class AuthAPI:
             user = user_service.get_user_by_uid(user_id)
 
             if not user:
+                # Common when a GitHub-only token is used without a corresponding DB user
                 return JSONResponse(
-                    content={"error": "User not found"},
+                    content={
+                        "error": "User not found",
+                        "message": "You are signed in with your GitHub email. Please sign in with your work email (Google) to verify that address.",
+                        "action": "sign_in_with_work_email",
+                    },
                     status_code=404,
                 )
 
@@ -790,4 +796,181 @@ class AuthAPI:
             return JSONResponse(
                 content={"error": f"Failed to get account: {str(e)}"},
                 status_code=400,
+            )
+
+    @auth_router.post("/account/resend-verification")
+    async def resend_verification_email(
+        request: Request,
+        user_data: dict = Depends(AuthService.check_auth),
+        db: Session = Depends(get_db),
+    ):
+        """
+        Resend email verification to the user's work email.
+        Uses Firebase Admin SDK to generate verification link and sends it via email service.
+        """
+        try:
+            # Get authenticated user
+            user_id = user_data.get("user_id")
+
+            if not user_id:
+                return JSONResponse(
+                    content={"error": "Authentication required"},
+                    status_code=401,
+                )
+
+            # Get user from database to get work email
+            user_service = UserService(db)
+            user = user_service.get_user_by_uid(user_id)
+
+            if not user:
+                return JSONResponse(
+                    content={"error": "User not found"},
+                    status_code=404,
+                )
+
+            work_email = user.email
+
+            # Check if email is already verified
+            if user.email_verified:
+                return JSONResponse(
+                    content={"message": "Email is already verified"},
+                    status_code=200,
+                )
+
+            # Check if user's primary provider is GitHub
+            unified_auth = UnifiedAuthService(db)
+            providers = unified_auth.get_user_providers(user_id)
+            primary_provider = next(
+                (p for p in providers if p.is_primary), None
+            )
+            
+            # If primary provider is GitHub, don't send verification email
+            # User needs to sign in with work email (Google) instead
+            if primary_provider and primary_provider.provider_type == PROVIDER_TYPE_FIREBASE_GITHUB:
+                return JSONResponse(
+                    content={
+                        "error": "Cannot send verification email to GitHub account",
+                        "message": "You are signed in with your GitHub email. Please sign in with your work email (Google) to verify that address.",
+                        "action": "sign_in_with_work_email",
+                    },
+                    status_code=400,
+                )
+
+            # Use Firebase Admin SDK to generate verification link
+            try:
+                from firebase_admin import auth as firebase_auth
+                import firebase_admin
+
+                # Check if Firebase is initialized
+                try:
+                    firebase_admin.get_app()
+                except ValueError:
+                    return JSONResponse(
+                        content={"error": "Firebase not initialized"},
+                        status_code=500,
+                    )
+
+                # Get Firebase user to check/update email
+                try:
+                    firebase_user = firebase_auth.get_user(user_id)
+                    firebase_email = firebase_user.email
+                    
+                    # If Firebase email doesn't match work email, update it
+                    if firebase_email and firebase_email.lower() != work_email.lower():
+                        logger.info(
+                            f"Updating Firebase user {user_id} email from {firebase_email} to {work_email}"
+                        )
+                        firebase_auth.update_user(user_id, email=work_email)
+                        logger.info(f"Successfully updated Firebase user email to {work_email}")
+                except firebase_auth.UserNotFoundError:
+                    return JSONResponse(
+                        content={"error": "Firebase user not found"},
+                        status_code=404,
+                    )
+
+                # Generate email verification link for the work email
+                action_code_settings = firebase_auth.ActionCodeSettings(
+                    url=f"{os.getenv('FRONTEND_URL', 'https://app.potpie.ai')}/sign-in?emailVerified=true",
+                    handle_code_in_app=False,
+                )
+
+                # Generate the verification link using the work email
+                verification_link = firebase_auth.generate_email_verification_link(
+                    work_email, action_code_settings=action_code_settings
+                )
+
+                # Send email via our email service
+                email_helper = EmailHelper()
+                
+                # Create verification email HTML
+                email_html = f"""
+                <html>
+                <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+                    <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+                        <h2 style="color: #2563eb;">Verify Your Email Address</h2>
+                        <p>Hi {user.display_name or 'there'},</p>
+                        <p>Please verify your email address by clicking the button below:</p>
+                        <div style="text-align: center; margin: 30px 0;">
+                            <a href="{verification_link}" 
+                               style="background-color: #2563eb; color: white; padding: 12px 24px; 
+                                      text-decoration: none; border-radius: 6px; display: inline-block;">
+                                Verify Email Address
+                            </a>
+                        </div>
+                        <p>Or copy and paste this link into your browser:</p>
+                        <p style="word-break: break-all; color: #666; font-size: 12px;">
+                            {verification_link}
+                        </p>
+                        <p>This link will expire in 24 hours.</p>
+                        <p>If you didn't request this verification email, you can safely ignore it.</p>
+                        <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+                        <p style="color: #666; font-size: 12px;">
+                            Best regards,<br>
+                            The Potpie Team
+                        </p>
+                    </div>
+                </body>
+                </html>
+                """
+
+                # Send email using Resend
+                import resend
+                resend.api_key = email_helper.api_key
+                
+                email_params = {
+                    "from": f"Potpie <{email_helper.from_address}>",
+                    "to": work_email,
+                    "subject": "Verify your Potpie email address",
+                    "html": email_html,
+                }
+                
+                resend.Emails.send(email_params)
+
+                logger.info(f"Verification email sent to {work_email} for user {user_id}")
+
+                return JSONResponse(
+                    content={
+                        "message": "Verification email sent successfully",
+                        "email": work_email,
+                    },
+                    status_code=200,
+                )
+
+            except ImportError:
+                return JSONResponse(
+                    content={"error": "Firebase Admin SDK not available"},
+                    status_code=500,
+                )
+            except Exception as e:
+                logger.error(f"Failed to send verification email: {str(e)}", exc_info=True)
+                return JSONResponse(
+                    content={"error": f"Failed to send verification email: {str(e)}"},
+                    status_code=500,
+                )
+
+        except Exception as e:
+            logger.error(f"Resend verification failed: {str(e)}", exc_info=True)
+            return JSONResponse(
+                content={"error": f"Failed to resend verification: {str(e)}"},
+                status_code=500,
             )
