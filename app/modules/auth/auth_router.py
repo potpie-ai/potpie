@@ -3,6 +3,7 @@ import logging
 import os
 
 import requests
+import time
 from dotenv import load_dotenv
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse, Response
@@ -35,6 +36,7 @@ from app.modules.auth.unified_auth_service import (
 from app.modules.users.user_service import UserService
 from app.modules.utils.APIRouter import APIRouter
 from app.modules.utils.posthog_helper import PostHogClient
+from app.core.config_provider import ConfigProvider
 from app.modules.utils.email_helper import EmailHelper
 
 SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL", None)
@@ -47,6 +49,58 @@ async def send_slack_message(message: str):
     payload = {"text": message}
     if SLACK_WEBHOOK_URL:
         requests.post(SLACK_WEBHOOK_URL, json=payload)
+
+
+class ResendRateLimiter:
+    """
+    Simple per-user rate limiter for resend verification.
+    Tries Redis first; falls back to in-memory with TTL.
+    """
+
+    def __init__(self, ttl_seconds: int = 3600, max_attempts: int = 3):
+        self.ttl = ttl_seconds
+        self.max_attempts = max_attempts
+        self.redis = None
+        self._memory_cache = {}
+
+        try:
+            from redis import Redis
+
+            config = ConfigProvider()
+            self.redis = Redis.from_url(config.get_redis_url())
+        except Exception as e:
+            logger.warning("ResendRateLimiter: Redis unavailable, using in-memory fallback: %s", e)
+            self.redis = None
+
+    def _memory_increment(self, key: str) -> int:
+        now = time.time()
+        entry = self._memory_cache.get(key)
+        if entry and entry["expires_at"] > now:
+            entry["count"] += 1
+        else:
+            entry = {"count": 1, "expires_at": now + self.ttl}
+        self._memory_cache[key] = entry
+        return entry["count"]
+
+    def increment(self, user_id: str) -> int:
+        key = f"resend_verif:{user_id}"
+
+        # Redis path
+        if self.redis:
+            try:
+                pipe = self.redis.pipeline()
+                pipe.incr(key)
+                pipe.expire(key, self.ttl)
+                count, _ = pipe.execute()
+                return int(count)
+            except Exception as e:
+                logger.warning("ResendRateLimiter: Redis error, falling back to memory: %s", e)
+
+        # Fallback path
+        return self._memory_increment(key)
+
+
+resend_rate_limiter = ResendRateLimiter()
 
 
 class AuthAPI:
@@ -836,6 +890,21 @@ class AuthAPI:
                     content={"message": "Email is already verified"},
                     status_code=200,
                 )
+
+            # Per-user rate limit to prevent email flooding (3 per hour default)
+            try:
+                attempts = resend_rate_limiter.increment(user_id)
+                if attempts > resend_rate_limiter.max_attempts:
+                    return JSONResponse(
+                        content={
+                            "error": "Too many requests. Please try again later.",
+                            "retry_after_seconds": resend_rate_limiter.ttl,
+                        },
+                        status_code=429,
+                    )
+            except Exception as e:
+                # Fail open but log; still sends email while we protect obvious abuse paths
+                logger.warning("Resend verification rate limit check failed: %s", e)
 
             # Check if user's primary provider is GitHub
             unified_auth = UnifiedAuthService(db)
